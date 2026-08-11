@@ -1,6 +1,8 @@
 # Contributing to kelson
 
-kelson is pre-alpha and in the design phase. Nothing is implemented yet.
+kelson is pre-alpha and in the design phase. Nothing is implemented yet. The repository is scaffolded
+([#18](https://github.com/dafrie/kelson/issues/18)) and the [ADRs](docs/adr/) record the load-bearing
+decisions.
 
 ## The most useful contribution right now is argument
 
@@ -19,19 +21,74 @@ Particularly interested in pushback on:
 Also valuable: experience reports. If you run Coolify, Dokploy, Kubero or Canine in anger, what breaks?
 What did you have to work around? That is worth more than a feature request.
 
-## Ways to help
+## Issues and templates
 
-- **Experience reports** — open an issue describing what you run and what hurts
-- **ADR review** — argue with the decisions
-- **Design review** — [architecture](docs/architecture.md) and [roadmap](docs/roadmap.md)
-- **Prior art** — if a project already solves one of these problems well, point us at it
+Use the issue forms in `.github/ISSUE_TEMPLATE/`: **bug report** for broken behavior, **feature request**
+for new capability, and **design / ADR request** for anything that changes a load-bearing decision.
+Design questions belong in the design template, not buried in a feature request — they need the
+alternatives-and-consequences reasoning an ADR records.
 
-## Once implementation starts
+## Implementation
 
-Guidelines for code, tests, commits and reviews will land with the M0 foundations work. Until then,
-please don't send implementation PRs — the interfaces they'd target don't exist yet, and reviewing
-speculative code against an unbuilt design wastes your time more than ours.
+M0 work is scoped in the [issue tracker](https://github.com/dafrie/kelson/issues). Before you start,
+check the roadmap: if an interface it would target doesn't exist yet, the PR will bounce. The four-plane
+layout is the contract — changes that cross a plane boundary or touch a load-bearing property should
+reference or argue with the relevant [ADR](docs/adr/).
+
+### Setup
+
+```sh
+go test ./...   # or: make test (adds -race)
+make lint       # golangci-lint
+make build
+make fmt
+```
+
+### Code style
+
+- Go. Format with `gofmt` (see `make fmt`). `golangci-lint` must pass — the rule set is in `.golangci.yml`.
+- Two languages (Go core, TypeScript/React UI per [ADR-0002](docs/adr/0002-tech-stack.md)); keep each side
+  idiomatic for its toolchain and follow the lint rules that ship with it.
+- No comments that restate the code. Comments explain *why*, not *what*.
+
+### The renderer-purity rule
+
+`internal/renderer` must stay a deterministically **pure function** ([ADR-0001](docs/adr/0001-hybrid-state-model.md),
+[#20](https://github.com/dafrie/kelson/issues/20)): no Kubernetes client, no network, no clock, no ambient
+filesystem. This is enforced by a `depguard` rule in `.golangci.yml` and is the load-bearing constraint of
+the project. Golden-file tests depend on it — the same input must produce the same bytes.
+
+### Tests
+
+- Renderer logic is **golden-file tested**: fixed input, byte-identical output. Any change that alters
+  rendered output for unchanged input updates the golden files and must be reviewed as such.
+- Keep the renderer pure so it can be tested without a cluster. Anything that needs a real API server
+  lives outside `internal/renderer`.
+- Run the full suite with `make test` before opening a PR.
+
+### Commit conventions
+
+[Conventional commits](https://www.conventionalcommits.org/), one logical change per commit, and reference
+the issue you're working on:
+
+```
+feat(renderer): add ClusterProfile detection
+fix(cli): honor --dry-run flag
+docs(adr): add ADR-0010 identity model
+```
+
+Commit messages describe the change, not the process. Always reference the issue number.
+
+### Review process
+
+- Open a PR against `main` using the [pull request template](.github/pull_request_template.md). Reference
+  the issue(s) it closes and any ADRs it touches.
+- Any behavior change must point at the ADR that licenses it, or add one. If a change contradicts an
+  accepted ADR, that is a design discussion, not a code review.
+- CI runs lint and tests; keep them green. Renderer-purity violations are a review-blocking defect, not
+  style feedback.
 
 ## Conduct
 
 Be decent. Assume good faith. Argue about the technical substance, not the person making the argument.
+See [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).

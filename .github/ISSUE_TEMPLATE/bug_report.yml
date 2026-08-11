@@ -1,0 +1,45 @@
+name: Bug report
+description: Something is broken or behaves unexpectedly.
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Fill in what you can — anything blank slows the fix.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened vs. what you expected. One or two sentences.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Commands, inputs, or a kelson.yaml snippet that triggers it.
+      render: bash
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Commit or release where you observed it.
+    validations:
+      required: false
+  - type: textarea
+    id: context
+    attributes:
+      label: Environment
+      description: Kubernetes distribution/version, OS, anything relevant.
+    validations:
+      required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues for a duplicate.
+          required: true
