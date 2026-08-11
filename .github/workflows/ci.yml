@@ -1,0 +1,235 @@
+# kelson CI pipeline (issues #19, #20).
+#
+# - Go: lint (golangci-lint v2 with depguard renderer-purity rule), race tests,
+#   coverage, cross-compiled build matrix, govulncheck.
+# - TypeScript UI: stubbed to no-op cleanly when ui/package.json is absent.
+# - Docs-only fast path skips the heavy Go/TS jobs.
+# - Required status checks on the default branch are configured in GitHub
+#   repository settings; the `CI` job aggregates the required outcomes.
+
+name: CI
+
+on:
+  push:
+    branches: [main, ag/a-ci]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    name: Detect changed files
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      docs_only: ${{ steps.filter.outputs.docs_only == 'true' }}
+      go: ${{ steps.filter.outputs.go == 'true' }}
+      typescript: ${{ steps.filter.outputs.typescript == 'true' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Path filter
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            docs:
+              - '**/*.md'
+              - 'docs/**'
+            go:
+              - 'go.mod'
+              - 'go.sum'
+              - '**/*.go'
+              - '.golangci.yml'
+              - 'Makefile'
+            typescript:
+              - 'ui/**'
+          predicate-quantifier: every
+
+      - name: Determine docs-only
+        id: docs_only
+        run: |
+          if [ "${{ steps.filter.outputs.docs }}" == "true" ] && [ "${{ steps.filter.outputs.go }}" != "true" ] && [ "${{ steps.filter.outputs.typescript }}" != "true" ]; then
+            echo "docs_only=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  lint:
+    name: Go lint
+    needs: changes
+    if: ${{ needs.changes.outputs.docs_only != 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install golangci-lint v2
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+
+      - name: Run golangci-lint
+        run: golangci-lint run ./...
+
+  test:
+    name: Go test with race detector
+    needs: changes
+    if: ${{ needs.changes.outputs.docs_only != 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run tests with race detector
+        run: go test -race ./...
+
+  coverage:
+    name: Go coverage
+    needs: changes
+    if: ${{ needs.changes.outputs.docs_only != 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Generate coverage profile
+        run: go test -race -coverprofile=coverage.out ./...
+
+      - name: Report coverage
+        run: go tool cover -func=coverage.out
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.out
+          if-no-files-found: error
+
+  vuln:
+    name: Vulnerability scan
+    needs: changes
+    if: ${{ needs.changes.outputs.docs_only != 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run govulncheck
+        run: govulncheck ./...
+
+  build:
+    name: Build binaries (${{ matrix.os }}/${{ matrix.arch }})
+    needs: changes
+    if: ${{ needs.changes.outputs.docs_only != 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+          - os: linux
+            arch: arm64
+          - os: darwin
+            arch: amd64
+          - os: darwin
+            arch: arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build all binaries
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+        run: go build ./...
+
+  typescript:
+    name: TypeScript UI
+    needs: changes
+    if: ${{ needs.changes.outputs.typescript == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: No-op when UI is not yet present
+        run: |
+          if [ ! -f package.json ]; then
+            echo "ui/package.json not found; skipping TypeScript checks."
+            exit 0
+          fi
+          echo "TypeScript UI checks not implemented yet (issue #?)"
+          exit 1
+
+  ci:
+    name: CI summary
+    needs: [changes, lint, test, coverage, vuln, build, typescript]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Evaluate required outcomes
+        run: |
+          if [ "${{ needs.changes.outputs.docs_only }}" == "true" ]; then
+            echo "Docs-only change; heavy checks skipped by fast path."
+            exit 0
+          fi
+
+          for job in lint test coverage vuln build typescript; do
+            result="${{ needs[job].result }}"
+            if [ "$result" != "success" ] && [ "$result" != "skipped" ]; then
+              echo "Job $job failed with result: $result"
+              exit 1
+            fi
+          done
+
+          echo "All required CI jobs passed."
