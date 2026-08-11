@@ -1,0 +1,32 @@
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: staging
+
+# Flux mode, with agents allowed but obliged to dry-run first.
+spec:
+  project: billing
+  namespace: billing-staging
+
+  routing:
+    domainSuffix: staging.billing.acme.run
+    ingressClass: nginx
+
+  delivery:
+    mode: flux
+    git:
+      repo: git@github.com:acme/billing-deploy.git
+      branch: main
+      path: billing/staging
+
+  policy:
+    agents: allow
+    require: [dry-run]
+
+  secrets:
+    backend: externalSecrets
+    store: vault-backend
+
+  services:
+    - name: db
+      plan: small             # dedicated single-instance cluster (P5)

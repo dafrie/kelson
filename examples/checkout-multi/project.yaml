@@ -1,0 +1,41 @@
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: checkout
+
+# The shape docs/architecture.md targets: one HA, TLS-terminated,
+# database-backed service with a worker and a cron job, with no duplication.
+spec:
+  source:
+    git: https://github.com/acme/checkout
+    ref: main
+  build:
+    strategy: auto            # auto | dockerfile | buildpacks | none
+
+  env:                        # shared by every application
+    LOG_LEVEL: info
+    DATABASE_URL:
+      from: { service: db, key: uri }   # binding, never a literal (ADR-0009)
+
+  services:
+    - name: db
+      type: postgres
+      plan: ha-small          # → CloudNativePG Cluster with PITR
+
+  applications:
+    - name: web
+      port: 8080
+      health: /healthz
+      domains: [checkout.acme.com]
+      replicas: { min: 2, max: 10 }
+
+    - name: worker
+      command: ["bundle", "exec", "sidekiq"]
+
+    - name: nightly-report
+      schedule: "0 3 * * *"
+
+  defaults:                   # fallbacks only; Environment values always win (P4)
+    deliveryMode: flux
+    policy:
+      agents: propose-only

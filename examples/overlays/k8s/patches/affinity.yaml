@@ -1,0 +1,17 @@
+# Strategic-merge patch applied to the rendered transcoder Deployment.
+# Overlays merge into the resource whose kind/name they carry, in order.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: transcoder
+spec:
+  template:
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: acme.com/gpu
+                    operator: In
+                    values: ["true"]

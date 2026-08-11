@@ -1,0 +1,21 @@
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: production
+
+spec:
+  project: mailroom
+  namespace: mailroom
+
+  delivery:
+    mode: direct
+
+  policy:
+    agents: allow
+    require: [dry-run]
+
+  applications:
+    - name: worker
+      resources:
+        requests: { cpu: 100m, memory: 128Mi }
+        limits: { memory: 512Mi }

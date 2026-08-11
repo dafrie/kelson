@@ -1,0 +1,33 @@
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: streaming
+
+# Needs the escape hatch: node affinity for GPU nodes, and a NetworkPolicy the
+# schema does not (and will not) model. Always available, never required.
+spec:
+  source:
+    git: https://github.com/acme/streaming
+  build:
+    strategy: dockerfile
+
+  env:
+    REDIS_URL:
+      from: { service: cache, key: uri }
+
+  services:
+    - name: cache
+      type: valkey
+      plan: small
+
+  applications:
+    - name: transcoder
+      port: 8443
+      domains: [stream.acme.com]
+      resources:
+        requests: { cpu: 4, memory: 8Gi }
+
+  # Escape hatch. Always available, never required (rule P6: project first).
+  overlays:
+    - patch: ./k8s/patches/affinity.yaml       # merged into rendered workloads
+    - manifest: ./k8s/extra/networkpolicy.yaml # emitted as-is

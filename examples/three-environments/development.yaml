@@ -1,0 +1,18 @@
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: development
+
+# Direct mode: kelson server-side applies. Rendered history keeps diffs
+# and rollback even here (ADR-0001).
+spec:
+  project: billing
+
+  routing:
+    domainSuffix: dev.billing.internal
+
+  delivery:
+    mode: direct
+
+  policy:
+    agents: allow             # agents deploy freely in development

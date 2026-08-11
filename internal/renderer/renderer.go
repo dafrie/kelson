@@ -25,10 +25,10 @@ type Spec struct{}
 
 // Manifest is a single rendered Kubernetes resource.
 type Manifest struct {
-	APIVersion string            `json:"apiVersion" yaml:"apiVersion"`
-	Kind       string            `json:"kind" yaml:"kind"`
-	Name       string            `json:"name" yaml:"name"`
-	Data       map[string]any    `json:"data" yaml:"data"`
+	APIVersion  string            `json:"apiVersion" yaml:"apiVersion"`
+	Kind        string            `json:"kind" yaml:"kind"`
+	Name        string            `json:"name" yaml:"name"`
+	Data        map[string]any    `json:"data" yaml:"data"`
 	Annotations map[string]string `json:"annotations,omitempty" yaml:"annotations,omitempty"`
 }
 
