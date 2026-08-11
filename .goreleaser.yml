@@ -1,0 +1,110 @@
+# goreleaser config — issue #21.
+#
+# Cutting a release is one tag (see docs/release-policy.md):
+#   git tag v0.X.Y && git push origin v0.X.Y
+# The GitHub Actions release workflow runs `goreleaser release --clean`.
+#
+# Local dry-run: `make release-snapshot` (or `goreleaser release --snapshot --clean`).
+
+version: 2
+
+project_name: kelson
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: kelson
+    main: ./cmd/kelson
+    binary: kelson
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/dafrie/kelson/internal/version.Version={{.Version}}
+      - -X github.com/dafrie/kelson/internal/version.Commit={{.ShortCommit}}
+
+  - id: kelson-server
+    main: ./cmd/kelson-server
+    binary: kelson-server
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/dafrie/kelson/internal/version.Version={{.Version}}
+      - -X github.com/dafrie/kelson/internal/version.Commit={{.ShortCommit}}
+
+archives:
+  - id: kelson
+    ids: [kelson, kelson-server]
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - LICENSE
+      - README.md
+      - docs/release-policy.md
+
+dockers:
+  - id: kelson-server-amd64
+    ids: [kelson-server]
+    goos: linux
+    goarch: amd64
+    use: buildx
+    dockerfile: Dockerfile
+    image_templates:
+      - "ghcr.io/dafrie/kelson-server:{{ .Version }}-amd64"
+    build_flag_templates:
+      - "--platform=linux/amd64"
+
+  - id: kelson-server-arm64
+    ids: [kelson-server]
+    goos: linux
+    goarch: arm64
+    use: buildx
+    dockerfile: Dockerfile
+    image_templates:
+      - "ghcr.io/dafrie/kelson-server:{{ .Version }}-arm64"
+    build_flag_templates:
+      - "--platform=linux/arm64"
+
+docker_manifests:
+  - name_template: "ghcr.io/dafrie/kelson-server:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/dafrie/kelson-server:{{ .Version }}-amd64"
+      - "ghcr.io/dafrie/kelson-server:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/dafrie/kelson-server:latest"
+    image_templates:
+      - "ghcr.io/dafrie/kelson-server:{{ .Version }}-amd64"
+      - "ghcr.io/dafrie/kelson-server:{{ .Version }}-arm64"
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^Merge pull request"
+      - "^Merge branch"
+
+release:
+  draft: true
+  prerelease: auto
+  github:
+    owner: dafrie
+    name: kelson

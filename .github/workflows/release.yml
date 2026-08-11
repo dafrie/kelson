@@ -1,0 +1,69 @@
+# Release pipeline — issue #21.
+#
+# Triggered by a version tag `vX.Y.Z` (see docs/release-policy.md). Runs
+# goreleaser to build binaries and a container image, opens a draft GitHub
+# release, and pushes the image to ghcr.io/dafrie/kelson-server.
+#
+# Cosign image signing is stubbed below — it is installed but the sign step is
+# not wired. Enable it as part of the supply-chain work (issue #85), where
+# keyless signing, the verifier policy and the artifact attestation story all
+# land together.
+
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write   # goreleaser writes the GitHub release
+  packages: write   # push to ghcr.io
+  id-token: write   # reserved for cosign keyless signing (issue #85)
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # goreleaser needs full history for the changelog
+
+      - name: setup go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+
+      - name: login to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: install cosign
+        uses: sigstore/cosign-installer@v3
+        # cosign is installed so the version is pinned and the binary is
+        # available for manual signing during the transition. The automated
+        # sign step below is intentionally not enabled yet — see issue #85.
+
+      # - name: sign container images (issue #85)
+      #   if: ${{ false }}
+      #   run: |
+      #     cosign sign --yes \
+      #       ghcr.io/dafrie/kelson-server:${{ github.ref_name }}-amd64 \
+      #       ghcr.io/dafrie/kelson-server:${{ github.ref_name }}-arm64
+      #   env:
+      #     COSIGN_EXPERIMENTAL: 1
+      #   # TODO(issue #85): enable once keyless signing, the attestation
+      #   # policy and the verification story are reviewed together.
+
+      - name: goreleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
