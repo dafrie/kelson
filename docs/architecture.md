@@ -319,3 +319,7 @@ kelson's contribution is the **coherent application model across all of them**, 
 agent-grade API. Every one of those is a place where an incumbent chose to reimplement and later regretted
 it — most visibly Kubero, whose vendored Bitnami charts broke working installations when the upstream
 catalog was withdrawn.
+
+This constrains **what kelson promises**, not what you can run. Any workload or Helm chart is installable;
+kelson runs it, routes to it and binds applications to it. It just makes no durability claim about
+anything it did not provision as a managed type. See [ADR-0005](adr/0005-delegate-to-operators.md).
