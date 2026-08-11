@@ -1,7 +1,11 @@
 # ADR-0005: Delegate stateful workloads to upstream operators
 
-- **Status:** Accepted
+- **Status:** **Proposed** — not yet reviewed or accepted
 - **Date:** 2026-08-11
+
+> ⚠️ This decision was drafted without sign-off. It raises the prerequisite burden for users
+> meaningfully, and it is being built on by [ADR-0007](0007-data-services.md) and the M9 issues. Review
+> before it hardens.
 
 ## Context
 

@@ -1,7 +1,10 @@
 # ADR-0002: Go control plane, TypeScript/React UI
 
-- **Status:** Accepted
+- **Status:** Accepted for the language choice · **Proposed** for the API transport
 - **Date:** 2026-08-11
+
+> ⚠️ Go for the control plane and TypeScript/React for the UI are agreed. **ConnectRPC as the API
+> transport is not** — it was drafted without sign-off and is still open for review.
 
 ## Context
 
