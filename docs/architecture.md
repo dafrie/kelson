@@ -209,8 +209,15 @@ L3 shares all its machinery with pull-request preview environments — built onc
 
 kelson's agent story is an API design commitment, not a chatbot.
 
-**The MCP server is a thin adapter over the same typed API the UI uses.** If it needs endpoints the UI
-doesn't have, that is a signal the API is wrong.
+**Capability parity, not surface parity** ([ADR-0008](adr/0008-mcp-surface.md)). The MCP server exposes no
+capability the API lacks, which is what stops it becoming a privileged backdoor with its own logic. But its
+*shape* is deliberately different: tools are task-shaped rather than resource-shaped, because a
+sixty-endpoint API mapped one-to-one gives sixty tools and makes "why is checkout broken" cost eight round
+trips. One `diagnose_application` that composes status, events, a bounded log window and the recent
+revision is the same capability in a form an agent can actually use.
+
+The test: *if MCP needs a **capability** the API lacks, the API is wrong. If it needs a different
+**shape**, that is the point.*
 
 Required properties of every mutating operation:
 

@@ -1,10 +1,7 @@
 # ADR-0002: Go control plane, TypeScript/React UI
 
-- **Status:** Accepted for the language choice · **Proposed** for the API transport
+- **Status:** Accepted (transport reviewed and accepted 2026-08-12)
 - **Date:** 2026-08-11
-
-> ⚠️ Go for the control plane and TypeScript/React for the UI are agreed. **ConnectRPC as the API
-> transport is not** — it was drafted without sign-off and is still open for review.
 
 ## Context
 
@@ -40,7 +37,23 @@ ambitions here (live log streaming, rich diff rendering, an app graph) put a rea
 ConnectRPC is chosen over plain REST or plain gRPC because it produces one schema with both gRPC and
 HTTP/JSON, giving generated clients everywhere and browser support without a proxy. Since
 [ADR-0001](0001-hybrid-state-model.md) requires the UI, CLI and MCP server to be true peers over one API,
-a single generated schema is what makes that enforceable rather than aspirational.
+a single generated schema is what makes that enforceable rather than aspirational. Two further arguments
+that decided it: `buf` detects breaking changes in CI, which matters because the API carries a
+compatibility promise; and the Protobuf schema is a machine-readable source for checking that every MCP
+tool maps to real API operations ([ADR-0008](0008-mcp-surface.md)).
+
+**Rejected: Kubernetes CRDs as the API.** The obvious question for a Kubernetes-native project — `kubectl`
+works, cluster RBAC becomes the authorization, watch and dry-run come free. It fails on
+[ADR-0001](0001-hybrid-state-model.md): in Git mode the spec lives in Git, so a CRD-based API would mean
+writing a CRD that a controller then renders and commits to Git, giving the same information two homes.
+That is Kubero's model and it is the one kelson deliberately is not. It is also poor for log streaming and
+build triggering, and would require every client to hold cluster credentials.
+
+**Rejected: OpenAPI/REST**, which is more familiar and easier to script against ad hoc, but has materially
+worse code generation, needs streaming bolted on via SSE, and leaves API compatibility to discipline
+rather than tooling. **Rejected: gRPC with grpc-gateway**, which means maintaining the gateway and a
+second JSON mapping, and still needs a proxy for browsers. **Rejected: GraphQL**, which suits varied UI
+data needs but fits RPC-shaped operations like "deploy with dry-run and an idempotency key" poorly.
 
 ## Consequences
 
