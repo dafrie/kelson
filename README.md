@@ -55,6 +55,7 @@ Direct mode is Git mode with an implicit repository. It still versions rendered 
 - [ADR-0004](docs/adr/0004-licensing.md) — MIT, no feature gating
 - [ADR-0005](docs/adr/0005-delegate-to-operators.md) — Delegate stateful workloads
 - [ADR-0006](docs/adr/0006-project-application-environment.md) — Project, Application, Environment
+- [ADR-0007](docs/adr/0007-data-services.md) — Data services: plans, delegation, branching
 
 ## Docs
 

@@ -11,6 +11,7 @@ wrong, open an issue — it is far cheaper to reverse a decision now than after 
 | [0004](0004-licensing.md) | MIT, fully open, no feature gating | Accepted |
 | [0005](0005-delegate-to-operators.md) | Delegate stateful workloads to upstream operators | Accepted |
 | [0006](0006-project-application-environment.md) | Project, Application, Environment | Accepted |
+| [0007](0007-data-services.md) | Data services — plans, delegation and branching | Accepted |
 
 ## Format
 
