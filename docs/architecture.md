@@ -252,6 +252,48 @@ paths, both keeping cleartext out of Git and out of kelson's own storage:
 Direct mode may write `Secret` resources to the cluster directly, but the spec never carries literals —
 only references. This is enforced by the renderer, not by convention.
 
+## Data services
+
+Delegated to CloudNativePG and a Valkey operator, with kelson owning only the application-facing
+abstraction. Full reasoning in [ADR-0007](adr/0007-data-services.md).
+
+**Plans determine topology.** CNPG recommends one database per cluster, which is right for production and
+unaffordable below it — ten apps across three environments is 30 pods and roughly 15 GB before any
+application code runs.
+
+| Plan | Topology | Branchable | Cost |
+|---|---|---|---|
+| `shared` | `Database` CRD in a shared cluster | no | no pod |
+| `small` | dedicated cluster, 1 instance | yes | 1 pod + PVC |
+| `ha-small`, `ha-medium` | dedicated, 3 instances, synchronous | as source | 3 pods |
+| `branch` | dedicated, bootstrapped from a source | is a branch | 1 pod + PVC |
+
+Plan is an Environment-level override, so one Project spec covers `shared` in development and `ha-small`
+in production.
+
+**Branching** works everywhere and is fast where storage cooperates. CSI snapshots are PVC-level and a CNPG
+cluster's PVC is the whole cluster, so a database cannot be branched out of a shared cluster — branching
+snapshots a dedicated source and bootstraps a new dedicated cluster from it.
+
+| Mechanism | Requires | Speed | Storage |
+|---|---|---|---|
+| Thin snapshot clone | Ceph RBD, ZFS, LVM-thin | seconds | thin |
+| Full snapshot clone | EBS, GCE PD, Azure Disk | minutes | full size |
+| Backup restore with PITR | object store configured | minutes to hours | full size |
+| Logical dump and restore | nothing | slow | full size |
+| Empty plus migrations | nothing | seconds | minimal |
+
+kelson selects from `ClusterProfile` and reports which mechanism it used, with the expected duration and
+storage cost, before the operation starts. k3s ships local-path, which has no snapshot driver at all, so
+the bootstrap path gets restore-based branching until a user opts into snapshot-capable storage — and the
+UI says so at the point of use rather than leaving it to be discovered.
+
+The flagship use is not preview databases. It is **branch production as of ten minutes ago, run the
+migration against it, and see what breaks** — which falls straight out of CNPG's point-in-time recovery.
+
+Two invariants: backups are configured **once per environment**, never per database; and retention is
+**asymmetric** — persistent environments retain on spec removal, previews destroy on close.
+
 ## Component map
 
 | Component | Language | Role |

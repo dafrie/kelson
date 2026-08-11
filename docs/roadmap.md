@@ -10,13 +10,13 @@ their properties. The visible parts come after the foundation can support them.
 
 ## The v0.1 cut
 
-**50 issues**, tagged [`v0.1`](https://github.com/dafrie/kelson/issues?q=is%3Aissue+label%3Av0.1).
+**70 issues**, tagged [`v0.1`](https://github.com/dafrie/kelson/issues?q=is%3Aissue+label%3Av0.1).
 
-Someone with a bare VPS or an existing cluster gets a Git repo to a URL over TLS, through a web UI, and the
-manifests kelson wrote are ones they would approve in review.
+Someone with a bare VPS or an existing cluster gets a Git repo to a URL over TLS, through a web UI, with a
+production-grade database behind it — and the manifests kelson wrote are ones they would approve in review.
 
-It spans M0–M6 plus the minimal bootstrap and the parts of M8 that Git mode makes mandatory. Deliberately
-trimmed:
+It spans M0–M6, all of M9, the minimal bootstrap, and the parts of M8 that Git mode makes mandatory.
+Deliberately trimmed:
 
 | Deferred from v0.1 | Why |
 |---|---|
@@ -26,12 +26,17 @@ trimmed:
 | Release history UI (#67) | The API has it; the UI can wait. |
 | external-secrets (#80) | SOPS + age (#81) is more self-contained for a bootstrapped cluster. ESO follows. |
 | Score research (#31) | Interop, not core. |
-| All of M9–M16 | See below. |
+| MySQL | The operator landscape is materially weaker than CNPG. Two engines done properly beats three half-supported. |
+| M10–M16 | See the phase tables below. |
 
-**The known gap: v0.1 ships without managed data services.** M9 is Phase 3, so v0.1 users bring their own
-database and reference it through the secret model. That is defensible for an early release and it is worth
-being honest about, because "managed Postgres" is the feature people ask about first. If early feedback
-says it blocks adoption, M9 moves ahead of M6.
+**M9 moved into v0.1 and grew.** Managed Postgres is the feature people ask about first, and shipping
+without it would have made v0.1 hard to use for a real application. It now also carries database branching,
+which is the most differentiating capability in the plan — see [ADR-0007](adr/0007-data-services.md).
+
+The known weak spot: `kelson up` defaults to k3s with local-path, which has **no snapshot driver at all**,
+so the bootstrap path gets restore-based branching until a user opts into snapshot-capable storage. The
+mitigation is detection plus an explicit nudge at the point of use rather than a silent degradation
+(#108).
 
 ---
 
@@ -56,10 +61,11 @@ by golden tests.
 
 | Milestone | Scope |
 |---|---|
-| **M5 · ClusterProfile & install** | Detection and adoption, Helm chart, non-destructive uninstall, minimal k3s bootstrap |
+| **M5 · ClusterProfile & install** | Detection and adoption, Helm chart, non-destructive uninstall, minimal k3s bootstrap, storage capability |
 | **M6 · Web UI** | App list and detail, deploy flow with preview, live logs, diff view, rollback |
 | **M7 · Agent surface & MCP** | ConnectRPC schema, dry-run everywhere, idempotency, structured errors, MCP server, agent identities, policy |
 | **M8 · Secrets** | external-secrets, SOPS/age, renderer-enforced no-plaintext, binding injection |
+| **M9 · Data services & branching** | CNPG plans, HA, backup and PITR, Valkey, branching, preview databases, migration testing |
 
 ## Phase 3 — Platform
 
@@ -67,7 +73,6 @@ by golden tests.
 
 | Milestone | Scope |
 |---|---|
-| **M9 · Data services** | CloudNativePG, Valkey, object storage, backup and PITR, connection binding |
 | **M10 · Environments & promotion** | Environment model, PR previews, vcluster ephemeral preview, promotion, Kargo interop |
 | **M11 · Teams, RBAC & tenancy** | OIDC SSO, teams, Kubernetes RBAC mapping, quotas, audit log |
 | **M12 · Networking & TLS** | Gateway API, Ingress, custom domains, cert-manager, DNS |
@@ -109,3 +114,10 @@ already reports. The expensive parts — Talos, multi-node, upgrades, DR — sta
 **The catalog stays late.** Coolify's ~300 templates cannot be matched quickly and racing them is a losing
 game. The plugin API matters more than the initial catalog size; the goal is for the community to add
 templates.
+
+**M9 sits in Phase 2 despite its number.** Milestone numbers are identifiers, not ordering. Data services
+moved forward because v0.1 is unusable for a real application without a database, and because branching
+turned out to be the most differentiating capability in the plan rather than a nice-to-have.
+
+**Branching pulls the release-command hook forward.** Empty preview databases are useless without
+migrations, so #104 lands in M9 rather than with the rest of day-2 operations in M14.
