@@ -113,8 +113,12 @@ feature can have, and the default must make it impossible rather than merely unl
 
 ### Engines
 
-PostgreSQL and Valkey in the first cut. MySQL is deferred: the operator landscape is materially weaker
-than CNPG, and three half-supported engines is worse than two done properly.
+PostgreSQL and Valkey are the managed types in the first cut. MySQL is deferred: the operator landscape is
+materially weaker than CNPG, and three half-supported engines is worse than two done properly.
+
+Per [ADR-0005](0005-delegate-to-operators.md), "deferred" means no *managed* MySQL type. Anyone can install
+a MySQL chart and bind to it today — they just get no plans, backups or branching, and kelson makes no
+durability claim about it.
 
 ## Consequences
 
