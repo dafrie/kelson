@@ -15,21 +15,28 @@ linters:
     - ineffassign
     - depguard
     - gocritic
-
-linters-settings:
-  depguard:
-    rules:
-      renderer-purity:
-        files:
-          - "internal/renderer/**"
-        deny:
-          - pkg: "k8s.io/client-go"
-            desc: "renderer must be pure: importing a Kubernetes client breaks determinism and golden tests (issue #20)"
-          - pkg: "sigs.k8s.io/controller-runtime"
-            desc: "renderer must be pure: importing controller-runtime breaks determinism (issue #20)"
-          - pkg: "net/http"
-            desc: "renderer must be pure: no network access (issue #20)"
-          - regex: "^(os|io|time)$"
-            desc: "renderer must be pure: no ambient inputs (filesystem, env, clock) — issue #20"
-          - regex: "^math/rand$"
-            desc: "renderer must be deterministic: inject a seeded source or none at all (issue #20)"
+  settings:
+    depguard:
+      rules:
+        renderer-purity:
+          files:
+            - "**/internal/renderer/**"
+          deny:
+            - pkg: "k8s.io/client-go"
+              desc: "renderer must be pure: importing a Kubernetes client breaks determinism and golden tests (issue #20)"
+            - pkg: "sigs.k8s.io/controller-runtime"
+              desc: "renderer must be pure: importing controller-runtime breaks determinism (issue #20)"
+            - pkg: "net/http"
+              desc: "renderer must be pure: no network access (issue #20)"
+            - regex: "^(os|io|time)$"
+              desc: "renderer must be pure: no ambient inputs (filesystem, env, clock) — issue #20"
+            - regex: "^math/rand$"
+              desc: "renderer must be deterministic: inject a seeded source or none at all (issue #20)"
+        main:
+          files:
+            - $all
+          allow:
+            - $gostd
+            - github.com/dafrie/kelson
+            - github.com/invopop/jsonschema
+            - gopkg.in/yaml.v3

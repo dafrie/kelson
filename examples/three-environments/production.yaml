@@ -1,0 +1,41 @@
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: production
+
+# Argo CD mode. Agents propose pull requests; a human merges. SOPS keeps
+# secrets in Git, encrypted.
+spec:
+  project: billing
+  namespace: billing-prod
+
+  routing:
+    domainSuffix: billing.acme.com
+    ingressClass: nginx
+    tls: true
+
+  delivery:
+    mode: argocd
+    git:
+      repo: git@github.com:acme/billing-deploy.git
+      branch: main
+      path: billing/production
+
+  policy:
+    agents: propose-only
+    deployers: [team-billing, on-call]
+
+  secrets:
+    backend: sops
+
+  services:
+    - name: db
+      plan: ha-medium         # 3-instance synchronous cluster (P5)
+
+  applications:
+    - name: api
+      replicas: { min: 3, max: 50 }
+      resources:
+        requests: { cpu: 250m, memory: 256Mi }
+      env:
+        LOG_LEVEL: warning    # innermost scope wins (P1)

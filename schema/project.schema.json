@@ -1,0 +1,369 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kelson.dev/model/project.schema.json",
+  "properties": {
+    "apiVersion": {
+      "type": "string"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "Project",
+        "Environment"
+      ]
+    },
+    "metadata": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "maxLength": 63,
+          "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+          "description": "DNS-1123 label"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name"
+      ]
+    },
+    "spec": {
+      "properties": {
+        "source": {
+          "properties": {
+            "git": {
+              "type": "string",
+              "format": "uri",
+              "description": "git URL of the application source"
+            },
+            "ref": {
+              "type": "string",
+              "default": "main"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "git"
+          ]
+        },
+        "build": {
+          "properties": {
+            "strategy": {
+              "type": "string",
+              "enum": [
+                "auto",
+                "dockerfile",
+                "buildpacks",
+                "none"
+              ],
+              "default": "auto"
+            },
+            "dockerfile": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "image": {
+          "type": "string",
+          "description": "pre-built image reference"
+        },
+        "env": {
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "properties": {
+                  "from": {
+                    "properties": {
+                      "service": {
+                        "type": "string",
+                        "description": "name of a service declared in the Project"
+                      },
+                      "key": {
+                        "type": "string",
+                        "description": "well-known key of the service type"
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "service",
+                      "key"
+                    ]
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "from"
+                ]
+              }
+            ]
+          },
+          "type": "object"
+        },
+        "services": {
+          "items": {
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "postgres",
+                  "valkey"
+                ]
+              },
+              "plan": {
+                "type": "string",
+                "enum": [
+                  "shared",
+                  "small",
+                  "ha-small",
+                  "ha-medium",
+                  "branch"
+                ],
+                "default": "shared"
+              }
+            },
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "name",
+              "type"
+            ]
+          },
+          "type": "array",
+          "description": "data services this project's applications bind to"
+        },
+        "applications": {
+          "items": {
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+              },
+              "image": {
+                "type": "string",
+                "description": "overrides the Project image (rule P3)"
+              },
+              "command": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "description": "container command; wins over the image default"
+              },
+              "port": {
+                "type": "integer",
+                "maximum": 65535,
+                "minimum": 1
+              },
+              "health": {
+                "type": "string",
+                "description": "HTTP liveness/readiness path"
+              },
+              "schedule": {
+                "type": "string",
+                "description": "five-field cron expression"
+              },
+              "domains": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "replicas": {
+                "properties": {
+                  "min": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "max": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "min"
+                ]
+              },
+              "resources": {
+                "properties": {
+                  "requests": {
+                    "properties": {
+                      "cpu": {
+                        "type": "string",
+                        "description": "Kubernetes quantity"
+                      },
+                      "memory": {
+                        "type": "string",
+                        "description": "Kubernetes quantity"
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object"
+                  },
+                  "limits": {
+                    "properties": {
+                      "cpu": {
+                        "type": "string",
+                        "description": "Kubernetes quantity"
+                      },
+                      "memory": {
+                        "type": "string",
+                        "description": "Kubernetes quantity"
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object"
+              },
+              "env": {
+                "additionalProperties": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "properties": {
+                        "from": {
+                          "properties": {
+                            "service": {
+                              "type": "string",
+                              "description": "name of a service declared in the Project"
+                            },
+                            "key": {
+                              "type": "string",
+                              "description": "well-known key of the service type"
+                            }
+                          },
+                          "additionalProperties": false,
+                          "type": "object",
+                          "required": [
+                            "service",
+                            "key"
+                          ]
+                        }
+                      },
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "from"
+                      ]
+                    }
+                  ]
+                },
+                "type": "object"
+              }
+            },
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "name"
+            ]
+          },
+          "type": "array",
+          "minItems": 1
+        },
+        "defaults": {
+          "properties": {
+            "deliveryMode": {
+              "type": "string"
+            },
+            "policy": {
+              "properties": {
+                "agents": {
+                  "type": "string",
+                  "enum": [
+                    "allow",
+                    "propose-only"
+                  ],
+                  "default": "propose-only"
+                },
+                "require": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array",
+                  "description": "guards that must hold before deploy; only dry-run is defined"
+                },
+                "deployers": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "additionalProperties": false,
+              "type": "object"
+            },
+            "secrets": {
+              "properties": {
+                "backend": {
+                  "type": "string",
+                  "enum": [
+                    "cluster",
+                    "externalSecrets",
+                    "sops"
+                  ]
+                },
+                "store": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "backend"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "overlays": {
+          "items": {
+            "properties": {
+              "patch": {
+                "type": "string",
+                "description": "YAML document merged into the resource it targets"
+              },
+              "manifest": {
+                "type": "string",
+                "description": "path to an extra Kubernetes manifest"
+              }
+            },
+            "additionalProperties": false,
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "applications"
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ]
+}

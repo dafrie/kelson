@@ -1,0 +1,33 @@
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: mailroom
+
+# A queue system: one long-running worker and two cron applications.
+# Workload kinds are derived — no type field anywhere (docs/model.md).
+spec:
+  image: registry.acme.run/mailroom:2.0.7
+
+  env:
+    QUEUE_URL:
+      from: { service: queue, key: uri }
+    QUEUE_PASSWORD:
+      from: { service: queue, key: password }
+
+  services:
+    - name: queue
+      type: valkey
+      plan: small
+
+  applications:
+    - name: worker            # no port, no schedule → worker (Deployment)
+      command: ["mailroom", "work"]
+      replicas: { min: 2 }
+
+    - name: digest            # schedule present → CronJob
+      schedule: "30 6 * * 1-5"
+      command: ["mailroom", "send-digests"]
+
+    - name: retention-sweep
+      schedule: "15 2 * * *"
+      command: ["mailroom", "sweep", "--older-than=90d"]

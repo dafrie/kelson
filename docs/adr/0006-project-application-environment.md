@@ -67,6 +67,11 @@ that expresses a real system, and adding a fourth should require a strong argume
 
 ## Open questions for implementation
 
-- Precedence when Project and Environment both set a value
-- Whether an Application can belong to more than one Project (default answer: no)
-- How Project-level shared configuration is expressed without becoming a second spec format
+Resolved by [docs/model.md](../model.md) with the implementation in `internal/model` (#24, #25, #28):
+
+- Precedence when Project and Environment both set a value → rules P1–P6: innermost scope
+  wins; environment-scoped concerns (delivery, policy, secrets) are taken whole, never merged.
+- Whether an Application can belong to more than one Project → no; identified by
+  (project, application).
+- How Project-level shared configuration is expressed without becoming a second spec format →
+  shared fields on the Project act as per-key defaults merged into each Application.

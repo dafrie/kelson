@@ -1,0 +1,32 @@
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: billing
+
+# One project, three environments with three different delivery modes — the
+# practical shape of the hybrid decision (ADR-0001, issue #25).
+spec:
+  source:
+    git: https://github.com/acme/billing
+  build:
+    strategy: dockerfile
+
+  env:
+    CURRENCY: EUR
+    STRIPE_DATABASE_URL:
+      from: { service: db, key: uri }
+
+  services:
+    - name: db
+      type: postgres
+      plan: shared            # environments override per rule P5
+
+  applications:
+    - name: api
+      port: 3000
+      health: /livez
+      replicas: { min: 1 }
+
+  defaults:
+    secrets:
+      backend: cluster        # v0.1 default; staging/prod pin their own
