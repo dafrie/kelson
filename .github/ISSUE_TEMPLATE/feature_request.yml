@@ -1,0 +1,49 @@
+name: Feature request
+description: Propose a new capability or change to existing behavior.
+title: "feat: "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        kelson is pre-alpha and decisions are being made while they are still cheap.
+        If this touches a load-bearing design, a [design / ADR request](?template=design_request.yml)
+        may be the better format.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is the user trying to do, and why does kelson make it hard?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: What kelson should do, concretely.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds or adjacent solutions, even if rejected — the reasoning matters.
+    validations:
+      required: false
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - Within a four plane (authoring, rendering, delivery, platform)
+        - Cross-cutting / architecture
+        - Not sure
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I checked the [roadmap](https://github.com/dafrie/kelson/blob/main/docs/roadmap.md) and existing issues for overlap.
+          required: true

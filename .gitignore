@@ -3,6 +3,9 @@
 *.test
 *.out
 
+# MkDocs
+site/
+
 # Go
 /vendor/
 coverage.*

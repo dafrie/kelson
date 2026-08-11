@@ -1,0 +1,49 @@
+name: Design / ADR request
+description: Propose or challenge a load-bearing decision that should be recorded as an ADR.
+title: "design: "
+labels: [design]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Some decisions outlive the code. These go in an [ADR](https://github.com/dafrie/kelson/tree/main/docs/adr).
+        Challenge existing ADRs here too — reversing a decision now costs a conversation,
+        in a year it costs a rewrite.
+  - type: textarea
+    id: decision
+    attributes:
+      label: Decision under consideration
+      description: The decision, stated as one sentence ("kelson will ...").
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What forces are at play, and why does this decision matter now?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: Options considered and rejected, with the reasoning for each.
+    validations:
+      required: true
+  - type: textarea
+    id: consequences
+    attributes:
+      label: Expected consequences
+      description: Both positive and negative. An ADR that lists only benefits is marketing.
+    validations:
+      required: true
+  - type: dropdown
+    id: relates
+    attributes:
+      label: Relation to existing ADRs
+      options:
+        - New decision
+        - Supersedes an existing ADR (name it in the title or description)
+        - Challenges an existing ADR without proposing to replace it
+    validations:
+      required: true
