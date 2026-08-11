@@ -13,13 +13,9 @@ wrong, open an issue — it is far cheaper to reverse a decision now than after 
 | [0006](0006-project-application-environment.md) | Project, Application, Environment | Accepted |
 | [0007](0007-data-services.md) | Data services — plans, delegation and branching | Accepted |
 | [0008](0008-mcp-surface.md) | MCP tools are task-shaped, not endpoint-shaped | Accepted |
+| [0009](0009-secrets.md) | Secrets are references; values never enter Git | Accepted |
 
-## Not yet written up
-
-One decision is being built on but has no ADR, and was drafted without sign-off:
-
-- **Secrets are references only, enforced by a hard render failure.** A strong constraint that users will
-  feel. Currently described in [architecture.md](../architecture.md) and issues #79 and #82.
+Every load-bearing decision is now recorded and reviewed.
 
 ## Format
 

@@ -248,16 +248,26 @@ agent safety mechanism — one thing to build, one thing to reason about.
 
 ## Secrets
 
-A hard constraint that falls out of Git mode: **plaintext secrets can never be committed.** Two supported
-paths, both keeping cleartext out of Git and out of kelson's own storage:
+The spec carries **references, never values**, and a literal is a hard render failure in every delivery
+mode. Enforcing it at the renderer means one rule covers CLI, UI, API and agents — there is no second path
+to secure. Full reasoning in [ADR-0009](adr/0009-secrets.md).
 
-1. **external-secrets** (preferred) — kelson renders `ExternalSecret` resources referencing your Vault,
-   AWS/GCP secret manager or similar. kelson never holds the value.
-2. **SOPS + age** — encrypted at rest in the repo, decrypted in-cluster by the Flux SOPS integration or
-   an equivalent.
+Three backends, chosen per Environment. The schema accommodates all three from day one so adding the later
+two is not a breaking change.
 
-Direct mode may write `Secret` resources to the cluster directly, but the spec never carries literals —
-only references. This is enforced by the renderer, not by convention.
+| Backend | Where the value lives | Ships |
+|---|---|---|
+| `cluster` | Kubernetes Secret written by kelson via the API | v0.1 |
+| `externalSecrets` | Vault, AWS/GCP/Azure secret manager | v0.2 |
+| `sops` | Encrypted in Git, age keys | v0.2 |
+
+In v0.1 rendered manifests contain only `secretKeyRef`, and **kelson does not persist secret values** —
+the cluster is the store, read back masked for display. No prerequisites: `kelson secret set FOO=bar`.
+The cost is that secrets are not part of the reproducible artifact, so a cluster rebuild from Git alone
+will not restore them; the v0.2 backends close that for anyone who needs it.
+
+Two failures not repeated from the category: build-time secrets go through BuildKit secret mounts rather
+than build arguments or image layers, and no secret value is ever written to a log, event, error or diff.
 
 ## Data services
 
