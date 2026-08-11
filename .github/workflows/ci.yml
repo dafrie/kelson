@@ -3,7 +3,8 @@
 # - Go: lint (golangci-lint v2 with depguard renderer-purity rule), race tests,
 #   coverage, cross-compiled build matrix, govulncheck.
 # - TypeScript UI: stubbed to no-op cleanly when ui/package.json is absent.
-# - Docs-only fast path skips the heavy Go/TS jobs.
+# - Docs-only fast path skips the heavy Go/TS jobs via native git change
+#   detection (no third-party action).
 # - Required status checks on the default branch are configured in GitHub
 #   repository settings; the `CI` job aggregates the required outcomes.
 
@@ -26,39 +27,58 @@ jobs:
     permissions:
       contents: read
     outputs:
-      docs_only: ${{ steps.filter.outputs.docs_only == 'true' }}
-      go: ${{ steps.filter.outputs.go == 'true' }}
-      typescript: ${{ steps.filter.outputs.typescript == 'true' }}
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+      go: ${{ steps.classify.outputs.go }}
+      typescript: ${{ steps.classify.outputs.typescript }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Path filter
-        id: filter
-        uses: dorny/paths-filter@v3
         with:
-          filters: |
-            docs:
-              - '**/*.md'
-              - 'docs/**'
-            go:
-              - 'go.mod'
-              - 'go.sum'
-              - '**/*.go'
-              - '.golangci.yml'
-              - 'Makefile'
-            typescript:
-              - 'ui/**'
-          predicate-quantifier: every
+          fetch-depth: 0
 
-      - name: Determine docs-only
-        id: docs_only
+      - name: Classify changed paths
+        id: classify
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
         run: |
-          if [ "${{ steps.filter.outputs.docs }}" == "true" ] && [ "${{ steps.filter.outputs.go }}" != "true" ] && [ "${{ steps.filter.outputs.typescript }}" != "true" ]; then
-            echo "docs_only=true" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            MERGE_BASE="$(git merge-base "$BASE_REF" "$GITHUB_SHA")"
+            CHANGED="$(git diff --name-only "$MERGE_BASE" "$GITHUB_SHA")"
           else
-            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            CHANGED="$(git diff --name-only "${BEFORE:-HEAD~1}" "$GITHUB_SHA")"
           fi
+
+          go="false"
+          typescript="false"
+          docs="false"
+          for f in $CHANGED; do
+            case "$f" in
+              *.go|go.mod|go.sum|.golangci.yml|Makefile)
+                go="true"
+                ;;
+              ui/*)
+                typescript="true"
+                ;;
+              *.md|docs/*)
+                docs="true"
+                ;;
+            esac
+          done
+
+          if [ "$docs" = "true" ] && [ "$go" != "true" ] && [ "$typescript" != "true" ]; then
+            docs_only="true"
+          else
+            docs_only="false"
+          fi
+
+          {
+            echo "go=$go"
+            echo "typescript=$typescript"
+            echo "docs=$docs"
+            echo "docs_only=$docs_only"
+          } >> "$GITHUB_OUTPUT"
 
   lint:
     name: Go lint
@@ -207,7 +227,7 @@ jobs:
             echo "ui/package.json not found; skipping TypeScript checks."
             exit 0
           fi
-          echo "TypeScript UI checks not implemented yet (issue #?)"
+          echo "TypeScript UI checks not implemented yet."
           exit 1
 
   ci:
@@ -218,18 +238,31 @@ jobs:
     permissions: {}
     steps:
       - name: Evaluate required outcomes
+        env:
+          DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+          LINT: ${{ needs.lint.result }}
+          TEST: ${{ needs.test.result }}
+          COVERAGE: ${{ needs.coverage.result }}
+          VULN: ${{ needs.vuln.result }}
+          BUILD: ${{ needs.build.result }}
+          TS: ${{ needs.typescript.result }}
         run: |
-          if [ "${{ needs.changes.outputs.docs_only }}" == "true" ]; then
+          if [ "$DOCS_ONLY" = "true" ]; then
             echo "Docs-only change; heavy checks skipped by fast path."
             exit 0
           fi
 
-          for job in lint test coverage vuln build typescript; do
-            result="${{ needs[job].result }}"
+          failed=0
+          for pair in "lint:$LINT" "test:$TEST" "coverage:$COVERAGE" "vuln:$VULN" "build:$BUILD" "typescript:$TS"; do
+            name="${pair%%:*}"
+            result="${pair#*:}"
             if [ "$result" != "success" ] && [ "$result" != "skipped" ]; then
-              echo "Job $job failed with result: $result"
-              exit 1
+              echo "Job $name failed with result: $result"
+              failed=1
             fi
           done
 
+          if [ "$failed" != "0" ]; then
+            exit 1
+          fi
           echo "All required CI jobs passed."

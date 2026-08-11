@@ -38,7 +38,10 @@ jobs:
           path: site
 
   deploy:
-    if: github.ref == 'refs/heads/main'
+    # Only deploy on manual dispatch. Auto-deploy was disabled because GitHub
+    # Pages is not available on this plan; enable Pages + run manually when
+    # ready. The `build` job still validates the site on every push/PR.
+    if: github.event_name == 'workflow_dispatch'
     needs: build
     runs-on: ubuntu-latest
     environment:
