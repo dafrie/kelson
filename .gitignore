@@ -1,0 +1,23 @@
+# Build output
+/bin/
+*.test
+*.out
+
+# Go
+/vendor/
+coverage.*
+cover.out
+
+# Node / UI
+node_modules/
+ui/dist/
+ui/.next/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local tooling
+/bin/
