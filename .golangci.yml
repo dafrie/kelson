@@ -47,9 +47,22 @@ linters:
         main:
           files:
             - $all
+            - "!**/internal/delivery/**"
           allow:
             - $gostd
             - github.com/dafrie/kelson
             - github.com/invopop/jsonschema
             - github.com/spf13/cobra
             - gopkg.in/yaml.v3
+        delivery:
+          files:
+            - "**/internal/delivery/**"
+          allow:
+            - $gostd
+            - github.com/dafrie/kelson
+            - k8s.io/client-go
+            - k8s.io/api
+            - k8s.io/apimachinery
+            - sigs.k8s.io/yaml
+            - github.com/go-git/go-git/v5
+            - github.com/go-git/go-billy/v5

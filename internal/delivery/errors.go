@@ -85,6 +85,30 @@ func Conflict(resource, field, msg, remediation string) Error {
 	return newError(ErrConflicted, resource, field, msg, remediation)
 }
 
+// NotWatched is a helper to construct the "we wrote somewhere no reconciler is
+// looking" failure (issue #34). Misconfiguration must be reported, never left
+// hanging as a deployment that silently never arrives.
+func NotWatched(resource, field, msg, remediation string) Error {
+	return newError(ErrNotWatched, resource, field, msg, remediation)
+}
+
+// AsNotWatched reports whether err is a delivery/not-watched (issue #34).
+func AsNotWatched(err error) bool {
+	var de Error
+	return errors.As(err, &de) && de.Code == ErrNotWatched
+}
+
+// ApplyFailed is a helper to construct a generic last-mile failure.
+func ApplyFailed(resource, field, msg, remediation string) Error {
+	return newError(ErrApplyFailed, resource, field, msg, remediation)
+}
+
+// AsApplyFailed reports whether err is a delivery/apply-failed.
+func AsApplyFailed(err error) bool {
+	var de Error
+	return errors.As(err, &de) && de.Code == ErrApplyFailed
+}
+
 // UnsupportedError reports a capability mismatch (issue #32).
 func UnsupportedError(adapter, op string) error {
 	return newError(ErrUnsupported, adapter, op,
