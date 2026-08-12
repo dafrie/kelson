@@ -84,12 +84,7 @@ func diffNodes(out *[]FieldDiff, ref ResourceRef, kind, path string, prev, cur *
 // after-only keys in document order so the output never depends on map
 // iteration.
 func diffMappings(out *[]FieldDiff, ref ResourceRef, kind string, prev, cur *yaml.Node, path string, origin OriginFor) {
-	curIndex := map[string]*yaml.Node{}
-	for _, k := range cur.Content {
-		if k.Tag == "!!str" {
-			curIndex[k.Value] = k
-		}
-	}
+	curIndex := indexByKey(cur)
 
 	// Track which keys exist in cur so after-only keys are seen later.
 	processed := map[string]bool{}
@@ -123,7 +118,7 @@ func diffMappings(out *[]FieldDiff, ref ResourceRef, kind string, prev, cur *yam
 // `name` (env, containers, ports, ...) merge per name — the Kubernetes
 // authoring convention; anything else is compared positionally.
 func diffSequences(out *[]FieldDiff, ref ResourceRef, kind string, prev, cur *yaml.Node, path string, origin OriginFor) {
-	if mergeableByName(prev) && mergeableByName(cur) {
+	if mergeableByName(prev) && mergeableByName(cur) && !seqIndexStyle(path) {
 		diffNamedSequence(out, ref, kind, prev, cur, path, origin)
 		return
 	}
@@ -146,12 +141,7 @@ func diffSequences(out *[]FieldDiff, ref ResourceRef, kind string, prev, cur *ya
 // diffNamedSequence diffs name-keyed mapping sequences, joining by name and
 // walking names in before-then-after document order.
 func diffNamedSequence(out *[]FieldDiff, ref ResourceRef, kind string, prev, cur *yaml.Node, path string, origin OriginFor) {
-	curIndex := map[string]*yaml.Node{}
-	for _, item := range cur.Content {
-		if name := namedKey(item); name != "" {
-			curIndex[name] = item
-		}
-	}
+	curIndex := indexByName(cur)
 
 	processed := map[string]bool{}
 	for _, item := range prev.Content {
@@ -235,6 +225,31 @@ func mapGet(m *yaml.Node, key string) *yaml.Node {
 	return nil
 }
 
+// indexByKey maps mapping keys to their value nodes in a mapping node,
+// iterating the alternating key/value content explicitly so a scalar value is
+// never mistaken for a key.
+func indexByKey(m *yaml.Node) map[string]*yaml.Node {
+	index := map[string]*yaml.Node{}
+	if m == nil || m.Kind != yaml.MappingNode {
+		return index
+	}
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		index[m.Content[i].Value] = m.Content[i+1]
+	}
+	return index
+}
+
+// indexByName maps name-keyed sequence items to the items themselves.
+func indexByName(m *yaml.Node) map[string]*yaml.Node {
+	index := map[string]*yaml.Node{}
+	for _, item := range m.Content {
+		if name := namedKey(item); name != "" {
+			index[name] = item
+		}
+	}
+	return index
+}
+
 func namedKey(m *yaml.Node) string {
 	if m == nil || m.Kind != yaml.MappingNode {
 		return ""
@@ -312,4 +327,13 @@ func joinIndex(base string, i int) string {
 
 func joinKey(base, name string) string {
 	return base + "[" + name + "]"
+}
+
+// seqIndexStyle reports whether a sequence is addressed positionally ([n])
+// rather than by name ([name]). The contract's canonical examples are
+// containers[0] and env[DATABASE_URL]: pod-spec container lists are indexed,
+// while every other name-keyed list (env, ports, volumes, ...) is keyed by
+// the strategic-merge identity name.
+func seqIndexStyle(path string) bool {
+	return strings.HasSuffix(path, "containers")
 }

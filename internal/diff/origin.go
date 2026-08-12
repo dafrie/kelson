@@ -94,12 +94,7 @@ func collectOverlayPaths(set map[string]bool, kind string, ref ResourceRef, prev
 }
 
 func collectMappingPaths(set map[string]bool, kind string, ref ResourceRef, prev, cur *yaml.Node, path string) {
-	curIndex := map[string]*yaml.Node{}
-	for _, k := range cur.Content {
-		if k.Tag == "!!str" {
-			curIndex[k.Value] = k
-		}
-	}
+	curIndex := indexByKey(cur)
 	processed := map[string]bool{}
 	for i := 0; i+1 < len(prev.Content); i += 2 {
 		key := prev.Content[i].Value
@@ -124,13 +119,8 @@ func collectMappingPaths(set map[string]bool, kind string, ref ResourceRef, prev
 }
 
 func collectSequencePaths(set map[string]bool, kind string, ref ResourceRef, prev, cur *yaml.Node, path string) {
-	if mergeableByName(prev) && mergeableByName(cur) {
-		curIndex := map[string]*yaml.Node{}
-		for _, item := range cur.Content {
-			if name := namedKey(item); name != "" {
-				curIndex[name] = item
-			}
-		}
+	if mergeableByName(prev) && mergeableByName(cur) && !seqIndexStyle(path) {
+		curIndex := indexByName(cur)
 		processed := map[string]bool{}
 		for _, item := range prev.Content {
 			name := namedKey(item)

@@ -1,0 +1,6 @@
+rendered diff hello/development
+
+~ Deployment/web restart-required
+    ~ spec.template.spec.containers[0].env[LOG_LEVEL].value = "info" -> "debug"  (spec)
+
+summary: 0 added, 1 modified, 0 removed · restart: [web] · max risk: restart-required

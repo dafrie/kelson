@@ -1,0 +1,21 @@
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: hello
+spec:
+  image: ghcr.io/acme/hello:1.4.2
+  env:
+    LOG_LEVEL: debug
+  applications:
+    - name: web
+      port: 8080
+      health: /healthz
+---
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: development
+spec:
+  project: hello
+  routing:
+    domainSuffix: dev.acme.run

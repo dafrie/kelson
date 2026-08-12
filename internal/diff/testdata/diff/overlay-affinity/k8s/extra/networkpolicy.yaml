@@ -1,0 +1,16 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: transcoder-ingress
+spec:
+  podSelector:
+    matchLabels:
+      kelson.dev/application: transcoder
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              acme.com/partner: cdn
+      ports:
+        - port: 8443
