@@ -19,7 +19,7 @@ spec:
   services:
     - name: db
       type: postgres
-      plan: shared            # environments override per rule P5
+      preset: shared          # environments override per rule P5
 
   applications:
     - name: api

@@ -132,8 +132,8 @@ must stay propose-only, that is written on the production Environment. `delivery
 Environments (a Project-level Git target for deployments would be meaningless; every environment needs
 its own repo/branch/path).
 
-**P5 — Service plans:** `Environment.spec.services[].plan` (matched by service name) replaces the Project
-service's plan for that Environment — `shared` in development, `ha-small` in production, from one Project
+**P5 — Service presets:** `Environment.spec.services[].preset` (matched by service name) replaces the Project
+service's preset for that Environment — `shared` in development, `ha-small` in production, from one Project
 spec ([ADR-0007](adr/0007-data-services.md)).
 
 **P6 — Overlays:** concatenate, Project first, then Environment. Each patch applies in order to the
@@ -152,7 +152,7 @@ spec:
   services:
     - name: db
       type: postgres           # postgres | valkey
-      plan: ha-small           # shared | small | ha-small | ha-medium | branch
+      preset: ha-small         # shared | small | ha-small | ha-medium | branch
   env:
     DATABASE_URL:
       from: { service: db, key: uri }
@@ -225,7 +225,7 @@ spec:
         LOG_LEVEL: warning
   services:
     - name: db
-      plan: ha-small
+      preset: ha-small
 ```
 
 Delivery mode is per-Environment ([ADR-0001](adr/0001-hybrid-state-model.md)): development applies

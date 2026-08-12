@@ -7,7 +7,7 @@ import (
 
 // precedenceProject exercises every precedence rule at once: P1 (env merge),
 // P2 (replicas/resources), P3 (image), P4 (delivery/policy/secrets chain),
-// P5 (service plans), P6 (overlays).
+// P5 (service presets), P6 (overlays).
 const precedenceProject = `
 apiVersion: kelson.dev/v1alpha1
 kind: Project
@@ -20,7 +20,7 @@ spec:
     DATABASE_URL:
       from: {service: db, key: uri}
   services:
-    - {name: db, type: postgres, plan: shared}
+    - {name: db, type: postgres, preset: shared}
     - {name: cache, type: valkey}
   applications:
     - name: web
@@ -221,7 +221,7 @@ spec:
 	}
 }
 
-func TestResolveServicePlanOverrideP5(t *testing.T) {
+func TestResolveServicePresetOverrideP5(t *testing.T) {
 	p, e := loadPair(t, precedenceProject, `
 apiVersion: kelson.dev/v1alpha1
 kind: Environment
@@ -231,14 +231,14 @@ spec:
   delivery:
     git: {repo: git@github.com:acme/deploy.git}
   services:
-    - {name: db, plan: ha-small}
+    - {name: db, preset: ha-small}
 `)
 	r, _ := Resolve(p, e)
-	if r.Services[0].Plan != PlanHASmall {
-		t.Errorf("db plan = %q, want ha-small (P5)", r.Services[0].Plan)
+	if r.Services[0].Preset != PresetHASmall {
+		t.Errorf("db preset = %q, want ha-small (P5)", r.Services[0].Preset)
 	}
-	if r.Services[1].Plan != PlanShared {
-		t.Errorf("cache plan = %q, want shared (project value survives; plan default is shared)", r.Services[1].Plan)
+	if r.Services[1].Preset != PresetShared {
+		t.Errorf("cache preset = %q, want shared (project value survives; preset default is shared)", r.Services[1].Preset)
 	}
 }
 

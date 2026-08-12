@@ -15,7 +15,7 @@ spec:
   services:
     - name: cache
       type: valkey
-      plan: small
+      preset: small
 
   applications:
     - name: transcoder

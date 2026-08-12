@@ -20,7 +20,7 @@ spec:
   services:
     - name: db
       type: postgres
-      plan: ha-small          # → CloudNativePG Cluster with PITR
+      preset: ha-small        # → CloudNativePG Cluster with PITR
 
   applications:
     - name: web

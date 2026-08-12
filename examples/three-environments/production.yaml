@@ -30,7 +30,7 @@ spec:
 
   services:
     - name: db
-      plan: ha-medium         # 3-instance synchronous cluster (P5)
+      preset: ha-medium       # 3-instance synchronous cluster (P5)
 
   applications:
     - name: api

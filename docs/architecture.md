@@ -76,7 +76,7 @@ spec:
   services:
     - name: db
       type: postgres
-      plan: ha-small        # topology preset → CloudNativePG Cluster with PITR (field renamed to `preset:` by #146)
+      preset: ha-small      # topology preset → CloudNativePG Cluster with PITR
 
   applications:
     - name: web
@@ -320,8 +320,8 @@ than build arguments or image layers, and no secret value is ever written to a l
 Delegated to CloudNativePG and a Valkey operator, with kelson owning only the application-facing
 abstraction. Full reasoning in [ADR-0007](adr/0007-data-services.md).
 
-**Presets determine topology** (the spec field is currently `plan:`, renamed to `preset:` by #146 —
-these are topology presets, not paid tiers; kelson has no paid anything). CNPG recommends one database
+**Presets determine topology** (the spec field is `preset:` — these are topology presets, not paid
+tiers; kelson has no paid anything). CNPG recommends one database
 per cluster, which is right for production and unaffordable below it — ten apps across three
 environments is 30 pods and roughly 15 GB before any application code runs.
 

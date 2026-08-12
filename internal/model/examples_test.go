@@ -110,10 +110,10 @@ func TestThreeEnvironmentsDeliveryModes(t *testing.T) {
 		"staging":     DeliveryFlux,
 		"production":  DeliveryArgoCD,
 	}
-	wantPlans := map[string]ServicePlan{
-		"development": PlanShared,
-		"staging":     PlanSmall,
-		"production":  PlanHAMedium,
+	wantPresets := map[string]ServicePreset{
+		"development": PresetShared,
+		"staging":     PresetSmall,
+		"production":  PresetHAMedium,
 	}
 	for name, mode := range wantModes {
 		env, ok := envs[name]
@@ -127,8 +127,8 @@ func TestThreeEnvironmentsDeliveryModes(t *testing.T) {
 		if r.Environment.Mode != mode {
 			t.Errorf("%s mode = %q, want %q", name, r.Environment.Mode, mode)
 		}
-		if r.Services[0].Plan != wantPlans[name] {
-			t.Errorf("%s db plan = %q, want %q", name, r.Services[0].Plan, wantPlans[name])
+		if r.Services[0].Preset != wantPresets[name] {
+			t.Errorf("%s db preset = %q, want %q", name, r.Services[0].Preset, wantPresets[name])
 		}
 		if mode == DeliveryDirect && r.Environment.Delivery.Git != nil {
 			t.Errorf("%s: direct mode must not carry a git target", name)

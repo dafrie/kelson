@@ -96,7 +96,7 @@ decision ([ADR-0005](../adr/0005-delegate-to-operators.md) reasoning), and Score
 by itself an argument to reverse that.
 
 Score's open-ended resource types (`dns`, `s3`, `volume`, …) are explicitly *not* a gap. kelson's narrow
-`postgres`/`valkey` set with real plans is a decision recorded in [ADR-0007](../adr/0007-data-services.md);
+`postgres`/`valkey` set with real presets is a decision recorded in [ADR-0007](../adr/0007-data-services.md);
 an importer should fail loudly on resource types it cannot honour rather than approximate them.
 
 ## What adopting Score wholesale would cost

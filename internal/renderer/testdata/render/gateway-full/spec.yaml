@@ -17,7 +17,7 @@ spec:
   services:
     - name: db
       type: postgres
-      plan: ha-small
+      preset: ha-small
 
   applications:
     - name: web

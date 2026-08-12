@@ -75,7 +75,7 @@ breaking change:
 | `externalSecrets` | Vault, AWS/GCP/Azure secret manager | v0.2 |
 | `sops` | Encrypted in Git, age keys | v0.2 |
 
-Backend is an Environment-level choice, consistent with how delivery mode and data-service plans work.
+Backend is an Environment-level choice, consistent with how delivery mode and data-service presets work.
 
 ### Two holes we do not repeat
 

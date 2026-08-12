@@ -55,9 +55,9 @@ type ResolvedApplication struct {
 }
 
 type ResolvedService struct {
-	Name string
-	Type string
-	Plan ServicePlan // after the P5 environment override
+	Name   string
+	Type   string
+	Preset ServicePreset // after the P5 environment override
 }
 
 // Resolve validates the (Project, Environment) pair and returns the effective
@@ -120,20 +120,20 @@ func Resolve(p *Project, e *Environment) (*Resolved, Errors) {
 		r.Environment.Secrets = *sb
 	}
 
-	// P5: service plan overrides by name.
-	svcPlans := map[string]ServicePlan{}
+	// P5: service preset overrides by name.
+	svcPresets := map[string]ServicePreset{}
 	for _, ov := range e.Spec.Services {
-		svcPlans[ov.Name] = ov.Plan
+		svcPresets[ov.Name] = ov.Preset
 	}
 	for _, svc := range p.Spec.Services {
-		plan := svc.Plan
-		if plan == "" {
-			plan = PlanShared
+		preset := svc.Preset
+		if preset == "" {
+			preset = PresetShared
 		}
-		if ov, ok := svcPlans[svc.Name]; ok {
-			plan = ov
+		if ov, ok := svcPresets[svc.Name]; ok {
+			preset = ov
 		}
-		r.Services = append(r.Services, ResolvedService{Name: svc.Name, Type: svc.Type, Plan: plan})
+		r.Services = append(r.Services, ResolvedService{Name: svc.Name, Type: svc.Type, Preset: preset})
 	}
 
 	// P6: project overlays first.

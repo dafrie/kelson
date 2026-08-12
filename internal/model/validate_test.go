@@ -24,7 +24,7 @@ spec:
   services:
     - name: db
       type: postgres
-      plan: ha-small
+      preset: ha-small
   applications:
     - name: web
       port: 8080
@@ -251,6 +251,37 @@ spec:
 	}
 }
 
+// TestServicePlanFieldRejected covers #146: the pre-rename field name `plan`
+// is not a silent alias for `preset` — it is an unknown field like any typo.
+func TestServicePlanFieldRejected(t *testing.T) {
+	_, errs := DecodeDocuments([]byte(`
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata: {name: p}
+spec:
+  image: i:1
+  services:
+    - {name: db, type: postgres, plan: shared}
+  applications:
+    - {name: web, port: 8080}
+`))
+	var uf *Error
+	for i := range errs {
+		if errs[i].Code == ErrUnknownField {
+			uf = &errs[i]
+		}
+	}
+	if uf == nil {
+		t.Fatalf("old field name %q must be rejected as unknown, got:\n%v", "plan", errs)
+	}
+	if uf.Field != "$.spec.services[0].plan" {
+		t.Errorf("field = %q, want $.spec.services[0].plan", uf.Field)
+	}
+	if !strings.Contains(uf.Remediation, "preset") {
+		t.Errorf("remediation should point at the current field name, got %q", uf.Remediation)
+	}
+}
+
 func TestEnvironmentCrossReferences(t *testing.T) {
 	docs, errs := DecodeDocuments([]byte(`
 apiVersion: kelson.dev/v1alpha1
@@ -271,7 +302,7 @@ spec:
   delivery:
     mode: github
   services:
-    - {name: warehouse, plan: small}
+    - {name: warehouse, preset: small}
   applications:
     - name: web
       env:

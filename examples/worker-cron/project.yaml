@@ -17,7 +17,7 @@ spec:
   services:
     - name: queue
       type: valkey
-      plan: small
+      preset: small
 
   applications:
     - name: worker            # no port, no schedule → worker (Deployment)

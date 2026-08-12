@@ -120,4 +120,4 @@ This reference is **generated** from the committed JSON Schema [`schema/environm
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `name` | string | yes |  |  |
-| `plan` | string enum `"shared"`, `"small"`, `"ha-small"`, `"ha-medium"`, `"branch"` | yes |  |  |
+| `preset` | string enum `"shared"`, `"small"`, `"ha-small"`, `"ha-medium"`, `"branch"` | yes |  |  |

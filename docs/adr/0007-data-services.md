@@ -53,16 +53,16 @@ local-path, which has no snapshot driver at all.**
 
 ## Decision
 
-### Plans determine topology
+### Presets determine topology
 
-| Plan | Topology | Branchable | Cost |
+| Preset | Topology | Branchable | Cost |
 |---|---|---|---|
 | `shared` | `Database` CRD in a shared cluster | no | no pod |
 | `small` | dedicated cluster, 1 instance | yes | 1 pod + PVC |
 | `ha-small`, `ha-medium` | dedicated, 3 instances, synchronous | as source | 3 pods |
 | `branch` | dedicated, bootstrapped from a source | is a branch | 1 pod + PVC |
 
-Plan is an **Environment-level override**. One Project spec, `shared` in development and `ha-small` in
+Preset is an **Environment-level override**. One Project spec, `shared` in development and `ha-small` in
 production. This falls out of [ADR-0006](0006-project-application-environment.md).
 
 We follow CNPG's guidance where it matters and deviate knowingly where it doesn't, documenting why.
@@ -117,7 +117,7 @@ PostgreSQL and Valkey are the managed types in the first cut. MySQL is deferred:
 materially weaker than CNPG, and three half-supported engines is worse than two done properly.
 
 Per [ADR-0005](0005-delegate-to-operators.md), "deferred" means no *managed* MySQL type. Anyone can install
-a MySQL chart and bind to it today — they just get no plans, backups or branching, and kelson makes no
+a MySQL chart and bind to it today — they just get no presets, backups or branching, and kelson makes no
 durability claim about it.
 
 ## Consequences

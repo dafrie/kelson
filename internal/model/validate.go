@@ -458,12 +458,12 @@ func validateProject(p *Project, v *validator) {
 				fmt.Sprintf("unknown service type %q", svc.Type),
 				"valid types: postgres, valkey")
 		}
-		switch svc.Plan {
-		case "", PlanShared, PlanSmall, PlanHASmall, PlanHAMedium, PlanBranch:
+		switch svc.Preset {
+		case "", PresetShared, PresetSmall, PresetHASmall, PresetHAMedium, PresetBranch:
 		default:
-			v.err(ErrInvalidEnum, f+".plan",
-				fmt.Sprintf("unknown plan %q", svc.Plan),
-				"valid plans: shared, small, ha-small, ha-medium, branch (docs/architecture.md, ADR-0007)")
+			v.err(ErrInvalidEnum, f+".preset",
+				fmt.Sprintf("unknown preset %q", svc.Preset),
+				"valid presets: shared, small, ha-small, ha-medium, branch (docs/architecture.md, ADR-0007)")
 		}
 		if _, dup := services[svc.Name]; dup {
 			v.err(ErrDuplicateName, f+".name",
@@ -568,12 +568,12 @@ func validateEnvironmentShape(e *Environment, v *validator) {
 				"one override block per service")
 		}
 		seenSvc[ov.Name] = i
-		switch ov.Plan {
-		case PlanShared, PlanSmall, PlanHASmall, PlanHAMedium, PlanBranch:
+		switch ov.Preset {
+		case PresetShared, PresetSmall, PresetHASmall, PresetHAMedium, PresetBranch:
 		default:
-			v.err(ErrInvalidEnum, f+".plan",
-				fmt.Sprintf("unknown plan %q", ov.Plan),
-				"valid plans: shared, small, ha-small, ha-medium, branch")
+			v.err(ErrInvalidEnum, f+".preset",
+				fmt.Sprintf("unknown preset %q", ov.Preset),
+				"valid presets: shared, small, ha-small, ha-medium, branch")
 		}
 	}
 

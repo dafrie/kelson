@@ -115,7 +115,7 @@ This reference is **generated** from the committed JSON Schema [`schema/project.
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `name` | string | yes |  |  |
-| `plan` | string enum `"shared"`, `"small"`, `"ha-small"`, `"ha-medium"`, `"branch"` | no | `"shared"` |  |
+| `preset` | string enum `"shared"`, `"small"`, `"ha-small"`, `"ha-medium"`, `"branch"` | no | `"shared"` |  |
 | `type` | string enum `"postgres"`, `"valkey"` | yes |  |  |
 
 #### `spec.source`
