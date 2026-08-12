@@ -1,8 +1,9 @@
 # Contributing to kelson
 
-kelson is pre-alpha and in the design phase. Nothing is implemented yet. The repository is scaffolded
-([#18](https://github.com/dafrie/kelson/issues/18)) and the [ADRs](docs/adr/) record the load-bearing
-decisions.
+kelson is pre-alpha. The renderer, the spec model and the delivery adapters exist and are tested; the
+build pipeline, server, UI and install path do not, so nothing deploys an application end to end yet.
+The [ADRs](docs/adr/) record the load-bearing decisions, and the
+[milestones](https://github.com/dafrie/kelson/milestones) are the current state of the project.
 
 ## The most useful contribution right now is argument
 
@@ -30,10 +31,12 @@ alternatives-and-consequences reasoning an ADR records.
 
 ## Implementation
 
-M0 work is scoped in the [issue tracker](https://github.com/dafrie/kelson/issues). Before you start,
-check the roadmap: if an interface it would target doesn't exist yet, the PR will bounce. The four-plane
-layout is the contract — changes that cross a plane boundary or touch a load-bearing property should
-reference or argue with the relevant [ADR](docs/adr/).
+Work is scoped in the [issue tracker](https://github.com/dafrie/kelson/issues) and grouped into
+[milestones](https://github.com/dafrie/kelson/milestones); an issue's milestone tells you whether the
+ground it stands on exists yet. Before you start, check the roadmap: if an interface it would target
+doesn't exist yet, the PR will bounce. The four-plane layout is the contract — changes that cross a
+plane boundary or touch a load-bearing property should reference or argue with the relevant
+[ADR](docs/adr/).
 
 ### Setup
 
