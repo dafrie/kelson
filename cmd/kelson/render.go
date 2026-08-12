@@ -38,21 +38,19 @@ func newRenderCmd() *cobra.Command {
 	f.StringVar(&opts.env, "env", "", "name of the Environment to render (optional when the input holds exactly one)")
 	f.StringVar(&opts.profile, "profile", "", "ClusterProfile YAML file, or from-cluster to capture a live profile (requires cluster access)")
 	f.StringVar(&opts.kubeconfig, "kubeconfig", "", "path to a kubeconfig for --profile from-cluster (default: $KUBECONFIG, in-cluster credentials, then ~/.kube/config)")
+	f.StringVar(&opts.image, "image", "", imageFlagUsage)
 	f.StringVarP(&opts.output, "output", "o", "", "directory to write one YAML file per manifest (default: stdout, multi-document)")
 	cobra.CheckErr(cmd.MarkFlagRequired("file"))
 	return cmd
 }
 
 type renderOptions struct {
-	files      []string
-	env        string
-	profile    string
-	kubeconfig string
-	output     string
+	specInput
+	output string
 }
 
 func runRender(cmd *cobra.Command, opts *renderOptions) error {
-	_, _, manifests, _, err := resolveAndRender(opts.files, opts.env, opts.profile, opts.kubeconfig)
+	_, _, manifests, _, err := resolveAndRender(opts.specInput)
 	if err != nil {
 		return err
 	}
@@ -70,23 +68,47 @@ func runRender(cmd *cobra.Command, opts *renderOptions) error {
 	return writeManifestDir(cmd, opts.output, manifests)
 }
 
+// specInput is the spec-loading half of every command that renders: which
+// documents, which environment, which cluster shape, and which image to use
+// for applications the spec builds from source.
+type specInput struct {
+	files      []string
+	env        string
+	profile    string
+	kubeconfig string
+	image      string
+}
+
+// imageFlagUsage documents --image identically wherever a command renders. A
+// spec with source + build has no image until a build produces one, and the
+// build plane is not yet driven from the CLI (issue #47) — so this flag is how
+// a built artifact reaches a render at all. Without it such a spec used to
+// render `image: "@"` (issue #136); now it fails with image/unresolved.
+const imageFlagUsage = "image reference for applications the spec builds from source, e.g. ghcr.io/acme/app@sha256:abc123"
+
 // resolveAndRender runs the shared spec pipeline: load the -f spec files,
 // select the environment, resolve and render. It is the single place render
 // and diff (issue #46) build the current manifest set, so the two commands
 // cannot drift on what "the current render" means. It returns the resolved
 // ClusterProfile too, so `kelson diff --dry-run=server` can hand it to the L2
 // engine (issue #45) instead of resolving it a second time.
-func resolveAndRender(files []string, env, profile, kubeconfig string) (*model.Project, *model.Environment, []renderer.Manifest, clusterprofile.ClusterProfile, error) {
-	profileValue, err := resolveProfile(profile, kubeconfig)
+func resolveAndRender(in specInput) (*model.Project, *model.Environment, []renderer.Manifest, clusterprofile.ClusterProfile, error) {
+	profileValue, err := resolveProfile(in.profile, in.kubeconfig)
 	if err != nil {
 		return nil, nil, nil, clusterprofile.ClusterProfile{}, err
 	}
 
-	project, environments, specDirs, err := loadSpecFiles(files)
+	project, environments, specDirs, err := loadSpecFiles(in.files)
 	if err != nil {
 		return nil, nil, nil, clusterprofile.ClusterProfile{}, err
 	}
-	environment, err := selectEnvironment(environments, env)
+	if in.image != "" {
+		// --image stands in for spec.image, so it is subject to the same
+		// precedence: an application that names its own image still wins
+		// (rule P3, docs/model.md).
+		project.Spec.Image = in.image
+	}
+	environment, err := selectEnvironment(environments, in.env)
 	if err != nil {
 		return nil, nil, nil, clusterprofile.ClusterProfile{}, err
 	}

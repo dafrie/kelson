@@ -1,0 +1,3 @@
+# Empty profile: this fixture is about the image, not the cluster shape. No
+# routing substrate is detected, so only the workloads render.
+{}

@@ -47,19 +47,17 @@ func newStatusCmdFactory(connect deliveryConnector) *cobra.Command {
 	f.StringVar(&opts.profile, "profile", "", "ClusterProfile YAML file, or from-cluster to capture a live profile (requires cluster access)")
 	f.StringVar(&opts.kubeconfig, "kubeconfig", "", "path to a kubeconfig (default: $KUBECONFIG, in-cluster credentials, then ~/.kube/config)")
 	f.StringVar(&opts.mode, "mode", "", "delivery adapter to query, overriding the environment's delivery mode (direct or flux)")
+	f.StringVar(&opts.image, "image", "", imageFlagUsage)
 	f.StringVar(&opts.history, "history", "", "kelson data directory holding the direct-mode rendered history (default: $KELSON_DATA_DIR, else $XDG_DATA_HOME/kelson)")
 	cobra.CheckErr(cmd.MarkFlagRequired("file"))
 	return cmd
 }
 
 type statusOptions struct {
-	files      []string
-	env        string
-	profile    string
-	kubeconfig string
-	mode       string
-	history    string
-	connect    deliveryConnector
+	specInput
+	mode    string
+	history string
+	connect deliveryConnector
 }
 
 // runStatus reports and exits 0. A degraded workload is a successful report of
@@ -68,7 +66,7 @@ type statusOptions struct {
 // unusable in the `set -e` scripts that need it most. `kelson deploy` is the
 // command that gates on health.
 func runStatus(cmd *cobra.Command, opts *statusOptions) error {
-	target, set, err := resolveDeliveryTarget(opts.files, opts.env, opts.profile, opts.kubeconfig, opts.history, opts.mode)
+	target, set, err := resolveDeliveryTarget(opts.specInput, opts.history, opts.mode)
 	if err != nil {
 		return err
 	}

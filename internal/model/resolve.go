@@ -5,6 +5,12 @@ import (
 	"strings"
 )
 
+// ImageUnresolved is the image a ResolvedApplication carries when the spec
+// builds it from source and no build result has been supplied yet. It is a
+// sentinel, not a reference: it must never reach a manifest, and the renderer
+// refuses to render an application still carrying it (issue #136).
+const ImageUnresolved = "@"
+
 // Resolved is the precedence-resolved output for one (Project, Environment)
 // pair — the concrete input the renderer consumes (issue #26). Resolution
 // applies every rule from docs/model.md (P1–P6) and the built-in defaults.
@@ -164,7 +170,10 @@ func Resolve(p *Project, e *Environment) (*Resolved, Errors) {
 			ra.Image = p.Spec.Image
 		}
 		if ra.Image == "" && builtFromSource {
-			ra.Image = "@" // built artifact placeholder; the build plane fills the digest
+			// The build plane fills the digest in; until it does, the image is
+			// explicitly unresolved rather than blank, so a consumer can tell
+			// "waiting on a build" from "the spec named nothing" (issue #136).
+			ra.Image = ImageUnresolved
 		}
 		ra.Resources = app.Resources
 		ra.Domains = app.Domains

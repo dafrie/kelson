@@ -111,6 +111,12 @@ Project-level variable for one Environment, override it to an empty string.
 image anywhere is a validation error (`semantic/no-image-source`). Application `command:` always wins;
 Project has no command.
 
+Until a build produces that artifact, such an application resolves to an *unresolved* image, and
+rendering it fails with the structured render error `image/unresolved` naming each application —
+kelson never emits a placeholder image into a manifest. Supply the built reference with `--image`
+(`kelson render`, `diff`, `deploy`, `status`, `rollback`), which stands in for Project `image:` and so
+still loses to an Application `image:`.
+
 **P4 — Environment-scoped concerns (delivery, policy, secrets):** an explicit Environment value always
 wins over the Project `defaults` value; otherwise the Project default; otherwise the built-in default:
 

@@ -50,6 +50,7 @@ func newRollbackCmdFactory(connect deliveryConnector) *cobra.Command {
 	f.StringVar(&opts.profile, "profile", "", "ClusterProfile YAML file, or from-cluster to capture a live profile (requires cluster access)")
 	f.StringVar(&opts.kubeconfig, "kubeconfig", "", "path to a kubeconfig (default: $KUBECONFIG, in-cluster credentials, then ~/.kube/config)")
 	f.StringVar(&opts.mode, "mode", "", "delivery adapter to use, overriding the environment's delivery mode (direct or flux)")
+	f.StringVar(&opts.image, "image", "", imageFlagUsage)
 	f.StringVar(&opts.history, "history", "", "kelson data directory holding the direct-mode rendered history (default: $KELSON_DATA_DIR, else $XDG_DATA_HOME/kelson)")
 	f.BoolVar(&opts.yes, "yes", false, "apply the rollback without asking for confirmation; the preview is printed either way")
 	cobra.CheckErr(cmd.MarkFlagRequired("file"))
@@ -57,19 +58,16 @@ func newRollbackCmdFactory(connect deliveryConnector) *cobra.Command {
 }
 
 type rollbackOptions struct {
-	files      []string
-	env        string
-	to         string
-	profile    string
-	kubeconfig string
-	mode       string
-	history    string
-	yes        bool
-	connect    deliveryConnector
+	specInput
+	to      string
+	mode    string
+	history string
+	yes     bool
+	connect deliveryConnector
 }
 
 func runRollback(cmd *cobra.Command, opts *rollbackOptions) error {
-	target, set, err := resolveDeliveryTarget(opts.files, opts.env, opts.profile, opts.kubeconfig, opts.history, opts.mode)
+	target, set, err := resolveDeliveryTarget(opts.specInput, opts.history, opts.mode)
 	if err != nil {
 		return err
 	}
@@ -210,4 +208,3 @@ func describeFinding(f rollback.Finding) string {
 	}
 	return head + ": " + f.Message
 }
-
