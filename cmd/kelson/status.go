@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -80,43 +82,105 @@ func runStatus(cmd *cobra.Command, opts *statusOptions) error {
 		return err
 	}
 
+	// The verdicts are read before anything is printed because the summary's
+	// degraded counter is derived from them (issue #151).
+	verdicts, err := workloadVerdicts(cmd.Context(), plane, set, target.namespace)
+	if err != nil {
+		return err
+	}
+
 	out := &printer{w: cmd.OutOrStdout()}
 	out.printf("%s/%s via %s\n", set.Project, set.Environment, adapter.Name())
 	out.printf("%s %s\n", padPhase(st.Phase), phaseSummary(st))
-	for _, key := range []string{"resources", "live", "degraded"} {
+	printSummary(out, st, verdicts)
+	printVerdicts(out, plane, verdicts)
+	return out.err
+}
+
+// printSummary prints the per-resource counters under the phase line.
+//
+// The degraded counter is not the adapter's alone. The two planes answer
+// different questions: the adapter reads a resource's own conditions and says
+// whether the rollout of THIS revision finished, while observation classifies
+// the pods behind each workload. They disagreed in exactly the case status
+// exists for (issue #151) — a Deployment whose new pods CrashLoopBackOff keeps
+// the previous ReplicaSet alive, so the adapter reports a rollout still in
+// flight and counts "degraded: 0" directly above a verdict reading
+// "degraded: crash-loop-back-off".
+//
+// Neither source sees every resource (the adapter also judges CronJobs; the
+// probe classifies only Deployments), so the printed count is the larger of the
+// two. That is a lower bound on the union, and it can never under-report a
+// resource one of the planes has already called degraded.
+func printSummary(out *printer, st delivery.Status, verdicts []observation.Verdict) {
+	for _, key := range []string{"resources", "live"} {
 		if v, ok := st.Detail[key]; ok {
 			out.printf("  %-10s %s\n", key+":", v)
 		}
 	}
-
-	if err := reportVerdicts(cmd, plane, set, target.namespace, out); err != nil {
-		return err
+	reported, ok := st.Detail["degraded"]
+	n := degradedCount(reported, verdicts)
+	if ok || n > 0 {
+		out.printf("  %-10s %d\n", "degraded:", n)
 	}
-	return out.err
 }
 
-// reportVerdicts prints the observation verdict for every workload the rendered
-// set declares. The set IS the correlation: these are the resources kelson
-// rendered for this project and environment, carrying the provenance the
-// adapter just matched against the cluster.
-func reportVerdicts(cmd *cobra.Command, plane *deliveryPlane, set delivery.ManifestSet, namespace string, out *printer) error {
+// degradedCount reconciles the adapter's degraded count with the verdicts. A
+// count the adapter did not report (or reported unparseably) contributes
+// nothing, which leaves the verdicts as the answer.
+func degradedCount(reported string, verdicts []observation.Verdict) int {
+	n := 0
+	for _, v := range verdicts {
+		if isDegraded(v) {
+			n++
+		}
+	}
+	if fromAdapter, err := strconv.Atoi(reported); err == nil && fromAdapter > n {
+		return fromAdapter
+	}
+	return n
+}
+
+// isDegraded applies the same test observation.Verdict.String uses when it
+// prints the word "degraded", so the counter and the verdict lines below it
+// cannot disagree by construction. Stuck is deliberately excluded: the
+// observation plane keeps "made no progress" distinct from "broken".
+func isDegraded(v observation.Verdict) bool {
+	return !v.Healthy && !v.Stuck && observation.IsFailure(v.Code)
+}
+
+// workloadVerdicts evaluates the observation verdict for every workload the
+// rendered set declares. The set IS the correlation: these are the resources
+// kelson rendered for this project and environment, carrying the provenance the
+// adapter just matched against the cluster. No probe means no verdicts, which
+// printVerdicts reports as such rather than as "nothing is failing".
+func workloadVerdicts(ctx context.Context, plane *deliveryPlane, set delivery.ManifestSet, namespace string) ([]observation.Verdict, error) {
+	if plane.health == nil {
+		return nil, nil
+	}
+	var out []observation.Verdict
+	for _, w := range deployments(set, namespace) {
+		verdict, err := plane.health.Evaluate(ctx, w.namespace, w.name)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, verdict)
+	}
+	return out, nil
+}
+
+func printVerdicts(out *printer, plane *deliveryPlane, verdicts []observation.Verdict) {
 	if plane.health == nil {
 		out.printf("\nno observation probe available: workload health was not read\n")
-		return nil
+		return
 	}
-	workloads := deployments(set, namespace)
-	if len(workloads) == 0 {
-		return nil
+	if len(verdicts) == 0 {
+		return
 	}
 	out.printf("\n")
-	for _, w := range workloads {
-		verdict, err := plane.health.Evaluate(cmd.Context(), w.namespace, w.name)
-		if err != nil {
-			return err
-		}
-		printVerdict(out, verdict)
+	for _, v := range verdicts {
+		printVerdict(out, v)
 	}
-	return nil
 }
 
 // printVerdict renders one workload verdict: the one-line summary (which
