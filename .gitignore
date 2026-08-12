@@ -24,4 +24,5 @@ ui/.next/
 
 # Local tooling
 /bin/
+/hack/bin/
 .claude/worktrees/
