@@ -13,6 +13,7 @@ import (
 	"k8s.io/client-go/dynamic"
 	sigsyaml "sigs.k8s.io/yaml"
 
+	"github.com/dafrie/kelson/internal/clusterprofile"
 	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/diff"
 )
@@ -37,6 +38,11 @@ type Options struct {
 	// FieldManager overrides the field-manager identity. Defaults to
 	// FieldManager.
 	FieldManager string
+	// ClusterProfile is the target cluster's detected capabilities. Preview
+	// uses it to decide whether an unexplained rejection is plausibly a policy
+	// finding at all (issue #45): a cluster running no policy engine must not
+	// have its failures dressed up as one.
+	ClusterProfile clusterprofile.ClusterProfile
 }
 
 // DryRun produces L2 server-side dry-run previews (issue #43). It consumes an
@@ -45,6 +51,7 @@ type DryRun struct {
 	client  dynamic.Interface
 	mapper  Mapper
 	manager string
+	profile clusterprofile.ClusterProfile
 }
 
 // New validates options and returns an L2 engine.
@@ -59,7 +66,7 @@ func New(opts Options) (*DryRun, error) {
 	if manager == "" {
 		manager = FieldManager
 	}
-	return &DryRun{client: opts.Client, mapper: opts.Mapper, manager: manager}, nil
+	return &DryRun{client: opts.Client, mapper: opts.Mapper, manager: manager, profile: opts.ClusterProfile}, nil
 }
 
 // ResourceRef identifies one Kubernetes resource.
@@ -218,17 +225,30 @@ func (d *DryRun) rejection(t target, liveMap map[string]any, batch batchInfo, er
 		return rd, findings{violations: c.violations}, nil
 	}
 
-	// Not a recognised permission/policy/validation shape — surface as a
-	// generic disruptive finding carrying the API's own message rather than
-	// silently dropping the rejection.
+	// Not a recognised permission/policy/validation shape. We cannot attribute
+	// the rejection, so we must not dress it up as a particular policy — an
+	// invented name like "dryrun-rejected" would let an agent branch on a
+	// policy that does not exist (#45). Report it honestly as not-evaluated and
+	// let the cluster's detected engines shape how unlikely a policy rejection
+	// is: none present means this is something else entirely.
 	rd := disrupting(t, liveMap)
-	return rd, findings{violations: []diff.PolicyViolation{{
-		Engine:      "kubernetes",
-		Policy:      "dryrun-rejected",
-		Resource:    t.ref.String(),
-		Message:     errorMessage(err),
-		Enforcement: diff.EnforcementEnforce,
+	return rd, findings{unvalidated: []diff.Unvalidated{{
+		Resource: t.ref.String(),
+		InBatch:  false,
+		Message:  unattributedMessage(d.profile, errorMessage(err)),
 	}}}, nil
+}
+
+// unattributedMessage explains an unrecognised rejection without pretending to
+// know which policy fired. HasPolicyEngine() decides whether a policy rejection
+// is even a plausible culprit, so a cluster running no policy engine is pointed
+// away from policy rather than toward it (issue #45).
+func unattributedMessage(p clusterprofile.ClusterProfile, msg string) string {
+	prefix := "dry-run rejected the resource for a reason preview could not attribute"
+	if p.HasPolicyEngine() {
+		return prefix + "; the cluster runs admission-policy engines, so this may be a policy rejection in an unrecognised shape: " + msg
+	}
+	return prefix + "; the cluster runs no policy engine, so this is not a policy finding: " + msg
 }
 
 // disrupting builds a resource diff for a resource the API server rejected: the
