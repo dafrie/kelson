@@ -59,7 +59,14 @@ func Render(resolved *model.Resolved, profile clusterprofile.ClusterProfile, res
 	if errs := unresolvedImages(resolved); len(errs) > 0 {
 		return nil, errs
 	}
-	out := []Manifest{}
+	// The Namespace leads the set: delivery.ManifestSet documents apply order as
+	// "namespaces first", and every following resource targets it (issue #150).
+	// Overlays append after the core resources, so nothing can displace it.
+	ns, err := namespaceManifest(resolved)
+	if err != nil {
+		return nil, err
+	}
+	out := []Manifest{ns}
 	for i := range resolved.Applications {
 		ms, err := appManifests(resolved, &resolved.Applications[i], profile)
 		if err != nil {

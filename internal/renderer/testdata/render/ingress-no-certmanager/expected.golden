@@ -1,5 +1,18 @@
 ---
 apiVersion: v1
+kind: Namespace
+metadata:
+  name: shopfront
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/environment: production
+    kelson.dev/project: shopfront
+  annotations:
+    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/spec-hash: sha256:459efca4f7b11be6fe9ba102540cfa95a203ef8c272aea9861bd338aa8e8ba95
+    kelson.dev/namespace-ownership: declared
+---
+apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: web

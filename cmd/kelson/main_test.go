@@ -128,10 +128,10 @@ func TestRenderToDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading output dir: %v", err)
 	}
-	// hello/development renders ServiceAccount + Service + Deployment (no
-	// route: the default profile detects no routing substrate).
-	if len(entries) != 3 {
-		t.Fatalf("expected 3 manifest files, got %d: %v", len(entries), entries)
+	// hello/development renders Namespace + ServiceAccount + Service +
+	// Deployment (no route: the default profile detects no routing substrate).
+	if len(entries) != 4 {
+		t.Fatalf("expected 4 manifest files, got %d: %v", len(entries), entries)
 	}
 	for _, e := range entries {
 		if !strings.HasSuffix(e.Name(), ".yaml") {

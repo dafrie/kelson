@@ -1,4 +1,17 @@
 ---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mailroom
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/environment: production
+    kelson.dev/project: mailroom
+  annotations:
+    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/spec-hash: sha256:25678253b0a562e792d329901cef96051b84c9059ea38e2702553aabf972083b
+    kelson.dev/namespace-ownership: declared
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:

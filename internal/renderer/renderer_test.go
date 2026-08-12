@@ -108,6 +108,7 @@ func TestRenderResourceSet(t *testing.T) {
 		t.Fatalf("Render failed: %v", err)
 	}
 	want := []string{
+		"Namespace/checkout-prod",
 		"ServiceAccount/web",
 		"Service/web",
 		"Deployment/web",
