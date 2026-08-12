@@ -19,8 +19,11 @@ ENV_FILE="$EXAMPLE_DIR/e2e.yaml"
 ENV_NAME="e2e"
 PROJECT_NAME="hello-e2e"
 APP_NAME="web"
-NAMESPACE="${PROJECT_NAME}-${ENV_NAME}"
 SELECTOR="kelson.dev/project=${PROJECT_NAME},kelson.dev/application=${APP_NAME}"
+# NAMESPACE is derived from the rendered manifests once render has run (below)
+# rather than hardcoded, so it can't drift from what the renderer actually
+# targets.
+NAMESPACE=""
 
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
@@ -58,10 +61,23 @@ grep -q '^kind: Deployment$' "$WORKDIR/rendered.yaml" || die "render did not pro
 grep -q '^kind: Service$' "$WORKDIR/rendered.yaml" || die "render did not produce a Service for hello-e2e/web"
 log "render OK: $(grep -c '^kind:' "$WORKDIR/rendered.yaml") manifests"
 
+NAMESPACE="$(grep -m1 'namespace:' "$WORKDIR/rendered.yaml" | sed -E 's/^[[:space:]]*namespace:[[:space:]]*//')"
+[[ -n "$NAMESPACE" ]] || die "could not determine the target namespace from the rendered manifests"
+log "target namespace: ${NAMESPACE}"
+
 log "== stage: probe for deploy/status/rollback (issue #135) =="
 if ! "$KELSON" deploy --help >/dev/null 2>&1; then
 	die "kelson binary lacks 'deploy' — build from a branch containing #135 (the CLI wiring for deploy/status/rollback). Cluster provisioning, profile capture and render all passed; the deploy/status/rollback lifecycle cannot run until that command exists."
 fi
+
+# TODO(#150): the renderer targets namespace "<project>-<environment>" but
+# never emits a Namespace manifest, so `kelson deploy` server-side-applies
+# into a namespace that doesn't exist yet and fails. Remove this stage once
+# the renderer emits the Namespace itself. Idempotent, and covers the broken
+# revision and rollback below too — they deploy into the same namespace.
+log "== stage: ensure namespace (workaround for #150) =="
+kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f - >/dev/null ||
+	die "failed to ensure namespace ${NAMESPACE} exists"
 
 log "== stage: deploy (good revision) =="
 if ! "$KELSON" deploy -f "$PROJECT_FILE" -f "$ENV_FILE" --env "$ENV_NAME" \
