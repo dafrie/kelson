@@ -52,6 +52,7 @@ nav:
       - 0008 — MCP surface: adr/0008-mcp-surface.md
       - 0009 — Secrets: adr/0009-secrets.md
       - 0010 — Build strategy: adr/0010-build-strategy.md
+      - 0011 — Build cache: adr/0011-build-cache.md
 
 markdown_extensions:
   - admonition
