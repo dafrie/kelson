@@ -50,25 +50,7 @@ type renderOptions struct {
 }
 
 func runRender(cmd *cobra.Command, opts *renderOptions) error {
-	profile, err := resolveProfile(opts.profile)
-	if err != nil {
-		return err
-	}
-
-	project, environments, specDirs, err := loadSpecFiles(opts.files)
-	if err != nil {
-		return err
-	}
-	environment, err := selectEnvironment(environments, opts.env)
-	if err != nil {
-		return err
-	}
-	resolved, errs := model.Resolve(project, environment)
-	if len(errs) > 0 {
-		return errs
-	}
-
-	manifests, err := renderer.Render(resolved, profile, overlayResolver(specDirs))
+	_, _, manifests, err := resolveAndRender(opts.files, opts.env, opts.profile)
 	if err != nil {
 		return err
 	}
@@ -84,6 +66,36 @@ func runRender(cmd *cobra.Command, opts *renderOptions) error {
 		return nil
 	}
 	return writeManifestDir(cmd, opts.output, manifests)
+}
+
+// resolveAndRender runs the shared spec pipeline: load the -f spec files,
+// select the environment, resolve and render. It is the single place render
+// and diff (issue #46) build the current manifest set, so the two commands
+// cannot drift on what "the current render" means.
+func resolveAndRender(files []string, env, profile string) (*model.Project, *model.Environment, []renderer.Manifest, error) {
+	profileValue, err := resolveProfile(profile)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	project, environments, specDirs, err := loadSpecFiles(files)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	environment, err := selectEnvironment(environments, env)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	resolved, errs := model.Resolve(project, environment)
+	if len(errs) > 0 {
+		return nil, nil, nil, errs
+	}
+
+	manifests, err := renderer.Render(resolved, profileValue, overlayResolver(specDirs))
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return project, environment, manifests, nil
 }
 
 // resolveProfile loads the ClusterProfile input. An empty flag renders
