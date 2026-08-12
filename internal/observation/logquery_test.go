@@ -422,7 +422,13 @@ func TestFollowDeliversLinesAndCloses(t *testing.T) {
 	}))
 
 	q := newTestQuery([]runtime.Object{fakePod("web-0", "web")}, src)
-	ch, st, err := q.Follow(context.Background(), Query{Namespace: testNS, Application: testApp, Backlog: 2})
+	// Default backlog, deliberately. This test's premise is a consumer that
+	// keeps up, and a backlog of 2 for three lines does not express that — it
+	// makes "nothing was dropped" depend on whether the reader is scheduled
+	// between sends, which is a coin flip that lands differently on a loaded
+	// CI runner. Overflow behaviour has its own tests that force the overflow
+	// rather than racing for it.
+	ch, st, err := q.Follow(context.Background(), Query{Namespace: testNS, Application: testApp})
 	if err != nil {
 		t.Fatal(err)
 	}
