@@ -2,7 +2,10 @@
 
 A self-hosted PaaS that runs on your Kubernetes cluster and writes standard manifests instead of hiding them.
 
-**Pre-alpha.** Nothing is implemented yet. The [roadmap](docs/roadmap.md) and [issues](https://github.com/dafrie/kelson/issues) are the current state of the project.
+**Pre-alpha, and not usable yet.** The pure renderer, the spec model and all four delivery adapters
+are implemented and tested; there is no build pipeline, no server, no UI and no install path, so
+nothing here deploys an application end to end. `kelson render` works offline today. The
+[roadmap](docs/roadmap.md) and [issues](https://github.com/dafrie/kelson/issues) track the rest.
 
 ## Why Kubernetes
 
