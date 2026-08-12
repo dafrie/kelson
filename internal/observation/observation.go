@@ -17,4 +17,9 @@
 //
 // Everything talks through injected clients the way the delivery adapters do
 // (dynamic for the health signal, typed for logs), so no test needs a cluster.
+//
+// The log query engine (LogQuery) is the transport-agnostic layer a later API
+// (#69) will wrap: a bounded, structured, deterministically-ordered query over
+// an application's replicas, or a live follow — the "last N lines around this
+// failure" the issue #54 design note asks for. It carries no transport types.
 package observation
