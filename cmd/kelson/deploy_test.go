@@ -360,6 +360,36 @@ func TestDeployNeverPickedUpExitsNonZero(t *testing.T) {
 	}
 }
 
+// TestDeployRolloutInFlightNeverExitsZero is the command half of the
+// mid-rollout regression (see direct.TestStatusDoesNotReportHealthyMidRollout).
+//
+// A second, broken revision leaves the adapter reporting Applied indefinitely:
+// the new pods never become available, so the rolling update keeps the previous
+// revision's pods alive. The deploy gate is health, so that must time out
+// non-zero rather than exit 0 the moment the apply lands.
+func TestDeployRolloutInFlightNeverExitsZero(t *testing.T) {
+	spec, history := deploySpec(t)
+	adapter := newFakeAdapter("direct")
+	adapter.statuses = []delivery.Status{{
+		Phase: delivery.PhaseApplied,
+		Cause: "Deployment/hello-development/web: 1 replicas of the previous revision are pending termination",
+	}}
+	stdout, code, msg := runDelivery(t, planeOf([]delivery.Adapter{adapter}, nil, nil),
+		"deploy", "-f", spec, "--env", "development", "--history", history, "--timeout", "150ms")
+	if code == exitOK {
+		t.Fatalf("a rollout that never completes must not exit 0:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "Healthy") {
+		t.Fatalf("Healthy must not be reported while the rollout is in flight:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "Applied") {
+		t.Fatalf("stdout should report the Applied phase it is wedged in:\n%s", stdout)
+	}
+	if !strings.Contains(msg, "never reported healthy") {
+		t.Fatalf("error should say the revision was applied but never became healthy, got: %s", msg)
+	}
+}
+
 // TestDeployApplyFailurePropagates: an apply that fails is the command's error,
 // and nothing waits on a deployment that never started.
 func TestDeployApplyFailurePropagates(t *testing.T) {
