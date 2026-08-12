@@ -72,8 +72,10 @@ Multiple agents often work this repo at once. The protocol:
 - **Shared types at an integration seam are agreed before work starts, not invented twice.** When two
   tasks meet at a common type, the orchestrator fixes the contract up front and both sides receive it
   byte-identical. If the contract looks wrong, stop and say so — do not change it unilaterally.
-- **Do not push or open PRs unless the task says to.** Commit locally on your branch; the orchestrator
-  integrates.
+- **Push your branch and open a PR when the work is coherent.** If the PR is low-stakes — docs,
+  tracker alignment, mechanical cleanups, changes with no behaviour impact — merge it yourself once CI
+  is green. If it changes behaviour, golden files, a public contract or an ADR-governed decision, ask
+  for review instead of merging. When in doubt, it is not low-stakes.
 
 ## Close the issue when the work lands
 
