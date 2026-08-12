@@ -48,15 +48,20 @@ linters:
           files:
             - $all
             - "!**/internal/delivery/**"
+            - "!**/internal/observation/**"
           allow:
             - $gostd
             - github.com/dafrie/kelson
             - github.com/invopop/jsonschema
             - github.com/spf13/cobra
             - gopkg.in/yaml.v3
+        # The cluster-facing planes. internal/observation watches live resources
+        # by definition (docs/architecture.md), so it needs the same client
+        # libraries as delivery; the renderer still gets none of them.
         delivery:
           files:
             - "**/internal/delivery/**"
+            - "**/internal/observation/**"
           allow:
             - $gostd
             - github.com/dafrie/kelson
