@@ -58,12 +58,40 @@ type Diff struct {
 	Environment string            `json:"environment"`
 	Resources   []ResourceDiff    `json:"resources"`
 	Violations  []PolicyViolation `json:"violations,omitempty"`
-	Summary     Summary           `json:"summary"`
+	// Unvalidated lists resources the preview could not evaluate. It is
+	// separate from Violations because "we checked this and it fails" and "we
+	// could not check this" are different answers, and a preview that blurs
+	// them is not trustworthy (#43).
+	Unvalidated []Unvalidated `json:"unvalidated,omitempty"`
+	Summary     Summary       `json:"summary"`
 	// Degraded is set when L2 was requested but the live cluster was
 	// unavailable, falling back to L1. Agents and the UI can then show a
 	// best-effort preview instead of a hard error (#43).
 	Degraded       bool   `json:"degraded,omitempty"`
 	DegradedReason string `json:"degradedReason,omitempty"`
+}
+
+// Unvalidated is a resource the API server could not evaluate, because a
+// prerequisite it depends on does not exist: a custom resource before its CRD,
+// anything before its Namespace (#43).
+//
+// This is deliberately not a PolicyViolation. Nothing rejected the resource —
+// the question was never asked. Reporting it as a policy finding would make an
+// agent branching on Violations see a policy that does not exist, and reporting
+// nothing at all would let a resource slip through the preview unchecked.
+type Unvalidated struct {
+	// Resource is apiVersion/Kind/namespace/name.
+	Resource string `json:"resource"`
+	// Requires names the missing prerequisite, e.g. "Namespace/checkout".
+	Requires string `json:"requires,omitempty"`
+	// InBatch distinguishes the benign case from the real one. True means the
+	// prerequisite is created by this same batch, so applying in the renderer's
+	// order resolves it and the resource is expected to validate. False means
+	// the prerequisite is genuinely absent and the apply would fail too — the
+	// resource carries a disruptive ResourceDiff so a CI gate still trips.
+	InBatch bool `json:"inBatch"`
+	// Message is the API server's own explanation.
+	Message string `json:"message,omitempty"`
 }
 
 // ResourceDiff is one Kubernetes resource's change, plus the field-level

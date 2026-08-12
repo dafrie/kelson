@@ -105,7 +105,7 @@ func (d *DryRun) Preview(ctx context.Context, set delivery.ManifestSet) (*diff.D
 	audit := d.readAuditReports(ctx)
 
 	for _, t := range targets {
-		rd, violations, err := d.evaluate(ctx, t, batch)
+		rd, found, err := d.evaluate(ctx, t, batch)
 		if err != nil {
 			// A permission problem, not a policy or validation rejection:
 			// degrade to L1 instead of failing the preview.
@@ -117,7 +117,8 @@ func (d *DryRun) Preview(ctx context.Context, set delivery.ManifestSet) (*diff.D
 		if rd != nil {
 			out.Resources = append(out.Resources, *rd)
 		}
-		out.Violations = append(out.Violations, violations...)
+		out.Violations = append(out.Violations, found.violations...)
+		out.Unvalidated = append(out.Unvalidated, found.unvalidated...)
 	}
 
 	out.Violations = append(out.Violations, audit...)
@@ -125,10 +126,19 @@ func (d *DryRun) Preview(ctx context.Context, set delivery.ManifestSet) (*diff.D
 	return out, nil
 }
 
+// findings is what one resource's evaluation contributes to the preview
+// besides its diff. Policy findings and unevaluated resources travel
+// separately because they answer different questions: "this was rejected" and
+// "this was never checked" (#43).
+type findings struct {
+	violations  []diff.PolicyViolation
+	unvalidated []diff.Unvalidated
+}
+
 // evaluate dry-runs one resource and returns its resource diff and any
-// violations. It returns a non-nil error only for unexpected failures and for
+// findings. It returns a non-nil error only for unexpected failures and for
 // permission problems (which Preview interprets as the L1-degradation trigger).
-func (d *DryRun) evaluate(ctx context.Context, t target, batch batchInfo) (*diff.ResourceDiff, []diff.PolicyViolation, error) {
+func (d *DryRun) evaluate(ctx context.Context, t target, batch batchInfo) (*diff.ResourceDiff, findings, error) {
 	live, getErr := d.get(ctx, t)
 	liveMap := map[string]any{}
 	if getErr == nil && live != nil {
@@ -154,17 +164,20 @@ func (d *DryRun) evaluate(ctx context.Context, t target, batch batchInfo) (*diff
 		Fields:     fields,
 	}
 	rd.Risk = resourceRisk(op, fields, t.ref.Kind)
-	return rd, nil, nil
+	return rd, findings{}, nil
 }
 
 // rejection maps a failed dry-run apply onto the diff taxonomy.
-func (d *DryRun) rejection(t target, liveMap map[string]any, batch batchInfo, err error) (*diff.ResourceDiff, []diff.PolicyViolation, error) {
+func (d *DryRun) rejection(t target, liveMap map[string]any, batch batchInfo, err error) (*diff.ResourceDiff, findings, error) {
 	var status apierrors.APIStatus
 	if errors.As(err, &status) && apierrors.IsNotFound(err) {
 		// A prerequisite that does not exist yet — either it is being created
 		// in this same batch (ordering, report as such, not a policy failure) or
 		// it is genuinely missing (an error the apply would also hit).
 		if batch.prerequisitePending(t, err) {
+			// Benign: applying the batch in the renderer's order creates the
+			// prerequisite first, so this resource is expected to validate.
+			// Reported, never swallowed, and never as a policy finding (#43).
 			target := diff.ResourceDiff{
 				APIVersion: t.ref.APIVersion,
 				Kind:       t.ref.Kind,
@@ -173,54 +186,49 @@ func (d *DryRun) rejection(t target, liveMap map[string]any, batch batchInfo, er
 				Op:         diff.OpAdded,
 				Risk:       diff.RiskAdditive,
 			}
-			v := diff.PolicyViolation{
-				Engine:   "kubernetes",
-				Policy:   "dryrun-prerequisite-pending",
+			u := diff.Unvalidated{
 				Resource: t.ref.String(),
-				Message:  fmt.Sprintf("%s could not be validated: a prerequisite is being created in the same batch (%s)", t.ref.String(), errorMessage(err)),
-				// This is a non-blocker: once the batch is applied in the
-				// renderer's order the prerequisite exists and the resource
-				// validates. Reporting it as audit keeps it from gating while
-				// still surfacing the ordering explicitly (#43).
-				Enforcement: diff.EnforcementAudit,
+				Requires: batch.requirementOf(t, err),
+				InBatch:  true,
+				Message:  errorMessage(err),
 			}
-			return &target, []diff.PolicyViolation{v}, nil
+			return &target, findings{unvalidated: []diff.Unvalidated{u}}, nil
 		}
-		// Genuinely missing prerequisite — the apply would fail too.
+		// Genuinely missing prerequisite — the apply would fail too. The
+		// resource still carries a disruptive ResourceDiff, so a CI gate
+		// branching on MaxRisk trips on it.
 		rd := disrupting(t, liveMap)
-		return rd, []diff.PolicyViolation{
-			{
-				Engine:      "kubernetes",
-				Policy:      "missing-prerequisite",
-				Resource:    t.ref.String(),
-				Message:     errorMessage(err),
-				Enforcement: diff.EnforcementEnforce,
-			},
-		}, nil
+		u := diff.Unvalidated{
+			Resource: t.ref.String(),
+			Requires: batch.requirementOf(t, err),
+			InBatch:  false,
+			Message:  errorMessage(err),
+		}
+		return rd, findings{unvalidated: []diff.Unvalidated{u}}, nil
 	}
 
 	c := classify(t.ref, err)
 	if c.permission {
 		// RBAC: the caller lacks permission to dry-run. Surfaces as
 		// degradation to L1 at the Preview level.
-		return nil, nil, err
+		return nil, findings{}, err
 	}
 	if c.policyRejected {
 		rd := disrupting(t, liveMap)
-		return rd, c.violations, nil
+		return rd, findings{violations: c.violations}, nil
 	}
 
 	// Not a recognised permission/policy/validation shape — surface as a
 	// generic disruptive finding carrying the API's own message rather than
 	// silently dropping the rejection.
 	rd := disrupting(t, liveMap)
-	return rd, []diff.PolicyViolation{{
+	return rd, findings{violations: []diff.PolicyViolation{{
 		Engine:      "kubernetes",
 		Policy:      "dryrun-rejected",
 		Resource:    t.ref.String(),
 		Message:     errorMessage(err),
 		Enforcement: diff.EnforcementEnforce,
-	}}, nil
+	}}}, nil
 }
 
 // disrupting builds a resource diff for a resource the API server rejected: the

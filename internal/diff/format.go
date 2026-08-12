@@ -85,9 +85,71 @@ func format(d *Diff, color bool) string {
 	for _, r := range d.Resources {
 		writeResource(&b, r, color)
 	}
+	if len(d.Violations) > 0 {
+		b.WriteString("\n")
+		writeViolations(&b, d.Violations, color)
+	}
+	if len(d.Unvalidated) > 0 {
+		b.WriteString("\n")
+		writeUnvalidated(&b, d.Unvalidated, color)
+	}
 	b.WriteString("\n")
 	writeSummary(&b, d.Summary, color)
 	return b.String()
+}
+
+// writeViolations prints admission-policy findings. A developer reading this
+// should see which policy rejects the change and why, without applying it
+// (#45). Enforce and audit are labelled distinctly so a warning is never
+// mistaken for a blocker.
+func writeViolations(b *strings.Builder, vs []PolicyViolation, color bool) {
+	for _, v := range vs {
+		label := "BLOCKED"
+		col := ansiRed
+		if v.Enforcement == EnforcementAudit {
+			label = "warning"
+			col = ansiYellow
+		}
+		head := fmt.Sprintf("%s %s/%s", label, v.Engine, v.Policy)
+		if v.Rule != "" {
+			head += " rule " + v.Rule
+		}
+		if color {
+			head = col + head + ansiReset
+		}
+		fmt.Fprintf(b, "%s\n", head)
+		fmt.Fprintf(b, "    %s\n", v.Resource)
+		if path := v.SpecPath; path != "" {
+			fmt.Fprintf(b, "    at %s\n", path)
+		} else if v.Path != "" {
+			fmt.Fprintf(b, "    at %s\n", v.Path)
+		}
+		if v.Message != "" {
+			fmt.Fprintf(b, "    %s\n", v.Message)
+		}
+	}
+}
+
+// writeUnvalidated prints resources the preview could not evaluate, so an
+// incomplete preview never reads as a clean one (#43).
+func writeUnvalidated(b *strings.Builder, us []Unvalidated, color bool) {
+	for _, u := range us {
+		head := "not validated: " + u.Resource
+		if u.Requires != "" {
+			head += " (requires " + u.Requires + ")"
+		}
+		if !u.InBatch {
+			head += " — prerequisite is missing, apply would fail"
+		}
+		if color {
+			c := ansiYellow
+			if !u.InBatch {
+				c = ansiRed
+			}
+			head = c + head + ansiReset
+		}
+		fmt.Fprintf(b, "%s\n", head)
+	}
 }
 
 func writeResource(b *strings.Builder, r ResourceDiff, color bool) {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/dafrie/kelson/internal/diff"
@@ -151,5 +152,92 @@ func TestDefaultColorNonTerminal(t *testing.T) {
 	// The dummy is cleared after; confirm we did not accidentally return true.
 	if os.Getenv("NO_COLOR") != "" {
 		t.Fatalf("NO_COLOR should be cleared")
+	}
+}
+
+// serverDiff is an L2 result carrying both a policy rejection and a resource
+// the preview could not evaluate.
+func serverDiff() *diff.Diff {
+	d := sampleDiff()
+	d.Level = diff.LevelServer
+	d.Violations = []diff.PolicyViolation{
+		{
+			Engine:      "kyverno",
+			Policy:      "require-run-as-nonroot",
+			Rule:        "check-securitycontext",
+			Resource:    "Deployment/web",
+			Path:        "spec.template.spec.securityContext.runAsNonRoot",
+			Message:     "runAsNonRoot must be set to true",
+			Enforcement: diff.EnforcementEnforce,
+		},
+		{
+			Engine:      "kyverno",
+			Policy:      "require-labels",
+			Resource:    "Deployment/web",
+			Message:     "missing recommended label app.kubernetes.io/name",
+			Enforcement: diff.EnforcementAudit,
+		},
+	}
+	d.Unvalidated = []diff.Unvalidated{
+		{Resource: "Widget/thing", Requires: "CustomResourceDefinition for Widget.example.com", InBatch: true},
+	}
+	return d
+}
+
+// TestWriteRendersViolations: a policy rejection is the whole point of L2
+// (#45) — the terminal renderer must not swallow it, and must label enforce
+// and audit distinctly so a warning is never read as a blocker.
+func TestWriteRendersViolations(t *testing.T) {
+	var buf bytes.Buffer
+	if err := diff.Write(&buf, serverDiff(), false); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	out := buf.String()
+	for _, want := range []string{
+		"BLOCKED", "kyverno/require-run-as-nonroot", "check-securitycontext",
+		"runAsNonRoot must be set to true",
+		"warning", "kyverno/require-labels",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q\n%s", want, out)
+		}
+	}
+}
+
+// TestWriteRendersUnvalidated: a preview that could not check a resource must
+// say so, otherwise an incomplete preview reads as a clean one (#43).
+func TestWriteRendersUnvalidated(t *testing.T) {
+	var buf bytes.Buffer
+	if err := diff.Write(&buf, serverDiff(), false); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "not validated: Widget/thing") {
+		t.Errorf("unvalidated resource not reported\n%s", out)
+	}
+	if !strings.Contains(out, "CustomResourceDefinition for Widget.example.com") {
+		t.Errorf("missing prerequisite not named\n%s", out)
+	}
+}
+
+// TestUnvalidatedIsNotAViolation guards the contract distinction itself: the
+// two channels stay separate through a JSON round trip, so an agent branching
+// on Violations never sees an ordering artifact.
+func TestUnvalidatedIsNotAViolation(t *testing.T) {
+	b, err := diff.EncodeJSON(serverDiff())
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	var got diff.Diff
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got.Unvalidated) != 1 || !got.Unvalidated[0].InBatch {
+		t.Fatalf("unvalidated lost in round trip: %+v", got.Unvalidated)
+	}
+	for _, v := range got.Violations {
+		if strings.Contains(v.Resource, "Widget") {
+			t.Errorf("unvalidated resource leaked into Violations: %+v", v)
+		}
 	}
 }

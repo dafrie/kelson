@@ -580,17 +580,27 @@ func TestPreviewMissingPrerequisiteOrdering(t *testing.T) {
 	if err != nil {
 		t.Fatalf("preview: %v", err)
 	}
-	var pending *diff.PolicyViolation
-	for i := range out.Violations {
-		if out.Violations[i].Policy == "dryrun-prerequisite-pending" {
-			pending = &out.Violations[i]
+	var pending *diff.Unvalidated
+	for i := range out.Unvalidated {
+		if out.Unvalidated[i].Resource == "Deployment/checkout" {
+			pending = &out.Unvalidated[i]
 		}
 	}
 	if pending == nil {
-		t.Fatalf("expected an ordering (prerequisite-pending) finding, got %+v", out.Violations)
+		t.Fatalf("expected an unvalidated (prerequisite-pending) entry, got %+v", out.Unvalidated)
 	}
-	if pending.Enforcement != diff.EnforcementAudit {
-		t.Errorf("enforcement = %q, want audit (ordering is a warning, not a blocker)", pending.Enforcement)
+	if !pending.InBatch {
+		t.Error("InBatch = false, want true: the Namespace is created by this same batch")
+	}
+	if pending.Requires != "Namespace/"+tNS {
+		t.Errorf("Requires = %q, want %q", pending.Requires, "Namespace/"+tNS)
+	}
+	// The whole point of the separate channel: an ordering artifact is not a
+	// policy finding, so an agent branching on Violations must not see one.
+	for _, v := range out.Violations {
+		if v.Resource == "Deployment/checkout" {
+			t.Errorf("ordering reported as a policy violation: %+v", v)
+		}
 	}
 	if out.Summary.MaxRisk == diff.RiskDisruptive {
 		t.Error("an ordering finding must not raise MaxRisk to disruptive")

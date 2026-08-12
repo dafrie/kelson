@@ -55,6 +55,25 @@ func crdsOf(targets []target) map[schema.GroupKind]bool {
 	return out
 }
 
+// requirementOf names the prerequisite a NotFound error is complaining about,
+// so the report says what is missing rather than only that something is. It
+// returns "" when the error does not identify one, and the caller falls back to
+// the API server's own message.
+func (b batchInfo) requirementOf(t target, err error) string {
+	var status apierrors.APIStatus
+	if !errors.As(err, &status) {
+		return ""
+	}
+	if strings.Contains(status.Status().Message, "no matches for kind") {
+		gk := t.obj.GroupVersionKind().GroupKind()
+		return "CustomResourceDefinition for " + gk.Kind + "." + gk.Group
+	}
+	if ns := t.ref.Namespace; ns != "" && strings.Contains(status.Status().Message, "namespace") {
+		return "Namespace/" + ns
+	}
+	return ""
+}
+
 // prerequisitePending reports whether a NotFound error is explained by a
 // prerequisite being created in the same batch, rather than a genuine absence.
 func (b batchInfo) prerequisitePending(t target, err error) bool {
