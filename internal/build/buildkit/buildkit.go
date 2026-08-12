@@ -65,6 +65,9 @@ type Config struct {
 	// BuildkitImage is the rootless buildkit image, e.g.
 	// moby/buildkit:v0.20.0-rootless. Defaults to DefaultBuildkitImage.
 	BuildkitImage string
+	// GitImage clones the source into the workspace. Defaults to
+	// DefaultGitImage. It runs as an unprivileged init container.
+	GitImage string
 	// ServiceAccount the Job runs as, when the caller wants a non-default SA.
 	ServiceAccount string
 	// Resources applied to the build container. May be zero.

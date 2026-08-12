@@ -23,7 +23,21 @@ type Request struct {
 	Environment string
 	Application string
 
-	// ContextDir is the checked-out source tree the build runs against.
+	// SourceGit is the repository the build clones, from Project.source.git.
+	//
+	// An in-cluster build has no local path to read: the build pod starts with
+	// an empty workspace, so the source has to arrive somehow. Cloning inside
+	// the pod is how, and it keeps the control plane out of the data path —
+	// nothing uploads a tarball through kelson.
+	SourceGit string
+	// SourceRef is the branch, tag or commit to check out. Empty means the
+	// repository's default branch. Prefer a commit: Revision records what was
+	// built, and a moving ref makes that record a guess.
+	SourceRef string
+
+	// ContextDir is the build context within the checked-out tree, relative to
+	// its root. Empty means the root. This is what makes a monorepo buildable:
+	// the repository is cloned whole and only this subdirectory is built.
 	ContextDir string
 	// Dockerfile is the path relative to ContextDir. Empty means ./Dockerfile.
 	Dockerfile string
