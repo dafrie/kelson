@@ -1,0 +1,163 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: web
+  namespace: shopfront
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: web
+    kelson.dev/environment: production
+    kelson.dev/project: shopfront
+  annotations:
+    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/spec-hash: sha256:0e8e4a0e329e6a7c8e10870b619bbfa60ed25d459aa3e091acc130ee83f41558
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: shopfront
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: web
+    kelson.dev/environment: production
+    kelson.dev/project: shopfront
+  annotations:
+    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/spec-hash: sha256:0e8e4a0e329e6a7c8e10870b619bbfa60ed25d459aa3e091acc130ee83f41558
+spec:
+  selector:
+    kelson.dev/project: shopfront
+    kelson.dev/application: web
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: shopfront
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: web
+    kelson.dev/environment: production
+    kelson.dev/project: shopfront
+  annotations:
+    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/spec-hash: sha256:0e8e4a0e329e6a7c8e10870b619bbfa60ed25d459aa3e091acc130ee83f41558
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      kelson.dev/project: shopfront
+      kelson.dev/application: web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/managed-by: kelson
+        kelson.dev/application: web
+        kelson.dev/environment: production
+        kelson.dev/project: shopfront
+    spec:
+      serviceAccountName: web
+      containers:
+        - name: web
+          image: registry.acme.run/shopfront:3.1.0
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: CACHE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: shopfront-cache-credentials
+                  key: uri
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /up
+              port: 3000
+          readinessProbe:
+            httpGet:
+              path: /up
+              port: 3000
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web
+  namespace: shopfront
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: web
+    kelson.dev/environment: production
+    kelson.dev/project: shopfront
+  annotations:
+    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/spec-hash: sha256:0e8e4a0e329e6a7c8e10870b619bbfa60ed25d459aa3e091acc130ee83f41558
+spec:
+  ingressClassName: public
+  rules:
+    - host: web.shop.acme.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  number: 3000
+  tls:
+    - hosts:
+        - web.shop.acme.io
+      secretName: web-tls
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: images
+  namespace: shopfront
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: images
+    kelson.dev/environment: production
+    kelson.dev/project: shopfront
+  annotations:
+    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/spec-hash: sha256:9a625bad2d5d100641470738fe14fad39bf8ada930c7b0416285d43db10e5a19
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      kelson.dev/project: shopfront
+      kelson.dev/application: images
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/managed-by: kelson
+        kelson.dev/application: images
+        kelson.dev/environment: production
+        kelson.dev/project: shopfront
+    spec:
+      containers:
+        - name: images
+          image: registry.acme.run/shopfront:3.1.0
+          command:
+            - shopfront
+            - process-images
+          env:
+            - name: CACHE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: shopfront-cache-credentials
+                  key: uri

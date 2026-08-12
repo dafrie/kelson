@@ -1,0 +1,3 @@
+ingressClasses: [nginx]
+certManager:
+  clusterIssuers: [letsencrypt-prod]

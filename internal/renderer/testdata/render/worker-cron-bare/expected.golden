@@ -1,0 +1,140 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: mailroom
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: worker
+    kelson.dev/environment: production
+    kelson.dev/project: mailroom
+  annotations:
+    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/spec-hash: sha256:a655205b6f8b150f46877b1d52cf9c8e3bff53f90487ae31fb3d29f4c03ac22c
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      kelson.dev/project: mailroom
+      kelson.dev/application: worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/managed-by: kelson
+        kelson.dev/application: worker
+        kelson.dev/environment: production
+        kelson.dev/project: mailroom
+    spec:
+      containers:
+        - name: worker
+          image: registry.acme.run/mailroom:2.0.7
+          command:
+            - mailroom
+            - work
+          env:
+            - name: QUEUE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mailroom-queue-credentials
+                  key: password
+            - name: QUEUE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: mailroom-queue-credentials
+                  key: uri
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: digest
+  namespace: mailroom
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: digest
+    kelson.dev/environment: production
+    kelson.dev/project: mailroom
+  annotations:
+    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/spec-hash: sha256:5841ef3319e5ce31081d850b853ffac7f32a34fe7f8611c116dff820834854b2
+spec:
+  schedule: 30 6 * * 1-5
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/managed-by: kelson
+            kelson.dev/application: digest
+            kelson.dev/environment: production
+            kelson.dev/project: mailroom
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: digest
+              image: registry.acme.run/mailroom:2.0.7
+              command:
+                - mailroom
+                - send-digests
+              env:
+                - name: QUEUE_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: mailroom-queue-credentials
+                      key: password
+                - name: QUEUE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: mailroom-queue-credentials
+                      key: uri
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: retention-sweep
+  namespace: mailroom
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: retention-sweep
+    kelson.dev/environment: production
+    kelson.dev/project: mailroom
+  annotations:
+    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/spec-hash: sha256:2eb8b0556d2ad752a4e8bdf44571e04691a398ffa86e420ea3b7bb4cec4069eb
+spec:
+  schedule: 15 2 * * *
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/managed-by: kelson
+            kelson.dev/application: retention-sweep
+            kelson.dev/environment: production
+            kelson.dev/project: mailroom
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: retention-sweep
+              image: registry.acme.run/mailroom:2.0.7
+              command:
+                - mailroom
+                - sweep
+                - --older-than=90d
+              env:
+                - name: QUEUE_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: mailroom-queue-credentials
+                      key: password
+                - name: QUEUE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: mailroom-queue-credentials
+                      key: uri

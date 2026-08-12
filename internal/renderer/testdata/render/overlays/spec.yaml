@@ -1,0 +1,48 @@
+# Fixture for issue #29: the escape hatch. A strategic-merge patch adds GPU
+# node affinity to the rendered transcoder Deployment; a raw NetworkPolicy is
+# emitted alongside. Both carry the kelson.dev/overlays provenance marker.
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: streaming
+spec:
+  image: ghcr.io/acme/streaming:0.9.1
+
+  env:
+    REDIS_URL:
+      from: { service: cache, key: uri }
+
+  services:
+    - name: cache
+      type: valkey
+      plan: small
+
+  applications:
+    - name: transcoder
+      port: 8443
+      domains: [stream.acme.com]
+      resources:
+        requests: { cpu: "4", memory: 8Gi }
+
+  overlays:
+    - patch: ./k8s/patches/affinity.yaml       # merged into the rendered Deployment
+    - manifest: ./k8s/extra/networkpolicy.yaml # emitted as-is
+---
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: production
+spec:
+  project: streaming
+  namespace: streaming
+  routing:
+    domainSuffix: acme.com
+    gatewayClass: envoy
+  delivery:
+    mode: flux
+    git:
+      repo: git@github.com:acme/streaming-deploy.git
+      path: streaming/production
+  applications:
+    - name: transcoder
+      replicas: { min: 2, max: 8 }
