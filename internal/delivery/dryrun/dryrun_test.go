@@ -1,7 +1,9 @@
 package dryrun
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -19,6 +21,7 @@ import (
 	k8stesting "k8s.io/client-go/testing"
 	sigsyaml "sigs.k8s.io/yaml"
 
+	"github.com/dafrie/kelson/internal/clusterprofile"
 	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/diff"
 )
@@ -128,7 +131,12 @@ func testMapper() meta.RESTMapper {
 
 func newEngine(t *testing.T, c *cluster) *DryRun {
 	t.Helper()
-	e, err := New(Options{Client: c.dyn, Mapper: testMapper()})
+	return newEngineWithProfile(t, c, clusterprofile.ClusterProfile{})
+}
+
+func newEngineWithProfile(t *testing.T, c *cluster, p clusterprofile.ClusterProfile) *DryRun {
+	t.Helper()
+	e, err := New(Options{Client: c.dyn, Mapper: testMapper(), ClusterProfile: p})
 	if err != nil {
 		t.Fatalf("new dryrun: %v", err)
 	}
@@ -445,6 +453,134 @@ func TestPreviewKyvernoEnforceRejection(t *testing.T) {
 	}
 	if out.Summary.MaxRisk != diff.RiskDisruptive {
 		t.Errorf("maxRisk = %q, want disruptive (the write would be rejected)", out.Summary.MaxRisk)
+	}
+}
+
+// TestPreviewFormatsPolicyExplanation is issue #45's acceptance criterion in
+// one test: a realistic Kyverno enforcement rejection travels from the raw
+// payload through the preview to the formatted terminal output a developer
+// actually reads, which must name the policy, the rule, the resource and the
+// engine's own why — before anything is applied.
+func TestPreviewFormatsPolicyExplanation(t *testing.T) {
+	c := newCluster()
+	c.seedLive(liveDeployment())
+	msg := fmt.Sprintf("resource [%s/checkout] was blocked due to the following policies\n\nrequire-safe-image:\n  require-nonlatest-tag: image 'nginx:latest' uses the 'latest' tag", tNS)
+	c.handle = func(obj *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+		return nil, apierrors.NewForbidden(
+			schema.GroupResource{Group: "apps", Resource: "deployments"}, "checkout",
+			fmt.Errorf("%s", msg))
+	}
+	e := newEngine(t, c)
+
+	dep := manifest(t, "apps/v1", "Deployment", "checkout", tNS,
+		map[string]any{"spec": map[string]any{
+			"selector": map[string]any{"matchLabels": map[string]any{"app": "checkout"}},
+			"template": map[string]any{
+				"metadata": map[string]any{"labels": map[string]any{"app": "checkout"}},
+				"spec": map[string]any{
+					"containers": []any{map[string]any{"name": "web", "image": "nginx:latest"}},
+				},
+			},
+		}})
+	out, err := e.Preview(context.Background(), set(dep))
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if err := diff.Write(&buf, out, false); err != nil {
+		t.Fatalf("format: %v", err)
+	}
+	text := buf.String()
+	for _, want := range []string{
+		"BLOCKED kyverno/require-safe-image rule require-nonlatest-tag",
+		"Deployment/checkout",
+		"image 'nginx:latest' uses the 'latest' tag",
+		"max risk: disruptive",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("formatted preview missing %q:\n%s", want, text)
+		}
+	}
+}
+
+// TestPreviewUnattributableRejectionIsNotFabricated is requirement #3 of issue
+// #45: a rejection we cannot recognise must become an Unvalidated entry (we
+// could not attribute it) — never a fabricated policy name for an agent or a
+// human to chase. The detected policy engines shape the explanation, and the
+// resource still carries a disruptive risk so a CI gate keeps blocking.
+func TestPreviewUnattributableRejectionIsNotFabricated(t *testing.T) {
+	c := newCluster()
+	c.seedLive(liveDeployment())
+	c.handle = func(obj *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+		return nil, apierrors.NewConflict(
+			schema.GroupResource{Group: "apps", Resource: "deployments"}, "checkout",
+			errors.New("resource version mismatch"))
+	}
+	e := newEngineWithProfile(t, c, clusterprofile.ClusterProfile{
+		PolicyEngines: []clusterprofile.PolicyEngine{{Name: "kyverno"}},
+	})
+
+	dep := manifest(t, "apps/v1", "Deployment", "checkout", tNS,
+		map[string]any{"spec": map[string]any{
+			"selector": map[string]any{"matchLabels": map[string]any{"app": "checkout"}},
+			"template": map[string]any{
+				"metadata": map[string]any{"labels": map[string]any{"app": "checkout"}},
+				"spec": map[string]any{
+					"containers": []any{map[string]any{"name": "web", "image": "nginx:1.20"}},
+				},
+			},
+		}})
+	out, err := e.Preview(context.Background(), set(dep))
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	if len(out.Violations) != 0 {
+		t.Fatalf("an unattributable rejection must not be dressed up as a policy violation: %+v", out.Violations)
+	}
+	var u *diff.Unvalidated
+	for i := range out.Unvalidated {
+		if out.Unvalidated[i].Resource == "Deployment/checkout" {
+			u = &out.Unvalidated[i]
+		}
+	}
+	if u == nil {
+		t.Fatalf("expected an unvalidated entry for the unattributable rejection, got %+v", out.Unvalidated)
+	}
+	if u.InBatch {
+		t.Error("InBatch = true for an unattributable rejection; it has no pending prerequisite")
+	}
+	if !strings.Contains(u.Message, "admission-policy engines") {
+		t.Errorf("explanation should reflect the detected engines: %q", u.Message)
+	}
+	r := findResource(t, out, "Deployment")
+	if r.Risk != diff.RiskDisruptive {
+		t.Errorf("resource risk = %q, want disruptive (a CI gate must block)", r.Risk)
+	}
+	if out.Summary.MaxRisk != diff.RiskDisruptive {
+		t.Errorf("maxRisk = %q, want disruptive", out.Summary.MaxRisk)
+	}
+}
+
+// TestUnattributedMessageUsesPolicyEngines pins requirement #3: the fallback
+// wording must point away from policy on a cluster running none, and flag the
+// possibility on one that runs engines — never guessing which policy fired.
+func TestUnattributedMessageUsesPolicyEngines(t *testing.T) {
+	noEngines := clusterprofile.ClusterProfile{}
+	withEngines := clusterprofile.ClusterProfile{
+		PolicyEngines: []clusterprofile.PolicyEngine{{Name: "kyverno", Version: "1.12"}},
+	}
+
+	plain := unattributedMessage(noEngines, "boom")
+	if !strings.Contains(plain, "no policy engine") {
+		t.Errorf("no-engine message should say it is not a policy finding: %q", plain)
+	}
+	with := unattributedMessage(withEngines, "boom")
+	if !strings.Contains(with, "admission-policy engines") {
+		t.Errorf("with-engines message should flag a possible policy rejection: %q", with)
+	}
+	if !strings.Contains(with, "boom") {
+		t.Errorf("message must keep the API server's own wording: %q", with)
 	}
 }
 

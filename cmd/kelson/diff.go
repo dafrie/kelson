@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dafrie/kelson/internal/clusterprofile"
 	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/delivery/dryrun"
 	"github.com/dafrie/kelson/internal/delivery/kube"
@@ -38,8 +39,10 @@ type diffRunner interface {
 
 // newDiffCmdFactory builds `kelson diff` with an injectable L2 engine
 // constructor. Production uses newServerDryRun; tests inject a dryrun engine
-// backed by a fake cluster.
-func newDiffCmdFactory(newServer func(kubeconfig string) (diffRunner, error)) *cobra.Command {
+// backed by a fake cluster. The factory receives the resolved ClusterProfile
+// so the L2 engine can consult HasPolicyEngine() when attributing a rejection
+// (issue #45).
+func newDiffCmdFactory(newServer func(kubeconfig string, profile clusterprofile.ClusterProfile) (diffRunner, error)) *cobra.Command {
 	opts := &diffOptions{newServer: newServer}
 	cmd := &cobra.Command{
 		Use:   "diff -f spec.yaml --env <name> [--from <spec.yaml>] [--dry-run render|server]",
@@ -88,7 +91,7 @@ type diffOptions struct {
 	kubeconfig string
 	output     string
 	noColor    bool
-	newServer  func(kubeconfig string) (diffRunner, error)
+	newServer  func(kubeconfig string, profile clusterprofile.ClusterProfile) (diffRunner, error)
 }
 
 // newServerDryRun constructs the live L2 engine. The Kubernetes client
@@ -100,16 +103,16 @@ type diffOptions struct {
 // error, and silently downgrading a requested server-side preview would give a
 // CI gate a clean answer it did not earn. Losing dry-run *permission* is a
 // different case, handled inside the engine as a reported degradation.
-func newServerDryRun(kubeconfig string) (diffRunner, error) {
+func newServerDryRun(kubeconfig string, profile clusterprofile.ClusterProfile) (diffRunner, error) {
 	cluster, err := kube.Connect(kubeconfig)
 	if err != nil {
 		return nil, err
 	}
-	return dryrun.New(dryrun.Options{Client: cluster.Dynamic, Mapper: cluster.Mapper})
+	return dryrun.New(dryrun.Options{Client: cluster.Dynamic, Mapper: cluster.Mapper, ClusterProfile: profile})
 }
 
 func runDiff(cmd *cobra.Command, opts *diffOptions) error {
-	project, environment, cur, err := resolveAndRender(opts.files, opts.env, opts.profile, opts.kubeconfig)
+	project, environment, cur, profile, err := resolveAndRender(opts.files, opts.env, opts.profile, opts.kubeconfig)
 	if err != nil {
 		return err
 	}
@@ -117,7 +120,7 @@ func runDiff(cmd *cobra.Command, opts *diffOptions) error {
 	var d *diff.Diff
 	switch strings.ToLower(opts.dryRun) {
 	case "server":
-		d, err = opts.runServer(cmd.Context(), project, environment, cur)
+		d, err = opts.runServer(cmd.Context(), project, environment, cur, profile)
 	case "render", "":
 		d, err = runRenderedDiff(project, environment, opts, cur)
 	default:
@@ -144,7 +147,7 @@ func runDiff(cmd *cobra.Command, opts *diffOptions) error {
 func runRenderedDiff(project *model.Project, environment *model.Environment, opts *diffOptions, cur []renderer.Manifest) (*diff.Diff, error) {
 	var prev []renderer.Manifest
 	if opts.from != "" {
-		_, _, fromManifests, err := resolveAndRender([]string{opts.from}, environment.Metadata.Name, opts.profile, opts.kubeconfig)
+		_, _, fromManifests, _, err := resolveAndRender([]string{opts.from}, environment.Metadata.Name, opts.profile, opts.kubeconfig)
 		if err != nil {
 			return nil, err
 		}
@@ -155,11 +158,11 @@ func runRenderedDiff(project *model.Project, environment *model.Environment, opt
 
 // runServer drives the L2 engine (--dry-run=server). It is the only path that
 // can touch a cluster, keeping --dry-run=render free of any client.
-func (opts *diffOptions) runServer(ctx context.Context, project *model.Project, environment *model.Environment, cur []renderer.Manifest) (*diff.Diff, error) {
+func (opts *diffOptions) runServer(ctx context.Context, project *model.Project, environment *model.Environment, cur []renderer.Manifest, profile clusterprofile.ClusterProfile) (*diff.Diff, error) {
 	if opts.newServer == nil {
 		return nil, errors.New("--dry-run=server is unavailable in this build")
 	}
-	engine, err := opts.newServer(opts.kubeconfig)
+	engine, err := opts.newServer(opts.kubeconfig, profile)
 	if err != nil {
 		return nil, err
 	}

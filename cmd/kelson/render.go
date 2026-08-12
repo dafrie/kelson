@@ -52,7 +52,7 @@ type renderOptions struct {
 }
 
 func runRender(cmd *cobra.Command, opts *renderOptions) error {
-	_, _, manifests, err := resolveAndRender(opts.files, opts.env, opts.profile, opts.kubeconfig)
+	_, _, manifests, _, err := resolveAndRender(opts.files, opts.env, opts.profile, opts.kubeconfig)
 	if err != nil {
 		return err
 	}
@@ -73,31 +73,33 @@ func runRender(cmd *cobra.Command, opts *renderOptions) error {
 // resolveAndRender runs the shared spec pipeline: load the -f spec files,
 // select the environment, resolve and render. It is the single place render
 // and diff (issue #46) build the current manifest set, so the two commands
-// cannot drift on what "the current render" means.
-func resolveAndRender(files []string, env, profile, kubeconfig string) (*model.Project, *model.Environment, []renderer.Manifest, error) {
+// cannot drift on what "the current render" means. It returns the resolved
+// ClusterProfile too, so `kelson diff --dry-run=server` can hand it to the L2
+// engine (issue #45) instead of resolving it a second time.
+func resolveAndRender(files []string, env, profile, kubeconfig string) (*model.Project, *model.Environment, []renderer.Manifest, clusterprofile.ClusterProfile, error) {
 	profileValue, err := resolveProfile(profile, kubeconfig)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, clusterprofile.ClusterProfile{}, err
 	}
 
 	project, environments, specDirs, err := loadSpecFiles(files)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, clusterprofile.ClusterProfile{}, err
 	}
 	environment, err := selectEnvironment(environments, env)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, clusterprofile.ClusterProfile{}, err
 	}
 	resolved, errs := model.Resolve(project, environment)
 	if len(errs) > 0 {
-		return nil, nil, nil, errs
+		return nil, nil, nil, clusterprofile.ClusterProfile{}, errs
 	}
 
 	manifests, err := renderer.Render(resolved, profileValue, overlayResolver(specDirs))
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, clusterprofile.ClusterProfile{}, err
 	}
-	return project, environment, manifests, nil
+	return project, environment, manifests, profileValue, nil
 }
 
 // resolveProfile loads the ClusterProfile input. An empty flag renders

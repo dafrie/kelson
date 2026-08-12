@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dafrie/kelson/internal/clusterprofile"
 	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/diff"
 )
@@ -23,7 +24,7 @@ import (
 // those imports out of cmd, so the CI-gate tests drive the command through
 // this seam and assert the mapping from a preview verdict to exit code and
 // rendering (issue #46).
-func rootWithEngine(factory func(string) (diffRunner, error)) *cobra.Command {
+func rootWithEngine(factory func(string, clusterprofile.ClusterProfile) (diffRunner, error)) *cobra.Command {
 	root := newRootCmd()
 	for _, c := range root.Commands() {
 		if c.Name() == "diff" {
@@ -35,7 +36,7 @@ func rootWithEngine(factory func(string) (diffRunner, error)) *cobra.Command {
 	return root
 }
 
-func runEngineKelson(t *testing.T, factory func(string) (diffRunner, error), args ...string) (stdout, stderr string, code int, msg string) {
+func runEngineKelson(t *testing.T, factory func(string, clusterprofile.ClusterProfile) (diffRunner, error), args ...string) (stdout, stderr string, code int, msg string) {
 	t.Helper()
 	cmd := rootWithEngine(factory)
 	var outBuf, errBuf bytes.Buffer
@@ -70,7 +71,7 @@ func writeSpec(t *testing.T, dir, name, imageVersion string) string {
 // reports every resource as an addition (no --from, no history).
 func TestDiffRenderWorksWithoutCluster(t *testing.T) {
 	spec := writeSpec(t, t.TempDir(), "spec.yaml", "1.4.2")
-	stdout, _, code, _ := runEngineKelson(t, func(string) (diffRunner, error) {
+	stdout, _, code, _ := runEngineKelson(t, func(string, clusterprofile.ClusterProfile) (diffRunner, error) {
 		t.Fatal("render mode must never construct a server engine")
 		return nil, nil
 	}, "diff", "-f", spec, "--dry-run=render")
@@ -151,8 +152,8 @@ func TestDiffJSONUnmarshalsIntoDiff(t *testing.T) {
 // verdict, so the command's CI-gate behaviour is tested against a fixed server
 // opinion without a cluster. verdict is returned as-is; err, when non-nil,
 // is returned instead (simulating an unreachable cluster).
-func previewEngine(verdict *diff.Diff, err error) func(string) (diffRunner, error) {
-	return func(string) (diffRunner, error) {
+func previewEngine(verdict *diff.Diff, err error) func(string, clusterprofile.ClusterProfile) (diffRunner, error) {
+	return func(string, clusterprofile.ClusterProfile) (diffRunner, error) {
 		return diffRunnerFunc(func(context.Context, delivery.ManifestSet) (*diff.Diff, error) { return verdict, err }), nil
 	}
 }
