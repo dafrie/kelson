@@ -37,6 +37,8 @@ nav:
   - Reference:
       - Project spec: reference/project.md
       - Environment spec: reference/environment.md
+  - Research:
+      - Score as an input format: research/score-as-input-format.md
   - ADRs:
       - Index: adr/README.md
       - 0001 — Hybrid state model: adr/0001-hybrid-state-model.md

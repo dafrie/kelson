@@ -9,6 +9,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dafrie/kelson/internal/delivery"
+	"github.com/dafrie/kelson/internal/delivery/dryrun"
+	"github.com/dafrie/kelson/internal/delivery/kube"
 	"github.com/dafrie/kelson/internal/diff"
 	"github.com/dafrie/kelson/internal/model"
 	"github.com/dafrie/kelson/internal/renderer"
@@ -37,7 +39,7 @@ type diffRunner interface {
 // newDiffCmdFactory builds `kelson diff` with an injectable L2 engine
 // constructor. Production uses newServerDryRun; tests inject a dryrun engine
 // backed by a fake cluster.
-func newDiffCmdFactory(newServer func() (diffRunner, error)) *cobra.Command {
+func newDiffCmdFactory(newServer func(kubeconfig string) (diffRunner, error)) *cobra.Command {
 	opts := &diffOptions{newServer: newServer}
 	cmd := &cobra.Command{
 		Use:   "diff -f spec.yaml --env <name> [--from <spec.yaml>] [--dry-run render|server]",
@@ -71,30 +73,39 @@ func newDiffCmdFactory(newServer func() (diffRunner, error)) *cobra.Command {
 	f.StringVar(&opts.from, "from", "", "previous spec YAML file to compare against (render mode); with no --from everything is reported as an addition")
 	f.StringVar(&opts.dryRun, "dry-run", "render", "fidelity of the preview: render (offline, L1) or server (cluster access, L2)")
 	f.StringVar(&opts.output, "output", "", "output format: empty for the terminal report, or json for the structured diff")
+	f.StringVar(&opts.kubeconfig, "kubeconfig", "", "path to a kubeconfig for --dry-run=server (default: $KUBECONFIG, in-cluster credentials, then ~/.kube/config)")
 	f.BoolVar(&opts.noColor, "no-color", false, "disable ANSI colour even on a terminal (also honoured via NO_COLOR)")
 	cobra.CheckErr(cmd.MarkFlagRequired("file"))
 	return cmd
 }
 
 type diffOptions struct {
-	files     []string
-	env       string
-	profile   string
-	from      string
-	dryRun    string
-	output    string
-	noColor   bool
-	newServer func() (diffRunner, error)
+	files      []string
+	env        string
+	profile    string
+	from       string
+	dryRun     string
+	kubeconfig string
+	output     string
+	noColor    bool
+	newServer  func(kubeconfig string) (diffRunner, error)
 }
 
-// newServerDryRun constructs the live L2 engine. Building a dynamic client and
-// REST mapper from a kubeconfig needs the Kubernetes client libraries, which
-// the command plane's lint allow-list forbids — that construction belongs
-// behind the delivery plane (issue #46). Until a delivery-plane client
-// constructor exists, requesting server mode fails loudly; it never falls
-// back to render silently. --dry-run=render is unaffected and fully offline.
-func newServerDryRun() (diffRunner, error) {
-	return nil, errors.New("--dry-run=server needs a live cluster client, which is not wired up yet: constructing it belongs behind the delivery plane. Use --dry-run=render for an offline L1 diff")
+// newServerDryRun constructs the live L2 engine. The Kubernetes client
+// libraries are forbidden here by the command plane's lint allow-list, so the
+// connection is built behind the delivery plane by kube.Connect and this
+// function only assembles the engine from it (issue #46).
+//
+// It never falls back to render on failure: an unreachable cluster is a real
+// error, and silently downgrading a requested server-side preview would give a
+// CI gate a clean answer it did not earn. Losing dry-run *permission* is a
+// different case, handled inside the engine as a reported degradation.
+func newServerDryRun(kubeconfig string) (diffRunner, error) {
+	cluster, err := kube.Connect(kubeconfig)
+	if err != nil {
+		return nil, err
+	}
+	return dryrun.New(dryrun.Options{Client: cluster.Dynamic, Mapper: cluster.Mapper})
 }
 
 func runDiff(cmd *cobra.Command, opts *diffOptions) error {
@@ -148,7 +159,7 @@ func (opts *diffOptions) runServer(ctx context.Context, project *model.Project, 
 	if opts.newServer == nil {
 		return nil, errors.New("--dry-run=server is unavailable in this build")
 	}
-	engine, err := opts.newServer()
+	engine, err := opts.newServer(opts.kubeconfig)
 	if err != nil {
 		return nil, err
 	}

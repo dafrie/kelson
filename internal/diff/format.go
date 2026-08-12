@@ -205,9 +205,11 @@ func writeSummary(b *strings.Builder, s Summary, color bool) {
 		b.WriteString(riskANSICode(s.MaxRisk))
 		b.WriteString(line)
 		b.WriteString(ansiReset)
+		b.WriteString("\n")
 		return
 	}
 	b.WriteString(line)
+	b.WriteString("\n")
 }
 
 // valueString renders a Before/After value compactly for the terminal.
