@@ -20,14 +20,16 @@ Deliberately trimmed:
 
 | Deferred from v0.1 | Why |
 |---|---|
-| Argo CD adapter (#35) | Flux proves the Git path. Argo is the same shape. |
-| Buildpacks (#49) | Dockerfile covers most repos. Zero-config builds are the least differentiating work on the critical path. |
-| `kelson eject` (#41) | The non-destructive uninstall test (#59) is the stronger deletability proof and it ships. |
+| Buildpacks (#49) | Dockerfile covers most repos. Zero-config builds are the least differentiating work on the critical path. Note [ADR-0010](adr/0010-build-strategy.md) makes Buildpacks the eventual *default*, so this defers the default, not the decision. |
 | Release history UI (#67) | The API has it; the UI can wait. |
 | external-secrets (#80) | SOPS + age (#81) is more self-contained for a bootstrapped cluster. ESO follows. |
-| Score research (#31) | Interop, not core. |
 | MySQL | The operator landscape is materially weaker than CNPG. Two engines done properly beats three half-supported. |
 | M10–M16 | See the phase tables below. |
+
+**Three deferrals were reversed by shipping early.** The Argo CD adapter (#35) and `kelson eject` (#41)
+both landed with M2, because the adapter interface made the third adapter cheap and eject fell out of the
+rendered-history store. The Score question (#31) was answered rather than postponed:
+[an importer, not an input format](research/score-as-input-format.md), scheduled as #131 in M15.
 
 **M9 moved into v0.1 and grew.** Managed Postgres is the feature people ask about first, and shipping
 without it would have made v0.1 hard to use for a real application. It now also carries database branching,
@@ -83,7 +85,7 @@ by golden tests.
 | Milestone | Scope |
 |---|---|
 | **M14 · Day-2 & scaling** | HPA/KEDA, cron, workers, progressive delivery, resource recommendations |
-| **M15 · Catalog & ecosystem** | Service catalog, plugin API, Score importer, `kelson eject` |
+| **M15 · Catalog & ecosystem** | Service catalog, plugin API, Score importer (#131) |
 | **M16 · Full bootstrap** | Talos, multi-node, node addition, upgrades, control-plane DR |
 
 ---
