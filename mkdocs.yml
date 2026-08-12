@@ -38,6 +38,7 @@ nav:
       - Project spec: reference/project.md
       - Environment spec: reference/environment.md
   - Research:
+      - Build strategy selection: research/build-strategy-selection.md
       - Score as an input format: research/score-as-input-format.md
   - ADRs:
       - Index: adr/README.md
@@ -50,6 +51,7 @@ nav:
       - 0007 — Data services: adr/0007-data-services.md
       - 0008 — MCP surface: adr/0008-mcp-surface.md
       - 0009 — Secrets: adr/0009-secrets.md
+      - 0010 — Build strategy: adr/0010-build-strategy.md
 
 markdown_extensions:
   - admonition
