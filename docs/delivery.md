@@ -43,7 +43,10 @@ three answers that must never be confused:
    health detail.
 
 Every failure transition carries a `Cause` naming the responsible component
-and the reason.
+and the reason. The engine, the transition table, provenance correlation and
+the timeout policy are specified in [the state machine](statemachine.md)
+(`internal/delivery/statemachine`); adapters plug into it by implementing a
+single watch-based `Source`.
 
 ### History, uniform across modes
 
