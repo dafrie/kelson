@@ -78,16 +78,22 @@ func TestRenderWithProfile(t *testing.T) {
 	}
 }
 
-// TestRenderFromCluster: live profile capture is a CLI concern outside the
-// renderer — until implemented, it is an explicit error, never silent.
+// TestRenderFromCluster: capture is a CLI concern outside the renderer. The
+// command must not silently fall back to a zero profile when it cannot reach a
+// cluster — an explicit error is the only honest answer, so `--profile
+// from-cluster` without usable credentials fails loudly instead of rendering
+// offline as if nothing were installed.
 func TestRenderFromCluster(t *testing.T) {
 	project, env := examplesHello(t)
-	_, _, err := runKelson(t, "render", "-f", project, "-f", env, "--profile", "from-cluster")
+	stdout, _, err := runKelson(t, "render", "-f", project, "-f", env, "--profile", "from-cluster")
 	if err == nil {
-		t.Fatalf("expected from-cluster to fail until implemented")
+		t.Fatalf("expected from-cluster to fail without cluster credentials")
 	}
-	if !strings.Contains(err.Error(), "not implemented") {
-		t.Fatalf("expected a clear not-implemented error, got: %v", err)
+	if !strings.Contains(err.Error(), "credentials") && !strings.Contains(err.Error(), "refused") {
+		t.Fatalf("expected a credentials/connection error, got: %v", err)
+	}
+	if strings.Contains(stdout, "kind: Deployment") {
+		t.Fatalf("from-cluster without a cluster must not render offline:\n%s", stdout)
 	}
 }
 
