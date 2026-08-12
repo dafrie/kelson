@@ -85,6 +85,23 @@ func Conflict(resource, field, msg, remediation string) Error {
 	return newError(ErrConflicted, resource, field, msg, remediation)
 }
 
+// NotProvenanced is a helper to report a prune candidate kelson does not own
+// (issue #33). It is a refusal, not a failure: the resource is left untouched.
+func NotProvenanced(resource, field, msg, remediation string) Error {
+	return newError(ErrNotProvenanced, resource, field, msg, remediation)
+}
+
+// AsNotProvenanced reports whether err is a delivery/not-provenanced refusal.
+func AsNotProvenanced(err error) bool {
+	var de Error
+	return errors.As(err, &de) && de.Code == ErrNotProvenanced
+}
+
+// ApplyFailed is a helper to report a generic last-mile failure.
+func ApplyFailed(resource, field, msg, remediation string) Error {
+	return newError(ErrApplyFailed, resource, field, msg, remediation)
+}
+
 // UnsupportedError reports a capability mismatch (issue #32).
 func UnsupportedError(adapter, op string) error {
 	return newError(ErrUnsupported, adapter, op,
