@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -37,6 +38,7 @@ var (
 	cpuRE        = regexp.MustCompile(`^(\d+|\d*\.\d+)m?$`)
 	memoryRE     = regexp.MustCompile(`^\d+(Ei|Pi|Ti|Gi|Mi|Ki|E|P|T|G|M|K)?$`)
 	cronFieldRE  = regexp.MustCompile(`^[\d*,\-/]+$|^[A-Za-z]{3}$`)
+	cronNameRE   = regexp.MustCompile(`^[A-Za-z]{3}$`)
 	secretNameRE = regexp.MustCompile(`(?i)(PASSWORD|PASSWD|SECRET|TOKEN|API[_-]?KEY|PRIVATE[_-]?KEY|CREDENTIAL|_AUTH)`)
 	envVarNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 )
@@ -185,7 +187,29 @@ func (v *validator) resources(field string, r *Resources) {
 	check(field+".limits", r.Limits)
 }
 
-// cron validates a five-field cron expression field by field.
+// cronField names one of the five cron positions and its inclusive numeric
+// bounds. Kubernetes CronJob parses the schedule with robfig/cron's standard
+// 5-field parser, so these mirror that parser's bounds rather than inventing
+// our own (issue #143) — day-of-week keeps both 0 and 7 as Sunday, matching
+// crontab(5) rather than robfig's stricter 0-6.
+type cronField struct {
+	name     string
+	min, max int
+}
+
+var cronFields = [5]cronField{
+	{"minute", 0, 59},
+	{"hour", 0, 23},
+	{"day-of-month", 1, 31},
+	{"month", 1, 12},
+	{"day-of-week", 0, 7},
+}
+
+// cron validates a five-field cron expression field by field: shape first
+// (cronFieldRE), then numeric bounds. A shape-valid field like "99" used to
+// reach the CronJob unchecked and fail only when applied to the cluster
+// (issue #143), instead of at validation time where the field path and a fix
+// are available.
 func (v *validator) cron(field, s string) {
 	fields := strings.Fields(s)
 	if len(fields) != 5 {
@@ -199,8 +223,70 @@ func (v *validator) cron(field, s string) {
 			v.err(ErrInvalidFormat, field,
 				fmt.Sprintf("cron field %d %q is not valid", i+1, f),
 				"use numbers, ranges, steps and *, e.g. \"*/15 2-4 * * 1-5\"; month/day names (JAN, MON) are allowed")
+			continue
+		}
+		if cronNameRE.MatchString(f) {
+			continue // a bare 3-letter name (JAN, MON, ...) has no numeric bound to check
+		}
+		spec := cronFields[i]
+		if reason := cronRangeError(f, spec); reason != "" {
+			v.err(ErrOutOfRange, field,
+				fmt.Sprintf("cron field %d (%s) %q %s", i+1, spec.name, f, reason),
+				fmt.Sprintf("%s must be between %d and %d", spec.name, spec.min, spec.max))
 		}
 	}
+}
+
+// cronRangeError checks one already shape-valid cron field against its
+// numeric bounds. It covers every form cronFieldRE accepts: *, a bare number,
+// a range (a-b), a step (base/n, including */n), and a comma-separated list
+// of any of those. Returns "" when every item is in bounds.
+func cronRangeError(field string, spec cronField) string {
+	for _, item := range strings.Split(field, ",") {
+		if reason := cronItemRangeError(item, spec); reason != "" {
+			return reason
+		}
+	}
+	return ""
+}
+
+// cronItemRangeError checks one list item (no commas) of a cron field.
+func cronItemRangeError(item string, spec cronField) string {
+	base, step, hasStep := strings.Cut(item, "/")
+	if hasStep {
+		n, err := strconv.Atoi(step)
+		if err != nil || n <= 0 {
+			return fmt.Sprintf("has step %q, which must be a positive integer", step)
+		}
+	}
+	if base == "*" {
+		return ""
+	}
+	if lo, hi, isRange := strings.Cut(base, "-"); isRange {
+		start, errStart := strconv.Atoi(lo)
+		end, errEnd := strconv.Atoi(hi)
+		if errStart != nil || errEnd != nil {
+			return fmt.Sprintf("has a malformed range %q", base)
+		}
+		if start < spec.min || start > spec.max {
+			return fmt.Sprintf("has range start %d outside %d-%d", start, spec.min, spec.max)
+		}
+		if end < spec.min || end > spec.max {
+			return fmt.Sprintf("has range end %d outside %d-%d", end, spec.min, spec.max)
+		}
+		if start > end {
+			return fmt.Sprintf("has range %d-%d with start after end", start, end)
+		}
+		return ""
+	}
+	n, err := strconv.Atoi(base)
+	if err != nil {
+		return fmt.Sprintf("has a malformed value %q", base)
+	}
+	if n < spec.min || n > spec.max {
+		return fmt.Sprintf("value %d is outside %d-%d", n, spec.min, spec.max)
+	}
+	return ""
 }
 
 func (v *validator) overlay(field string, o Overlay) {

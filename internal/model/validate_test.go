@@ -392,3 +392,53 @@ spec:
 		t.Errorf("build.strategy none without image must fail, got %v", errs)
 	}
 }
+
+// TestCronFieldRanges covers issue #143: cronFieldRE only checked shape, so a
+// schedule like "99 * * * *" passed validation and failed only once applied
+// to the cluster as a CronJob. Bounds mirror what Kubernetes' CronJob accepts
+// (robfig/cron's standard 5-field parser), field by field, with no
+// cross-field check (schedule "0 0 31 2 *" is accepted here even though no
+// February has a 31st — that is deliberately out of scope).
+func TestCronFieldRanges(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		schedule string
+		wantErr  bool
+	}{
+		{"plain schedule", "0 3 * * *", false},
+		{"ranges, steps and lists", "*/15 2-4 * * 1-5", false},
+		{"no cross-field check", "0 0 31 2 *", false},
+		{"month name", "0 0 1 JAN *", false},
+		{"day-of-week name", "0 0 * * MON", false},
+		{"day-of-week 0 is Sunday", "0 0 * * 0", false},
+		{"day-of-week 7 is also Sunday", "0 0 * * 7", false},
+		{"minute out of range", "99 * * * *", true},
+		{"hour out of range", "* 24 * * *", true},
+		{"step of zero", "*/0 * * * *", true},
+		{"range end out of range", "5-99 * * * *", true},
+		{"day-of-month zero", "0 0 0 * *", true},
+		{"day-of-week out of range", "0 0 * * 8", true},
+		{"month out of range", "0 0 1 13 *", true},
+		{"list member out of range", "0 0 * * 1,2,8", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, errs := DecodeDocuments([]byte(`
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata: {name: p}
+spec:
+  image: i:1
+  applications:
+    - name: nightly
+      schedule: "` + tc.schedule + `"
+`))
+			hasRangeErr := slices.Contains(errs.Codes(), ErrOutOfRange)
+			if tc.wantErr && !hasRangeErr {
+				t.Errorf("schedule %q: want an out-of-range error, got %v", tc.schedule, errs)
+			}
+			if !tc.wantErr && len(errs) != 0 {
+				t.Errorf("schedule %q: want no errors, got %v", tc.schedule, errs)
+			}
+		})
+	}
+}
