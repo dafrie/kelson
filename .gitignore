@@ -3,8 +3,10 @@
 *.test
 *.out
 
-# MkDocs
-site/
+# Docs site (Docusaurus)
+website/build/
+website/.docusaurus/
+website/.cache-loader/
 
 # Go
 /vendor/

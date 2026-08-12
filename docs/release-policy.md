@@ -113,7 +113,7 @@ gets the deprecation warning they need *before* the removal lands.
   system's normal mechanism (a Git revert reconciled by Flux).
 - A kelson upgrade never rewrites a working spec; it may re-render different
   bytes from the same spec, gated by the deprecation rules above. **A kelson
-  uninstall must not break a running application** ([README](../README.md#whats-different))
+  uninstall must not break a running application** ([README](https://github.com/dafrie/kelson#whats-different))
   — the rendered manifests stay behind, plain YAML, owner-unsupported.
 
 ## Spec compatibility promise
