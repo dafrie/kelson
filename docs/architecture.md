@@ -21,8 +21,7 @@ properties fall out of keeping them honest.
 ┌─────────────────────────────▼────────────────────────────────────────┐
 │  DELIVERY           pluggable adapter, identical input                │
 │                     ├── direct    kelson server-side applies          │
-│                     ├── flux      commit → GitRepository → Kustomize  │
-│                     └── argocd    commit → Application → sync         │
+│                     └── flux      commit → GitRepository → Kustomize  │
 └─────────────────────────────┬────────────────────────────────────────┘
                               │
 ┌─────────────────────────────▼────────────────────────────────────────┐
@@ -77,7 +76,7 @@ spec:
   services:
     - name: db
       type: postgres
-      plan: ha-small        # → CloudNativePG Cluster with PITR
+      plan: ha-small        # topology preset → CloudNativePG Cluster with PITR (field renamed to `preset:` by #146)
 
   applications:
     - name: web
@@ -139,9 +138,12 @@ rendered from "it isn't there" are indistinguishable afterwards — and only one
 the same rule preview follows for policy: *checked and failing* and *could not check* never collapse into
 one answer.
 
-The renderer takes this as an input. Same spec, different cluster, correct output: `HTTPRoute` where
-Gateway API exists and `Ingress` where it doesn't; a `Certificate` where cert-manager is present rather
-than kelson running its own ACME client; a `ServiceMonitor` only if something will read it.
+The renderer takes this as an input. Same spec, different cluster, correct output: a `Certificate`
+where cert-manager is present rather than kelson running its own ACME client; a `ServiceMonitor` only
+if something will read it. Routing is **Gateway API only** — a cluster without Gateway API is a hard,
+loudly-reported capability gap with an offer to install a Gateway implementation (#140), never a
+silent fallback. `ingressClasses` stays in the profile as advisory data: it powers the migration
+nudge for clusters running retired ingress controllers, and is never rendered against.
 
 Passing the profile explicitly — rather than having the renderer query the cluster — is what keeps
 rendering pure and golden-testable across arbitrary cluster shapes.
@@ -180,7 +182,7 @@ upgrades.
 
 ## Delivery adapters
 
-All three consume identical rendered manifests.
+Both consume identical rendered manifests.
 
 **`direct`** — kelson server-side applies with field management, so ownership conflicts surface as
 conflicts rather than silent overwrites. Rendered output is still versioned (implicit local repo or OCI
@@ -189,11 +191,41 @@ artifact), so direct-mode users keep diffs, history and rollback.
 **`flux`** — commit to the configured repo and path, then poke `flux reconcile` rather than waiting for
 the poll interval. Perceived latency ends up comparable to direct mode.
 
-**`argocd`** — commit, then trigger sync via the Argo API. kelson reads Argo's computed sync and health
-status rather than recomputing its own.
+Flux is the only supported GitOps mode ([ADR-0012](adr/0012-flux-only-gitops.md)). The adapter seam
+stays pluggable — an Argo CD adapter existed, was removed pre-release to keep the feature × mode test
+matrix honest, and may return at "compose with existing Argo" scope.
 
 Delivery mode is **per-environment**, not per-install. Dev can be direct while production goes through
 pull requests. This is the practical shape of the hybrid decision.
+
+## Living with flux-operator
+
+kelson deliberately sits **above** [flux-operator](https://fluxoperator.dev/) rather than beside it:
+kelson is the app-altitude author and observer (spec, capability-aware rendering, diff/dry-run, build,
+app-shaped status, UI/API/MCP); flux-operator is the substrate manager (Flux install and upgrade via
+`FluxInstance`, per-PR preview lifecycle via `ResourceSet` + `ResourceSetInputProvider`, Flux health
+via `FluxReport`, its own Flux-altitude MCP server); the Flux controllers do the reconciling. kelson
+never reconciles in GitOps mode — it writes inputs and reads status.
+
+Four cluster shapes, one install path:
+
+1. **Existing Flux** — adopt. kelson installs nothing, writes rendered manifests to a path an existing
+   `Kustomization` already watches (a path nothing watches is a hard `not-watched` error), and reads
+   status back from Kustomization conditions and `FluxReport` where available.
+2. **No GitOps** — direct mode; or, opting in, kelson installs flux-operator, creates a `FluxInstance`
+   and per-environment `GitRepository`/`Kustomization`, then behaves exactly like shape 1.
+3. **Bare VPS bootstrap** — k3s, then flux-operator, then the same additive installer as shape 2.
+   Bootstrap never forks the install path.
+4. **PR previews** — kelson renders `ResourceSet` templates (containing kelson-rendered app manifests
+   with provenance labels); flux-operator instantiates one environment per labelled pull request and
+   tears it down on close. kelson surfaces these previews, it does not manage their lifecycle.
+
+The division of labour is symmetric: kelson does not reimplement reconciliation, Flux lifecycle or
+PR-preview GC — and `ResourceSet` templating (plain input substitution) does not replace kelson's
+renderer, which is capability-aware via `ClusterProfile`. Integration is CR-only: flux-operator is
+AGPL-3.0 and kelson is MIT, so kelson creates and reads its CRs with the dynamic client and never
+imports its Go modules. For agents, kelson's MCP (app-altitude, [ADR-0008](adr/0008-mcp-surface.md))
+and flux-operator's MCP (Flux-altitude) are complementary layers an agent can hold simultaneously.
 
 ### Upgrading direct → Git
 
@@ -258,9 +290,12 @@ agent safety mechanism — one thing to build, one thing to reason about.
 
 ## Secrets
 
-The spec carries **references, never values**, and a literal is a hard render failure in every delivery
-mode. Enforcing it at the renderer means one rule covers CLI, UI, API and agents — there is no second path
-to secure. Full reasoning in [ADR-0009](adr/0009-secrets.md).
+The spec carries **references, never values**, and the goal is that a literal fails validation in every
+delivery mode. Enforcing it in the shared model validation means one rule covers CLI, UI, API and agents —
+there is no second path to secure. Today's enforcement is honest-but-heuristic: a name pattern plus
+URL-credential detection, which catches the common shapes and misses creatively named literals; making
+the guarantee structural is tracked in [#82](https://github.com/dafrie/kelson/issues/82). Full reasoning
+in [ADR-0009](adr/0009-secrets.md).
 
 Three backends, chosen per Environment. The schema accommodates all three from day one so adding the later
 two is not a breaking change.
@@ -272,7 +307,8 @@ two is not a breaking change.
 | `sops` | Encrypted in Git, age keys | v0.2 |
 
 In v0.1 rendered manifests contain only `secretKeyRef`, and **kelson does not persist secret values** —
-the cluster is the store, read back masked for display. No prerequisites: `kelson secret set FOO=bar`.
+the cluster is the store, read back masked for display. No prerequisites: `kelson secret set FOO=bar`
+(command planned, M8).
 The cost is that secrets are not part of the reproducible artifact, so a cluster rebuild from Git alone
 will not restore them; the v0.2 backends close that for anyone who needs it.
 
@@ -284,23 +320,27 @@ than build arguments or image layers, and no secret value is ever written to a l
 Delegated to CloudNativePG and a Valkey operator, with kelson owning only the application-facing
 abstraction. Full reasoning in [ADR-0007](adr/0007-data-services.md).
 
-**Plans determine topology.** CNPG recommends one database per cluster, which is right for production and
-unaffordable below it — ten apps across three environments is 30 pods and roughly 15 GB before any
-application code runs.
+**Presets determine topology** (the spec field is currently `plan:`, renamed to `preset:` by #146 —
+these are topology presets, not paid tiers; kelson has no paid anything). CNPG recommends one database
+per cluster, which is right for production and unaffordable below it — ten apps across three
+environments is 30 pods and roughly 15 GB before any application code runs.
 
-| Plan | Topology | Branchable | Cost |
+| Preset | Topology | Branchable | Cost |
 |---|---|---|---|
 | `shared` | `Database` CRD in a shared cluster | no | no pod |
 | `small` | dedicated cluster, 1 instance | yes | 1 pod + PVC |
 | `ha-small`, `ha-medium` | dedicated, 3 instances, synchronous | as source | 3 pods |
 | `branch` | dedicated, bootstrapped from a source | is a branch | 1 pod + PVC |
 
-Plan is an Environment-level override, so one Project spec covers `shared` in development and `ha-small`
-in production.
+The preset is an Environment-level override, so one Project spec covers `shared` in development and
+`ha-small` in production.
 
-**Branching** works everywhere and is fast where storage cooperates. CSI snapshots are PVC-level and a CNPG
-cluster's PVC is the whole cluster, so a database cannot be branched out of a shared cluster — branching
-snapshots a dedicated source and bootstraps a new dedicated cluster from it.
+**Branching** (v0.2 — [M9b](https://github.com/dafrie/kelson/milestone/18)) works on every *dedicated*
+preset and is fast where storage cooperates. It does **not** work on `shared` — the default development
+preset — because CSI snapshots are PVC-level and a CNPG cluster's PVC is the whole cluster, so a
+database cannot be branched out of a shared cluster. Branching snapshots a dedicated source and
+bootstraps a new dedicated cluster from it, and the UI says which presets are branchable at the point
+of use.
 
 | Mechanism | Requires | Speed | Storage |
 |---|---|---|---|
@@ -311,9 +351,11 @@ snapshots a dedicated source and bootstraps a new dedicated cluster from it.
 | Empty plus migrations | nothing | seconds | minimal |
 
 kelson selects from `ClusterProfile` and reports which mechanism it used, with the expected duration and
-storage cost, before the operation starts. k3s ships local-path, which has no snapshot driver at all, so
-the bootstrap path gets restore-based branching until a user opts into snapshot-capable storage — and the
-UI says so at the point of use rather than leaving it to be discovered.
+storage cost, before the operation starts. k3s ships local-path, which has no snapshot driver at all —
+and restore-based branching requires an object store, which a bare-VPS bootstrap does not have either.
+That path gets logical dump/restore or empty-plus-migrations until the user configures an object store
+or opts into snapshot-capable storage — and the UI says so at the point of use rather than leaving it to
+be discovered.
 
 The flagship use is not preview databases. It is **branch production as of ten minutes ago, run the
 migration against it, and see what breaks** — which falls straight out of CNPG's point-in-time recovery.
@@ -328,7 +370,7 @@ Two invariants: backups are configured **once per environment**, never per datab
 | `kelson-server` | Go | API, renderer, delivery adapters, observation, policy |
 | `kelson-controller` | Go, controller-runtime | Reconciles CRDs in direct mode; ClusterProfile detection |
 | `kelson` (CLI) | Go | Local render/diff/deploy; single static binary |
-| `kelson-mcp` | Go | MCP server; thin adapter over the API |
+| `kelson-mcp` | Go | MCP server; task-shaped surface with capability parity to the API ([ADR-0008](adr/0008-mcp-surface.md)) |
 | `kelson-ui` | TypeScript / React | Web UI |
 
 API transport: ConnectRPC (gRPC and HTTP/JSON from one schema definition, giving the CLI, UI and MCP

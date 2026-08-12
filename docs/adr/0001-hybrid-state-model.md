@@ -1,6 +1,6 @@
 # ADR-0001: Hybrid state model — one renderer, pluggable delivery
 
-- **Status:** Accepted
+- **Status:** Accepted (Argo CD adapter scope superseded by [ADR-0012](0012-flux-only-gitops.md), 2026-08-12)
 - **Date:** 2026-08-11
 
 ## Context

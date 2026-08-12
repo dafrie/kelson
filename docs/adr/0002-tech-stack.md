@@ -1,6 +1,6 @@
 # ADR-0002: Go control plane, TypeScript/React UI
 
-- **Status:** Accepted (transport reviewed and accepted 2026-08-12)
+- **Status:** Accepted (transport reviewed and accepted 2026-08-12; MCP framing superseded by [ADR-0008](0008-mcp-surface.md); Argo CD scope superseded by [ADR-0012](0012-flux-only-gitops.md))
 - **Date:** 2026-08-11
 
 ## Context
@@ -18,7 +18,7 @@ Options considered: Go core with a React UI; Go end-to-end with templ/HTMX; Type
 
 - Control plane and controller: Go with `controller-runtime` / kubebuilder
 - CLI: Go, distributed as a single static binary
-- MCP server: Go, a thin adapter over the API
+- MCP server: Go, task-shaped surface with capability parity to the API (see [ADR-0008](0008-mcp-surface.md), which supersedes the original "thin adapter" framing here)
 - Web UI: TypeScript and React
 - API transport: ConnectRPC — gRPC and HTTP/JSON from one schema, generating clients for CLI, UI and MCP
 

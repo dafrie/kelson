@@ -1,7 +1,8 @@
 # Contributing to kelson
 
-kelson is pre-alpha. The renderer, the spec model and the delivery adapters exist and are tested; the
-build pipeline, server, UI and install path do not, so nothing deploys an application end to end yet.
+kelson is pre-alpha. The renderer, the spec model and the delivery adapters (direct and Flux) exist
+and are tested, but are not yet wired to a `deploy` command; the server, UI and install path do not
+exist, so nothing deploys an application end to end yet.
 The [ADRs](docs/adr/) record the load-bearing decisions, and the
 [milestones](https://github.com/dafrie/kelson/milestones) are the current state of the project.
 

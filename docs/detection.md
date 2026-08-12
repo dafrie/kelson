@@ -16,7 +16,7 @@ profile *type* that the renderer imports, never a dependency of it.
 | `ClusterProfile.Incomplete` | **Could not tell.** Crucially, *not* "absent". |
 
 The third bucket is the whole point of the design (issue #56). If a probe lacked RBAC to list
-ClusterIssuers and reported `CertManager: nil`, the renderer would emit an Ingress with no TLS and the
+ClusterIssuers and reported `CertManager: nil`, the renderer would emit a route with no TLS and the
 manifest would look deliberate. So a `Forbidden` — or a `NotFound` on the API endpoint itself — appends
 a `Gap{Field, Reason}` to `Incomplete`; only a *successful empty list* means absent. `Gap.Reason`
 names the missing permission so a human can grant it and re-run.

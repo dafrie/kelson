@@ -1,8 +1,8 @@
 # Deployment state machine — "is my change live?"
 
 Design reference for `internal/delivery/statemachine` (issue #37). It is the
-hardest problem in the delivery plane for one reason: **in Git modes kelson does
-not apply.** kelson commits; Flux or Argo applies. Something still has to give
+hardest problem in the delivery plane for one reason: **in Git mode kelson does
+not apply.** kelson commits; Flux applies. Something still has to give
 the user a truthful answer about their change, without owning the apply step.
 
 The answer is not a spinner. It is a state machine fed by correlated

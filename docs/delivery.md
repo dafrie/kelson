@@ -16,9 +16,11 @@ Three concepts, mirrored in `internal/delivery`:
   git or rollback are supported (`SupportsPR`, `RequiresGit`,
   `SupportsRollback`).
 - **`Registry`** — per-environment adapter selection by delivery mode
-  (`direct` / `flux` / `argocd`).
+  (`direct` / `flux`; the `argocd` adapter is removed per
+  [ADR-0012](adr/0012-flux-only-gitops.md), and the seam is where it would
+  return).
 
-A fourth adapter requires: implement `Adapter`, register it. No renderer
+A further adapter requires: implement `Adapter`, register it. No renderer
 changes. That is the acceptance test for #32 and it is structural, not
 aspirational.
 

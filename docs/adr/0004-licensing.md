@@ -1,6 +1,6 @@
 # ADR-0004: MIT, fully open, no feature gating
 
-- **Status:** Accepted
+- **Status:** Accepted (amended 2026-08-12: no monetization intended — the earlier "hosting and support" hedge is removed)
 - **Date:** 2026-08-11
 
 ## Context
@@ -15,9 +15,9 @@ Options considered: fully open; open core; fair-source/BSL.
 
 **MIT. Every feature. Permanently.**
 
-SSO, RBAC, audit logging and multi-tenancy are security fundamentals and will never be paywalled. If
-kelson is ever monetized, it will be through hosting, support and managed operations — never through
-withholding capability.
+SSO, RBAC, audit logging and multi-tenancy are security fundamentals and will never be paywalled.
+kelson is not a commercial project and there is no monetization plan — no paid tiers, no paid presets,
+no enterprise edition. It is open source because that is the point.
 
 ## Rationale
 
@@ -48,8 +48,8 @@ worth revisiting once there are outside contributors — but it is not worth a r
 - No license-based protection against a hyperscaler repackaging kelson as a managed service. Accepted:
   at this stage obscurity is the larger risk, and Coolify demonstrates that a strong community and brand
   are adequate defence in this category.
-- Monetization, if pursued, requires building an actual operational business rather than flipping a
-  feature flag. This is harder and slower, and it is the honest path.
+- There is no revenue path, by intent. If that ever changes it requires a superseding ADR, and feature
+  gating stays off the table regardless.
 - MIT permits closed-source forks with no reciprocity. Accepted as the cost of maximum adoption.
 
 ## Revisit when
