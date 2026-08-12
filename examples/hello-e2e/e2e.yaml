@@ -1,0 +1,11 @@
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: e2e
+
+spec:
+  project: hello-e2e
+  # No routing: a stock kind cluster has no ingress controller or Gateway
+  # API installed, and the renderer emits no route when neither is detected
+  # (internal/renderer/routing.go). The harness talks to the workload via
+  # kubectl instead of a hostname.

@@ -10,7 +10,7 @@ LDFLAGS := -s -w \
   -X github.com/dafrie/kelson/internal/version.Version=$(VERSION) \
   -X github.com/dafrie/kelson/internal/version.Commit=$(COMMIT)
 
-.PHONY: all build binaries test lint fmt clean install release release-snapshot
+.PHONY: all build binaries test lint fmt clean install release release-snapshot e2e-up e2e e2e-down
 
 all: lint test build
 
@@ -48,3 +48,17 @@ release-snapshot:
 clean:
 	$(GO) clean ./...
 	rm -rf $(BIN) dist/
+
+# kind-based E2E harness (issue #86): a spec to running workloads and back on
+# a local kind cluster. e2e-up/e2e-down are idempotent and independent of
+# each other; `make e2e` provisions the cluster and runs the full lifecycle
+# but leaves it up afterward so the state can be inspected — run
+# `make e2e-down` when done. See docs/e2e.md.
+e2e-up:
+	hack/e2e/up.sh
+
+e2e: e2e-up
+	hack/e2e/run.sh
+
+e2e-down:
+	hack/e2e/down.sh

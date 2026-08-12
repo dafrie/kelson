@@ -1,0 +1,16 @@
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: hello-e2e
+
+spec:
+  # traefik/whoami: a tiny, real, publicly hosted image that actually starts
+  # and serves HTTP. It answers 200 on every path, which makes it a reliable
+  # health check for a harness that needs the "healthy" case to be boringly
+  # deterministic (issue #86).
+  image: docker.io/traefik/whoami:v1.12.0
+
+  applications:
+    - name: web
+      port: 80
+      health: /healthz

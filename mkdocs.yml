@@ -39,6 +39,7 @@ nav:
       - Environment spec: reference/environment.md
       - Cluster detection: detection.md
       - Support matrix: reference/support-matrix.md
+      - E2E harness: e2e.md
   - Design:
       - Model: model.md
       - Delivery: delivery.md
