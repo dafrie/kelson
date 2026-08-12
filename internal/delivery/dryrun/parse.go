@@ -106,6 +106,12 @@ func kyvernoClassify(ref ResourceRef, st metav1.Status) (classification, bool) {
 	var out classification
 	out.policyRejected = true
 	out.violations = append(out.violations, kyvernoBlockedPolicies(msg)...)
+	for i := range out.violations {
+		// The multi-policy parser emits per-policy entries without the resource
+		// identity; stamp it here so every violation points at what was blocked
+		// (issue #45) rather than only the fallback doing so.
+		out.violations[i].Resource = ref.String()
+	}
 	if len(out.violations) == 0 {
 		out.violations = append(out.violations, diff.PolicyViolation{
 			Engine:      "kyverno",
@@ -179,15 +185,19 @@ func gatekeeperClassify(ref ResourceRef, st metav1.Status) (classification, bool
 	}, true
 }
 
-var gatekeeperDenied = regexp.MustCompile(`denied the request:\s*\[denied by \S+\]\s*(.*)`)
+var gatekeeperDenied = regexp.MustCompile(`denied the request:\s*\[denied by (\S+)\]\s*(.*)`)
 
 // gatekeeperConstraint extracts the constraint name from either the bracketed
-// or the "<constraint> <kind>.denied:" forms.
+// "[denied by <constraint>]" or the older "<constraint> <kind>.denied:" form.
+// The name character class stops at punctuation — `\S+` alone would swallow the
+// closing bracket of "[denied by require-owner]" — and the kind.denied form is
+// matched anywhere in the line, because the message carries the webhook head
+// ("admission webhook ... denied the request:") before the constraint pair.
 func gatekeeperConstraint(msg string) string {
-	if m := regexp.MustCompile(`denied by (\S+)`).FindStringSubmatch(msg); m != nil {
+	if m := regexp.MustCompile(`denied by ([A-Za-z0-9_.-]+)`).FindStringSubmatch(msg); m != nil {
 		return m[1]
 	}
-	if m := regexp.MustCompile(`(?m)^\s*(\S+)\s+\S+\.denied:`).FindStringSubmatch(msg); m != nil {
+	if m := regexp.MustCompile(`(\S+)\s+\S+\.denied:`).FindStringSubmatch(msg); m != nil {
 		return m[1]
 	}
 	return "unknown"
