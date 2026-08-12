@@ -15,7 +15,7 @@ wrong, open an issue — it is far cheaper to reverse a decision now than after 
 | [0008](0008-mcp-surface.md) | MCP tools are task-shaped, not endpoint-shaped | Accepted |
 | [0009](0009-secrets.md) | Secrets are references; values never enter Git | Accepted |
 | [0010](0010-build-strategy.md) | Dockerfile when present, Cloud Native Buildpacks otherwise | Accepted |
-| [0011](0011-build-cache.md) | Build cache is a registry cache, scoped per application | Proposed |
+| [0011](0011-build-cache.md) | Build cache is a registry cache, scoped per application | Deferred |
 
 Every load-bearing decision is now recorded and reviewed.
 

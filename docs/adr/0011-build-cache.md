@@ -1,7 +1,35 @@
 # ADR-0011: Build cache is a registry cache, scoped per application
 
-- **Status:** Proposed
+- **Status:** Deferred
 - **Date:** 2026-08-12
+
+!!! warning "Deferred — not a decision yet"
+
+    Caching is an optimisation, and kelson does not yet work end to end. Building it now
+    adds a second registry repository, a second credential scope and a new failure surface
+    to a path that has never run against a real cluster, in exchange for speed nobody can
+    measure yet. The cache code has been removed from the buildpacks driver and every build
+    is cold; see [#52](https://github.com/dafrie/kelson/issues/52).
+
+    This ADR also needs correcting before it can be accepted. It argues its decision almost
+    entirely in BuildKit's vocabulary, and [ADR-0010](0010-build-strategy.md) makes Cloud
+    Native Buildpacks the eventual *default*. The two have different caching mechanisms:
+    BuildKit exports build steps with `--export-cache type=registry`, while the CNB
+    lifecycle caches buildpack-declared dependency layers with `-cache-image`. **`mode=min`
+    and `mode=max` are BuildKit concepts with no CNB equivalent** — the "Cache export uses
+    `mode=min` by default" decision below cannot be expressed under Buildpacks at all, and a
+    `CacheMode` knob written from this ADR sat in the buildpacks driver validated, defaulted
+    and tested while never reaching the lifecycle.
+
+    The document also omits CNB's largest speed-up, which is not a cache in this ADR's sense:
+    the lifecycle's `analyze`/`restore` phases reuse layers from the *previous app image*.
+    That strengthens the isolation argument, since image repositories are already scoped per
+    application, and it makes the "a registry outage degrades builds to cold" consequence
+    more severe than stated.
+
+    What survives review is the general part: cache belongs in a registry, scoped per
+    `(project, application)`, never shared across projects, evicted by registry retention.
+    The per-strategy mechanism has to be stated separately.
 
 ## Context
 

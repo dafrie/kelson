@@ -8,7 +8,6 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/dafrie/kelson/internal/build"
-	"github.com/dafrie/kelson/internal/build/registry"
 )
 
 // DefaultBuilder is the zero-config builder image the generated Job runs when
@@ -54,22 +53,14 @@ const (
 	annRevision      = "kelson.dev/revision"
 )
 
-// cacheSuffix marks a cache repository derived from (never shared with) its
-// image repository (ADR-0011). appending it must be injective over repository
-// names so two different applications can never derive the same cache repo.
-const cacheSuffix = "-cache"
-
 // withDefaults fills unset parts of the config: the builder and run images and
-// a zero timeout and the recommended cache mode.
+// a zero timeout.
 func (c Config) withDefaults() Config {
 	if c.BuilderImage == "" {
 		c.BuilderImage = DefaultBuilder
 	}
 	if c.RunImage == "" {
 		c.RunImage = DefaultRunImage
-	}
-	if c.CacheMode == "" {
-		c.CacheMode = CacheModeMin
 	}
 	return c
 }
@@ -82,11 +73,6 @@ func (c Config) Workload(req build.Request) ([]byte, error) {
 		return nil, err
 	}
 	cfg := c.withDefaults()
-
-	cacheRef, err := CacheRef(req.Image)
-	if err != nil {
-		return nil, err
-	}
 
 	labels := map[string]string{
 		labelProject:     req.Project,
@@ -102,7 +88,7 @@ func (c Config) Workload(req build.Request) ([]byte, error) {
 	}
 
 	name := jobName(req)
-	ctr := podContainer(req, cfg, cacheRef)
+	ctr := podContainer(req, cfg)
 
 	podSpec := podSpec{
 		ServiceAccountName: cfg.ServiceAccount,
@@ -134,8 +120,7 @@ func (c Config) Workload(req build.Request) ([]byte, error) {
 }
 
 // validate enforces the invariants a build Job needs before it is rendered:
-// an image to push to, a namespace to run in, a well-formed timeout, and a
-// recognised cache mode.
+// an image to push to, a namespace to run in, and a well-formed timeout.
 func validate(req build.Request, c Config) error {
 	if req.Image == "" {
 		return fmt.Errorf("buildpacks: Workload needs a destination image (Request.Image)")
@@ -146,36 +131,7 @@ func validate(req build.Request, c Config) error {
 	if c.Timeout < 0 {
 		return fmt.Errorf("buildpacks: negative build timeout %s", time.Duration(c.Timeout))
 	}
-	if c.CacheMode != "" && c.CacheMode != CacheModeMin && c.CacheMode != CacheModeMax {
-		return fmt.Errorf("buildpacks: unknown cache mode %q", c.CacheMode)
-	}
 	return nil
-}
-
-// CacheRef derives the registry cache reference for a build from the identity
-// that owns the image repository, per ADR-0011: cache is scoped per
-// (project, application) and shared across environments of one application but
-// never across projects. Because an application's image repository already
-// encodes its owning project and application, deriving the cache from that
-// repository (and not from any global/shared name) gives the isolation
-// property by construction: it is a pure, injective function of the
-// repository, so two different applications can never derive the same cache
-// reference. See TestCacheReferenceIsolationAcrossProjects.
-//
-// The cache lives in a sibling repository named "<image-repo>-cache" so it is
-// visible next to the images it builds, carries the same access control, and
-// evicts under the same registry retention as the images themselves
-// (ADR-0011). Tags and digests are dropped: the cache repo is distinguished by
-// name, not by tag, so it is never mistaken for a deployable image.
-func CacheRef(image string) (string, error) {
-	r, err := registry.Parse(image)
-	if err != nil {
-		return "", err
-	}
-	r.Tag = ""
-	r.Digest = ""
-	r.Repository += cacheSuffix
-	return r.String(), nil
 }
 
 // jobName derives a stable, DNS-1123-safe name for the Job from the request so
@@ -220,9 +176,8 @@ func sanitizeName(s string) string {
 }
 
 // podContainer assembles the build container: the builder image running the
-// lifecycle rootless, with the source mounted, a per-application registry
-// cache, and a non-root security context.
-func podContainer(req build.Request, cfg Config, cacheRef string) container {
+// lifecycle rootless, with the source mounted and a non-root security context.
+func podContainer(req build.Request, cfg Config) container {
 	volumeMounts := []volumeMount{
 		{Name: "workspace", MountPath: "/workspace"},
 		{Name: "layers", MountPath: "/layers"},
@@ -233,7 +188,7 @@ func podContainer(req build.Request, cfg Config, cacheRef string) container {
 	ctr := container{
 		Name:         "buildpack",
 		Image:        cfg.BuilderImage,
-		Command:      []string{"sh", "-c", buildCommand(req, cfg, cacheRef)},
+		Command:      []string{"sh", "-c", buildCommand(req, cfg)},
 		VolumeMounts: volumeMounts,
 		SecurityContext: &securityContext{
 			RunAsNonRoot:             boolPtr(true),
@@ -249,18 +204,21 @@ func podContainer(req build.Request, cfg Config, cacheRef string) container {
 
 // buildCommand is the build itself: the lifecycle creator detects the app's
 // language from /workspace, picks the matching buildpacks, builds, and pushes
-// to the destination with a per-application registry cache. Detection is the
-// lifecycle's job and its choices surface in creator's output, which the
-// caller streams back (ADR-0010); this driver only supplies the parameters.
+// to the destination. Detection is the lifecycle's job and its choices surface
+// in creator's output, which the caller streams back (ADR-0010); this driver
+// only supplies the parameters.
 //
-// Flags: the destination is <image>:<tag> (or bare <image>), the cache image is
-// the ADR-0011 per-application reference, and extra buildpacks registered via
-// Config.Buildpacks are passed through verbatim so users can add buildpacks
-// without forking the builder. Registry credentials for the push/cache are
-// injected out-of-band by the cluster seam, never embedded here. The exact
-// lifecycle invocation is what the end-to-end harness (#86) validates against
-// a real registry; no unit test here can prove it runs.
-func buildCommand(req build.Request, cfg Config, cacheRef string) string {
+// There is no cross-build cache, so every build is cold (issue #52). The
+// -launch-cache below is local to the pod and dies with it — it is the
+// lifecycle's own scratch space, not a cache that survives a build.
+//
+// Flags: the destination is <image>:<tag> (or bare <image>), and extra
+// buildpacks registered via Config.Buildpacks are passed through verbatim so
+// users can add buildpacks without forking the builder. Registry credentials
+// for the push are injected out-of-band by the cluster seam, never embedded
+// here. The exact lifecycle invocation is what the end-to-end harness (#86)
+// validates against a real registry; no unit test here can prove it runs.
+func buildCommand(req build.Request, cfg Config) string {
 	var b strings.Builder
 	b.WriteString("set -euo pipefail\n")
 
@@ -273,7 +231,6 @@ func buildCommand(req build.Request, cfg Config, cacheRef string) string {
 	fmt.Fprintf(&b, " -app /workspace")
 	fmt.Fprintf(&b, " -layers /layers")
 	fmt.Fprintf(&b, " -launch-cache /launch-cache")
-	fmt.Fprintf(&b, " -cache-image %s", cacheRef)
 	fmt.Fprintf(&b, " -report /tmp/report.toml")
 	fmt.Fprintf(&b, " -run-image %s", cfg.RunImage)
 	fmt.Fprintf(&b, " -process-type web")

@@ -17,14 +17,14 @@
 // The lifecycle does buildpack detection and language coverage: it reads the
 // source tree at /workspace, picks the buildpacks that match the app's
 // language, and reports what it chose in its output. This package only gives
-// the lifecycle the source and the parameters (builder, run image, cache,
+// the lifecycle the source and the parameters (builder, run image,
 // destination), then returns whatever it pushed. That boundary is deliberate
 // (ADR-0010): kelson does not re-implement detection, and no buildpack DSL
 // enters the spec.
 //
 // # Builder images and the kelson config surface
 //
-// The builder, run image, cache and extra buildpacks are operator/driver
+// The builder, run image and extra buildpacks are operator/driver
 // configuration on Config — the same status as a delivery adapter's client or
 // buildkit's image pick — never strategy fields in the kelson spec (ADR-0010).
 // "Configure buildpacks" means setting Config here, not teaching the spec a
@@ -112,24 +112,7 @@ type Config struct {
 	// reference passed straight through to the lifecycle. Empty uses the
 	// builder's bundled buildpacks.
 	Buildpacks []string
-	// CacheMode selects the registry cache export mode (ADR-0011). Empty
-	// defaults to CacheModeMin, the recommended default.
-	CacheMode CacheMode
 }
-
-// CacheMode controls how much of a build the registry cache retains
-// (ADR-0011).
-type CacheMode string
-
-const (
-	// CacheModeMin caches only the final image layers, so intermediates it
-	// contains are no more sensitive than the image itself (ADR-0011 default).
-	CacheModeMin CacheMode = "min"
-	// CacheModeMax also caches intermediate layers, which can contain
-	// build-time file contents and source that never reach the final image; a
-	// max cache is therefore as sensitive as the source tree (ADR-0011).
-	CacheModeMax CacheMode = "max"
-)
 
 // ResourceRequirements is a thin re-declaration of the Kubernetes resource
 // shape, kept here so Workload stays pure (no k8s imports, .golangci.yml).

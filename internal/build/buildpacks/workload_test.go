@@ -125,17 +125,13 @@ func TestWorkloadLifecycleIsNotPrivileged(t *testing.T) {
 // TestWorkloadCoversAcceptanceLanguages renders the workload for each of the
 // four acceptance languages of issue #49 (a Node, Python, Go or Ruby repo with
 // no Dockerfile) and asserts the render is correct — strategy label, builder,
-// run image, per-application cache, destination — and non-privileged.
+// run image, destination — and non-privileged.
 //
 // This can only prove the rendered workload is correct and non-privileged, not
 // that it builds and runs; the language detection itself is the lifecycle's
 // job and the end-to-end "builds and runs" half of the criterion belongs to
 // the e2e harness (#86).
 func TestWorkloadCoversAcceptanceLanguages(t *testing.T) {
-	// Signed by digest so CacheRef drops it cleanly and the destination stays
-	// a pinned, reproducible reference (issue #51).
-	const digest = "abababababababababababababababababababababababababababababababab"
-
 	for _, lang := range acceptanceLanguages {
 		req := baseRequest()
 		req.Application = lang.name
@@ -159,9 +155,6 @@ func TestWorkloadCoversAcceptanceLanguages(t *testing.T) {
 		if !strings.Contains(cmd, "-image ghcr.io/acme/"+lang.name) {
 			t.Errorf("%s: command must carry the per-app destination\n%s", lang.name, cmd)
 		}
-		if !strings.Contains(cmd, "-cache-image ghcr.io/acme/"+lang.name+cacheSuffix) {
-			t.Errorf("%s: command must carry the per-application cache\n%s", lang.name, cmd)
-		}
 
 		sc := ctr.SecurityContext
 		if sc == nil || sc.RunAsNonRoot == nil || !*sc.RunAsNonRoot {
@@ -170,106 +163,17 @@ func TestWorkloadCoversAcceptanceLanguages(t *testing.T) {
 		if sc.Privileged != nil && *sc.Privileged {
 			t.Errorf("%s: workload must not be privileged", lang.name)
 		}
-
-		// Sanity: the cache ref parses and is isolated from the image repo.
-		cache, err := CacheRef(req.Image)
-		if err != nil {
-			t.Fatalf("%s: CacheRef: %v", lang.name, err)
-		}
-		if cache == req.Image || strings.Contains(cache, "@"+digest) {
-			t.Errorf("%s: cache ref %q must be a distinct, unpinned sibling repo", lang.name, cache)
-		}
-	}
-}
-
-// TestCacheReferenceIsolationAcrossProjects is the ADR-0011 tenancy property:
-// two different projects must never be able to derive the same cache
-// reference, and cache is scoped per (project, application). Because CacheRef
-// derives the cache from the application's image repository (which already
-// encodes its owning project and application) by appending a suffix, distinct
-// applications always yield distinct caches — never a global or shared ref.
-func TestCacheReferenceIsolationAcrossProjects(t *testing.T) {
-	apps := []struct {
-		project string
-		app     string
-		image   string
-	}{
-		{project: "shop", app: "checkout", image: "ghcr.io/acme/checkout"},
-		{project: "shop", app: "catalog", image: "ghcr.io/acme/catalog"},
-		{project: "payments", app: "checkout", image: "ghcr.io/pay/checkout"},
-		{project: "shop", app: "web", image: "docker.io/acme/web"},
-		{project: "media", app: "web", image: "ghcr.io/media/web"},
-	}
-
-	seen := map[string]string{} // cacheRef -> image, so a collision is obvious
-	for _, a := range apps {
-		cache, err := CacheRef(a.image)
-		if err != nil {
-			t.Fatalf("CacheRef(%q): %v", a.image, err)
-		}
-		if cache == a.image {
-			t.Errorf("cache ref %q must differ from its image %q", cache, a.image)
-		}
-		if strings.Contains(cache, "@") {
-			t.Errorf("cache ref %q must be unpinned (no digest)", cache)
-		}
-		if !strings.HasSuffix(cache, cacheSuffix) {
-			t.Errorf("cache ref %q must live in a %q sibling repo", cache, cacheSuffix)
-		}
-		if prev, ok := seen[cache]; ok {
-			t.Fatalf("ADR-0011 tenancy violated: projects derived the same cache ref %q for %q and %q", cache, prev, a.image)
-		}
-		seen[cache] = a.image
-	}
-}
-
-// TestCacheRefIsInjective sweeps a range of repositories to demonstrate the
-// derivation cannot collide: distinct image repositories (distinct
-// applications) always map to distinct caches.
-func TestCacheRefIsInjective(t *testing.T) {
-	repos := []string{
-		"ghcr.io/acme/web",
-		"ghcr.io/acme/web2",
-		"ghcr.io/acme/other",
-		"ghcr.io/other/web",
-		"reg.example.com/ns/a/b",
-		"reg.example.com/ns/a/b2",
-	}
-	refs := map[string]string{}
-	for _, image := range repos {
-		cache, err := CacheRef(image)
-		if err != nil {
-			t.Fatalf("CacheRef(%q): %v", image, err)
-		}
-		if prev, ok := refs[cache]; ok {
-			t.Fatalf("cache collision: %q and %q both -> %q", prev, image, cache)
-		}
-		refs[cache] = image
-	}
-}
-
-// TestCacheRefDropsTagAndDigest verifies the cache repo never takes the
-// application's tag or digest: it is a sibling repository named by suffix, not
-// a tagged variant of the deployable image.
-func TestCacheRefDropsTagAndDigest(t *testing.T) {
-	got, err := CacheRef("ghcr.io/acme/checkout:v1@sha256:" + strings.Repeat("cd", 32))
-	if err != nil {
-		t.Fatalf("CacheRef: %v", err)
-	}
-	if want := "ghcr.io/acme/checkout-cache"; got != want {
-		t.Fatalf("CacheRef = %q, want %q", got, want)
 	}
 }
 
 // TestWorkloadCommand carries the build parameters: builder, run image,
-// per-application cache, destination, and extra registered buildpacks — all of
+// destination, and extra registered buildpacks — all of
 // it driven from Config, never from the kelson spec or a buildpack DSL
 // (ADR-0010).
 func TestWorkloadCommand(t *testing.T) {
 	cfg := Config{
 		Namespace:  testNS,
 		RunImage:   "ghcr.io/corp/run-jammy",
-		CacheMode:  CacheModeMax,
 		Buildpacks: []string{"urn:cnb:builder:paketo-community/rust", "urn:cnb:builder:example/extra"},
 	}
 	cmd := buildContainer(workloadFor(t, baseRequest(), cfg)).Command[2]
@@ -277,7 +181,6 @@ func TestWorkloadCommand(t *testing.T) {
 	for _, want := range []string{
 		"exec /cnb/lifecycle/creator",
 		"-app /workspace",
-		"-cache-image " + testImage + cacheSuffix,
 		"-run-image ghcr.io/corp/run-jammy",
 		"-process-type web",
 		"-image " + testImage + ":deadbeefabcd1234",
@@ -310,8 +213,7 @@ func TestCustomBuildpacksRegistration(t *testing.T) {
 }
 
 // TestWorkloadValidation covers the render-step invariants: it refuses to emit
-// a Job with no destination image, no namespace, a negative timeout, or an
-// unknown cache mode.
+// a Job with no destination image, no namespace, or a negative timeout.
 func TestWorkloadValidation(t *testing.T) {
 	req := baseRequest()
 	req.Image = ""
@@ -324,14 +226,6 @@ func TestWorkloadValidation(t *testing.T) {
 	}
 	if _, err := (Config{Namespace: testNS, Timeout: Duration(-1 * time.Second)}).Workload(baseRequest()); err == nil {
 		t.Fatal("a negative timeout must be rejected")
-	}
-	for _, mode := range []CacheMode{"max", "", "min"} {
-		if _, err := (Config{Namespace: testNS, CacheMode: mode}).Workload(baseRequest()); err != nil {
-			t.Fatalf("valid cache mode %q must be accepted: %v", mode, err)
-		}
-	}
-	if _, err := (Config{Namespace: testNS, CacheMode: CacheMode("evil")}).Workload(baseRequest()); err == nil {
-		t.Fatal("an unknown cache mode must be rejected")
 	}
 }
 
