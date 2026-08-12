@@ -16,6 +16,10 @@ import (
 // multi-tenancy (issue #48).
 const DefaultBuildkitImage = "moby/buildkit:v0.20.0-rootless"
 
+// DefaultGitImage clones the source. Alpine's git image is small and needs no
+// privileges; the clone runs as the same non-root user as the build.
+const DefaultGitImage = "alpine/git:latest"
+
 // Default rootless service account username/group the buildkit image runs as.
 const (
 	defaultRunAsUser  = 1000
@@ -37,6 +41,9 @@ const (
 func (c Config) withDefaults() Config {
 	if c.BuildkitImage == "" {
 		c.BuildkitImage = DefaultBuildkitImage
+	}
+	if c.GitImage == "" {
+		c.GitImage = DefaultGitImage
 	}
 	return c
 }
@@ -68,6 +75,7 @@ func (c Config) Workload(req build.Request) ([]byte, error) {
 	podSpec := podSpec{
 		ServiceAccountName: cfg.ServiceAccount,
 		RestartPolicy:      "Never",
+		InitContainers:     sourceInitContainers(req, cfg),
 		Containers:         []container{ctr},
 		Volumes:            baseVolumes(),
 	}
@@ -192,11 +200,12 @@ func buildCommand(req build.Request) string {
 	b.WriteString("exec buildctl --addr unix://")
 	b.WriteString(sock)
 	b.WriteString(" build --frontend dockerfile.v0")
-	b.WriteString(" --local context=/workspace")
+	ctxPath := contextPath(req)
+	fmt.Fprintf(&b, " --local context=%s", ctxPath)
 	if req.Dockerfile != "" && req.Dockerfile != "Dockerfile" {
-		fmt.Fprintf(&b, " --local dockerfile=/workspace --opt filename=%s", req.Dockerfile)
+		fmt.Fprintf(&b, " --local dockerfile=%s --opt filename=%s", ctxPath, req.Dockerfile)
 	} else {
-		b.WriteString(" --local dockerfile=/workspace")
+		fmt.Fprintf(&b, " --local dockerfile=%s", ctxPath)
 	}
 	if req.Target != "" {
 		fmt.Fprintf(&b, " --opt target=%s", req.Target)
@@ -259,6 +268,7 @@ type podTemplateMetadata struct {
 type podSpec struct {
 	ServiceAccountName string      `yaml:"serviceAccountName,omitempty"`
 	RestartPolicy      string      `yaml:"restartPolicy"`
+	InitContainers     []container `yaml:"initContainers,omitempty"`
 	Containers         []container `yaml:"containers"`
 	Volumes            []volume    `yaml:"volumes"`
 }
@@ -354,4 +364,74 @@ func secondsPtr(d Duration) *int64 {
 		s = 1
 	}
 	return &s
+}
+
+// sourceInitContainers clones the application source into the workspace before
+// the build container starts (#48 scope: build context handling from a Git
+// source).
+//
+// Cloning in-pod rather than uploading a context keeps the control plane out
+// of the data path: kelson never streams a source tree through itself, and a
+// large repository costs the build pod's bandwidth rather than the server's.
+//
+// It returns nil when no source is configured, which is the case the tests
+// covering a pre-populated workspace rely on.
+func sourceInitContainers(req build.Request, cfg Config) []container {
+	if req.SourceGit == "" {
+		return nil
+	}
+	return []container{{
+		Name:         "clone",
+		Image:        cfg.GitImage,
+		Command:      []string{"sh", "-c", cloneCommand(req)},
+		VolumeMounts: []volumeMount{{Name: "workspace", MountPath: "/workspace"}},
+		SecurityContext: &securityContext{
+			RunAsNonRoot:             boolPtr(true),
+			RunAsUser:                int64Ptr(defaultRunAsUser),
+			RunAsGroup:               int64Ptr(defaultRunAsGroup),
+			AllowPrivilegeEscalation: boolPtr(false),
+			Capabilities:             &capabilities{Drop: []string{"ALL"}},
+		},
+		Resources: resourceReqs(cfg.Resources),
+	}}
+}
+
+// cloneCommand fetches exactly one commit where it can.
+//
+// A ref that names a commit is fetched directly at depth 1, which is both the
+// fastest path and the only one that guarantees the build matches Revision. A
+// branch or tag is cloned at depth 1 instead; that is a moving target, and the
+// comment says so rather than pretending the result is pinned.
+func cloneCommand(req build.Request) string {
+	var b strings.Builder
+	b.WriteString("set -euo pipefail\n")
+	b.WriteString("git init -q /workspace\n")
+	b.WriteString("cd /workspace\n")
+	fmt.Fprintf(&b, "git remote add origin %s\n", shellQuote(req.SourceGit))
+	ref := req.SourceRef
+	if ref == "" {
+		ref = "HEAD"
+	}
+	fmt.Fprintf(&b, "git fetch --depth 1 origin %s\n", shellQuote(ref))
+	b.WriteString("git checkout -q FETCH_HEAD\n")
+	return b.String()
+}
+
+// shellQuote wraps a value in single quotes for the generated shell command.
+// The values here come from the spec, not from a build's own output, but a
+// repository URL is still user input reaching a shell — quoting it is the
+// difference between a config error and a command injection.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// contextPath is the build context inside the cloned workspace. A monorepo
+// clones whole and builds one subdirectory, so ContextDir selects the subtree
+// rather than changing what is fetched.
+func contextPath(req build.Request) string {
+	dir := strings.Trim(req.ContextDir, "/")
+	if dir == "" || dir == "." {
+		return "/workspace"
+	}
+	return "/workspace/" + dir
 }
