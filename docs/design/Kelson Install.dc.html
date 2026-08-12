@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  body { margin: 0; background: #0b0f13; }
+  a { color: #0FA36B; text-decoration: none; }
+  a:hover { color: #3ed49b; }
+</style>
+</helmet>
+
+<div style="min-height: 100vh; background: #0b0f13; font-family: 'Space Grotesk', Helvetica, sans-serif; color: #e6ebf0; display: flex;">
+  <aside style="width: 236px; flex: 0 0 236px; border-right: 1px solid #18202a; padding: 22px 0 40px;">
+    <div style="display: flex; align-items: center; gap: 10px; padding: 0 22px 28px;">
+      <svg width="22" height="22" viewBox="0 0 120 120" fill="none" stroke="#0FA36B" stroke-width="10" stroke-linecap="round">
+        <path d="M22 26 L22 56 A38 38 0 0 0 98 56 L98 26"></path>
+        <path d="M60 74 L60 100"></path>
+        <path d="M30 84 L90 84"></path>
+      </svg>
+      <span style="font-size: 17px; font-weight: 600; letter-spacing: -0.015em; color: #e6ebf0;">kelson</span>
+      <span style="margin-left: auto; font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: #5d6875;">0.4.2</span>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 1px;">
+      <a href="Kelson Docs.dc.html" style="padding: 8px 22px; font-size: 14px; color: #8b98a6; border-left: 2px solid transparent;" style-hover="color: #e6ebf0;">Overview</a>
+      <a href="Kelson Install.dc.html" style="padding: 8px 22px; font-size: 14px; color: #e6ebf0; border-left: 2px solid #0FA36B; background: #101820;">Install</a>
+      <span style="padding: 8px 22px; font-size: 14px; color: #8b98a6; border-left: 2px solid transparent;">Concepts</span>
+      <span style="padding: 8px 22px; font-size: 14px; color: #8b98a6; border-left: 2px solid transparent;">Apps &amp; services</span>
+      <span style="padding: 8px 22px; font-size: 14px; color: #8b98a6; border-left: 2px solid transparent;">CLI reference</span>
+      <span style="padding: 8px 22px; font-size: 14px; color: #8b98a6; border-left: 2px solid transparent;">Troubleshooting</span>
+      <span style="padding: 8px 22px; font-size: 14px; color: #8b98a6; border-left: 2px solid transparent;">Contributing</span>
+    </div>
+    <div style="margin: 28px 22px 0; padding-top: 20px; border-top: 1px solid #18202a; display: flex; flex-direction: column; gap: 9px;">
+      <a href="Kelson Dashboard.dc.html" style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; letter-spacing: 0.06em;">→ Open dashboard</a>
+      <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #5d6875;">Apache 2.0</span>
+    </div>
+  </aside>
+
+  <main style="flex: 1; display: flex; gap: 48px; padding: 64px 56px 96px;">
+    <article style="flex: 1; max-width: 720px;">
+      <span style="font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; letter-spacing: 0.14em; text-transform: uppercase; color: #0FA36B;">Getting started</span>
+      <h1 style="margin: 12px 0 14px; font-size: 40px; font-weight: 600; letter-spacing: -0.03em; line-height: 1.1;">Install kelson</h1>
+      <p style="margin: 0 0 44px; font-size: 17px; line-height: 1.65; color: #9aa7b4; text-wrap: pretty;">kelson runs as a controller inside your cluster. Installing it takes one Helm release and no external accounts.</p>
+
+      <h2 id="prereqs" style="margin: 0 0 14px; font-size: 15px; font-weight: 500; letter-spacing: 0.02em; color: #e6ebf0; padding-bottom: 10px; border-bottom: 1px solid #18202a;">1 · Prerequisites</h2>
+      <div style="display: grid; grid-template-columns: 150px 1fr; gap: 10px 20px; margin-bottom: 40px; font-size: 15px; line-height: 1.5;">
+        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #0FA36B;">Kubernetes</span>
+        <span style="color: #9aa7b4;">1.27 or newer, with the <span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #cdd8e3;">CustomResourceDefinition</span> API enabled.</span>
+        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #0FA36B;">Helm</span>
+        <span style="color: #9aa7b4;">3.12 or newer.</span>
+        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #0FA36B;">Permissions</span>
+        <span style="color: #9aa7b4;">cluster-admin for the install; kelson drops to a scoped role afterwards.</span>
+        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #0FA36B;">Storage</span>
+        <span style="color: #9aa7b4;">A default StorageClass for the revision cache. 2 GiB is enough to start.</span>
+      </div>
+
+      <h2 id="install" style="margin: 0 0 14px; font-size: 15px; font-weight: 500; letter-spacing: 0.02em; color: #e6ebf0; padding-bottom: 10px; border-bottom: 1px solid #18202a;">2 · Install the chart</h2>
+      <p style="margin: 0 0 16px; font-size: 15px; line-height: 1.65; color: #9aa7b4;">Add the chart repository and install into its own namespace.</p>
+      <div style="background: #10171f; border: 1px solid #1d2732; border-radius: 6px; padding: 18px 20px; margin-bottom: 16px; font-family: 'IBM Plex Mono', monospace; font-size: 13px; line-height: 1.95; color: #cdd8e3;">
+        <div><span style="color: #5d6875;">$ </span>helm repo add kelson https://charts.kelson.dev</div>
+        <div><span style="color: #5d6875;">$ </span>helm repo update</div>
+        <div><span style="color: #5d6875;">$ </span>helm install kelson kelson/kelson \</div>
+        <div style="padding-left: 22px;">-n kelson-system --create-namespace</div>
+      </div>
+      <div style="display: flex; gap: 12px; padding: 14px 16px; background: #101a20; border: 1px solid #1b2b32; border-left: 2px solid #0FA36B; border-radius: 4px; margin-bottom: 40px;">
+        <span style="font-size: 14px; line-height: 1.6; color: #9aa7b4;">The default values install a single controller replica with leader election off. For production, set <span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #cdd8e3;">controller.replicas=2</span>.</span>
+      </div>
+
+      <h2 id="verify" style="margin: 0 0 14px; font-size: 15px; font-weight: 500; letter-spacing: 0.02em; color: #e6ebf0; padding-bottom: 10px; border-bottom: 1px solid #18202a;">3 · Verify</h2>
+      <p style="margin: 0 0 16px; font-size: 15px; line-height: 1.65; color: #9aa7b4;">The controller reports ready once its CRDs are established and the revision cache is bound.</p>
+      <div style="background: #10171f; border: 1px solid #1d2732; border-radius: 6px; padding: 18px 20px; margin-bottom: 20px; font-family: 'IBM Plex Mono', monospace; font-size: 13px; line-height: 1.95; color: #cdd8e3;">
+        <div><span style="color: #5d6875;">$ </span>kelson status</div>
+        <div style="color: #6f7b89;">  controller   <span style="color: #0FA36B;">ready</span>     v0.4.2</div>
+        <div style="color: #6f7b89;">  crds         <span style="color: #0FA36B;">established</span>   4 resources</div>
+        <div style="color: #6f7b89;">  cache        <span style="color: #0FA36B;">bound</span>     2Gi  standard</div>
+        <div style="color: #6f7b89;">  apps         0 deployed</div>
+      </div>
+      <p style="margin: 0 0 40px; font-size: 15px; line-height: 1.65; color: #9aa7b4;">If any line reports <span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #cdd8e3;">pending</span> for more than a minute, see Troubleshooting.</p>
+
+      <div style="display: flex; align-items: center; justify-content: space-between; padding: 20px 22px; background: #10171f; border: 1px solid #1d2732; border-radius: 6px;">
+        <div style="display: flex; flex-direction: column; gap: 4px;">
+          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: #5d6875;">Next</span>
+          <span style="font-size: 16px; font-weight: 500;">Deploy your first app from a git repo</span>
+        </div>
+        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #0FA36B;">kelson deploy →</span>
+      </div>
+    </article>
+
+    <nav style="width: 172px; flex: 0 0 172px; padding-top: 92px;">
+      <span style="display: block; font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: #5d6875; margin-bottom: 14px;">On this page</span>
+      <div style="display: flex; flex-direction: column; gap: 10px; font-size: 13.5px;">
+        <a href="#prereqs" style="color: #8b98a6;">Prerequisites</a>
+        <a href="#install" style="color: #8b98a6;">Install the chart</a>
+        <a href="#verify" style="color: #8b98a6;">Verify</a>
+      </div>
+    </nav>
+  </main>
+</div>
+
+</x-dc>
+</body>
+</html>

@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  body { margin: 0; background: #0b0f13; }
+  a { color: #0FA36B; text-decoration: none; }
+  a:hover { color: #3ed49b; }
+</style>
+</helmet>
+
+<div style="min-height: 100vh; background: #0b0f13; font-family: 'Space Grotesk', Helvetica, sans-serif; color: #e6ebf0; display: flex;">
+  <aside style="width: 236px; flex: 0 0 236px; border-right: 1px solid #18202a; padding: 22px 0 40px;">
+    <div style="display: flex; align-items: center; gap: 10px; padding: 0 22px 28px;">
+      <svg width="22" height="22" viewBox="0 0 120 120" fill="none" stroke="#0FA36B" stroke-width="10" stroke-linecap="round">
+        <path d="M22 26 L22 56 A38 38 0 0 0 98 56 L98 26"></path>
+        <path d="M60 74 L60 100"></path>
+        <path d="M30 84 L90 84"></path>
+      </svg>
+      <span style="font-size: 17px; font-weight: 600; letter-spacing: -0.015em; color: #e6ebf0;">kelson</span>
+      <span style="margin-left: auto; font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: #5d6875;">0.4.2</span>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 1px;">
+      <a href="Kelson Docs.dc.html" style="padding: 8px 22px; font-size: 14px; color: #e6ebf0; border-left: 2px solid #0FA36B; background: #101820;">Overview</a>
+      <a href="Kelson Install.dc.html" style="padding: 8px 22px; font-size: 14px; color: #8b98a6; border-left: 2px solid transparent;" style-hover="color: #e6ebf0;">Install</a>
+      <span style="padding: 8px 22px; font-size: 14px; color: #8b98a6; border-left: 2px solid transparent;">Concepts</span>
+      <span style="padding: 8px 22px; font-size: 14px; color: #8b98a6; border-left: 2px solid transparent;">Apps &amp; services</span>
+      <span style="padding: 8px 22px; font-size: 14px; color: #8b98a6; border-left: 2px solid transparent;">CLI reference</span>
+      <span style="padding: 8px 22px; font-size: 14px; color: #8b98a6; border-left: 2px solid transparent;">Troubleshooting</span>
+      <span style="padding: 8px 22px; font-size: 14px; color: #8b98a6; border-left: 2px solid transparent;">Contributing</span>
+    </div>
+    <div style="margin: 28px 22px 0; padding-top: 20px; border-top: 1px solid #18202a; display: flex; flex-direction: column; gap: 9px;">
+      <a href="Kelson Dashboard.dc.html" style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; letter-spacing: 0.06em;">→ Open dashboard</a>
+      <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #5d6875;">Apache 2.0</span>
+    </div>
+  </aside>
+
+  <main style="flex: 1; padding: 64px 56px 96px; max-width: 940px;">
+    <div style="display: flex; flex-direction: column; gap: 16px; margin-bottom: 40px;">
+      <h1 style="margin: 0; font-size: 44px; font-weight: 600; letter-spacing: -0.03em; line-height: 1.08;">An opinionated PaaS package for your Kubernetes cluster.</h1>
+      <p style="margin: 0; font-size: 18px; line-height: 1.6; color: #9aa7b4; max-width: 640px; text-wrap: pretty;">Git-driven deploys, entirely self-hosted, and layered on top of the Kubernetes API rather than in front of it. Everything kelson creates is a normal object you can inspect with kubectl.</p>
+    </div>
+
+    <div style="background: #10171f; border: 1px solid #1d2732; border-radius: 6px; overflow: hidden; margin-bottom: 48px;">
+      <div style="display: flex; align-items: center; gap: 7px; padding: 11px 16px; border-bottom: 1px solid #1d2732;">
+        <span style="width: 9px; height: 9px; border-radius: 50%; background: #2b3642;"></span>
+        <span style="width: 9px; height: 9px; border-radius: 50%; background: #2b3642;"></span>
+        <span style="width: 9px; height: 9px; border-radius: 50%; background: #2b3642;"></span>
+        <span style="margin-left: 8px; font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: #5d6875;">quickstart</span>
+      </div>
+      <div style="padding: 20px 20px 22px; font-family: 'IBM Plex Mono', monospace; font-size: 13px; line-height: 2; color: #cdd8e3;">
+        <div><span style="color: #5d6875;">$ </span>helm repo add kelson https://charts.kelson.dev</div>
+        <div><span style="color: #5d6875;">$ </span>helm install kelson kelson/kelson -n kelson-system --create-namespace</div>
+        <div style="color: #6f7b89;">  kelson-system/controller  <span style="color: #0FA36B;">ready</span>  4.2s</div>
+        <div><span style="color: #5d6875;">$ </span>kelson deploy --repo github.com/acme/website-static</div>
+        <div style="color: #6f7b89;">  website-static  <span style="color: #0FA36B;">synced</span>  rev 8f2c1ad  3 replicas</div>
+      </div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin-bottom: 48px;">
+      <a href="Kelson Install.dc.html" style="display: flex; flex-direction: column; gap: 7px; padding: 22px; background: #10171f; border: 1px solid #1d2732; border-radius: 6px; color: inherit;" style-hover="border-color: #0FA36B;">
+        <span style="font-size: 16px; font-weight: 500; color: #e6ebf0;">Install</span>
+        <span style="font-size: 14px; line-height: 1.55; color: #8b98a6;">Cluster prerequisites, the Helm chart, and verifying the controller.</span>
+      </a>
+      <div style="display: flex; flex-direction: column; gap: 7px; padding: 22px; background: #10171f; border: 1px solid #1d2732; border-radius: 6px;">
+        <span style="font-size: 16px; font-weight: 500;">Concepts</span>
+        <span style="font-size: 14px; line-height: 1.55; color: #8b98a6;">Apps, sources, and revisions — and the Kubernetes objects behind each.</span>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 7px; padding: 22px; background: #10171f; border: 1px solid #1d2732; border-radius: 6px;">
+        <span style="font-size: 16px; font-weight: 500;">Apps &amp; services</span>
+        <span style="font-size: 14px; line-height: 1.55; color: #8b98a6;">Deploy from a repo, scale, roll back, and tail logs.</span>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 7px; padding: 22px; background: #10171f; border: 1px solid #1d2732; border-radius: 6px;">
+        <span style="font-size: 16px; font-weight: 500;">CLI reference</span>
+        <span style="font-size: 14px; line-height: 1.55; color: #8b98a6; font-family: 'IBM Plex Mono', monospace; font-size: 13px;">deploy · ps · logs · scale · rollback</span>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 7px; padding: 22px; background: #10171f; border: 1px solid #1d2732; border-radius: 6px;">
+        <span style="font-size: 16px; font-weight: 500;">Troubleshooting</span>
+        <span style="font-size: 14px; line-height: 1.55; color: #8b98a6;">Stuck reconciles, failed rollouts, and reading kelson events.</span>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 7px; padding: 22px; background: #10171f; border: 1px solid #1d2732; border-radius: 6px;">
+        <span style="font-size: 16px; font-weight: 500;">Contributing</span>
+        <span style="font-size: 14px; line-height: 1.55; color: #8b98a6;">Local dev cluster, the test suite, and how releases are cut.</span>
+      </div>
+    </div>
+
+    <div style="display: flex; gap: 40px; padding-top: 28px; border-top: 1px solid #18202a; font-size: 14px; color: #8b98a6;">
+      <div style="display: flex; flex-direction: column; gap: 6px; max-width: 260px;">
+        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: #5d6875;">Self-hosted</span>
+        <span style="line-height: 1.55;">No control plane outside your cluster. Nothing phones home.</span>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 6px; max-width: 260px;">
+        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: #5d6875;">Git-driven</span>
+        <span style="line-height: 1.55;">The repo is the source of truth; kelson reconciles toward it.</span>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 6px; max-width: 260px;">
+        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: #5d6875;">Agents</span>
+        <span style="line-height: 1.55;">Long-running agent workloads deploy the same way services do.</span>
+      </div>
+    </div>
+  </main>
+</div>
+
+</x-dc>
+</body>
+</html>

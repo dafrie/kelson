@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  body { margin: 0; background: #0b0f13; }
+  a { color: #0FA36B; text-decoration: none; }
+  a:hover { color: #3ed49b; }
+  @keyframes kelson-pulse { 0%,100% { opacity: 1 } 50% { opacity: 0.25 } }
+</style>
+</helmet>
+
+<div style="min-height: 100vh; background: #0b0f13; font-family: 'Space Grotesk', Helvetica, sans-serif; color: #e6ebf0;">
+  <header style="display: flex; align-items: center; gap: 28px; padding: 0 32px; height: 56px; border-bottom: 1px solid #18202a; background: #0d1218;">
+    <div style="display: flex; align-items: center; gap: 10px;">
+      <svg width="21" height="21" viewBox="0 0 120 120" fill="none" stroke="#0FA36B" stroke-width="10" stroke-linecap="round">
+        <path d="M22 26 L22 56 A38 38 0 0 0 98 56 L98 26"></path>
+        <path d="M60 74 L60 100"></path>
+        <path d="M30 84 L90 84"></path>
+      </svg>
+      <span style="font-size: 16px; font-weight: 600; letter-spacing: -0.015em;">kelson</span>
+    </div>
+    <div style="display: flex; align-items: center; gap: 8px; padding: 5px 11px; background: #131c24; border: 1px solid #1f2a34; border-radius: 4px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #9aa7b4;">
+      <span style="width: 6px; height: 6px; border-radius: 50%; background: #0FA36B;"></span>
+      prod-eu-west
+    </div>
+    <nav style="display: flex; gap: 22px; font-size: 14px; color: #8b98a6;">
+      <span style="color: #e6ebf0; padding-bottom: 2px; border-bottom: 2px solid #0FA36B;">Apps</span>
+      <span>Agents</span>
+      <span>Sources</span>
+      <span>Events</span>
+      <span>Settings</span>
+    </nav>
+    <div style="margin-left: auto; display: flex; align-items: center; gap: 14px;">
+      <a href="Kelson Docs.dc.html" style="font-size: 13.5px; color: #8b98a6;">Docs</a>
+      <span style="width: 26px; height: 26px; border-radius: 50%; background: #1e2a34; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 500; color: #9aa7b4;">HB</span>
+    </div>
+  </header>
+
+  <main style="padding: 36px 32px 72px; max-width: 1240px; margin: 0 auto;">
+    <div style="display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 8px;">
+      <h1 style="margin: 0; font-size: 26px; font-weight: 600; letter-spacing: -0.02em;">Apps</h1>
+      <div style="display: flex; gap: 10px; font-family: 'IBM Plex Mono', monospace; font-size: 12.5px;">
+        <span style="padding: 7px 12px; border: 1px solid #1f2a34; border-radius: 4px; color: #8b98a6;">All namespaces</span>
+        <span style="padding: 7px 12px; border: 1px solid #0FA36B; border-radius: 4px; color: #0FA36B;">kelson deploy</span>
+      </div>
+    </div>
+    <div style="display: flex; gap: 22px; margin-bottom: 28px; font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; color: #6f7b89;">
+      <span>6 apps</span>
+      <span>·</span>
+      <span><span style="color: #0FA36B;">3</span> synced</span>
+      <span><span style="color: #e0a944;">1</span> degraded</span>
+      <span><span style="color: #e2543a;">1</span> failed</span>
+      <span><span style="color: #6f7b89;">1</span> suspended</span>
+    </div>
+
+    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px;">
+
+      <div style="display: flex; flex-direction: column; gap: 18px; padding: 22px 24px; background: #10171f; border: 1px solid #1d2732; border-radius: 6px;" style-hover="border-color: #2b3a47;">
+        <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;">
+          <div style="display: flex; flex-direction: column; gap: 5px; min-width: 0;">
+            <span style="font-size: 17px; font-weight: 500;">website-static</span>
+            <a href="https://acme.com" style="font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; color: #6f7b89;">acme.com</a>
+          </div>
+          <span style="display: flex; align-items: center; gap: 6px; padding: 4px 9px; background: #0f2620; border: 1px solid #164436; border-radius: 3px; font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: #0FA36B; white-space: nowrap;">
+            <span style="width: 5px; height: 5px; border-radius: 50%; background: #0FA36B;"></span>synced
+          </span>
+        </div>
+        <div style="display: flex; align-items: flex-end; justify-content: space-between; gap: 20px;">
+          <div style="display: flex; flex-direction: column; gap: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #6f7b89;">
+            <span><span style="color: #9aa7b4;">8f2c1ad</span> · main</span>
+            <span>deployed 2h ago</span>
+          </div>
+          <div style="display: flex; align-items: flex-end; gap: 10px;">
+            <svg width="76" height="26" viewBox="0 0 76 26" fill="none" stroke="#0FA36B" stroke-width="1.5" stroke-linejoin="round">
+              <path d="M1 20 L9 17 L17 19 L25 12 L33 14 L41 8 L49 11 L57 6 L65 9 L75 4"></path>
+            </svg>
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #cdd8e3; line-height: 1;">142<span style="font-size: 11px; color: #6f7b89;">/s</span></span>
+          </div>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 18px; padding: 22px 24px; background: #10171f; border: 1px solid #1d2732; border-radius: 6px;" style-hover="border-color: #2b3a47;">
+        <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;">
+          <div style="display: flex; flex-direction: column; gap: 5px; min-width: 0;">
+            <span style="font-size: 17px; font-weight: 500;">docs-public</span>
+            <a href="https://docs.acme.com" style="font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; color: #6f7b89;">docs.acme.com</a>
+          </div>
+          <span style="display: flex; align-items: center; gap: 6px; padding: 4px 9px; background: #101d2a; border: 1px solid #1c3a55; border-radius: 3px; font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: #4ea3ff; white-space: nowrap;">
+            <span style="width: 5px; height: 5px; border-radius: 50%; background: #4ea3ff; animation: kelson-pulse 1.4s ease-in-out infinite;"></span>reconciling
+          </span>
+        </div>
+        <div style="display: flex; align-items: flex-end; justify-content: space-between; gap: 20px;">
+          <div style="display: flex; flex-direction: column; gap: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #6f7b89;">
+            <span><span style="color: #9aa7b4;">c41b90e</span> · main</span>
+            <span>deploying now · 12s</span>
+          </div>
+          <div style="display: flex; align-items: flex-end; gap: 10px;">
+            <svg width="76" height="26" viewBox="0 0 76 26" fill="none" stroke="#4ea3ff" stroke-width="1.5" stroke-linejoin="round">
+              <path d="M1 14 L9 12 L17 15 L25 13 L33 16 L41 12 L49 14 L57 18 L65 15 L75 13"></path>
+            </svg>
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #cdd8e3; line-height: 1;">38<span style="font-size: 11px; color: #6f7b89;">/s</span></span>
+          </div>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 18px; padding: 22px 24px; background: #10171f; border: 1px solid #1d2732; border-radius: 6px;" style-hover="border-color: #2b3a47;">
+        <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;">
+          <div style="display: flex; flex-direction: column; gap: 5px; min-width: 0;">
+            <span style="font-size: 17px; font-weight: 500;">docs-internal</span>
+            <a href="https://docs.internal.acme" style="font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; color: #6f7b89;">docs.internal.acme</a>
+          </div>
+          <span style="display: flex; align-items: center; gap: 6px; padding: 4px 9px; background: #0f2620; border: 1px solid #164436; border-radius: 3px; font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: #0FA36B; white-space: nowrap;">
+            <span style="width: 5px; height: 5px; border-radius: 50%; background: #0FA36B;"></span>synced
+          </span>
+        </div>
+        <div style="display: flex; align-items: flex-end; justify-content: space-between; gap: 20px;">
+          <div style="display: flex; flex-direction: column; gap: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #6f7b89;">
+            <span><span style="color: #9aa7b4;">5da7e10</span> · main</span>
+            <span>deployed 3d ago</span>
+          </div>
+          <div style="display: flex; align-items: flex-end; gap: 10px;">
+            <svg width="76" height="26" viewBox="0 0 76 26" fill="none" stroke="#0FA36B" stroke-width="1.5" stroke-linejoin="round">
+              <path d="M1 21 L9 20 L17 22 L25 19 L33 21 L41 20 L49 18 L57 21 L65 19 L75 20"></path>
+            </svg>
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #cdd8e3; line-height: 1;">4<span style="font-size: 11px; color: #6f7b89;">/s</span></span>
+          </div>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 18px; padding: 22px 24px; background: #10171f; border: 1px solid #2a2119; border-radius: 6px;" style-hover="border-color: #3d3122;">
+        <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;">
+          <div style="display: flex; flex-direction: column; gap: 5px; min-width: 0;">
+            <span style="font-size: 17px; font-weight: 500;">backoffice</span>
+            <a href="https://backoffice.acme.com" style="font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; color: #6f7b89;">backoffice.acme.com</a>
+          </div>
+          <span style="display: flex; align-items: center; gap: 6px; padding: 4px 9px; background: #241c0f; border: 1px solid #3f3016; border-radius: 3px; font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: #e0a944; white-space: nowrap;">
+            <span style="width: 5px; height: 5px; border-radius: 50%; background: #e0a944;"></span>degraded
+          </span>
+        </div>
+        <div style="display: flex; align-items: flex-end; justify-content: space-between; gap: 20px;">
+          <div style="display: flex; flex-direction: column; gap: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #6f7b89;">
+            <span><span style="color: #9aa7b4;">a09f34b</span> · main</span>
+            <span>1 of 3 pods unavailable · 18m</span>
+          </div>
+          <div style="display: flex; align-items: flex-end; gap: 10px;">
+            <svg width="76" height="26" viewBox="0 0 76 26" fill="none" stroke="#e0a944" stroke-width="1.5" stroke-linejoin="round">
+              <path d="M1 9 L9 8 L17 11 L25 10 L33 14 L41 13 L49 18 L57 16 L65 20 L75 19"></path>
+            </svg>
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #cdd8e3; line-height: 1;">61<span style="font-size: 11px; color: #6f7b89;">/s</span></span>
+          </div>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 18px; padding: 22px 24px; background: #10171f; border: 1px solid #2d1c18; border-radius: 6px;" style-hover="border-color: #43261f;">
+        <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;">
+          <div style="display: flex; flex-direction: column; gap: 5px; min-width: 0;">
+            <span style="font-size: 17px; font-weight: 500;">vibe-coded-project-by-hubert</span>
+            <a href="https://hubert.acme.dev" style="font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; color: #6f7b89;">hubert.acme.dev</a>
+          </div>
+          <span style="display: flex; align-items: center; gap: 6px; padding: 4px 9px; background: #26130f; border: 1px solid #4a221a; border-radius: 3px; font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: #e2543a; white-space: nowrap;">
+            <span style="width: 5px; height: 5px; border-radius: 50%; background: #e2543a;"></span>failed
+          </span>
+        </div>
+        <div style="display: flex; align-items: flex-end; justify-content: space-between; gap: 20px;">
+          <div style="display: flex; flex-direction: column; gap: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #6f7b89;">
+            <span><span style="color: #9aa7b4;">3e81cc2</span> · feat/rewrite</span>
+            <span>rollout failed 41m ago · CrashLoopBackOff</span>
+          </div>
+          <div style="display: flex; align-items: flex-end; gap: 10px;">
+            <svg width="76" height="26" viewBox="0 0 76 26" fill="none" stroke="#e2543a" stroke-width="1.5" stroke-linejoin="round">
+              <path d="M1 8 L9 10 L17 9 L25 13 L33 12 L41 19 L49 23 L57 24 L65 24 L75 24"></path>
+            </svg>
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #cdd8e3; line-height: 1;">0<span style="font-size: 11px; color: #6f7b89;">/s</span></span>
+          </div>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 18px; padding: 22px 24px; background: #0e141a; border: 1px solid #1a222b; border-radius: 6px;" style-hover="border-color: #26313c;">
+        <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;">
+          <div style="display: flex; flex-direction: column; gap: 5px; min-width: 0;">
+            <span style="font-size: 17px; font-weight: 500; color: #8b98a6;">next-app</span>
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; color: #4d5763;">next.acme.dev</span>
+          </div>
+          <span style="display: flex; align-items: center; gap: 6px; padding: 4px 9px; background: #151b22; border: 1px solid #232d38; border-radius: 3px; font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: #6f7b89; white-space: nowrap;">
+            <span style="width: 5px; height: 5px; border-radius: 50%; background: #6f7b89;"></span>suspended
+          </span>
+        </div>
+        <div style="display: flex; align-items: flex-end; justify-content: space-between; gap: 20px;">
+          <div style="display: flex; flex-direction: column; gap: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #4d5763;">
+            <span><span style="color: #6f7b89;">7bd2f45</span> · main</span>
+            <span>suspended 6d ago</span>
+          </div>
+          <div style="display: flex; align-items: flex-end; gap: 10px;">
+            <svg width="76" height="26" viewBox="0 0 76 26" fill="none" stroke="#2b3642" stroke-width="1.5" stroke-linejoin="round">
+              <path d="M1 22 L75 22"></path>
+            </svg>
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #4d5763; line-height: 1;">—</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+</div>
+
+</x-dc>
+</body>
+</html>
