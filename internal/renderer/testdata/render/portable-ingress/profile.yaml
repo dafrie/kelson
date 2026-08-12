@@ -1,0 +1,5 @@
+# Half of the portability pair (issue #56): an ingress cluster with no
+# Gateway API. Rendering the portable spec.yaml through this profile must
+# produce an Ingress and nothing the portable-gateway sibling does not.
+ingressClasses:
+  - { name: nginx, controller: k8s.io/ingress-nginx, default: true }
