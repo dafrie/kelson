@@ -24,3 +24,4 @@ ui/.next/
 
 # Local tooling
 /bin/
+.claude/worktrees/
