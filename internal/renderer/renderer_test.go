@@ -176,10 +176,10 @@ func TestRenderEnvSorted(t *testing.T) {
 func TestRenderRoutingMatrix(t *testing.T) {
 	resolved := resolvedFixture()
 	cases := []struct {
-		name        string
-		profile     clusterprofile.ClusterProfile
-		wantKinds   []string // routing-plane kinds expected for web
-		unexpected  []string
+		name       string
+		profile    clusterprofile.ClusterProfile
+		wantKinds  []string // routing-plane kinds expected for web
+		unexpected []string
 	}{
 		{
 			name:      "gateway api preferred over ingress",

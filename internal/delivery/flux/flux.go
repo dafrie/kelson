@@ -101,11 +101,11 @@ func (a *Adapter) Capabilities() delivery.Capabilities {
 // left hanging as a deployment that silently never arrives.
 func (a *Adapter) Apply(ctx context.Context, set delivery.ManifestSet) (delivery.Result, error) {
 	msg := git.Message{
-		Subject:         fmt.Sprintf("kelson: update %s/%s", set.Project, set.Environment),
-		Project:         set.Project,
-		Environment:     set.Environment,
-		SpecHash:        set.SpecHash,
-		Revision:        set.Revision,
+		Subject:     fmt.Sprintf("kelson: update %s/%s", set.Project, set.Environment),
+		Project:     set.Project,
+		Environment: set.Environment,
+		SpecHash:    set.SpecHash,
+		Revision:    set.Revision,
 	}
 	res, err := a.writer.Write(ctx, git.WriteRequest{
 		Files:   git.ManifestFiles(set),

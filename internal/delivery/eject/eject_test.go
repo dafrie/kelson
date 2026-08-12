@@ -601,9 +601,9 @@ func seedRemote(t *testing.T, remote, branch string, files map[string]string) {
 	// HEAD symref still pointing at the default (master), which go-git would
 	// otherwise try to check out and fail to track the branch we push.
 	repo, err := gogit.PlainClone(dir, false, &gogit.CloneOptions{
-		URL:            remote,
-		SingleBranch:   true,
-		ReferenceName:  plumbing.NewBranchReferenceName(branch),
+		URL:           remote,
+		SingleBranch:  true,
+		ReferenceName: plumbing.NewBranchReferenceName(branch),
 	})
 	if err != nil {
 		// An empty remote cannot be cloned; initialise instead.

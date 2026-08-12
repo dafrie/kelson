@@ -42,10 +42,10 @@ type Kustomization struct {
 	Suspended bool
 
 	// Ready is the Ready condition with its reason and message.
-	Ready         ConditionState
-	Reason        string
-	Message       string
-	Reconciling   bool
+	Ready                 ConditionState
+	Reason                string
+	Message               string
+	Reconciling           bool
 	LastAppliedRevision   string
 	LastAttemptedRevision string
 }

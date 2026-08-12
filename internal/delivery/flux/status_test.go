@@ -93,11 +93,11 @@ func TestPhaseCommittedWhenSuspended(t *testing.T) {
 func TestKustomizationCovers(t *testing.T) {
 	real := normalizeRepo("git@github.com:acme/deploy.git")
 	cases := []struct {
-		name   string
-		k      Kustomization
-		repo   string
-		path   string
-		want   bool
+		name string
+		k    Kustomization
+		repo string
+		path string
+		want bool
 	}{
 		{"exact path", Kustomization{Path: "./apps/web"}, "https://github.com/acme/deploy.git", "apps/web", true},
 		{"parent path covers child", Kustomization{Path: "./apps"}, "x", "apps/web/checkout", true},
@@ -115,7 +115,10 @@ func TestKustomizationCovers(t *testing.T) {
 // TestRevisionMatches covers the Flux revision spellings (branch@sha1:abc,
 // branch/abc, abbreviated).
 func TestRevisionMatches(t *testing.T) {
-	for _, tc := range []struct{ flux, sha string; want bool }{
+	for _, tc := range []struct {
+		flux, sha string
+		want      bool
+	}{
 		{"main@sha1:abc123def", "abc123def", true},
 		{"main@sha1:abc123def", "abc123", true},
 		{"main/abc123def", "abc123def", true},
