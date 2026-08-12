@@ -9,8 +9,9 @@ import (
 )
 
 func main() {
-	if err := newRootCmd().Execute(); err != nil {
-		os.Exit(1)
+	root := newRootCmd()
+	if err := root.Execute(); err != nil {
+		os.Exit(rootError(err))
 	}
 }
 
@@ -21,8 +22,13 @@ func newRootCmd() *cobra.Command {
 		Long:         "kelson renders, diffs and deploys applications described by Project and Environment documents. Rendering is offline and deterministic: the same spec always produces the same bytes.",
 		Version:      version.String(),
 		SilenceUsage: true,
+		// Error output and exit codes are centralized in rootError so the diff
+		// command's non-error codes 2/3 can exit without cobra printing a
+		// spurious "Error:" line (issue #46).
+		SilenceErrors: true,
 	}
 	root.AddCommand(newRenderCmd())
 	root.AddCommand(newEjectCmd())
+	root.AddCommand(newDiffCmd())
 	return root
 }
