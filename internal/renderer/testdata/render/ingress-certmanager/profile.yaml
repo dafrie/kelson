@@ -1,3 +1,4 @@
-ingressClasses: [nginx]
+ingressClasses:
+  - { name: nginx }
 certManager:
   clusterIssuers: [letsencrypt-prod]

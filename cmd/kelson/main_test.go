@@ -65,7 +65,7 @@ func TestRenderDeterministicAcrossRuns(t *testing.T) {
 func TestRenderWithProfile(t *testing.T) {
 	dir := t.TempDir()
 	profilePath := filepath.Join(dir, "profile.yaml")
-	if err := os.WriteFile(profilePath, []byte("ingressClasses: [nginx]\n"), 0o600); err != nil {
+	if err := os.WriteFile(profilePath, []byte("ingressClasses:\n  - { name: nginx }\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	project, env := examplesHello(t)

@@ -53,7 +53,7 @@ func ingressClassName(routing model.ResolvedRouting, profile clusterprofile.Clus
 	if routing.IngressClass != "" {
 		return routing.IngressClass
 	}
-	return profile.IngressClasses[0]
+	return profile.DefaultIngressClass()
 }
 
 func hostnamesNode(domains []string) *yaml.Node {

@@ -1,1 +1,3 @@
-ingressClasses: [public, nginx]
+ingressClasses:
+  - { name: public }
+  - { name: nginx }

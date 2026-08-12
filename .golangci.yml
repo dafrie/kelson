@@ -49,19 +49,24 @@ linters:
             - $all
             - "!**/internal/delivery/**"
             - "!**/internal/observation/**"
+            - "!**/internal/clusterprofile/detect/**"
           allow:
             - $gostd
             - github.com/dafrie/kelson
             - github.com/invopop/jsonschema
             - github.com/spf13/cobra
             - gopkg.in/yaml.v3
-        # The cluster-facing planes. internal/observation watches live resources
-        # by definition (docs/architecture.md), so it needs the same client
-        # libraries as delivery; the renderer still gets none of them.
+        # The cluster-facing planes. internal/observation watches live
+        # resources by definition and internal/clusterprofile/detect probes one
+        # (docs/architecture.md), so both need the same client libraries as
+        # delivery. The renderer still gets none of them, and neither does
+        # internal/clusterprofile itself — the profile *type* stays pure so the
+        # renderer can import it. Only its detect/ subpackage is listed here.
         delivery:
           files:
             - "**/internal/delivery/**"
             - "**/internal/observation/**"
+            - "**/internal/clusterprofile/detect/**"
           allow:
             - $gostd
             - github.com/dafrie/kelson

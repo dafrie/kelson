@@ -59,7 +59,7 @@ func gatewayProfile() clusterprofile.ClusterProfile {
 	return clusterprofile.ClusterProfile{
 		GatewayAPI:  &clusterprofile.GatewayAPI{Version: "v1.6.0", Classes: []string{"envoy"}},
 		CertManager: &clusterprofile.CertManager{ClusterIssuers: []string{"letsencrypt-prod"}},
-		Prometheus:  true,
+		Prometheus:  &clusterprofile.Prometheus{ServiceMonitor: true},
 	}
 }
 
@@ -183,12 +183,12 @@ func TestRenderRoutingMatrix(t *testing.T) {
 	}{
 		{
 			name:      "gateway api preferred over ingress",
-			profile:   clusterprofile.ClusterProfile{GatewayAPI: &clusterprofile.GatewayAPI{Classes: []string{"envoy"}}, IngressClasses: []string{"nginx"}},
+			profile:   clusterprofile.ClusterProfile{GatewayAPI: &clusterprofile.GatewayAPI{Classes: []string{"envoy"}}, IngressClasses: []clusterprofile.IngressClass{{Name: "nginx"}}},
 			wantKinds: []string{"HTTPRoute"},
 		},
 		{
 			name:      "ingress when no gateway api",
-			profile:   clusterprofile.ClusterProfile{IngressClasses: []string{"nginx"}},
+			profile:   clusterprofile.ClusterProfile{IngressClasses: []clusterprofile.IngressClass{{Name: "nginx"}}},
 			wantKinds: []string{"Ingress"},
 		},
 		{
@@ -198,7 +198,7 @@ func TestRenderRoutingMatrix(t *testing.T) {
 		},
 		{
 			name:      "certificate only with cert-manager",
-			profile:   clusterprofile.ClusterProfile{IngressClasses: []string{"nginx"}, CertManager: &clusterprofile.CertManager{ClusterIssuers: []string{"letsencrypt-prod"}}},
+			profile:   clusterprofile.ClusterProfile{IngressClasses: []clusterprofile.IngressClass{{Name: "nginx"}}, CertManager: &clusterprofile.CertManager{ClusterIssuers: []string{"letsencrypt-prod"}}},
 			wantKinds: []string{"Ingress", "Certificate"},
 		},
 		{

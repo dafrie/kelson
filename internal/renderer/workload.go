@@ -40,7 +40,7 @@ func appManifests(resolved *model.Resolved, app *model.ResolvedApplication, prof
 		out = append(out, cronJob(app, prov))
 	}
 	out = append(out, routingResources(resolved, app, profile, prov)...)
-	if app.Kind == model.WorkloadService && profile.Prometheus {
+	if app.Kind == model.WorkloadService && profile.Prometheus != nil {
 		out = append(out, serviceMonitor(app, prov))
 	}
 	return out, nil

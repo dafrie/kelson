@@ -3,9 +3,12 @@
 gatewayAPI:
   version: v1.6.0
   classes: [envoy]
-ingressClasses: [nginx]
+ingressClasses:
+  - { name: nginx, controller: k8s.io/ingress-nginx, default: true }
 certManager:
   clusterIssuers: [letsencrypt-prod]
-prometheus: true
-metricsServer: true
-cnpg: true
+prometheus:
+  serviceMonitor: true
+  podMonitor: true
+metricsServer: {}
+cnpg: {}

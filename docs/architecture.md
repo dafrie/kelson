@@ -115,19 +115,29 @@ long-tail requests than adding fields until the surface is overwhelming.
 On install and periodically after, kelson probes the cluster and records what it finds:
 
 ```yaml
-kind: ClusterProfile
-detected:
-  gatewayAPI:     { present: true,  version: v1.6.0, classes: [envoy] }
-  ingressClasses: [nginx]
-  certManager:    { present: true,  clusterIssuers: [letsencrypt-prod] }
-  externalSecrets:{ present: true,  stores: [vault-backend] }
-  prometheus:     { present: true,  crd: ServiceMonitor }
-  cnpg:           { present: false }
-  flux:           { present: true,  version: v2.x }
-  argocd:         { present: false }
-  policy:         { kyverno: true }
-  metricsServer:  { present: true }
+kubernetes:      { version: v1.31.2, platform: k3s, nodeArchitectures: [amd64] }
+gatewayAPI:      { version: v1.6.0, classes: [envoy] }
+ingressClasses:  [{ name: nginx, controller: k8s.io/ingress-nginx, default: true }]
+certManager:     { clusterIssuers: [letsencrypt-prod] }
+externalSecrets: { clusterSecretStores: [vault-backend] }
+prometheus:      { serviceMonitor: true, podMonitor: true }
+flux:            { version: v2.4.0 }
+policyEngines:   [{ name: kyverno, version: v1.13.0 }]
+metricsServer:   {}
+incomplete:
+  - field: storageClasses
+    reason: 'list storageclasses.storage.k8s.io denied'
 ```
+
+Absent components are simply missing from the document — `cnpg` and `argocd` are not installed here.
+An empty mapping such as `metricsServer: {}` means present with an unknown version, which is a different
+answer again.
+
+`incomplete` is why the profile can be trusted. A probe that lacks permission to list storage classes
+records the gap instead of reporting none, because a manifest rendered from "we didn't look" and one
+rendered from "it isn't there" are indistinguishable afterwards — and only one of them is correct. It is
+the same rule preview follows for policy: *checked and failing* and *could not check* never collapse into
+one answer.
 
 The renderer takes this as an input. Same spec, different cluster, correct output: `HTTPRoute` where
 Gateway API exists and `Ingress` where it doesn't; a `Certificate` where cert-manager is present rather
