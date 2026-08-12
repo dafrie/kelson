@@ -1,0 +1,7 @@
+rendered diff streaming/production
+
+~ Deployment/transcoder restart-required
+    + spec.template.spec.affinity = {"nodeAffinity":{"requiredDuringSchedulingIgnoredDuringExecution":{"nodeSelectorTerms":[{"matchExpressions":[{"key":"acme.com/gpu","operator":"In","values":["true"]}]}]}}}  (overlay)
++ NetworkPolicy/transcoder-ingress additive
+
+summary: 1 added, 1 modified, 0 removed · restart: [transcoder] · max risk: restart-required
