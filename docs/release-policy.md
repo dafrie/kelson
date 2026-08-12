@@ -110,7 +110,7 @@ gets the deprecation warning they need *before* the removal lands.
 - **Direct-mode users** receive rendered-manifest history: rolling the
   renderer back to N-1 is a `git revert` against that history.
 - **GitOps-mode users** receive Kubernetes manifests: rollback is the GitOps
-  system's normal mechanism (`flux rollback`, Argo `sync --revision`).
+  system's normal mechanism (a Git revert reconciled by Flux).
 - A kelson upgrade never rewrites a working spec; it may re-render different
   bytes from the same spec, gated by the deprecation rules above. **A kelson
   uninstall must not break a running application** ([README](../README.md#whats-different))

@@ -1,6 +1,6 @@
-# ADR-0007: Data services — plans, delegation and branching
+# ADR-0007: Data services — presets, delegation and branching
 
-- **Status:** Accepted
+- **Status:** Accepted (amended 2026-08-12: "plan" is renamed to "preset" — it is a topology preset, not a paid tier; rename tracked in [#146](https://github.com/dafrie/kelson/issues/146). Branching and Valkey moved to v0.2/M9b.)
 - **Date:** 2026-08-11
 
 ## Context

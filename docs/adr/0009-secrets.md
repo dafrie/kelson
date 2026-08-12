@@ -30,11 +30,19 @@ The bar is low. Two of the three store secrets in plaintext somewhere, and the t
 
 ### The spec carries references, never values
 
-A spec containing a secret literal **fails to render**, in every delivery mode. Not a warning.
+A spec containing a secret literal **fails validation**, in every delivery mode. Not a warning.
 
-Enforcing this at the renderer means one rule covers the CLI, the UI, the API and agents at once. There is
-no second path to secure. A warning is suppressed under deadline pressure, and the failure mode it permits
-is a credential in Git history — which is not fixed by editing the file.
+Enforcing this in the shared model validation (which every render passes through) means one rule covers
+the CLI, the UI, the API and agents at once. There is no second path to secure. A warning is suppressed
+under deadline pressure, and the failure mode it permits is a credential in Git history — which is not
+fixed by editing the file.
+
+*Honesty note (2026-08-12 review):* the current implementation is a **heuristic** — an env-name pattern
+(`PASSWORD|SECRET|TOKEN|API_KEY|…`) plus URL-credential detection in `internal/model/validate.go`. It
+catches the common shapes; a literal under a creatively named key renders fine. The hard guarantee this
+section promises becomes structural (shape-based, not vocabulary-based) in
+[#82](https://github.com/dafrie/kelson/issues/82); until then, read "fails validation" as "fails for
+recognizable secret shapes".
 
 ### v0.1: values live in Kubernetes Secrets, written out-of-band
 

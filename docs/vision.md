@@ -34,7 +34,7 @@ Three fields to deploy. Every generated resource inspectable. Raw patches and ar
 The escape hatch also protects the spec. Long-tail requests get a good answer that isn't "add another field", which is how Coolify's option surface grew until its own users called it overwhelming.
 
 ### 4. Adopt, don't install
-If the cluster has an ingress controller, use it. If it has cert-manager, emit `Certificate` resources instead of running an ACME client. Detection is a subsystem, not a config flag.
+If the cluster has a Gateway API implementation, route through it. If it has cert-manager, emit `Certificate` resources instead of running an ACME client. Detection is a subsystem, not a config flag. (Routing is Gateway API only — a missing implementation is a reported gap plus an offer to install one, never a parallel stack.)
 
 ### 5. Delegate stateful workloads
 kelson will not implement Postgres failover. CloudNativePG has spent years on it. kelson's job is making a database a three-line spec entry and wiring the connection in correctly.
@@ -48,7 +48,7 @@ An agent gets its own identity, scoped and expiring credentials, its own audit t
 Tools are not the hard part here, and won't be a differentiator for long. Canine already ships MCP tools. The hard part is an agent acting in production without a human regretting it.
 
 ### 8. Open, permanently
-MIT. Every feature. SSO, RBAC and audit logs are security basics, not upsells. Paywalling them ships a product that is insecure by default for anyone who won't pay. If kelson is monetised it will be through hosting and support.
+MIT. Every feature. SSO, RBAC and audit logs are security basics, not upsells. Paywalling them ships a product that is insecure by default for anyone who won't pay. kelson has no monetization plan and no commercial intent — no paid tiers, ever.
 
 ## Vocabulary
 
@@ -65,7 +65,7 @@ A typical service is one Project containing three Applications, deployed into tw
 - **Not a Kubernetes distribution.** kelson can provision k3s or Talos for someone starting from nothing, but it delegates to them and doesn't manage node pools, upgrades or CNI.
 - **Not a general-purpose dashboard.** Headlamp and k9s exist. kelson shows applications, not every resource in the cluster.
 - **Not a CI system.** kelson builds images and deploys them. It doesn't replace GitHub Actions or run your test matrix.
-- **Not a replacement for Flux or Argo CD.** kelson can install Flux for someone who has nothing, but composing with an existing installation is the design point.
+- **Not a replacement for Flux.** kelson can install Flux (via flux-operator) for someone who has nothing, but composing with an existing installation is the design point. Flux is the only supported GitOps mode ([ADR-0012](adr/0012-flux-only-gitops.md)); the adapter seam stays open for others.
 - **Not a monitoring stack.** kelson adopts your Prometheus, Loki and Grafana and renders per-application views. It doesn't ship a TSDB.
 - **Not cloud infrastructure provisioning.** No Crossplane-style resource graph. If you need an RDS instance, provision it with Crossplane or Terraform and reference the result.
 

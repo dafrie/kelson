@@ -195,11 +195,11 @@ spec:
   namespace: checkout-prod           # target namespace
   routing:
     domainSuffix: acme.run
-    ingressClass: nginx              # or gatewayClass — not both
+    gatewayClass: envoy              # Gateway API only; `ingressClass` is removed by #140
     tls: true                        # default true
   delivery:
-    mode: flux                       # direct | flux | argocd
-    git:                             # required for flux/argocd, forbidden for direct
+    mode: flux                       # direct | flux (argocd removed — ADR-0012)
+    git:                             # required for flux, forbidden for direct
       repo: git@github.com:acme/deploy.git
       branch: main
       path: checkout/production

@@ -11,13 +11,15 @@ wrong, open an issue — it is far cheaper to reverse a decision now than after 
 | [0004](0004-licensing.md) | MIT, fully open, no feature gating | Accepted |
 | [0005](0005-delegate-to-operators.md) | Managed service types delegate to operators | Accepted (revised) |
 | [0006](0006-project-application-environment.md) | Project, Application, Environment | Accepted |
-| [0007](0007-data-services.md) | Data services — plans, delegation and branching | Accepted |
+| [0007](0007-data-services.md) | Data services — presets, delegation and branching | Accepted |
 | [0008](0008-mcp-surface.md) | MCP tools are task-shaped, not endpoint-shaped | Accepted |
 | [0009](0009-secrets.md) | Secrets are references; values never enter Git | Accepted |
 | [0010](0010-build-strategy.md) | Dockerfile when present, Cloud Native Buildpacks otherwise | Accepted |
 | [0011](0011-build-cache.md) | Build cache is a registry cache, scoped per application | Deferred |
+| [0012](0012-flux-only-gitops.md) | Flux is the only GitOps delivery mode; Argo CD deferred | Accepted |
 
-Every load-bearing decision is now recorded and reviewed.
+*Process note (2026-08-12):* ADR-0003 and ADR-0005 were revised in place before the immutability rule
+below hardened; their in-place revisions stand as recorded. From ADR-0012 on, changes supersede.
 
 ## Format
 

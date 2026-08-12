@@ -2,10 +2,12 @@
 
 A self-hosted PaaS that runs on your Kubernetes cluster and writes standard manifests instead of hiding them.
 
-**Pre-alpha, and not usable yet.** The pure renderer, the spec model and all four delivery adapters
-are implemented and tested; there is no build pipeline, no server, no UI and no install path, so
-nothing here deploys an application end to end. `kelson render` works offline today. The
-[roadmap](docs/roadmap.md) and [issues](https://github.com/dafrie/kelson/issues) track the rest.
+**Pre-alpha, and not usable yet.** What works end to end today: `kelson render`, `kelson diff`
+(including server-side dry-run), `kelson eject` and `kelson profile`. The delivery adapters
+(direct and Flux), build drivers and observation layer are implemented and tested but not yet
+wired to a `deploy` command, there is no server and no UI — so nothing here deploys an
+application end to end yet. The [roadmap](docs/roadmap.md) and
+[issues](https://github.com/dafrie/kelson/issues) track the assembly work.
 
 ## Why Kubernetes
 
@@ -26,27 +28,27 @@ So kelson doesn't wrap Kubernetes in new concepts. It generates Kubernetes.
     │  Renderer │   pure function: no cluster, no network, no clock
     └─────┬─────┘
           │  plain Kubernetes YAML
-   ┌──────┼──────┐
-   ▼      ▼      ▼
- direct  Flux  Argo CD
-   └──────┼──────┘
+      ┌───┴───┐
+      ▼       ▼
+   direct    Flux
+      └───┬───┘
           ▼
      your cluster
 ```
 
-The renderer is a pure function, so the same input always produces the same bytes. That's what makes the three delivery modes one code path rather than three, and what makes previews worth trusting.
+The renderer is a pure function, so the same input always produces the same bytes. That's what makes the delivery modes one code path rather than two, and what makes previews worth trusting. Delivery is a pluggable adapter seam; Flux is the supported GitOps mode, and an Argo CD adapter may return later ([ADR-0012](docs/adr/0012-flux-only-gitops.md)).
 
 Direct mode is Git mode with an implicit repository. It still versions rendered output, so you keep diffs, history and rollback, and `kelson eject --to-git` replays that history into a real repo when you want it.
 
 ## What's different
 
-**Uninstalling doesn't break anything.** Your apps keep running and you're left with a plain Kustomize repo. There's a CI test that proves it.
+**Uninstalling doesn't break anything.** Your apps keep running and you're left with a plain Kustomize repo. A CI test proving it is planned ([#59](https://github.com/dafrie/kelson/issues/59)) — until that test exists, treat this as a design goal, not a verified property.
 
 **You see what will happen first.** Three levels: a rendered diff, a server-side dry-run against the real API server, and an ephemeral live environment. The middle one is the API server's own answer, including admission webhooks, policy rejections and quota checks. Nothing else in this category surfaces it.
 
-**It adopts what you already run.** kelson detects Gateway API, cert-manager, external-secrets, Prometheus, CloudNativePG, Flux and Argo CD, and renders to fit. It won't install a second ingress controller next to yours.
+**It adopts what you already run.** kelson detects Gateway API, cert-manager, external-secrets, Prometheus, CloudNativePG and Flux, and renders to fit. Routing is Gateway API only — clusters without it get a clear capability gap and an offer to install a Gateway implementation, never a parallel ingress stack next to yours.
 
-**Agents get guardrails, not just tools.** Every mutation supports dry-run. Errors are structured with remediation hints. Agents authenticate as themselves with scoped, expiring credentials, and per-environment policy decides what they can do unsupervised. In production the default is propose-only, which is the same pull-request path a human uses.
+**Agents get guardrails, not just tools** *(designed; lands with the agent surface milestone, [M7](https://github.com/dafrie/kelson/issues/8))*. Every mutation supports dry-run. Errors are structured with remediation hints. Agents authenticate as themselves with scoped, expiring credentials, and per-environment policy decides what they can do unsupervised. In production the default is propose-only, which is the same pull-request path a human uses.
 
 **It doesn't reimplement operators.** CloudNativePG for Postgres, Strimzi for Kafka, cert-manager for TLS, external-secrets for secrets. Kubero vendored Bitnami charts and broke working installs when the catalog was withdrawn.
 
@@ -58,7 +60,8 @@ Direct mode is Git mode with an implicit repository. It still versions rendered 
 - [ADR-0004](docs/adr/0004-licensing.md) — MIT, no feature gating
 - [ADR-0005](docs/adr/0005-delegate-to-operators.md) — Delegate stateful workloads
 - [ADR-0006](docs/adr/0006-project-application-environment.md) — Project, Application, Environment
-- [ADR-0007](docs/adr/0007-data-services.md) — Data services: plans, delegation, branching
+- [ADR-0007](docs/adr/0007-data-services.md) — Data services: presets, delegation, branching
+- [ADR-0012](docs/adr/0012-flux-only-gitops.md) — Flux-only GitOps delivery; Argo CD deferred
 
 ## Docs
 

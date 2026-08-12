@@ -39,6 +39,11 @@ nav:
       - Environment spec: reference/environment.md
       - Cluster detection: detection.md
       - Support matrix: reference/support-matrix.md
+  - Design:
+      - Model: model.md
+      - Delivery: delivery.md
+      - State machine: statemachine.md
+      - Release policy: release-policy.md
   - Research:
       - Build strategy selection: research/build-strategy-selection.md
       - Score as an input format: research/score-as-input-format.md
@@ -55,6 +60,7 @@ nav:
       - 0009 — Secrets: adr/0009-secrets.md
       - 0010 — Build strategy: adr/0010-build-strategy.md
       - 0011 — Build cache: adr/0011-build-cache.md
+      - 0012 — Flux-only GitOps: adr/0012-flux-only-gitops.md
 
 markdown_extensions:
   - admonition
