@@ -757,7 +757,7 @@ func (w *Writer) FilesAt(ctx context.Context, revision string) ([]File, error) {
 	if err != nil {
 		e := delivery.ApplyFailed("git/read", "revision",
 			fmt.Sprintf("revision %q does not exist in the deployment repository", revision),
-			"list history with `kelson history` and pick a revision from it")
+			"pick a revision from history that kelson wrote")
 		e.Cause = err.Error()
 		return nil, e
 	}

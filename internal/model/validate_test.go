@@ -156,7 +156,12 @@ spec:
 			if secret == nil {
 				t.Fatalf("secret literal not rejected:\n%v", errs)
 			}
-			if !strings.Contains(secret.Remediation, "kelson secret set") {
+			// The remediation must not send anyone to a command that does not
+			// exist (issue #142): it can only name the fix kelson can do today.
+			if strings.Contains(secret.Remediation, "kelson secret set") {
+				t.Errorf("remediation references the nonexistent `kelson secret set` command, got %q", secret.Remediation)
+			}
+			if !strings.Contains(secret.Remediation, "service") {
 				t.Errorf("remediation should name the fix, got %q", secret.Remediation)
 			}
 		})

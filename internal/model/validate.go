@@ -125,14 +125,19 @@ func (v *validator) secretLiteral(field, name, literal string) {
 		if _, hasPassword := u.User.Password(); hasPassword {
 			v.err(ErrSecretLiteral, field,
 				fmt.Sprintf("%q contains a credential (URL with embedded password)", name),
-				fmt.Sprintf("declare a service and reference it, e.g. %s: {from: {service: <name>, key: uri}}, or run: kelson secret set %s=<value>", name, name))
+				// kelson has no command to write secret values yet (M8 · Secrets,
+				// ADR-0009) — a declared service is the only way to keep a
+				// credential-bearing value out of the spec today (issue #142).
+				fmt.Sprintf("declare a service and reference it, e.g. %s: {from: {service: <name>, key: uri}}", name))
 			return
 		}
 	}
 	if secretNameRE.MatchString(name) {
 		v.err(ErrSecretLiteral, field,
 			fmt.Sprintf("%q looks like a secret but is a plaintext literal", name),
-			fmt.Sprintf("run: kelson secret set %s=<value>, then reference it with {from: ...} — the spec carries references, never values (ADR-0009)", name))
+			"the spec carries references, never values (ADR-0009); kelson does not yet have a command to set secret "+
+				"values (tracked by the M8 · Secrets milestone) — until then, remove this variable or bind it to a "+
+				"declared service with {from: {service: <name>, key: <key>}}")
 	}
 }
 
