@@ -109,7 +109,7 @@ func newServerDryRun(kubeconfig string) (diffRunner, error) {
 }
 
 func runDiff(cmd *cobra.Command, opts *diffOptions) error {
-	project, environment, cur, err := resolveAndRender(opts.files, opts.env, opts.profile)
+	project, environment, cur, err := resolveAndRender(opts.files, opts.env, opts.profile, opts.kubeconfig)
 	if err != nil {
 		return err
 	}
@@ -144,7 +144,7 @@ func runDiff(cmd *cobra.Command, opts *diffOptions) error {
 func runRenderedDiff(project *model.Project, environment *model.Environment, opts *diffOptions, cur []renderer.Manifest) (*diff.Diff, error) {
 	var prev []renderer.Manifest
 	if opts.from != "" {
-		_, _, fromManifests, err := resolveAndRender([]string{opts.from}, environment.Metadata.Name, opts.profile)
+		_, _, fromManifests, err := resolveAndRender([]string{opts.from}, environment.Metadata.Name, opts.profile, opts.kubeconfig)
 		if err != nil {
 			return nil, err
 		}

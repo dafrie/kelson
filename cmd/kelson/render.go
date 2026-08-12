@@ -37,20 +37,22 @@ func newRenderCmd() *cobra.Command {
 	f.StringArrayVarP(&opts.files, "file", "f", nil, "spec YAML file holding Project and/or Environment documents (repeatable)")
 	f.StringVar(&opts.env, "env", "", "name of the Environment to render (optional when the input holds exactly one)")
 	f.StringVar(&opts.profile, "profile", "", "ClusterProfile YAML file, or from-cluster to capture a live profile (requires cluster access)")
+	f.StringVar(&opts.kubeconfig, "kubeconfig", "", "path to a kubeconfig for --profile from-cluster (default: $KUBECONFIG, in-cluster credentials, then ~/.kube/config)")
 	f.StringVarP(&opts.output, "output", "o", "", "directory to write one YAML file per manifest (default: stdout, multi-document)")
 	cobra.CheckErr(cmd.MarkFlagRequired("file"))
 	return cmd
 }
 
 type renderOptions struct {
-	files   []string
-	env     string
-	profile string
-	output  string
+	files      []string
+	env        string
+	profile    string
+	kubeconfig string
+	output     string
 }
 
 func runRender(cmd *cobra.Command, opts *renderOptions) error {
-	_, _, manifests, err := resolveAndRender(opts.files, opts.env, opts.profile)
+	_, _, manifests, err := resolveAndRender(opts.files, opts.env, opts.profile, opts.kubeconfig)
 	if err != nil {
 		return err
 	}
@@ -72,8 +74,8 @@ func runRender(cmd *cobra.Command, opts *renderOptions) error {
 // select the environment, resolve and render. It is the single place render
 // and diff (issue #46) build the current manifest set, so the two commands
 // cannot drift on what "the current render" means.
-func resolveAndRender(files []string, env, profile string) (*model.Project, *model.Environment, []renderer.Manifest, error) {
-	profileValue, err := resolveProfile(profile)
+func resolveAndRender(files []string, env, profile, kubeconfig string) (*model.Project, *model.Environment, []renderer.Manifest, error) {
+	profileValue, err := resolveProfile(profile, kubeconfig)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -101,12 +103,12 @@ func resolveAndRender(files []string, env, profile string) (*model.Project, *mod
 // resolveProfile loads the ClusterProfile input. An empty flag renders
 // against a zero profile (nothing detected: no gateway API, no ingress, no
 // cert-manager, no prometheus) — valid and deterministic.
-func resolveProfile(flag string) (clusterprofile.ClusterProfile, error) {
+func resolveProfile(flag, kubeconfig string) (clusterprofile.ClusterProfile, error) {
 	switch flag {
 	case "":
 		return clusterprofile.ClusterProfile{}, nil
 	case "from-cluster":
-		return detect.FromCluster("")
+		return detect.FromCluster(kubeconfig)
 	default:
 		data, err := os.ReadFile(filepath.Clean(flag))
 		if err != nil {

@@ -30,5 +30,6 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newRenderCmd())
 	root.AddCommand(newEjectCmd())
 	root.AddCommand(newDiffCmd())
+	root.AddCommand(newProfileCmd())
 	return root
 }
