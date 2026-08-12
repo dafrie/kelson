@@ -55,8 +55,13 @@ entries cannot be used at all — they make golangci-lint panic. Don't "simplify
 rendered output changed for unchanged input. Say so explicitly in the PR body — it is reviewed as a
 behaviour change.
 
-**CI has a docs-only fast path.** Changes touching only `*.md` and `docs/` skip lint, test, build and
-vulnerability scanning. A change that mixes docs and Go runs everything.
+**CI has a docs-only fast path.** Changes touching only `*.md`, `docs/` and `website/` skip lint,
+test, build and vulnerability scanning. A change that mixes docs and Go runs everything.
+
+**The docs site reads `docs/` in place.** `website/` is a Docusaurus site whose content is the
+markdown under `docs/` — nothing is copied or synced, so `docs/` stays the canonical location. A new
+page there must be added to `website/sidebars.ts` or it will not appear in navigation, and broken
+markdown links fail the site build. See [website/README.md](website/README.md).
 
 ## Parallel agents
 

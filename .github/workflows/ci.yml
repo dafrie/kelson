@@ -61,7 +61,11 @@ jobs:
               ui/*)
                 typescript="true"
                 ;;
-              *.md|docs/*)
+              # website/ is the Docusaurus docs site. It has no Go impact, so it
+              # belongs on the docs fast path; its own build runs in docs.yml.
+              # Without this it matched nothing, so a website-only change ran the
+              # full Go pipeline and skipped the site build entirely.
+              *.md|docs/*|website/*)
                 docs="true"
                 ;;
             esac

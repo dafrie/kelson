@@ -5,12 +5,12 @@ on:
     branches: [main]
     paths:
       - "docs/**"
-      - "mkdocs.yml"
+      - "website/**"
       - ".github/workflows/docs.yml"
   pull_request:
     paths:
       - "docs/**"
-      - "mkdocs.yml"
+      - "website/**"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
@@ -26,16 +26,23 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: website
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-node@v4
         with:
-          python-version: "3.12"
-      - run: pip install mkdocs-material
-      - run: mkdocs build
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - run: npm ci
+      # The site reads the markdown in docs/ in place, so the whole repo
+      # checkout is the build input, not just website/.
+      - run: npm run build
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: site
+          path: website/build
 
   deploy:
     # Only deploy on manual dispatch. Auto-deploy was disabled because GitHub
