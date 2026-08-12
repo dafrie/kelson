@@ -701,12 +701,39 @@ func health(obj *unstructured.Unstructured) (healthState, string) {
 	}
 }
 
+// deploymentHealth answers "is THIS revision live", which is not the same
+// question as "does this Deployment have available replicas".
+//
+// The distinction is the whole point. A server-side apply of a changed
+// Deployment returns immediately; the previous ReplicaSet's pods stay Ready
+// throughout the rollout, so status.availableReplicas and the Available
+// condition still describe the OLD revision for as long as the new pods take
+// to come up — or forever, if the new pods crash-loop and the rolling update
+// never retires the old ones. Reading Available alone therefore reports a
+// broken deploy as Healthy within a second of applying it, and only a FIRST
+// deploy (no previous ReplicaSet to mask the new one) looks correct.
+//
+// So health is pinned to the applied generation, mirroring what
+// `kubectl rollout status` waits for:
+//
+//  1. status.observedGeneration >= metadata.generation — the controller has
+//     seen this revision at all;
+//  2. updatedReplicas == spec.replicas — every new pod exists;
+//  3. replicas == updatedReplicas — no pods of the previous revision are left;
+//  4. availableReplicas >= updatedReplicas — the new pods are available.
+//
+// Until all four hold the rollout is in flight, which is Applied — not Healthy,
+// and not Degraded either: a rollout that is merely slow must not read as
+// broken. Degraded stays reserved for the signals that mean it will not finish
+// on its own — ReplicaFailure, and a Progressing condition the controller
+// turned False because its progress deadline expired.
 func deploymentHealth(obj *unstructured.Unstructured) (healthState, string) {
 	gen, _, _ := unstructured.NestedInt64(obj.Object, "metadata", "generation")
-	observed, found, _ := unstructured.NestedInt64(obj.Object, "status", "observedGeneration")
-	if found && observed < gen {
+	observed, _, _ := unstructured.NestedInt64(obj.Object, "status", "observedGeneration")
+	if observed < gen {
 		return healthProgressing, "the controller has not observed the latest generation yet"
 	}
+
 	conditions, _, _ := unstructured.NestedSlice(obj.Object, "status", "conditions")
 	var available, progressing map[string]any
 	for _, raw := range conditions {
@@ -729,13 +756,45 @@ func deploymentHealth(obj *unstructured.Unstructured) (healthState, string) {
 	if progressing != nil && progressing["status"] == "False" {
 		return healthDegraded, "rollout is not progressing: " + conditionText(progressing)
 	}
-	if available != nil && available["status"] != "True" {
-		return healthDegraded, "no available replicas: " + conditionText(available)
+
+	if state, cause := rolloutProgress(obj); state != healthOK {
+		return state, cause
 	}
+
+	// The rollout is complete, so the Available condition is finally about this
+	// revision. Unavailable now is a real failure, not a rollout in flight.
 	if available == nil {
 		return healthProgressing, "no Available condition reported yet"
 	}
+	if available["status"] != "True" {
+		return healthDegraded, "no available replicas: " + conditionText(available)
+	}
 	return healthOK, ""
+}
+
+// rolloutProgress reports whether the rolling update to the current generation
+// has finished, in the order `kubectl rollout status` reports it. It returns
+// healthOK only when every replica the spec asks for is an updated one and is
+// available.
+func rolloutProgress(obj *unstructured.Unstructured) (healthState, string) {
+	desired := int64(1) // spec.replicas defaults to 1 when unset.
+	if n, found, _ := unstructured.NestedInt64(obj.Object, "spec", "replicas"); found {
+		desired = n
+	}
+	updated, _, _ := unstructured.NestedInt64(obj.Object, "status", "updatedReplicas")
+	total, _, _ := unstructured.NestedInt64(obj.Object, "status", "replicas")
+	live, _, _ := unstructured.NestedInt64(obj.Object, "status", "availableReplicas")
+
+	switch {
+	case updated < desired:
+		return healthProgressing, fmt.Sprintf("%d of %d updated replicas have been created", updated, desired)
+	case total > updated:
+		return healthProgressing, fmt.Sprintf("%d replicas of the previous revision are pending termination", total-updated)
+	case live < updated:
+		return healthProgressing, fmt.Sprintf("%d of %d updated replicas are available", live, updated)
+	default:
+		return healthOK, ""
+	}
 }
 
 // cronJobHealth is intentionally minimal: batch/v1 CronJobs carry no

@@ -340,6 +340,9 @@ func TestStatusPhases(t *testing.T) {
 		t.Fatalf("status revision = %q", applied.Revision)
 	}
 
+	// Healthy needs the rollout to have finished for THIS generation, not just
+	// an Available condition — see TestStatusDoesNotReportHealthyMidRollout.
+	setRolloutCounts(t, c, 2, 2, 2)
 	setCondition(t, c, "Available", "True", "MinimumReplicasAvailable", "")
 	healthy, err := a.Status(ctx, s)
 	if err != nil {
@@ -371,6 +374,126 @@ func TestStatusPhases(t *testing.T) {
 	if got, err := a.Status(ctx, stale); err != nil || got.Phase != delivery.PhaseProposed {
 		t.Fatalf("stale revision status = %+v (err %v), want Proposed", got, err)
 	}
+}
+
+// TestStatusDoesNotReportHealthyMidRollout is the regression for the bug the
+// first real cluster run found: deploying a second, broken revision exited 0
+// immediately.
+//
+// A server-side apply returns as soon as the object is written. The previous
+// ReplicaSet's pods are still Ready at that moment, so the Deployment's
+// Available condition and availableReplicas describe the OLD revision — and
+// keep describing it forever when the new pods crash-loop, because the rolling
+// update never retires the old ones. Health must therefore be pinned to the
+// applied generation: mid-rollout is Applied, never Healthy.
+func TestStatusDoesNotReportHealthyMidRollout(t *testing.T) {
+	c := newCluster()
+	a := newAdapter(t, c)
+	ctx := context.Background()
+	s := fullSet(t)
+
+	if _, err := a.Apply(ctx, s); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	// The completed first rollout: this is the state the masking starts from.
+	setRolloutCounts(t, c, 2, 2, 2)
+	setCondition(t, c, "Available", "True", "MinimumReplicasAvailable", "")
+	if got, err := a.Status(ctx, s); err != nil || got.Phase != delivery.PhaseHealthy {
+		t.Fatalf("first revision status = %+v (err %v), want Healthy", got, err)
+	}
+
+	cases := []struct {
+		name                              string
+		generation, observed              int64
+		updated, total, availableReplicas int64
+		wantCause                         string
+	}{
+		{
+			name: "controller has not observed the new generation",
+			// The window right after an apply, before the controller reacts.
+			generation: 2, observed: 1,
+			updated: 2, total: 2, availableReplicas: 2,
+			wantCause: "has not observed the latest generation",
+		},
+		{
+			name: "new pods are not created yet",
+			// Available is still True: the old ReplicaSet is fully up.
+			generation: 2, observed: 2,
+			updated: 0, total: 2, availableReplicas: 2,
+			wantCause: "0 of 2 updated replicas have been created",
+		},
+		{
+			name: "old replicas are still running",
+			// The crash-loop signature: the new pods exist and never become
+			// available, so the rolling update keeps the old ones alive.
+			generation: 2, observed: 2,
+			updated: 2, total: 4, availableReplicas: 2,
+			wantCause: "2 replicas of the previous revision are pending termination",
+		},
+		{
+			name:       "updated pods are not available",
+			generation: 2, observed: 2,
+			updated: 2, total: 2, availableReplicas: 1,
+			wantCause: "1 of 2 updated replicas are available",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			setGeneration(t, c, tc.generation, tc.observed)
+			setRolloutCounts(t, c, tc.updated, tc.total, tc.availableReplicas)
+			setCondition(t, c, "Available", "True", "MinimumReplicasAvailable", "")
+
+			got, err := a.Status(ctx, s)
+			if err != nil {
+				t.Fatalf("status: %v", err)
+			}
+			if got.Phase == delivery.PhaseHealthy {
+				t.Fatalf("phase = Healthy while the rollout is in flight; an apply is not a live revision")
+			}
+			if got.Phase != delivery.PhaseApplied {
+				t.Fatalf("phase = %q, want Applied — a rollout in flight is not broken either", got.Phase)
+			}
+			if !strings.Contains(got.Cause, tc.wantCause) {
+				t.Fatalf("cause = %q, want it to name %q", got.Cause, tc.wantCause)
+			}
+		})
+	}
+}
+
+// setRolloutCounts writes the replica counters the Deployment controller
+// maintains: how many pods run the current generation, how many run at all,
+// and how many are available.
+func setRolloutCounts(t *testing.T, c *cluster, updated, total, available int64) {
+	t.Helper()
+	live := c.get(t, "deployments", testNS, "checkout")
+	if live == nil {
+		t.Fatal("Deployment is not live")
+	}
+	for field, value := range map[string]int64{
+		"updatedReplicas":   updated,
+		"replicas":          total,
+		"availableReplicas": available,
+	} {
+		if err := unstructured.SetNestedField(live.Object, value, "status", field); err != nil {
+			t.Fatalf("set status.%s: %v", field, err)
+		}
+	}
+	c.update(t, "deployments", live)
+}
+
+// setGeneration writes metadata.generation and the controller's
+// status.observedGeneration, which is how "this revision" is identified.
+func setGeneration(t *testing.T, c *cluster, generation, observed int64) {
+	t.Helper()
+	live := c.get(t, "deployments", testNS, "checkout")
+	if live == nil {
+		t.Fatal("Deployment is not live")
+	}
+	live.SetGeneration(generation)
+	if err := unstructured.SetNestedField(live.Object, observed, "status", "observedGeneration"); err != nil {
+		t.Fatalf("set observedGeneration: %v", err)
+	}
+	c.update(t, "deployments", live)
 }
 
 func setCondition(t *testing.T, c *cluster, condType, status, reason, message string) {

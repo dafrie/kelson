@@ -20,15 +20,21 @@ import (
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/discovery/cached/memory"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/restmapper"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
 // Cluster is a live connection: the dynamic client used for applies and reads,
-// and the mapper that resolves a kind to the resource those calls need.
+// the mapper that resolves a kind to the resource those calls need, and the
+// typed clientset for the few reads the dynamic client cannot do.
 type Cluster struct {
 	Dynamic dynamic.Interface
 	Mapper  meta.RESTMapper
+	// Typed is the typed clientset. It exists because container logs are not
+	// reachable through the dynamic client — observation.ClientGoLogSource
+	// needs this and nothing else in-tree turns a kubeconfig into one.
+	Typed kubernetes.Interface
 }
 
 // Connect resolves a kubeconfig and returns a live connection.
@@ -63,9 +69,14 @@ func Connect(kubeconfig string) (*Cluster, error) {
 	if err != nil {
 		return nil, fmt.Errorf("kube: building the discovery client: %w", err)
 	}
+	typed, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("kube: building the typed client: %w", err)
+	}
 
 	return &Cluster{
 		Dynamic: dyn,
 		Mapper:  restmapper.NewDeferredDiscoveryRESTMapper(memory.NewMemCacheClient(disco)),
+		Typed:   typed,
 	}, nil
 }
