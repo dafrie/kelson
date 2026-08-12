@@ -1,0 +1,46 @@
+# ClusterRole for `kelson profile` and `kelson render --profile from-cluster`.
+#
+# Detection is read-only by design (issue #56): every verb below is a get or a
+# list, there is no "*" verb, and no write verb appears anywhere. A cluster
+# where this binds is enough to capture a full profile; anything this cannot
+# read is reported as a gap in ClusterProfile.incomplete rather than guessed
+# absent.
+#
+# The first three rules cover the discovery API surface (server version, the
+# set of registered API groups, and one group's versions for the monitoring
+# kinds) — these are non-resource endpoints. The rest are the specific lists
+# the probe issues for classes, issuers, stores and storage. Keep this file in
+# sync with the probe in internal/clusterprofile/detect; the deploy/rbac test
+# enforces that no verb outside {get, list, watch} appears.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kelson-detect
+rules:
+  # Discovery: /version for the server version and platform, /apis for the
+  # registered groups that mark cert-manager, gateway API, external-secrets,
+  # cnpg, flux, argocd, metrics-server and the policy engines as present, and
+  # the monitoring group's resources to tell ServiceMonitor from PodMonitor.
+  - nonResourceURLs: ["/version", "/api", "/api/*", "/apis", "/apis/*"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingressclasses"]
+    verbs: ["get", "list"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list"]
+  - apiGroups: ["snapshot.storage.k8s.io"]
+    resources: ["volumesnapshotclasses"]
+    verbs: ["get", "list"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["gatewayclasses"]
+    verbs: ["get", "list"]
+  - apiGroups: ["cert-manager.io"]
+    resources: ["clusterissuers"]
+    verbs: ["get", "list"]
+  - apiGroups: ["external-secrets.io"]
+    resources: ["clustersecretstores", "secretstores"]
+    verbs: ["get", "list"]
