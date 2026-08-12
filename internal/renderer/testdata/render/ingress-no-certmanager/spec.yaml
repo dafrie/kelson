@@ -1,0 +1,39 @@
+# Fixture: ingress cluster without cert-manager. TLS is still requested, so
+# the Ingress carries a tls: section referencing the secret, but no
+# Certificate is emitted (no cert-manager to reconcile it). Fixed replica
+# counts exercise Deployment `replicas:` with no HPA.
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: shopfront
+spec:
+  image: registry.acme.run/shopfront:3.1.0
+  env:
+    CACHE_URL:
+      from: { service: cache, key: uri }
+  services:
+    - name: cache
+      type: valkey
+      plan: shared
+  applications:
+    - name: web
+      port: 3000
+      health: /up
+      replicas: { min: 3 }
+      resources:
+        requests: { cpu: 250m, memory: 256Mi }
+        limits: { cpu: "1", memory: 512Mi }
+    - name: images
+      command: ["shopfront", "process-images"]
+---
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: production
+spec:
+  project: shopfront
+  namespace: shopfront
+  routing:
+    domainSuffix: shop.acme.io
+    ingressClass: public
+    tls: true

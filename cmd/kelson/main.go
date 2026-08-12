@@ -1,19 +1,27 @@
 package main
 
 import (
-	"fmt"
 	"os"
+
+	"github.com/spf13/cobra"
+
+	"github.com/dafrie/kelson/internal/version"
 )
 
 func main() {
-	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
+	if err := newRootCmd().Execute(); err != nil {
 		os.Exit(1)
 	}
 }
 
-func run(args []string) error {
-	// Root command dispatch will land with the render subcommand (issue #30).
-	_ = args
-	return nil
+func newRootCmd() *cobra.Command {
+	root := &cobra.Command{
+		Use:          "kelson",
+		Short:        "kelson — the self-hosted Kubernetes PaaS CLI",
+		Long:         "kelson renders, diffs and deploys applications described by Project and Environment documents. Rendering is offline and deterministic: the same spec always produces the same bytes.",
+		Version:      version.String(),
+		SilenceUsage: true,
+	}
+	root.AddCommand(newRenderCmd())
+	return root
 }

@@ -1,0 +1,11 @@
+# A cluster that has everything: Gateway API AND an ingress class (Gateway
+# API must win), cert-manager, Prometheus.
+gatewayAPI:
+  version: v1.6.0
+  classes: [envoy]
+ingressClasses: [nginx]
+certManager:
+  clusterIssuers: [letsencrypt-prod]
+prometheus: true
+metricsServer: true
+cnpg: true

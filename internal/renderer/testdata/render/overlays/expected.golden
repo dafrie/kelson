@@ -1,0 +1,192 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: transcoder
+  namespace: streaming
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: transcoder
+    kelson.dev/environment: production
+    kelson.dev/project: streaming
+  annotations:
+    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/spec-hash: sha256:c126d103294e74c66e4d7439af4a5350ad339eeb499795de0ccebd2663555cfd
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: transcoder
+  namespace: streaming
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: transcoder
+    kelson.dev/environment: production
+    kelson.dev/project: streaming
+  annotations:
+    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/spec-hash: sha256:c126d103294e74c66e4d7439af4a5350ad339eeb499795de0ccebd2663555cfd
+spec:
+  selector:
+    kelson.dev/project: streaming
+    kelson.dev/application: transcoder
+  ports:
+    - name: http
+      port: 8443
+      targetPort: 8443
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: transcoder
+  namespace: streaming
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: transcoder
+    kelson.dev/environment: production
+    kelson.dev/project: streaming
+  annotations:
+    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/spec-hash: sha256:c126d103294e74c66e4d7439af4a5350ad339eeb499795de0ccebd2663555cfd
+    kelson.dev/overlays: ./k8s/patches/affinity.yaml
+spec:
+  selector:
+    matchLabels:
+      kelson.dev/project: streaming
+      kelson.dev/application: transcoder
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/managed-by: kelson
+        kelson.dev/application: transcoder
+        kelson.dev/environment: production
+        kelson.dev/project: streaming
+    spec:
+      serviceAccountName: transcoder
+      containers:
+        - name: transcoder
+          image: ghcr.io/acme/streaming:0.9.1
+          ports:
+            - name: http
+              containerPort: 8443
+          env:
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: streaming-cache-credentials
+                  key: uri
+          resources:
+            requests:
+              cpu: "4"
+              memory: 8Gi
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: acme.com/gpu
+                    operator: In
+                    values: ["true"]
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: transcoder
+  namespace: streaming
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: transcoder
+    kelson.dev/environment: production
+    kelson.dev/project: streaming
+  annotations:
+    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/spec-hash: sha256:c126d103294e74c66e4d7439af4a5350ad339eeb499795de0ccebd2663555cfd
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: transcoder
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: transcoder
+  namespace: streaming
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: transcoder
+    kelson.dev/environment: production
+    kelson.dev/project: streaming
+  annotations:
+    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/spec-hash: sha256:c126d103294e74c66e4d7439af4a5350ad339eeb499795de0ccebd2663555cfd
+spec:
+  parentRefs:
+    - name: envoy
+  hostnames:
+    - stream.acme.com
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: transcoder
+          port: 8443
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: transcoder-tls
+  namespace: streaming
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: transcoder
+    kelson.dev/environment: production
+    kelson.dev/project: streaming
+  annotations:
+    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/spec-hash: sha256:c126d103294e74c66e4d7439af4a5350ad339eeb499795de0ccebd2663555cfd
+spec:
+  secretName: transcoder-tls
+  issuerRef:
+    kind: ClusterIssuer
+    name: letsencrypt-prod
+  dnsNames:
+    - stream.acme.com
+---
+# Extra manifest emitted alongside the rendered resources, as-is.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: transcoder-ingress
+  namespace: streaming
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/environment: production
+    kelson.dev/project: streaming
+  annotations:
+    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/spec-hash: sha256:8ec082da17704ab1d06df1f3e217b3a911b583e37fa2bed826c992841169488e
+    kelson.dev/overlays: ./k8s/extra/networkpolicy.yaml
+spec:
+  podSelector:
+    matchLabels:
+      kelson.dev/application: transcoder
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              acme.com/partner: cdn
+      ports:
+        - port: 8443

@@ -21,6 +21,9 @@ linters:
         renderer-purity:
           files:
             - "**/internal/renderer/**"
+            # Test files are exempt (the golden harness must read testdata);
+            # the deny-list still governs everything the renderer ships.
+            - "!$test"
           deny:
             - pkg: "k8s.io/client-go"
               desc: "renderer must be pure: importing a Kubernetes client breaks determinism and golden tests (issue #20)"
@@ -28,9 +31,18 @@ linters:
               desc: "renderer must be pure: importing controller-runtime breaks determinism (issue #20)"
             - pkg: "net/http"
               desc: "renderer must be pure: no network access (issue #20)"
-            - regex: "^(os|io|time)$"
-              desc: "renderer must be pure: no ambient inputs (filesystem, env, clock) — issue #20"
-            - regex: "^math/rand$"
+            # The "$" suffix anchors to an exact package match (depguard pkg
+            # entries are prefixes otherwise, so "os" alone would also ban
+            # os/exec). Regex `regex:` entries cannot be used here at all:
+            # golangci-lint's depguard glue maps them to an empty pkg key
+            # and panics. Semantics are identical to ^(os|io|time)$.
+            - pkg: "os$"
+              desc: "renderer must be pure: no ambient filesystem/env inputs — issue #20"
+            - pkg: "io$"
+              desc: "renderer must be pure: no ambient inputs — issue #20"
+            - pkg: "time$"
+              desc: "renderer must be pure: no clock access — issue #20"
+            - pkg: "math/rand"
               desc: "renderer must be deterministic: inject a seeded source or none at all (issue #20)"
         main:
           files:
@@ -39,4 +51,5 @@ linters:
             - $gostd
             - github.com/dafrie/kelson
             - github.com/invopop/jsonschema
+            - github.com/spf13/cobra
             - gopkg.in/yaml.v3

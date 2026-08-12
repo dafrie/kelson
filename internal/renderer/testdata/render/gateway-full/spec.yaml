@@ -1,0 +1,64 @@
+# Fixture: full-featured spec against a cluster that has everything —
+# Gateway API (preferred over the detected ingress class), cert-manager and
+# Prometheus. Exercises all three workload kinds, bindings, env precedence
+# (P1), per-environment replicas/resources overrides (P2) and autoscaling.
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: checkout
+spec:
+  image: ghcr.io/acme/checkout:1.4.2
+
+  env:
+    LOG_LEVEL: info
+    DATABASE_URL:
+      from: { service: db, key: uri }
+
+  services:
+    - name: db
+      type: postgres
+      plan: ha-small
+
+  applications:
+    - name: web
+      port: 8080
+      health: /healthz
+      domains: [checkout.acme.com]
+      replicas: { min: 2, max: 10 }
+    - name: worker
+      command: ["bundle", "exec", "sidekiq"]
+      replicas: { min: 2 }
+    - name: nightly-report
+      schedule: "0 3 * * *"
+---
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: production
+spec:
+  project: checkout
+  namespace: checkout-prod
+
+  routing:
+    domainSuffix: acme.com
+    gatewayClass: envoy
+    tls: true
+
+  delivery:
+    mode: flux
+    git:
+      repo: git@github.com:acme/deploy.git
+      branch: main
+      path: checkout/production
+
+  secrets:
+    backend: sops
+
+  applications:
+    - name: web
+      replicas: { min: 3, max: 20 }
+      resources:
+        requests: { cpu: 500m, memory: 512Mi }
+        limits: { memory: 1Gi }
+      env:
+        LOG_LEVEL: warning
