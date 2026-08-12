@@ -37,6 +37,7 @@ nav:
   - Reference:
       - Project spec: reference/project.md
       - Environment spec: reference/environment.md
+      - Cluster detection: detection.md
       - Support matrix: reference/support-matrix.md
   - Research:
       - Build strategy selection: research/build-strategy-selection.md
