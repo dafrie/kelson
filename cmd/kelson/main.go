@@ -23,5 +23,6 @@ func newRootCmd() *cobra.Command {
 		SilenceUsage: true,
 	}
 	root.AddCommand(newRenderCmd())
+	root.AddCommand(newEjectCmd())
 	return root
 }
