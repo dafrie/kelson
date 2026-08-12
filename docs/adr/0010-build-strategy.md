@@ -1,6 +1,6 @@
 # ADR-0010: Dockerfile when present, Cloud Native Buildpacks otherwise
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-12
 
 ## Context
