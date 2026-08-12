@@ -45,6 +45,15 @@ func Between(project, environment string, prev, cur []renderer.Manifest, origin 
 	if err != nil {
 		return nil, err
 	}
+	return between(project, environment, prevRes, curRes, origin), nil
+}
+
+// between is the join shared by both entry points: resources matched by
+// identity, fields walked in document order so the result is deterministic.
+func between(project, environment string, prevRes, curRes []resource, origin OriginFor) *Diff {
+	if origin == nil {
+		origin = func(ResourceRef, string) Origin { return OriginSpec }
+	}
 
 	curIndex := map[ResourceRef]resource{}
 	curOrder := []ResourceRef{}
@@ -76,14 +85,34 @@ func Between(project, environment string, prev, cur []renderer.Manifest, origin 
 		out = append(out, addedResource(curIndex[ref]))
 	}
 
-	d := &Diff{
+	return &Diff{
 		Level:       LevelRendered,
 		Project:     project,
 		Environment: environment,
 		Resources:   out,
 		Summary:     summarize(out),
 	}
-	return d, nil
+}
+
+// scalarAt returns the scalar value of key in a mapping node, or "".
+func scalarAt(mapping *yaml.Node, key string) string {
+	if v := mappingAt(mapping, key); v != nil && v.Kind == yaml.ScalarNode {
+		return v.Value
+	}
+	return ""
+}
+
+// mappingAt returns the value node for key in a mapping node, or nil.
+func mappingAt(mapping *yaml.Node, key string) *yaml.Node {
+	if mapping == nil || mapping.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		if mapping.Content[i].Value == key {
+			return mapping.Content[i+1]
+		}
+	}
+	return nil
 }
 
 // resource is one parsed manifest plus its join identity.
@@ -111,6 +140,62 @@ func buildResources(ms []renderer.Manifest) ([]resource, error) {
 			ref:  ResourceRef{APIVersion: m.APIVersion, Kind: m.Kind, Name: m.Name, Namespace: m.Namespace},
 			root: root,
 		})
+	}
+	return out, nil
+}
+
+// BetweenDocuments diffs two sets of already-rendered YAML documents, one
+// resource per document.
+//
+// It exists for callers holding rendered bytes they must not re-render: the
+// rendered-history store and the Git writers keep the exact output that went
+// live at a revision (issue #38), and a rollback preview compares against
+// those bytes verbatim. Re-rendering the old spec to obtain manifests would
+// answer a different question — what that spec produces *now*, under today's
+// renderer and ClusterProfile — which is precisely the question a rollback
+// preview must not ask.
+//
+// Identity comes from each document's own apiVersion/kind/metadata, since
+// there is no renderer.Manifest carrying it alongside.
+func BetweenDocuments(project, environment string, prev, cur [][]byte, origin OriginFor) (*Diff, error) {
+	prevRes, err := buildResourcesFromDocuments(prev)
+	if err != nil {
+		return nil, err
+	}
+	curRes, err := buildResourcesFromDocuments(cur)
+	if err != nil {
+		return nil, err
+	}
+	return between(project, environment, prevRes, curRes, origin), nil
+}
+
+// buildResourcesFromDocuments parses raw rendered documents, reading each
+// resource's identity out of the document itself. A document that is empty or
+// carries no kind is skipped rather than failing the whole diff — a recorded
+// stream can legitimately contain a trailing separator.
+func buildResourcesFromDocuments(docs [][]byte) ([]resource, error) {
+	out := make([]resource, 0, len(docs))
+	for i, body := range docs {
+		var doc yaml.Node
+		if err := yaml.Unmarshal(body, &doc); err != nil {
+			return nil, fmt.Errorf("diff: parsing recorded document %d: %w", i, err)
+		}
+		root := docRoot(&doc)
+		if root == nil {
+			continue
+		}
+		ref := ResourceRef{
+			APIVersion: scalarAt(root, "apiVersion"),
+			Kind:       scalarAt(root, "kind"),
+		}
+		if meta := mappingAt(root, "metadata"); meta != nil {
+			ref.Name = scalarAt(meta, "name")
+			ref.Namespace = scalarAt(meta, "namespace")
+		}
+		if ref.Kind == "" {
+			continue
+		}
+		out = append(out, resource{ref: ref, root: root})
 	}
 	return out, nil
 }
