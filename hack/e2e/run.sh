@@ -126,7 +126,10 @@ log "kubectl confirms CrashLoopBackOff on ${SELECTOR}"
 log "== stage: kelson status names the failure =="
 status_out=$("$KELSON" status -f "$WORKDIR/broken-project.yaml" -f "$ENV_FILE" --env "$ENV_NAME" --kubeconfig "$KUBECONFIG_FILE" 2>&1 || true)
 printf '%s\n' "$status_out"
-grep -q "CrashLoopBackOff" <<<"$status_out" || die "kelson status did not print the CrashLoopBackOff verdict"
+# Assert on kelson's own stable verdict slug, not the kubelet's raw reason:
+# mid-crash-cycle the containerStatus reason briefly reads "Error" instead of
+# "CrashLoopBackOff", and which one status samples is a race we don't control.
+grep -q "crash-loop-back-off" <<<"$status_out" || die "kelson status did not print the crash-loop-back-off verdict"
 log "kelson status verdict confirmed"
 
 log "== stage: rollback =="
@@ -143,9 +146,20 @@ if [[ -n "$command_after" && "$command_after" != "[]" ]]; then
 	die "rollback did not restore the original container command (found: ${command_after})"
 fi
 
-wait_for "a ready ${APP_NAME} pod after rollback" '{.items[*].status.containerStatuses[*].ready}' "true" 12 5
-ready_after=$(kubectl -n "$NAMESPACE" get pods -l "$SELECTOR" -o jsonpath='{.items[*].status.containerStatuses[*].ready}')
-[[ "$ready_after" != *"false"* ]] || die "not every ${APP_NAME} pod is ready after rollback (found: ${ready_after})"
+# The broken revision's pod may still be terminating when we get here; it
+# matches the selector but says nothing about the restored revision. Consider
+# only pods that are not being deleted, and give the terminating one time to go.
+ready_after=""
+for _ in $(seq 1 12); do
+	ready_after=$(kubectl -n "$NAMESPACE" get pods -l "$SELECTOR" \
+		-o go-template='{{range .items}}{{if not .metadata.deletionTimestamp}}{{range .status.containerStatuses}}{{.ready}} {{end}}{{end}}{{end}}' 2>/dev/null || true)
+	if [[ "$ready_after" == *"true"* && "$ready_after" != *"false"* ]]; then
+		break
+	fi
+	sleep 5
+done
+[[ "$ready_after" == *"true"* && "$ready_after" != *"false"* ]] ||
+	die "not every surviving ${APP_NAME} pod is ready after rollback (found: ${ready_after:-none})"
 log "kubectl confirms the original workload is restored and healthy"
 
 elapsed=$(($(date +%s) - start_ts))
