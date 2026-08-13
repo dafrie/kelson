@@ -1,0 +1,59 @@
+.k-logs__selector,
+.k-logs__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 18px;
+  margin-bottom: 18px;
+}
+
+.k-logs__box {
+  max-height: 520px;
+  overflow: auto;
+  padding: 14px 16px;
+  background: var(--kelson-panel-dim);
+  border: 1px solid var(--kelson-border);
+  border-radius: 6px;
+  font-family: var(--kelson-font-mono);
+  font-size: 12px;
+  line-height: 1.75;
+}
+
+.k-logline {
+  display: flex;
+  gap: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.k-logline__time,
+.k-logline__pod,
+.k-logline__container {
+  color: var(--kelson-muted-deep);
+  flex: none;
+}
+
+.k-logline__pod {
+  color: var(--kelson-muted-2);
+}
+
+.k-logline__message {
+  color: var(--kelson-code);
+}
+
+.k-logs__dropped {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+  padding: 14px 18px;
+  background: var(--kelson-degraded-fill);
+  border: 1px solid var(--kelson-degraded-border);
+  border-radius: 6px;
+}
+
+.k-logs__dropped-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--kelson-degraded);
+}

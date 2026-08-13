@@ -1,0 +1,66 @@
+{
+  "level": "server",
+  "project": "checkout",
+  "environment": "production",
+  "resources": [
+    {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "name": "web",
+      "namespace": "checkout-prod",
+      "op": "modified",
+      "risk": "restart-required",
+      "fields": [
+        {
+          "path": "spec.template.spec.containers[0].env[LOG_LEVEL].value",
+          "before": "info",
+          "after": "debug",
+          "origin": "spec",
+          "risk": "restart-required"
+        }
+      ]
+    },
+    {
+      "apiVersion": "networking.k8s.io/v1",
+      "kind": "NetworkPolicy",
+      "name": "web-ingress",
+      "namespace": "checkout-prod",
+      "op": "added",
+      "risk": "additive"
+    }
+  ],
+  "violations": [
+    {
+      "engine": "kyverno",
+      "policy": "require-run-as-nonroot",
+      "rule": "check-securitycontext",
+      "resource": "Deployment/web",
+      "path": "spec.template.spec.securityContext.runAsNonRoot",
+      "message": "runAsNonRoot must be set to true",
+      "enforcement": "enforce"
+    },
+    {
+      "engine": "kyverno",
+      "policy": "require-labels",
+      "resource": "Deployment/web",
+      "message": "missing recommended label app.kubernetes.io/name",
+      "enforcement": "audit"
+    }
+  ],
+  "unvalidated": [
+    {
+      "resource": "Widget/thing",
+      "requires": "CustomResourceDefinition for Widget.example.com",
+      "inBatch": true
+    }
+  ],
+  "summary": {
+    "added": 1,
+    "modified": 1,
+    "removed": 0,
+    "restarting": [
+      "web"
+    ],
+    "maxRisk": "restart-required"
+  }
+}

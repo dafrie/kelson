@@ -31,6 +31,7 @@ boundaries between them are load-bearing:
 | `internal/observation/` | observation | status readback |
 | `internal/clusterprofile/` | — | capability detection; what the renderer is told about the target cluster |
 | `cmd/kelson`, `cmd/kelson-server` | — | CLI and server |
+| `ui/` | — | `kelson-ui`: TypeScript/React web UI (M6). Vite + ConnectRPC clients generated into `ui/src/gen` by `make proto`; see [ui/README.md](ui/README.md) |
 
 Start by reading the package doc comment of the package you're changing. They are written to explain
 *why* the boundary exists and they cite issue numbers — `internal/delivery/delivery.go` is the model

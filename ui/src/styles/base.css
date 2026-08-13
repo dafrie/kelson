@@ -1,0 +1,164 @@
+/*
+ * Base element styles and the shared primitives (eyebrow, panel, status pill,
+ * states). Component-specific rules live next to their components; anything
+ * two screens will both want lives here.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--kelson-page);
+  color: var(--kelson-text);
+  font-family: var(--kelson-font);
+  font-size: 14px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--kelson-green);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--kelson-green-hover);
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: 600;
+  /* Display sizes carry -0.02em tracking per docs/design/assets/README.md. */
+  letter-spacing: -0.02em;
+}
+
+h1 {
+  font-size: 26px;
+}
+
+h2 {
+  font-size: 18px;
+}
+
+h3 {
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+code,
+pre {
+  font-family: var(--kelson-font-mono);
+  color: var(--kelson-code);
+}
+
+/* The one animation in the system. Reserved for reconciling status dots: a
+   pulse means "something is actively happening", so nothing decorative may
+   borrow it. */
+@keyframes kelson-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+
+/* --------------------------------------------------------------- primitives */
+
+/* Uppercase mono eyebrow: section labels, table headers, metadata captions. */
+.k-eyebrow {
+  font-family: var(--kelson-font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--kelson-muted-2);
+}
+
+.k-mono {
+  font-family: var(--kelson-font-mono);
+  font-size: 12.5px;
+  color: var(--kelson-muted);
+}
+
+/* The card surface every list item and detail block sits on. */
+.k-panel {
+  padding: 22px 24px;
+  background: var(--kelson-panel);
+  border: 1px solid var(--kelson-border);
+  border-radius: 6px;
+}
+
+a.k-panel,
+.k-panel--interactive {
+  display: block;
+  color: inherit;
+  transition: border-color 120ms ease;
+}
+
+a.k-panel:hover,
+.k-panel--interactive:hover {
+  border-color: var(--kelson-border-hover);
+  color: inherit;
+}
+
+.k-panel--dim {
+  background: var(--kelson-panel-dim);
+}
+
+/* ------------------------------------------------------------------- states */
+
+/* Loading, empty and error are states the user will actually see against a
+   server that is not running, so they are styled, not bare text. */
+.k-state {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 28px 24px;
+  background: var(--kelson-panel-dim);
+  border: 1px solid var(--kelson-border);
+  border-radius: 6px;
+  color: var(--kelson-text-2);
+}
+
+.k-state__title {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--kelson-text);
+}
+
+.k-state__detail {
+  font-family: var(--kelson-font-mono);
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--kelson-muted);
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.k-state--error {
+  border-color: var(--kelson-failed-border);
+  background: var(--kelson-failed-fill);
+}
+
+.k-state--error .k-state__title {
+  color: var(--kelson-failed);
+}
+
+.k-state--loading .k-state__title {
+  color: var(--kelson-text-2);
+}

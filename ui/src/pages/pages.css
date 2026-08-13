@@ -1,0 +1,575 @@
+.k-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+
+@media (max-width: 860px) {
+  .k-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.k-card {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.k-card__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.k-card__name {
+  font-size: 17px;
+  font-weight: 500;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.k-card__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.k-card__ident {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.k-card__reason {
+  color: var(--kelson-text-3);
+  overflow-wrap: anywhere;
+}
+
+.k-card__rev {
+  color: var(--kelson-text-2);
+}
+
+/* One "N label" unit of the tally above the grid; the count keeps its colour,
+   the label stays muted, and the pair never wraps between the two. */
+.k-count-group {
+  white-space: nowrap;
+}
+
+.k-count--synced {
+  color: var(--kelson-synced);
+}
+
+.k-count--reconciling {
+  color: var(--kelson-reconciling);
+}
+
+.k-count--degraded {
+  color: var(--kelson-degraded);
+}
+
+.k-count--failed {
+  color: var(--kelson-failed);
+}
+
+.k-count--unknown {
+  color: var(--kelson-muted-2);
+}
+
+/* -------------------------------------------------------------- primitives */
+
+/* The recessed mono chip the mockup's header uses; here it carries the
+   environment name, which is the second half of every address in this UI. */
+.k-chip {
+  padding: 4px 9px;
+  background: var(--kelson-inset);
+  border: 1px solid var(--kelson-inset-border);
+  border-radius: 4px;
+  color: var(--kelson-text-2);
+  white-space: nowrap;
+}
+
+.k-note {
+  margin: 0 0 22px;
+  max-width: 78ch;
+  font-size: 13.5px;
+  color: var(--kelson-text-2);
+}
+
+.k-note code {
+  font-size: 12.5px;
+}
+
+.k-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 7px 14px;
+  background: transparent;
+  border: 1px solid var(--kelson-inset-border);
+  border-radius: 4px;
+  font-family: var(--kelson-font-mono);
+  font-size: 12.5px;
+  color: var(--kelson-text-2);
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease;
+}
+
+.k-button:hover:not(:disabled) {
+  border-color: var(--kelson-border-hover);
+  color: var(--kelson-text);
+}
+
+.k-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.k-button--primary {
+  border-color: var(--kelson-green);
+  color: var(--kelson-green);
+}
+
+.k-button--primary:hover:not(:disabled) {
+  border-color: var(--kelson-green-hover);
+  color: var(--kelson-green-hover);
+}
+
+.k-button--wide {
+  padding: 10px 20px;
+  font-size: 13px;
+}
+
+.k-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* Click-to-copy mono value: a button that must not look like one. */
+.k-copy {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 0;
+  background: none;
+  border: none;
+  border-bottom: 1px dashed var(--kelson-border-hover);
+  font-family: var(--kelson-font-mono);
+  font-size: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.k-copy:hover {
+  border-bottom-color: var(--kelson-green);
+  color: var(--kelson-text);
+}
+
+.k-copy__flag {
+  font-size: 10.5px;
+  color: var(--kelson-green);
+}
+
+.k-copy[data-state="failed"] .k-copy__flag {
+  color: var(--kelson-degraded);
+}
+
+.k-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--kelson-hairline);
+}
+
+.k-tab {
+  padding: 8px 14px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  font-family: var(--kelson-font-mono);
+  font-size: 12.5px;
+  color: var(--kelson-text-3);
+  cursor: pointer;
+}
+
+.k-tab:hover {
+  color: var(--kelson-text);
+}
+
+.k-tab--active,
+.k-tab--active:hover {
+  color: var(--kelson-text);
+  border-bottom-color: var(--kelson-green);
+}
+
+.k-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 200px;
+  flex: 1 1 200px;
+}
+
+.k-field--narrow {
+  flex: 0 0 130px;
+  min-width: 110px;
+}
+
+.k-field__note {
+  color: var(--kelson-muted-deep);
+}
+
+.k-input {
+  padding: 8px 11px;
+  background: var(--kelson-inset);
+  border: 1px solid var(--kelson-inset-border);
+  border-radius: 4px;
+  font-family: var(--kelson-font-mono);
+  font-size: 12.5px;
+  color: var(--kelson-text);
+}
+
+.k-input:focus {
+  outline: none;
+  border-color: var(--kelson-green);
+}
+
+.k-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--kelson-text-2);
+}
+
+.k-disclosure {
+  border: 1px solid var(--kelson-border);
+  border-radius: 6px;
+  background: var(--kelson-panel);
+}
+
+.k-disclosure__summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.k-disclosure__summary::-webkit-details-marker {
+  display: none;
+}
+
+.k-disclosure__summary::before {
+  content: "▸";
+  color: var(--kelson-muted-deep);
+  font-size: 11px;
+}
+
+.k-disclosure[open] > .k-disclosure__summary::before {
+  content: "▾";
+}
+
+.k-disclosure__label {
+  flex: 1 1 auto;
+  font-size: 13.5px;
+  color: var(--kelson-text);
+}
+
+.k-disclosure__meta {
+  color: var(--kelson-muted-deep);
+}
+
+.k-disclosure__body {
+  padding: 0 16px 16px;
+}
+
+/* ------------------------------------------------------------ app detail */
+
+.k-env {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 22px 24px;
+  background: var(--kelson-panel);
+  border: 1px solid var(--kelson-border);
+  border-radius: 6px;
+}
+
+.k-env__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.k-env__ident {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.k-env__verdicts {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.k-env__note {
+  margin: 0;
+  max-width: 72ch;
+  color: var(--kelson-muted);
+}
+
+.k-verdicts {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.k-verdict {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+  background: var(--kelson-panel-dim);
+  border: 1px solid var(--kelson-hairline);
+  border-radius: 5px;
+}
+
+.k-verdict__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.k-verdict__resource {
+  font-size: 12.5px;
+  color: var(--kelson-text-2);
+}
+
+.k-verdict__message {
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--kelson-text);
+}
+
+.k-verdict__fix {
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--kelson-text-2);
+}
+
+.k-verdict__fix-label {
+  font-family: var(--kelson-font-mono);
+  font-size: 12px;
+  color: var(--kelson-green);
+}
+
+.k-docs {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ------------------------------------------------- deploy / rollback flows */
+
+.k-manifests {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.k-manifest__name {
+  font-size: 13px;
+  color: var(--kelson-text);
+}
+
+.k-deploy__confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.k-deploy__note {
+  color: var(--kelson-muted-deep);
+  max-width: 62ch;
+}
+
+.k-stream {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.k-stream__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 16px;
+  background: var(--kelson-panel);
+  border: 1px solid var(--kelson-hairline);
+  border-radius: 5px;
+}
+
+.k-stream__label {
+  color: var(--kelson-muted-2);
+  min-width: 88px;
+}
+
+.k-stream__answer {
+  color: var(--kelson-text-2);
+}
+
+.k-stream__cause {
+  color: var(--kelson-muted);
+  overflow-wrap: anywhere;
+}
+
+.k-stream__at {
+  margin-left: auto;
+  color: var(--kelson-muted-deep);
+}
+
+.k-settled {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 20px 22px;
+  background: var(--kelson-synced-fill);
+  border: 1px solid var(--kelson-synced-border);
+  border-radius: 6px;
+}
+
+.k-settled__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.k-settled__title {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--kelson-synced);
+}
+
+.k-revisions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.k-revision {
+  padding: 12px 16px;
+  background: var(--kelson-panel);
+  border: 1px solid var(--kelson-border);
+  border-radius: 5px;
+}
+
+.k-revision--current {
+  background: var(--kelson-panel-dim);
+}
+
+.k-revision__label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.k-revision--current .k-revision__label {
+  cursor: default;
+}
+
+.k-revision__rev {
+  font-size: 13px;
+  color: var(--kelson-text);
+}
+
+.k-revision__meta {
+  color: var(--kelson-muted-deep);
+}
+
+.k-revision__message {
+  margin: 6px 0 0 26px;
+  font-size: 13px;
+  color: var(--kelson-text-2);
+}
+
+.k-rollback__preview {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ----------------------------------------------------------------- cluster */
+
+.k-section {
+  margin-top: 32px;
+}
+
+.k-section__body {
+  margin-top: 12px;
+}
+
+.k-kv {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 20px;
+  font-family: var(--kelson-font-mono);
+  font-size: 12.5px;
+  color: var(--kelson-text-2);
+}
+
+.k-kv__key {
+  color: var(--kelson-muted-2);
+}
+
+.k-pre {
+  margin: 0;
+  max-height: 420px;
+  overflow: auto;
+  font-size: 12.5px;
+  line-height: 1.7;
+  white-space: pre;
+}
+
+.k-gaps {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.k-gaps__field {
+  font-family: var(--kelson-font-mono);
+  font-size: 12.5px;
+  color: var(--kelson-degraded);
+}
+
+.k-gaps__reason {
+  font-size: 13px;
+  color: var(--kelson-text-2);
+}

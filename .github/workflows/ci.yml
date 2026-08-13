@@ -2,7 +2,7 @@
 #
 # - Go: lint (golangci-lint v2 with depguard renderer-purity rule), race tests,
 #   coverage, cross-compiled build matrix, govulncheck.
-# - TypeScript UI: stubbed to no-op cleanly when ui/package.json is absent.
+# - TypeScript UI: strict typecheck, vitest, and a production build of ui/.
 # - Docs-only fast path skips the heavy Go/TS jobs via native git change
 #   detection (no third-party action).
 # - Required status checks on the default branch are configured in GitHub
@@ -225,14 +225,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: No-op when UI is not yet present
-        run: |
-          if [ ! -f package.json ]; then
-            echo "ui/package.json not found; skipping TypeScript checks."
-            exit 0
-          fi
-          echo "TypeScript UI checks not implemented yet."
-          exit 1
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # tsc in strict mode is the lint story for the UI; there is no ESLint or
+      # Prettier in v0 and no repo precedent for either.
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm run test -- --run
+
+      - name: Build
+        run: npm run build
 
   ci:
     name: CI summary

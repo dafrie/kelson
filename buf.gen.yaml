@@ -7,6 +7,13 @@
 # test that shells out to a tool CI does not install would fail for the wrong
 # reason. Until buf joins CI, `make proto` in the same commit as the .proto
 # change is the discipline that keeps internal/api/gen honest.
+#
+# The TypeScript plugin is an npm devDependency of ui/, not a remote plugin, so
+# generation stays reproducible offline and pinned by ui/package-lock.json.
+# `make proto` therefore needs `npm ci` in ui/ to have been run first.
+# Connect-ES v2 needs only protoc-gen-es: `createClient` in @connectrpc/connect
+# consumes the service descriptors protoc-gen-es emits, so there is no
+# protoc-gen-connect-es counterpart to the Go plugin below.
 version: v2
 plugins:
   - local: protoc-gen-go
@@ -15,7 +22,6 @@ plugins:
   - local: protoc-gen-connect-go
     out: internal/api/gen
     opt: paths=source_relative
-# The TypeScript client is deliberately not generated in v0; M6 (UI) turns
-# this on rather than designs it (ADR-0013).
-# - remote: buf.build/bufbuild/es
-#   out: web/src/gen
+  - local: ui/node_modules/.bin/protoc-gen-es
+    out: ui/src/gen
+    opt: target=ts
