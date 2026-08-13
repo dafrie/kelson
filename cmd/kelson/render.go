@@ -80,11 +80,16 @@ type specInput struct {
 }
 
 // imageFlagUsage documents --image identically wherever a command renders. A
-// spec with source + build has no image until a build produces one, and the
-// build plane is not yet driven from the CLI (issue #47) — so this flag is how
-// a built artifact reaches a render at all. Without it such a spec used to
-// render `image: "@"` (issue #136); now it fails with image/unresolved.
-const imageFlagUsage = "image reference for applications the spec builds from source, e.g. ghcr.io/acme/app@sha256:abc123"
+// spec with source + build has no image until a build produces one, so this
+// flag is how a built artifact reaches a render. `kelson build` (issue #48)
+// produces exactly such a reference — its last line of stdout is the
+// digest-pinned image — and the two compose:
+//
+//	kelson deploy -f spec.yaml --image "$(kelson build -f spec.yaml --registry ghcr.io/acme | tail -1)"
+//
+// Without an image such a spec used to render `image: "@"` (issue #136); now it
+// fails with image/unresolved.
+const imageFlagUsage = "image reference for applications the spec builds from source, e.g. ghcr.io/acme/app@sha256:abc123 (see `kelson build`)"
 
 // resolveAndRender runs the shared spec pipeline: load the -f spec files,
 // select the environment, resolve and render. It is the single place render

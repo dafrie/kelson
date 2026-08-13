@@ -38,6 +38,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/dafrie/kelson/internal/clusterprofile"
+	"github.com/dafrie/kelson/internal/clusterprofile/storage"
 )
 
 // FromCluster probes a live cluster for its capabilities (Gateway API, ingress
@@ -106,6 +107,7 @@ func (p *prober) gap(field, reason string) {
 // bumped past these versions.
 var (
 	coreV1Nodes            = schema.GroupVersionResource{Version: "v1", Resource: "nodes"}
+	deploymentGVR          = schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}
 	gatewayClassGVR        = schema.GroupVersionResource{Group: "gateway.networking.k8s.io", Version: "v1", Resource: "gatewayclasses"}
 	ingressClassGVR        = schema.GroupVersionResource{Group: "networking.k8s.io", Version: "v1", Resource: "ingressclasses"}
 	clusterIssuerGVR       = schema.GroupVersionResource{Group: "cert-manager.io", Version: "v1", Resource: "clusterissuers"}
@@ -168,8 +170,11 @@ func (p *prober) probe(ctx context.Context) (clusterprofile.ClusterProfile, erro
 	prof.PolicyEngines = p.probePolicyEngines(groupPresent)
 
 	if prof.GatewayAPI != nil {
-		prof.GatewayAPI.Version = gatewayVersion(serverGroups)
+		prof.GatewayAPI.Version = preferredVersion(serverGroups, "gateway.networking.k8s.io", "v1")
 		prof.GatewayAPI.Classes = p.probeGatewayClasses(ctx)
+	}
+	if prof.CloudNativePG != nil {
+		p.probeCloudNativePG(ctx, prof.CloudNativePG, preferredVersion(serverGroups, cnpgGroup, "v1"))
 	}
 	if prof.CertManager != nil {
 		p.probeClusterIssuers(ctx, &prof.CertManager.ClusterIssuers)
@@ -205,7 +210,7 @@ func (p *prober) applyGroupPresence(prof clusterprofile.ClusterProfile, group, f
 	case "externalSecrets":
 		prof.ExternalSecrets = &clusterprofile.ExternalSecrets{}
 	case "cnpg":
-		prof.CloudNativePG = &clusterprofile.Component{}
+		prof.CloudNativePG = &clusterprofile.CloudNativePG{}
 	case "flux":
 		prof.Flux = &clusterprofile.Component{}
 	case "fluxOperator":
@@ -268,11 +273,17 @@ func detectPlatform(gitVersion string) string {
 	return ""
 }
 
-// gatewayVersion picks the Gateway API version the server prefers, falling
-// back to v1 which is the only version kelson targets.
-func gatewayVersion(groups *metav1.APIGroupList) (v string) {
+// preferredVersion picks the version of group the server prefers, falling back
+// to the version kelson targets when the group list says nothing useful. Used
+// for the Gateway API's reported version and to address the CNPG group's
+// resource list at the version the server actually prefers rather than a
+// hard-coded one.
+func preferredVersion(groups *metav1.APIGroupList, group, fallback string) string {
+	if groups == nil {
+		return fallback
+	}
 	for _, g := range groups.Groups {
-		if g.Name != "gateway.networking.k8s.io" {
+		if g.Name != group {
 			continue
 		}
 		if g.PreferredVersion.Version != "" {
@@ -282,7 +293,7 @@ func gatewayVersion(groups *metav1.APIGroupList) (v string) {
 			return g.Versions[0].Version
 		}
 	}
-	return "v1"
+	return fallback
 }
 
 func (p *prober) probeGatewayClasses(ctx context.Context) []string {
@@ -355,6 +366,134 @@ func (p *prober) probeExternalSecretStores(ctx context.Context, es *clusterprofi
 	}
 }
 
+// CNPG detection coordinates (issue #90).
+//
+// The version matters more here than for any other adopted component: kelson
+// renders databases declaratively — managed roles, the Database CRD, schemas
+// and extensions — and each of those arrived in a different CNPG release, so
+// "present" alone cannot answer whether a preset is hostable. The judgement
+// (internal/clusterprofile/postgres) needs the version and the served CRDs;
+// this is where they come from.
+const (
+	cnpgGroup = "postgresql.cnpg.io"
+	// cnpgOperatorSelector matches the operator Deployment in both supported
+	// install methods: the upstream release manifest and the Helm chart both
+	// label it app.kubernetes.io/name=cloudnative-pg. Selecting by label keeps
+	// the read narrow — detection wants one Deployment, not an inventory of the
+	// cluster's workloads — even though a ClusterRole cannot express that.
+	cnpgOperatorSelector = "app.kubernetes.io/name=cloudnative-pg"
+	// cnpgVersionLabel is the Helm chart's appVersion label, used when the
+	// operator image is pinned by digest and carries no readable tag.
+	cnpgVersionLabel = "app.kubernetes.io/version"
+)
+
+// probeCloudNativePG fills in the operator's version, namespace and served
+// CRDs. Both reads may fail into their own Gap without demoting CNPG to absent:
+// an operator whose Deployment cannot be read is still installed, and reporting
+// it as absent would tell a caller to install a second one — which CNPG's
+// cluster-scoped resources make actively harmful (ADR-0005).
+func (p *prober) probeCloudNativePG(ctx context.Context, c *clusterprofile.CloudNativePG, groupVersion string) {
+	p.probeCNPGOperator(ctx, c)
+	p.probeCNPGResources(c, groupVersion)
+}
+
+// probeCNPGOperator reads the operator Deployment for the running version. The
+// container image tag is preferred over the chart's version label because it is
+// what actually runs: a chart can be upgraded with the image pinned, and the
+// tag is present in the plain-manifest install where the label is not.
+//
+// Finding no labeled Deployment is not a gap. It means the operator was
+// installed in a shape this probe does not recognise, and an empty Version
+// already carries "installed, version unknown" (clusterprofile.go) — which the
+// judgement reports as Unknown rather than as too old.
+func (p *prober) probeCNPGOperator(ctx context.Context, c *clusterprofile.CloudNativePG) {
+	list, err := p.dyn.Resource(deploymentGVR).List(ctx, metav1.ListOptions{LabelSelector: cnpgOperatorSelector})
+	if err != nil {
+		p.gap("cnpg.version", p.reasonFor(err, "deployments.apps"))
+		return
+	}
+	items := append([]unstructured.Unstructured(nil), list.Items...)
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].GetNamespace() != items[j].GetNamespace() {
+			return items[i].GetNamespace() < items[j].GetNamespace()
+		}
+		return items[i].GetName() < items[j].GetName()
+	})
+	if len(items) == 0 {
+		return
+	}
+	d := &items[0]
+	c.Namespace = d.GetNamespace()
+	if v := operatorImageVersion(d); v != "" {
+		c.Version = v
+		return
+	}
+	c.Version = d.GetLabels()[cnpgVersionLabel]
+}
+
+// operatorImageVersion extracts the operator version from the image tag of the
+// container running the operator, e.g.
+// ghcr.io/cloudnative-pg/cloudnative-pg:1.26.0 -> 1.26.0. Returns "" when the
+// image is digest-pinned or the tag is not a version — guessing would be worse
+// than the Unknown an empty version produces.
+func operatorImageVersion(d *unstructured.Unstructured) string {
+	containers, _, _ := unstructured.NestedSlice(d.Object, "spec", "template", "spec", "containers")
+	for _, raw := range containers {
+		container, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		image, _ := container["image"].(string)
+		if !strings.Contains(image, "cloudnative-pg") {
+			continue
+		}
+		if tag := imageTag(image); tag != "" {
+			return tag
+		}
+	}
+	return ""
+}
+
+// imageTag returns the tag of an image reference, or "" when there is none.
+// A digest suffix is dropped first, and a colon that belongs to a registry port
+// (host:5000/repo) is not mistaken for a tag separator.
+func imageTag(image string) string {
+	if i := strings.IndexByte(image, '@'); i >= 0 {
+		image = image[:i]
+	}
+	i := strings.LastIndexByte(image, ':')
+	if i < 0 {
+		return ""
+	}
+	tag := image[i+1:]
+	if tag == "" || strings.Contains(tag, "/") {
+		return ""
+	}
+	return tag
+}
+
+// probeCNPGResources records which resources the API server actually serves in
+// the CNPG group — clusters, databases, poolers and the rest — because that is
+// the capability a manifest meets. A cluster whose operator version says 1.26
+// but whose Database CRD was never applied would accept a Cluster and reject a
+// Database, and the served set is the half of that answer discovery can give.
+func (p *prober) probeCNPGResources(c *clusterprofile.CloudNativePG, groupVersion string) {
+	gv := cnpgGroup + "/" + groupVersion
+	res, err := p.disco.ServerResourcesForGroupVersion(gv)
+	if err != nil {
+		p.gap("cnpg.crds", p.reasonFor(err, gv))
+		return
+	}
+	for _, r := range res.APIResources {
+		// Subresources ("clusters/status") are not CRDs a manifest targets.
+		if strings.Contains(r.Name, "/") {
+			continue
+		}
+		c.CRDs = append(c.CRDs, r.Name)
+	}
+	sort.Strings(c.CRDs)
+}
+
 // probePolicyEngines reports each admission-policy controller whose
 // registration was visible. Kyverno owns one group; Gatekeeper spreads its CRDs
 // across two, so either one marks it present.
@@ -397,9 +536,15 @@ func (p *prober) probeStorageClasses(ctx context.Context) []clusterprofile.Stora
 		return nil
 	}
 
+	// snapshotsReadable separates "this cluster has no snapshot class for that
+	// driver" from "we were not allowed to look". Both leave
+	// VolumeSnapshotClass empty, and only the first one may be reported as a
+	// capability of none (issue #91).
+	snapshotsReadable := true
 	vscByDriver := map[string]string{}
 	vscs, err := p.dyn.Resource(volumeSnapshotClassGVR).List(ctx, metav1.ListOptions{})
 	if err != nil {
+		snapshotsReadable = false
 		p.gap("storageClasses", p.reasonFor(err, "volumesnapshotclasses.snapshot.storage.k8s.io"))
 	} else {
 		for _, v := range vscs.Items {
@@ -418,9 +563,20 @@ func (p *prober) probeStorageClasses(ctx context.Context) []clusterprofile.Stora
 		cls.Default = strings.EqualFold(sc.GetAnnotations()["storageclass.kubernetes.io/is-default-class"], "true")
 		// A snapshot class whose driver matches this class's provisioner is
 		// the enablement for database branching (issue #108); without one the
-		// restore-based path applies and the field stays empty.
+		// restore-based path applies and the field stays empty. What that
+		// snapshot *costs* is the driver's business, classified from the
+		// maintained table in internal/clusterprofile/storage (issue #91).
 		if cls.Provisioner != "" {
 			cls.VolumeSnapshotClass = vscByDriver[cls.Provisioner]
+			if cls.VolumeSnapshotClass != "" {
+				cls.SnapshotDriver = cls.Provisioner
+			}
+		}
+		if snapshotsReadable {
+			cls.CloneCapability, cls.CloneConfidence = storage.Classify(cls.Provisioner, cls.VolumeSnapshotClass)
+		} else {
+			cls.CloneCapability = clusterprofile.CloneUnknown
+			cls.CloneConfidence = clusterprofile.CloneConfidenceUnreadable
 		}
 		out = append(out, cls)
 	}

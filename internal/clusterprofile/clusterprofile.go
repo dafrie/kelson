@@ -81,8 +81,15 @@ type ClusterProfile struct {
 	// time rather than a surprise at branch time.
 	StorageClasses []StorageClass `yaml:"storageClasses,omitempty" json:"storageClasses,omitempty"`
 
-	CloudNativePG *Component `yaml:"cnpg,omitempty" json:"cnpg,omitempty"`
-	Flux          *Component `yaml:"flux,omitempty" json:"flux,omitempty"`
+	// CloudNativePG is the CNPG operator: the prerequisite for every managed
+	// `type: postgres` service (ADR-0005). It is not a bare Component because
+	// which *preset* a cluster can host depends on more than presence — the
+	// `shared` preset needs the Database CRD that arrived in CNPG 1.25 — so the
+	// profile records the version and the CRDs the API server actually serves
+	// (issue #90).
+	CloudNativePG *CloudNativePG `yaml:"cnpg,omitempty" json:"cnpg,omitempty"`
+
+	Flux *Component `yaml:"flux,omitempty" json:"flux,omitempty"`
 
 	// FluxOperator is flux-operator, which is a separate finding from Flux:
 	// it manages the Flux installation and publishes a FluxReport the delivery
@@ -121,6 +128,58 @@ type Component struct {
 	// Namespace is where the component runs, when that is knowable and
 	// useful to report back to a human.
 	Namespace string `yaml:"namespace,omitempty" json:"namespace,omitempty"`
+}
+
+// CloudNativePG is the detected CNPG operator (issue #90).
+//
+// Presence alone does not answer the question a database service asks. kelson's
+// database rendering is declarative end to end — managed roles for application
+// credentials, the Database CRD for the `shared` preset of ADR-0007, schemas
+// and extensions on that Database — and each of those arrived in a different
+// CNPG release. So the profile records the raw facts (version, namespace, the
+// CRDs the API server actually serves) and leaves the per-capability verdict to
+// internal/clusterprofile/postgres, which is where the version floors live.
+//
+// kelson targets the *latest* CNPG as its baseline (owner decision,
+// 2026-08-13). An older operator is not a global refusal, it is a list of
+// declarative capabilities it cannot serve — which is why this records a
+// version rather than a boolean.
+//
+// Only one CNPG operator can run per cluster: its resources are cluster-scoped
+// and a second install fights the first. A profile that reports CNPG present is
+// therefore an instruction to adopt it, never to install alongside it
+// (ADR-0005).
+type CloudNativePG struct {
+	// Version is the operator version, e.g. 1.25.0, read from the operator
+	// Deployment. Empty means "installed, version unknown" — a real state that
+	// must not be read as too old.
+	Version string `yaml:"version,omitempty" json:"version,omitempty"`
+	// Namespace is where the operator Deployment runs (cnpg-system by default),
+	// so a human told to upgrade it knows where to look.
+	Namespace string `yaml:"namespace,omitempty" json:"namespace,omitempty"`
+	// CRDs are the resources the API server actually serves in the
+	// postgresql.cnpg.io group, as plural resource names: clusters, databases,
+	// poolers, backups. This is the capability as the cluster reports it rather
+	// than as the version implies — the two can disagree when a partial CRD set
+	// was applied, and the served set is the one that will accept a manifest.
+	//
+	// Empty means the served set could not be read; a Gap on "cnpg.crds"
+	// records why. Use [CloudNativePG.ServesCRD] rather than testing the slice,
+	// so "not served" and "not read" stay distinguishable at the call site.
+	CRDs []string `yaml:"crds,omitempty" json:"crds,omitempty"`
+}
+
+// ServesCRD reports whether the API server serves this plural resource in the
+// postgresql.cnpg.io group, e.g. "databases". False when the set was never read
+// — callers that need to tell that from a real absence must check len(CRDs) or
+// the detection Gap first, which is what the postgres judgement does.
+func (c CloudNativePG) ServesCRD(plural string) bool {
+	for _, name := range c.CRDs {
+		if name == plural {
+			return true
+		}
+	}
+	return false
 }
 
 // Kubernetes is the cluster itself.
@@ -181,7 +240,23 @@ type PolicyEngine struct {
 	Version string `yaml:"version,omitempty" json:"version,omitempty"`
 }
 
-// StorageClass is one storage class and whether it can snapshot.
+// StorageClass is one storage class, whether it can snapshot, and what a
+// snapshot on it actually costs (issues #108, #91).
+//
+// The cost is the part that decides whether database branching is a feature or
+// a trap: a thin copy-on-write clone is seconds and no extra space, a full-copy
+// snapshot is minutes and a second copy of the database, and the k3s default
+// has no snapshot driver at all (ADR-0007). Recording all three states, plus
+// how confidently each was determined, is what lets the branching judgement
+// name the mechanism instead of silently doing something expensive.
+//
+// Not recorded here: whether an object-store backup destination is configured,
+// which ADR-0007 makes the universal branching fallback. Nothing in the spec
+// model configures one yet — that is issue #94's scope (a destination per
+// environment) — and inventing a field the rest of kelson cannot fill would
+// make an unconfigured cluster indistinguishable from an unread one. Until
+// then, the fallback's availability is unknown by construction and the
+// branching verdict says so (internal/clusterprofile/storage).
 type StorageClass struct {
 	Name        string `yaml:"name" json:"name"`
 	Provisioner string `yaml:"provisioner,omitempty" json:"provisioner,omitempty"`
@@ -191,6 +266,77 @@ type StorageClass struct {
 	// unavailable on this class and the restore-based path applies instead
 	// (issue #108).
 	VolumeSnapshotClass string `yaml:"volumeSnapshotClass,omitempty" json:"volumeSnapshotClass,omitempty"`
+	// SnapshotDriver is the CSI driver of that snapshot class, e.g.
+	// rbd.csi.ceph.com. It is reported separately from the class name because
+	// the driver — not the name an administrator chose — is what determines
+	// what a snapshot costs.
+	SnapshotDriver string `yaml:"snapshotDriver,omitempty" json:"snapshotDriver,omitempty"`
+	// CloneCapability is what cloning this class's volumes costs.
+	// Empty is read as CloneUnknown, so a hand-written profile that omits it
+	// cannot read as a promise.
+	CloneCapability CloneCapability `yaml:"cloneCapability,omitempty" json:"cloneCapability,omitempty"`
+	// CloneConfidence is how that answer was reached, because a lookup by
+	// driver name and a direct observation are not equally trustworthy and the
+	// difference has to survive into the report (issue #91).
+	CloneConfidence CloneConfidence `yaml:"cloneConfidence,omitempty" json:"cloneConfidence,omitempty"`
+}
+
+// CloneCapability is what it costs to clone a volume on a storage class: the
+// three-way distinction issue #91's acceptance criterion asks the profile to
+// make, plus the unknown that keeps a guess from masquerading as an answer.
+type CloneCapability string
+
+const (
+	// CloneUnknown means the cost could not be determined — an unrecognised CSI
+	// driver, or snapshot classes the probe could not read. Never a guess.
+	CloneUnknown CloneCapability = "unknown"
+	// CloneNone means volumes here cannot be snapshotted at all: no snapshot
+	// class matches the provisioner. The k3s local-path default is this case,
+	// and branching must fall back to a restore (ADR-0007).
+	CloneNone CloneCapability = "none"
+	// CloneFullCopy means a snapshot restores into a full-size volume: EBS, GCE
+	// PD, Azure Disk. Branching works and costs time and space proportional to
+	// the database.
+	CloneFullCopy CloneCapability = "full-copy"
+	// CloneThin means copy-on-write clones: Ceph RBD, ZFS, LVM-thin. Branching
+	// is seconds and near-zero extra space.
+	CloneThin CloneCapability = "thin"
+)
+
+// CloneConfidence records how a [CloneCapability] was arrived at. It exists
+// because issue #91 asks explicitly for the confidence to be recorded rather
+// than for the answer to look uniform: "the driver is in our table" and "we
+// watched the cluster report no snapshot class" are different kinds of true,
+// and an unrecognised driver is neither.
+type CloneConfidence string
+
+const (
+	// CloneConfidenceObserved means the answer came from cluster state alone:
+	// no snapshot class serves this provisioner, so nothing can clone it. No
+	// table was consulted and none would change the answer.
+	CloneConfidenceObserved CloneConfidence = "observed"
+	// CloneConfidenceKnownDriver means the CSI driver is in the maintained
+	// table in internal/clusterprofile/storage.
+	CloneConfidenceKnownDriver CloneConfidence = "known-driver"
+	// CloneConfidenceUnknownDriver means snapshots exist but the driver is not
+	// in the table, so whether they are thin is unknown — reported as such
+	// rather than assumed either way.
+	CloneConfidenceUnknownDriver CloneConfidence = "unknown-driver"
+	// CloneConfidenceUnreadable means the snapshot classes could not be listed
+	// at all; the matching Gap in Incomplete carries the permission that would
+	// settle it.
+	CloneConfidenceUnreadable CloneConfidence = "unreadable"
+)
+
+// Capability normalises the recorded capability, treating the empty value a
+// hand-written profile may omit as [CloneUnknown]. Judgements read this rather
+// than the field, so "not written down" and "written down as unknown" behave
+// identically and neither can be mistaken for a yes.
+func (s StorageClass) Capability() CloneCapability {
+	if s.CloneCapability == "" {
+		return CloneUnknown
+	}
+	return s.CloneCapability
 }
 
 // Prometheus is the monitoring stack's CRDs. ServiceMonitor and PodMonitor are

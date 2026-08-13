@@ -17,7 +17,34 @@ package support
 import (
 	"strconv"
 	"strings"
+
+	"github.com/dafrie/kelson/internal/clusterprofile"
 )
+
+// AtLeast answers "is found at or above minimum?" in the codebase's three-way
+// vocabulary: OutcomeYes at or above, OutcomeNo below, and OutcomeUnknown when
+// either string cannot be parsed as a version — including the empty version a
+// component reports when it is installed but unreadable.
+//
+// It is exported because version floors exist outside the declared support
+// matrix: CNPG's declarative capabilities each arrived in a different release
+// (issue #90), and those floors are judged in
+// internal/clusterprofile/postgres. Duplicating this parser there would be two
+// answers to "is 1.31.2+k3s1 above 1.25?", which is exactly one too many.
+func AtLeast(found, minimum string) clusterprofile.Outcome {
+	req, ok := parseVersion(minimum)
+	if !ok {
+		return clusterprofile.OutcomeUnknown
+	}
+	has, ok := parseVersion(found)
+	if !ok {
+		return clusterprofile.OutcomeUnknown
+	}
+	if has.compare(req) >= 0 {
+		return clusterprofile.OutcomeYes
+	}
+	return clusterprofile.OutcomeNo
+}
 
 // version is a parsed, precedence-comparable version. Missing minor and patch
 // are treated as zero per semver, so "1.31" equals "1.31.0". Build metadata

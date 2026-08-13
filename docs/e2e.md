@@ -59,3 +59,11 @@ Per [ADR-0003](adr/0003-install-model.md), the combinatorial cluster-shape space
 cert-manager, Flux, ArgoCD, ...) is covered by `ClusterProfile` fixtures in the renderer's golden
 tests, not by additional kind clusters. This harness runs a single, minimal shape; issue #86 tracks
 extending it to a small set of representative shapes and wiring it into CI.
+
+**`kelson build` is also out of scope here today.** The build plane is unit-tested end to end against
+fakes — the workload renderer purely, the executor against a fake clientset, the command through its
+connector seam — but nothing has yet run a real BuildKit Job against a real registry. That needs a
+cluster and a registry, which is what this harness has, so it belongs here: a build stage would push
+to a cluster-internal registry, assert the printed reference is digest-pinned, assert the build pod
+ran unprivileged, and then deploy that exact digest. Tracked by issue #86; see
+[docs/build.md](build.md).

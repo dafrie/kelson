@@ -28,6 +28,17 @@ rules:
   - apiGroups: [""]
     resources: ["nodes"]
     verbs: ["get", "list"]
+  # Deployments, for the CloudNativePG operator's version (issue #90). kelson
+  # renders databases declaratively and each declarative capability arrived in
+  # a different CNPG release, so "present" is not a usable answer — the version
+  # is read from the operator Deployment's image tag. The probe narrows the
+  # read with a label selector (app.kubernetes.io/name=cloudnative-pg); a
+  # ClusterRole cannot express that, which is why this grant is wider than the
+  # single object detection wants. Without it the version is a gap, never a
+  # guess.
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list"]
   - apiGroups: ["networking.k8s.io"]
     resources: ["ingressclasses"]
     verbs: ["get", "list"]

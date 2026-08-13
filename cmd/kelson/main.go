@@ -30,6 +30,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newRenderCmd())
 	root.AddCommand(newEjectCmd())
 	root.AddCommand(newDiffCmd())
+	root.AddCommand(newBuildCmd())
 	root.AddCommand(newProfileCmd())
 	root.AddCommand(newDeployCmd())
 	root.AddCommand(newStatusCmd())
