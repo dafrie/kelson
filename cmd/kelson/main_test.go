@@ -38,7 +38,19 @@ func profileFile(t *testing.T, body string) string {
 	return path
 }
 
-const gatewayProfileYAML = "gatewayAPI:\n  version: v1.6.0\n  classes: [envoy]\n"
+// gatewayProfileYAML is the cluster the example walk renders against: what the
+// published examples actually require.
+//
+// CloudNativePG joined it with #89, for the same reason Gateway API is here.
+// A profile with no CNPG is not "we could not tell" — the judgement in
+// internal/clusterprofile/postgres reads a nil component as a checked absence
+// and refuses a managed postgres service on it, which is the honest answer and
+// exactly what #140 established for routing. So the fix is the same one #140
+// used: say what the cluster provides rather than weakening the judgement so a
+// zero profile passes. Rendering on Unknown is a different case and is
+// exercised in internal/renderer (docs/data-services.md).
+const gatewayProfileYAML = "gatewayAPI:\n  version: v1.6.0\n  classes: [envoy]\n" +
+	"cnpg:\n  version: 1.30.0\n  namespace: cnpg-system\n  crds: [clusters, databases]\n"
 
 func TestRenderToStdout(t *testing.T) {
 	project, env := examplesHello(t)

@@ -11,8 +11,9 @@ spec:
   build:
     strategy: dockerfile
 
-  # A valkey `services:` entry and the `REDIS_URL` binding onto it return with
-  # M9; kelson rejects unimplemented fields rather than ignoring them (#141).
+  # A valkey `services:` entry and the `REDIS_URL` binding onto it belong here.
+  # Postgres services render since #89; valkey does not, and kelson refuses it
+  # loudly rather than rendering nothing (#98).
 
   applications:
     - name: transcoder

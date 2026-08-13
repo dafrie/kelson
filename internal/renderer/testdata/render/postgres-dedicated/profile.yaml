@@ -1,0 +1,7 @@
+# A cluster running the CloudNativePG baseline kelson targets, with the served
+# CRDs spelled out — the shape detection produces (issue #90). No Gateway API
+# is needed: nothing in this fixture declares a domain.
+cnpg:
+  version: 1.30.0
+  namespace: cnpg-system
+  crds: [clusters, databases, poolers, backups]

@@ -14,11 +14,15 @@ spec:
 
   env:                        # shared by every application
     LOG_LEVEL: info
+    # A reference, never a value (ADR-0009). It renders as a secretKeyRef
+    # against the credentials CloudNativePG generates for the cluster below —
+    # kelson never holds the password.
+    DATABASE_URL: { from: { service: db, key: uri } }
 
-  # An HA postgres service and the `DATABASE_URL: {from: {service: db, key: uri}}`
-  # binding that ADR-0009 prescribes belong here. Both return with M9 — until
-  # then kelson rejects them rather than rendering a binding to a Secret nothing
-  # creates (#141).
+  services:                   # topology is the operator's job (ADR-0005, ADR-0007)
+    - name: db
+      type: postgres
+      preset: ha-small        # 3 instances, synchronous; see docs/data-services.md
 
   applications:
     - name: web

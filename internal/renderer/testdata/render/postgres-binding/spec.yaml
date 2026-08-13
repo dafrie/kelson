@@ -1,0 +1,46 @@
+# Fixture: service bindings (#89, ADR-0009). Every binding becomes a
+# secretKeyRef against <cluster>-app, the basic-auth Secret CloudNativePG
+# generates for the cluster's application owner during initdb bootstrap. kelson
+# never renders a Secret of its own — the spec carries references, never values.
+#
+# It exercises both scopes a binding can be written at (Project env, shared by
+# every application; Application env), all three workload kinds, and the key
+# mapping: kelson's `database` key is CloudNativePG's `dbname`, which is the
+# only one of the six where the two vocabularies differ.
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: checkout
+spec:
+  image: ghcr.io/acme/checkout:1.4.2
+
+  services:
+    - name: db
+      type: postgres
+      preset: small
+
+  env:
+    LOG_LEVEL: info
+    DATABASE_URL: { from: { service: db, key: uri } }
+
+  applications:
+    - name: web
+      port: 8080
+      env:
+        PGHOST: { from: { service: db, key: host } }
+        PGPORT: { from: { service: db, key: port } }
+        PGDATABASE: { from: { service: db, key: database } }
+        PGUSER: { from: { service: db, key: username } }
+        PGPASSWORD: { from: { service: db, key: password } }
+    - name: worker
+      command: ["bundle", "exec", "sidekiq"]
+    - name: nightly-report
+      schedule: "0 3 * * *"
+---
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: staging
+spec:
+  project: checkout
+  namespace: checkout-staging

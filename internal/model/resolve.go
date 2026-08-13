@@ -70,10 +70,12 @@ func Resolve(p *Project, e *Environment) (*Resolved, Errors) {
 }
 
 // resolve applies the precedence rules without validating. It is split out
-// because issue #141 gates fields the resolver still resolves — services,
-// policy and secret backends among them. Keeping resolution reachable without
-// the gate means P4 and P5 stay under test, and means landing M7/M8/M9 is a
-// matter of deleting a gate row rather than rebuilding precedence.
+// because issue #141 gates fields the resolver still resolves — policy and
+// secret backends among them. Keeping resolution reachable without the gate
+// means P4 stays under test, and means landing M7/M8 is a matter of deleting a
+// gate row rather than rebuilding precedence. M9 already proved it: services
+// and their P5 preset override left the gate table when the renderer began
+// emitting CloudNativePG resources (issue #89), and nothing here changed.
 func resolve(p *Project, e *Environment) *Resolved {
 	r := &Resolved{Project: p.Metadata.Name}
 

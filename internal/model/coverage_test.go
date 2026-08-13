@@ -39,8 +39,14 @@ var renderedFields = map[string]map[string]string{
 		"$.spec.build.strategy":   "internal/build/detect: strategy selection",
 		"$.spec.build.dockerfile": "internal/build/detect: Dockerfile path",
 
-		"$.spec.image": "renderer: container image, and the P3 fallback for applications",
-		"$.spec.env.*": "renderer: container env (literal form)",
+		"$.spec.image":              "renderer: container image, and the P3 fallback for applications",
+		"$.spec.env.*":              "renderer: container env (literal form)",
+		"$.spec.env.*.from.service": "renderer: secretKeyRef name — the credentials Secret of the bound service",
+		"$.spec.env.*.from.key":     "renderer: secretKeyRef key, mapped onto the operator's own key names",
+
+		"$.spec.services[].name":   "renderer: CloudNativePG resource name <project>-<environment>-<service>, and the binding target",
+		"$.spec.services[].type":   "renderer: selects the operator; postgres renders, valkey is a structured render error (#98)",
+		"$.spec.services[].preset": "renderer: CNPG topology and sizing (docs/data-services.md)",
 
 		"$.spec.applications[].name":                      "renderer: workload name and selector labels",
 		"$.spec.applications[].image":                     "renderer: container image (P3 override)",
@@ -56,6 +62,8 @@ var renderedFields = map[string]map[string]string{
 		"$.spec.applications[].resources.limits.cpu":      "renderer: container resource limits",
 		"$.spec.applications[].resources.limits.memory":   "renderer: container resource limits",
 		"$.spec.applications[].env.*":                     "renderer: container env (literal form)",
+		"$.spec.applications[].env.*.from.service":        "renderer: secretKeyRef name — the credentials Secret of the bound service",
+		"$.spec.applications[].env.*.from.key":            "renderer: secretKeyRef key, mapped onto the operator's own key names",
 
 		"$.spec.defaults.deliveryMode": "resolve P4 → internal/delivery: adapter selection",
 
@@ -87,6 +95,11 @@ var renderedFields = map[string]map[string]string{
 		"$.spec.applications[].resources.limits.cpu":      "renderer: container resource limits",
 		"$.spec.applications[].resources.limits.memory":   "renderer: container resource limits",
 		"$.spec.applications[].env.*":                     "renderer: container env (literal form)",
+		"$.spec.applications[].env.*.from.service":        "renderer: secretKeyRef name — the credentials Secret of the bound service",
+		"$.spec.applications[].env.*.from.key":            "renderer: secretKeyRef key, mapped onto the operator's own key names",
+
+		"$.spec.services[].name":   "resolve P5: selects the Project service whose preset this overrides",
+		"$.spec.services[].preset": "resolve P5 → renderer: the per-environment CNPG topology",
 
 		"$.spec.overlays[].patch":    "renderer: strategic-merge patch against rendered resources",
 		"$.spec.overlays[].manifest": "renderer: extra manifest emitted as-is",
@@ -180,35 +193,6 @@ func TestGateTableIsReal(t *testing.T) {
 // row in the table with no call site in the validator gates nothing, which is
 // exactly the silence issue #141 is about.
 var gateEnforcement = map[string]string{
-	KindProject + " $.spec.services": `
-spec:
-  image: i:1
-  services:
-    - {name: db, type: postgres, preset: shared}
-  applications:
-    - {name: web, port: 8080}`,
-
-	KindProject + " $.spec.env.*.from": `
-spec:
-  image: i:1
-  env:
-    DATABASE_URL: {from: {service: db, key: uri}}
-  services:
-    - {name: db, type: postgres}
-  applications:
-    - {name: web, port: 8080}`,
-
-	KindProject + " $.spec.applications[].env.*.from": `
-spec:
-  image: i:1
-  services:
-    - {name: db, type: postgres}
-  applications:
-    - name: web
-      port: 8080
-      env:
-        DATABASE_URL: {from: {service: db, key: uri}}`,
-
 	KindProject + " $.spec.defaults.policy": `
 spec:
   image: i:1
@@ -239,20 +223,6 @@ spec:
 spec:
   project: p
   secrets: {backend: sops}`,
-
-	KindEnvironment + " $.spec.services": `
-spec:
-  project: p
-  services:
-    - {name: db, preset: ha-small}`,
-
-	KindEnvironment + " $.spec.applications[].env.*.from": `
-spec:
-  project: p
-  applications:
-    - name: web
-      env:
-        DATABASE_URL: {from: {service: db, key: uri}}`,
 }
 
 // TestGateTableIsEnforced renders each gated field into a document and demands

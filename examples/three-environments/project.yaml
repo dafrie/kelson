@@ -14,9 +14,10 @@ spec:
   env:
     CURRENCY: EUR
 
-  # A `services:` block and its `from:` bindings belong here and return with
-  # M9; secret backends return with M8. kelson rejects unimplemented fields
-  # rather than ignoring them (#141), so they are absent rather than decorative.
+  # Secret backends return with M8; kelson rejects unimplemented fields rather
+  # than ignoring them (#141), so they are absent rather than decorative. A
+  # `services:` block with a per-environment preset override is what
+  # examples/checkout-multi shows, since #89.
 
   applications:
     - name: api
