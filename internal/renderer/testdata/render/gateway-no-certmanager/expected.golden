@@ -24,7 +24,7 @@ metadata:
     kelson.dev/project: shopfront
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:7e5e1c340260127fdc0314a288472054711b6f22d78b758d379c089d4a7d4c2e
+    kelson.dev/spec-hash: sha256:e0b7c9b9a4b79538fd3e67f01cf52f2f5fe71d32478cf73e0c475d983a70e556
 ---
 apiVersion: v1
 kind: Service
@@ -38,7 +38,7 @@ metadata:
     kelson.dev/project: shopfront
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:7e5e1c340260127fdc0314a288472054711b6f22d78b758d379c089d4a7d4c2e
+    kelson.dev/spec-hash: sha256:e0b7c9b9a4b79538fd3e67f01cf52f2f5fe71d32478cf73e0c475d983a70e556
 spec:
   selector:
     kelson.dev/project: shopfront
@@ -60,7 +60,7 @@ metadata:
     kelson.dev/project: shopfront
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:7e5e1c340260127fdc0314a288472054711b6f22d78b758d379c089d4a7d4c2e
+    kelson.dev/spec-hash: sha256:e0b7c9b9a4b79538fd3e67f01cf52f2f5fe71d32478cf73e0c475d983a70e556
 spec:
   replicas: 3
   selector:
@@ -82,12 +82,6 @@ spec:
           ports:
             - name: http
               containerPort: 3000
-          env:
-            - name: CACHE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: shopfront-cache-credentials
-                  key: uri
           resources:
             requests:
               cpu: 250m
@@ -116,7 +110,7 @@ metadata:
     kelson.dev/project: shopfront
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:7e5e1c340260127fdc0314a288472054711b6f22d78b758d379c089d4a7d4c2e
+    kelson.dev/spec-hash: sha256:e0b7c9b9a4b79538fd3e67f01cf52f2f5fe71d32478cf73e0c475d983a70e556
 spec:
   parentRefs:
     - name: public
@@ -143,7 +137,7 @@ metadata:
     kelson.dev/project: shopfront
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:4684e77535f58b27f546aa007f27a373da450c9846de6a1f157996dda3fd198f
+    kelson.dev/spec-hash: sha256:2a327dfc660d19af221be680f7c3b35bd7962b1d459c10c52362d07bb96019c6
 spec:
   replicas: 1
   selector:
@@ -164,9 +158,3 @@ spec:
           command:
             - shopfront
             - process-images
-          env:
-            - name: CACHE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: shopfront-cache-credentials
-                  key: uri

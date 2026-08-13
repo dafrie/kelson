@@ -11,13 +11,7 @@ metadata:
   name: shopfront
 spec:
   image: registry.acme.run/shopfront:3.1.0
-  env:
-    CACHE_URL:
-      from: { service: cache, key: uri }
-  services:
-    - name: cache
-      type: valkey
-      preset: shared
+  # The cache service and its CACHE_URL binding are gated until M9 (#141).
   applications:
     - name: web
       port: 3000

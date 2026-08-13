@@ -13,20 +13,13 @@ spec:
 
   env:
     CURRENCY: EUR
-    STRIPE_DATABASE_URL:
-      from: { service: db, key: uri }
 
-  services:
-    - name: db
-      type: postgres
-      preset: shared          # environments override per rule P5
+  # A `services:` block and its `from:` bindings belong here and return with
+  # M9; secret backends return with M8. kelson rejects unimplemented fields
+  # rather than ignoring them (#141), so they are absent rather than decorative.
 
   applications:
     - name: api
       port: 3000
       health: /livez
       replicas: { min: 1 }
-
-  defaults:
-    secrets:
-      backend: cluster        # v0.1 default; staging/prod pin their own

@@ -66,7 +66,15 @@ func Resolve(p *Project, e *Environment) (*Resolved, Errors) {
 	if errs := ValidateSet(p, e); len(errs) > 0 {
 		return nil, errs
 	}
+	return resolve(p, e), nil
+}
 
+// resolve applies the precedence rules without validating. It is split out
+// because issue #141 gates fields the resolver still resolves — services,
+// policy and secret backends among them. Keeping resolution reachable without
+// the gate means P4 and P5 stay under test, and means landing M7/M8/M9 is a
+// matter of deleting a gate row rather than rebuilding precedence.
+func resolve(p *Project, e *Environment) *Resolved {
 	r := &Resolved{Project: p.Metadata.Name}
 
 	// Environment identity and target.
@@ -195,5 +203,5 @@ func Resolve(p *Project, e *Environment) (*Resolved, Errors) {
 		r.Applications = append(r.Applications, ra)
 	}
 
-	return r, nil
+	return r
 }

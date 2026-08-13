@@ -3,8 +3,9 @@ kind: Environment
 metadata:
   name: production
 
-# Argo CD mode. Agents propose pull requests; a human merges. SOPS keeps
-# secrets in Git, encrypted.
+# Argo CD mode. The policy that would have agents propose pull requests here
+# returns with M7, SOPS-encrypted secrets with M8 and the HA database preset
+# with M9; kelson rejects unimplemented fields rather than ignoring them (#141).
 spec:
   project: billing
   namespace: billing-prod
@@ -20,17 +21,6 @@ spec:
       repo: git@github.com:acme/billing-deploy.git
       branch: main
       path: billing/production
-
-  policy:
-    agents: propose-only
-    deployers: [team-billing, on-call]
-
-  secrets:
-    backend: sops
-
-  services:
-    - name: db
-      preset: ha-medium       # 3-instance synchronous cluster (P5)
 
   applications:
     - name: api

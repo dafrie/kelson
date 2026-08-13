@@ -100,6 +100,12 @@ spec:
 One HA, TLS-terminated, database-backed service with a worker and a cron job, in about thirty lines with no
 duplication. Everything beyond this is progressive disclosure: reachable, not present by default.
 
+This is the target shape, not today's. The `services:` block and its `from:` binding are designed and
+validated but nothing provisions them yet, so kelson rejects them with `schema/not-implemented` naming
+M9 rather than accepting them and rendering nothing
+([#141](https://github.com/dafrie/kelson/issues/141)); the same holds for `policy:` (M7), `secrets:` (M8)
+and `cluster:` (M10). See [the model reference](model.md) for the current table.
+
 Environments carry what differs between deployments — cluster, namespace, domain suffix, replica and
 resource overrides, delivery mode, policy. Projects stay environment-agnostic; environments stay
 project-agnostic.

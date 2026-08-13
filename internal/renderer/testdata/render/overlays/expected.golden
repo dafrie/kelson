@@ -24,7 +24,7 @@ metadata:
     kelson.dev/project: streaming
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:bc60ff572126ef327f9d74b1d0babc0c3010f236fe7b7cee5ae398327af9f659
+    kelson.dev/spec-hash: sha256:a187f61dce5a14c3f8c7ad9437b82e334b934ad1a65f47f1bc1dcd1d7bc51a7b
 ---
 apiVersion: v1
 kind: Service
@@ -38,7 +38,7 @@ metadata:
     kelson.dev/project: streaming
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:bc60ff572126ef327f9d74b1d0babc0c3010f236fe7b7cee5ae398327af9f659
+    kelson.dev/spec-hash: sha256:a187f61dce5a14c3f8c7ad9437b82e334b934ad1a65f47f1bc1dcd1d7bc51a7b
 spec:
   selector:
     kelson.dev/project: streaming
@@ -60,7 +60,7 @@ metadata:
     kelson.dev/project: streaming
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:bc60ff572126ef327f9d74b1d0babc0c3010f236fe7b7cee5ae398327af9f659
+    kelson.dev/spec-hash: sha256:a187f61dce5a14c3f8c7ad9437b82e334b934ad1a65f47f1bc1dcd1d7bc51a7b
     kelson.dev/overlays: ./k8s/patches/affinity.yaml
 spec:
   selector:
@@ -82,12 +82,6 @@ spec:
           ports:
             - name: http
               containerPort: 8443
-          env:
-            - name: REDIS_URL
-              valueFrom:
-                secretKeyRef:
-                  name: streaming-cache-credentials
-                  key: uri
           resources:
             requests:
               cpu: "4"
@@ -113,7 +107,7 @@ metadata:
     kelson.dev/project: streaming
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:bc60ff572126ef327f9d74b1d0babc0c3010f236fe7b7cee5ae398327af9f659
+    kelson.dev/spec-hash: sha256:a187f61dce5a14c3f8c7ad9437b82e334b934ad1a65f47f1bc1dcd1d7bc51a7b
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
@@ -141,7 +135,7 @@ metadata:
     kelson.dev/project: streaming
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:bc60ff572126ef327f9d74b1d0babc0c3010f236fe7b7cee5ae398327af9f659
+    kelson.dev/spec-hash: sha256:a187f61dce5a14c3f8c7ad9437b82e334b934ad1a65f47f1bc1dcd1d7bc51a7b
 spec:
   parentRefs:
     - name: envoy
@@ -168,7 +162,7 @@ metadata:
     kelson.dev/project: streaming
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:bc60ff572126ef327f9d74b1d0babc0c3010f236fe7b7cee5ae398327af9f659
+    kelson.dev/spec-hash: sha256:a187f61dce5a14c3f8c7ad9437b82e334b934ad1a65f47f1bc1dcd1d7bc51a7b
 spec:
   secretName: transcoder-tls
   issuerRef:

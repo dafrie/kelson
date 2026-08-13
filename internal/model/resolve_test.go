@@ -3,11 +3,19 @@ package model
 import (
 	"slices"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // precedenceProject exercises every precedence rule at once: P1 (env merge),
 // P2 (replicas/resources), P3 (image), P4 (delivery/policy/secrets chain),
 // P5 (service presets), P6 (overlays).
+//
+// It deliberately keeps the fields issue #141 gates — services, bindings and a
+// policy default. Precedence over them is still real behaviour the resolver
+// implements, and M7/M8/M9 land by deleting a gate row, not by rebuilding
+// resolution. So these cases load through loadPairUnvalidated and call the
+// unexported resolve; the gate itself is covered in coverage_test.go.
 const precedenceProject = `
 apiVersion: kelson.dev/v1alpha1
 kind: Project
@@ -50,8 +58,25 @@ func loadPair(t *testing.T, projSrc, envSrc string) (*Project, *Environment) {
 	return docs[0].(*Project), docs[1].(*Environment)
 }
 
+// loadPairUnvalidated decodes a pair without validating it, so a spec carrying
+// fields gated by issue #141 can still reach the resolver. Only precedence
+// tests use it; anything asserting on validation must go through
+// DecodeDocuments.
+func loadPairUnvalidated(t *testing.T, projSrc, envSrc string) (*Project, *Environment) {
+	t.Helper()
+	p := new(Project)
+	if err := yaml.Unmarshal([]byte(projSrc), p); err != nil {
+		t.Fatalf("decoding project: %v", err)
+	}
+	e := new(Environment)
+	if err := yaml.Unmarshal([]byte(envSrc), e); err != nil {
+		t.Fatalf("decoding environment: %v", err)
+	}
+	return p, e
+}
+
 func TestResolveMergesEnvironmentVariablesP1(t *testing.T) {
-	p, e := loadPair(t, precedenceProject, `
+	p, e := loadPairUnvalidated(t, precedenceProject, `
 apiVersion: kelson.dev/v1alpha1
 kind: Environment
 metadata: {name: staging}
@@ -66,10 +91,7 @@ spec:
       env:
         LOG_LEVEL: trace          # environment override beats application (P1)
 `)
-	r, errs := Resolve(p, e)
-	if len(errs) != 0 {
-		t.Fatalf("resolve: %v", errs)
-	}
+	r := resolve(p, e)
 	web := r.Applications[0]
 	if web.Env["LOG_LEVEL"].Literal != "trace" {
 		t.Errorf("LOG_LEVEL = %q, want trace (environment override wins)", web.Env["LOG_LEVEL"].Literal)
@@ -83,7 +105,7 @@ spec:
 }
 
 func TestResolveReplicasAndDomainP2(t *testing.T) {
-	p, e := loadPair(t, precedenceProject, `
+	p, e := loadPairUnvalidated(t, precedenceProject, `
 apiVersion: kelson.dev/v1alpha1
 kind: Environment
 metadata: {name: staging}
@@ -97,7 +119,7 @@ spec:
     - name: web
       replicas: {min: 5}          # replaces the application's {2,4} whole (P2)
 `)
-	r, _ := Resolve(p, e)
+	r := resolve(p, e)
 	web := r.Applications[0]
 	if web.Replicas != (Replicas{Min: 5}) {
 		t.Errorf("replicas = %+v, want {Min:5} — environment replaces whole, no deep merge", web.Replicas)
@@ -143,7 +165,7 @@ spec:
 func TestResolveDeliveryPolicySecretsP4(t *testing.T) {
 	// Staging carries only its git target: the mode comes from the Project
 	// default, policy from the same default, secrets from the built-in.
-	p, staging := loadPair(t, precedenceProject, `
+	p, staging := loadPairUnvalidated(t, precedenceProject, `
 apiVersion: kelson.dev/v1alpha1
 kind: Environment
 metadata: {name: staging}
@@ -152,10 +174,7 @@ spec:
   delivery:
     git: {repo: git@github.com:acme/deploy.git, path: shop/staging}
 `)
-	r, errs := Resolve(p, staging)
-	if len(errs) != 0 {
-		t.Fatalf("resolve: %v", errs)
-	}
+	r := resolve(p, staging)
 	if r.Environment.Mode != DeliveryFlux {
 		t.Errorf("mode = %q, want flux from project default", r.Environment.Mode)
 	}
@@ -173,7 +192,19 @@ spec:
 func TestResolvedFluxWithoutGitFails(t *testing.T) {
 	// The effective mode (here, the Project default) requires a git target
 	// even though the Environment itself never set delivery.mode.
-	p, staging := loadPair(t, precedenceProject, `
+	// A gate-free project, so the only error this can produce is the one under
+	// test (issue #141 would otherwise add noise from precedenceProject).
+	p, staging := loadPair(t, `
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata: {name: shop}
+spec:
+  image: ghcr.io/acme/shop:2
+  applications:
+    - {name: web, port: 8080}
+  defaults:
+    deliveryMode: flux
+`, `
 apiVersion: kelson.dev/v1alpha1
 kind: Environment
 metadata: {name: staging}
@@ -186,7 +217,7 @@ spec:
 }
 
 func TestResolveEnvironmentOverridesDefaultsP4(t *testing.T) {
-	p, prod := loadPair(t, precedenceProject, `
+	p, prod := loadPairUnvalidated(t, precedenceProject, `
 apiVersion: kelson.dev/v1alpha1
 kind: Environment
 metadata: {name: production}
@@ -200,10 +231,7 @@ spec:
   secrets:
     backend: sops
 `)
-	r, errs := Resolve(p, prod)
-	if len(errs) != 0 {
-		t.Fatalf("resolve: %v", errs)
-	}
+	r := resolve(p, prod)
 	if r.Environment.Mode != DeliveryArgoCD {
 		t.Errorf("mode = %q, want argocd (environment beats project default)", r.Environment.Mode)
 	}
@@ -222,7 +250,7 @@ spec:
 }
 
 func TestResolveServicePresetOverrideP5(t *testing.T) {
-	p, e := loadPair(t, precedenceProject, `
+	p, e := loadPairUnvalidated(t, precedenceProject, `
 apiVersion: kelson.dev/v1alpha1
 kind: Environment
 metadata: {name: production}
@@ -233,7 +261,7 @@ spec:
   services:
     - {name: db, preset: ha-small}
 `)
-	r, _ := Resolve(p, e)
+	r := resolve(p, e)
 	if r.Services[0].Preset != PresetHASmall {
 		t.Errorf("db preset = %q, want ha-small (P5)", r.Services[0].Preset)
 	}
@@ -243,7 +271,7 @@ spec:
 }
 
 func TestResolveOverlaysOrderP6(t *testing.T) {
-	p, e := loadPair(t, precedenceProject, `
+	p, e := loadPairUnvalidated(t, precedenceProject, `
 apiVersion: kelson.dev/v1alpha1
 kind: Environment
 metadata: {name: staging}
@@ -254,7 +282,7 @@ spec:
   overlays:
     - patch: ./k8s/staging.yaml
 `)
-	r, _ := Resolve(p, e)
+	r := resolve(p, e)
 	if len(r.Overlays) != 2 || r.Overlays[0].Manifest != "./k8s/base.yaml" || r.Overlays[1].Patch != "./k8s/staging.yaml" {
 		t.Errorf("overlays must concatenate project-first: %+v", r.Overlays)
 	}

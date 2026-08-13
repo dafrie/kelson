@@ -24,7 +24,7 @@ metadata:
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:d00fd5e09ce327b0207f0d08d6545f6e92c6f9ef62276a17c46d67ebae5af9d3
+    kelson.dev/spec-hash: sha256:8a91b0c6f0fd0d74975904ee63990c32079c8477c00dafdde2c0904b302641c7
 ---
 apiVersion: v1
 kind: Service
@@ -38,7 +38,7 @@ metadata:
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:d00fd5e09ce327b0207f0d08d6545f6e92c6f9ef62276a17c46d67ebae5af9d3
+    kelson.dev/spec-hash: sha256:8a91b0c6f0fd0d74975904ee63990c32079c8477c00dafdde2c0904b302641c7
 spec:
   selector:
     kelson.dev/project: checkout
@@ -60,7 +60,7 @@ metadata:
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:d00fd5e09ce327b0207f0d08d6545f6e92c6f9ef62276a17c46d67ebae5af9d3
+    kelson.dev/spec-hash: sha256:8a91b0c6f0fd0d74975904ee63990c32079c8477c00dafdde2c0904b302641c7
 spec:
   selector:
     matchLabels:
@@ -82,11 +82,6 @@ spec:
             - name: http
               containerPort: 8080
           env:
-            - name: DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: checkout-db-credentials
-                  key: uri
             - name: LOG_LEVEL
               value: warning
           resources:
@@ -116,7 +111,7 @@ metadata:
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:d00fd5e09ce327b0207f0d08d6545f6e92c6f9ef62276a17c46d67ebae5af9d3
+    kelson.dev/spec-hash: sha256:8a91b0c6f0fd0d74975904ee63990c32079c8477c00dafdde2c0904b302641c7
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
@@ -144,7 +139,7 @@ metadata:
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:d00fd5e09ce327b0207f0d08d6545f6e92c6f9ef62276a17c46d67ebae5af9d3
+    kelson.dev/spec-hash: sha256:8a91b0c6f0fd0d74975904ee63990c32079c8477c00dafdde2c0904b302641c7
 spec:
   parentRefs:
     - name: envoy
@@ -171,7 +166,7 @@ metadata:
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:d00fd5e09ce327b0207f0d08d6545f6e92c6f9ef62276a17c46d67ebae5af9d3
+    kelson.dev/spec-hash: sha256:8a91b0c6f0fd0d74975904ee63990c32079c8477c00dafdde2c0904b302641c7
 spec:
   secretName: web-tls
   issuerRef:
@@ -192,7 +187,7 @@ metadata:
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:d00fd5e09ce327b0207f0d08d6545f6e92c6f9ef62276a17c46d67ebae5af9d3
+    kelson.dev/spec-hash: sha256:8a91b0c6f0fd0d74975904ee63990c32079c8477c00dafdde2c0904b302641c7
 spec:
   selector:
     matchLabels:
@@ -214,7 +209,7 @@ metadata:
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:e955523524c183ceaaf2e2273f8b58235c21ff381a7c27046eb1f948d32f14ba
+    kelson.dev/spec-hash: sha256:f280cf003479f4aa6effc6d649f61f60c1a8b4361bea53449f3fdd8e9a1907cb
 spec:
   replicas: 2
   selector:
@@ -237,11 +232,6 @@ spec:
             - exec
             - sidekiq
           env:
-            - name: DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: checkout-db-credentials
-                  key: uri
             - name: LOG_LEVEL
               value: info
 ---
@@ -257,7 +247,7 @@ metadata:
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:e5bc09ae32d4d13c79cae9dc2cf9bfbbe65eb37b021ca28b46352ff9452261a6
+    kelson.dev/spec-hash: sha256:ef54d298cf2320476019d466fa96de1c37320b3440a3bbaa898f3c0a1c409b40
 spec:
   schedule: 0 3 * * *
   jobTemplate:
@@ -275,10 +265,5 @@ spec:
             - name: nightly-report
               image: ghcr.io/acme/checkout:1.4.2
               env:
-                - name: DATABASE_URL
-                  valueFrom:
-                    secretKeyRef:
-                      name: checkout-db-credentials
-                      key: uri
                 - name: LOG_LEVEL
                   value: info

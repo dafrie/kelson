@@ -148,11 +148,11 @@ func decodeDocument(raw *yaml.Node, docIdx int) (any, Errors) {
 	unknownFieldErrorsWithResource(raw, doc, resource, pos, &errs)
 	switch d := doc.(type) {
 	case *Project:
-		vp := validator{resource: resource, pos: pos}
+		vp := validator{resource: resource, kind: KindProject, pos: pos}
 		validateProject(d, &vp)
 		errs = append(errs, vp.errs...)
 	case *Environment:
-		ve := validator{resource: resource, pos: pos}
+		ve := validator{resource: resource, kind: KindEnvironment, pos: pos}
 		validateEnvironmentShape(d, &ve)
 		errs = append(errs, ve.errs...)
 	}

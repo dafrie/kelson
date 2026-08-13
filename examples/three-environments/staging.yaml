@@ -3,7 +3,10 @@ kind: Environment
 metadata:
   name: staging
 
-# Flux mode, with agents allowed but obliged to dry-run first.
+# Flux mode. The policy that would allow agents here but oblige them to
+# dry-run first returns with M7; secret backends with M8; the per-environment
+# service preset with M9. kelson rejects unimplemented fields rather than
+# ignoring them (#141).
 spec:
   project: billing
   namespace: billing-staging
@@ -18,15 +21,3 @@ spec:
       repo: git@github.com:acme/billing-deploy.git
       branch: main
       path: billing/staging
-
-  policy:
-    agents: allow
-    require: [dry-run]
-
-  secrets:
-    backend: externalSecrets
-    store: vault-backend
-
-  services:
-    - name: db
-      preset: small           # dedicated single-instance cluster (P5)

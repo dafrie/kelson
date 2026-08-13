@@ -14,13 +14,11 @@ spec:
 
   env:                        # shared by every application
     LOG_LEVEL: info
-    DATABASE_URL:
-      from: { service: db, key: uri }   # binding, never a literal (ADR-0009)
 
-  services:
-    - name: db
-      type: postgres
-      preset: ha-small        # → CloudNativePG Cluster with PITR
+  # An HA postgres service and the `DATABASE_URL: {from: {service: db, key: uri}}`
+  # binding that ADR-0009 prescribes belong here. Both return with M9 — until
+  # then kelson rejects them rather than rendering a binding to a Secret nothing
+  # creates (#141).
 
   applications:
     - name: web
@@ -37,5 +35,4 @@ spec:
 
   defaults:                   # fallbacks only; Environment values always win (P4)
     deliveryMode: flux
-    policy:
-      agents: propose-only
+    # A `policy:` default belongs here too; it returns with M7 (#141).

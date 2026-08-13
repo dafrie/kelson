@@ -10,9 +10,7 @@ spec:
   delivery:
     mode: direct
 
-  policy:
-    agents: allow
-    require: [dry-run]
+  # `policy: {agents: allow, require: [dry-run]}` returns with M7 (#141).
 
   applications:
     - name: worker

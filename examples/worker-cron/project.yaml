@@ -8,16 +8,9 @@ metadata:
 spec:
   image: registry.acme.run/mailroom:2.0.7
 
-  env:
-    QUEUE_URL:
-      from: { service: queue, key: uri }
-    QUEUE_PASSWORD:
-      from: { service: queue, key: password }
-
-  services:
-    - name: queue
-      type: valkey
-      preset: small
+  # A valkey queue service and the QUEUE_URL/QUEUE_PASSWORD bindings onto it
+  # return with M9; kelson rejects unimplemented fields rather than ignoring
+  # them (#141).
 
   applications:
     - name: worker            # no port, no schedule → worker (Deployment)

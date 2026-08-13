@@ -19,12 +19,6 @@ spec:
     strategy: auto
   env:
     LOG_LEVEL: info
-    DATABASE_URL:
-      from: {service: db, key: uri}
-  services:
-    - name: db
-      type: postgres
-      preset: ha-small
   applications:
     - name: web
       port: 8080
@@ -156,20 +150,31 @@ spec:
 			if secret == nil {
 				t.Fatalf("secret literal not rejected:\n%v", errs)
 			}
-			// The remediation must not send anyone to a command that does not
-			// exist (issue #142): it can only name the fix kelson can do today.
+			// The remediation may only name things that work today. It used to
+			// send authors to a `kelson secret set` that does not exist (#142),
+			// then to a service binding, which #141 now rejects. What is left
+			// is the overlay escape hatch, which is implemented.
 			if strings.Contains(secret.Remediation, "kelson secret set") {
 				t.Errorf("remediation references the nonexistent `kelson secret set` command, got %q", secret.Remediation)
 			}
-			if !strings.Contains(secret.Remediation, "service") {
-				t.Errorf("remediation should name the fix, got %q", secret.Remediation)
+			if !strings.Contains(secret.Remediation, "overlay") {
+				t.Errorf("remediation should name a fix that works today, got %q", secret.Remediation)
+			}
+			// Prescribing a binding would send the author into a gated field.
+			if strings.Contains(secret.Remediation, "{from:") {
+				t.Errorf("remediation prescribes a service binding, which is gated until M9 (#141): %q", secret.Remediation)
 			}
 		})
 	}
 }
 
-// TestSecretReferenceAccepted: the same variable through from: is valid.
-func TestSecretReferenceAccepted(t *testing.T) {
+// TestSecretReferenceGatedNotSecretViolation: the same variable through from:
+// is well-formed under ADR-0009 — it carries a reference, not a value — so it
+// must not be reported as a secret literal. It is rejected anyway, because
+// nothing provisions the Secret the binding names until M9 (issue #141). The
+// distinction matters: the author is told the feature is missing, not that
+// they wrote a credential into the spec.
+func TestSecretReferenceGatedNotSecretViolation(t *testing.T) {
 	_, errs := DecodeDocuments([]byte(`
 apiVersion: kelson.dev/v1alpha1
 kind: Project
@@ -185,8 +190,22 @@ spec:
   applications:
     - {name: web, port: 8080}
 `))
-	if len(errs) != 0 {
-		t.Fatalf("references must be accepted, got:\n%v", errs)
+	if slices.Contains(errs.Codes(), ErrSecretLiteral) {
+		t.Errorf("a binding carries a reference, not a value: it must never be a secret/literal, got:\n%v", errs)
+	}
+	var binding *Error
+	for i := range errs {
+		if errs[i].Code == ErrNotImplemented && errs[i].Field == "$.spec.env.DATABASE_URL.from" {
+			binding = &errs[i]
+		}
+	}
+	if binding == nil {
+		t.Fatalf("the binding must be gated as %s, got:\n%v", ErrNotImplemented, errs)
+	}
+	for _, code := range errs.Codes() {
+		if code != ErrNotImplemented {
+			t.Errorf("the only complaint should be the gate, got %s in:\n%v", code, errs)
+		}
 	}
 }
 
@@ -348,14 +367,13 @@ spec:
 	if !slices.Contains(errs.Codes(), ErrInvalidEnum) {
 		t.Fatalf("delivery mode github must be caught at decode, got:\n%v", errs)
 	}
-	shapeOnly := 0
+	// Decode is otherwise clean: the gated services and binding (issue #141)
+	// are expected, everything else would be a shape complaint this document
+	// should not produce.
 	for _, e := range errs {
-		if e.Code != ErrInvalidEnum {
-			shapeOnly++
+		if e.Code != ErrInvalidEnum && e.Code != ErrNotImplemented {
+			t.Fatalf("decode must be otherwise clean, got:\n%v", errs)
 		}
-	}
-	if shapeOnly != 0 {
-		t.Fatalf("decode must be otherwise clean, got:\n%v", errs)
 	}
 	p := docs[0].(*Project)
 	e := docs[1].(*Environment)

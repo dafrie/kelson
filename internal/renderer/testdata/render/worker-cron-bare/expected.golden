@@ -24,7 +24,7 @@ metadata:
     kelson.dev/project: mailroom
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:bb1f143e5f6419fc223f9b4789e1936cae5e856f9c06907812bb493f2ad11e30
+    kelson.dev/spec-hash: sha256:2ac1ef9ec5f8f824937dd721c821189929eb8a11e0d2e935e7de9ea10e481434
 spec:
   replicas: 2
   selector:
@@ -45,17 +45,6 @@ spec:
           command:
             - mailroom
             - work
-          env:
-            - name: QUEUE_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: mailroom-queue-credentials
-                  key: password
-            - name: QUEUE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: mailroom-queue-credentials
-                  key: uri
           resources:
             requests:
               cpu: 100m
@@ -75,7 +64,7 @@ metadata:
     kelson.dev/project: mailroom
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:6dfd149af26050966f623c495277e3c283e1d0590dc5e5e2130f84f693006f33
+    kelson.dev/spec-hash: sha256:1b2c34850b336d8ac7e1545c0773af49865c65cd0c45149b07e71e09bc296ad8
 spec:
   schedule: 30 6 * * 1-5
   jobTemplate:
@@ -95,17 +84,6 @@ spec:
               command:
                 - mailroom
                 - send-digests
-              env:
-                - name: QUEUE_PASSWORD
-                  valueFrom:
-                    secretKeyRef:
-                      name: mailroom-queue-credentials
-                      key: password
-                - name: QUEUE_URL
-                  valueFrom:
-                    secretKeyRef:
-                      name: mailroom-queue-credentials
-                      key: uri
 ---
 apiVersion: batch/v1
 kind: CronJob
@@ -119,7 +97,7 @@ metadata:
     kelson.dev/project: mailroom
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:fd5da848656a5c861ea77b1d56cc038a82a7bad6438c1920633e829d8d97d6e1
+    kelson.dev/spec-hash: sha256:ec82651cd42b2feff0ad58ba3d03696141354d9bbc640757c324688efef14990
 spec:
   schedule: 15 2 * * *
   jobTemplate:
@@ -140,14 +118,3 @@ spec:
                 - mailroom
                 - sweep
                 - --older-than=90d
-              env:
-                - name: QUEUE_PASSWORD
-                  valueFrom:
-                    secretKeyRef:
-                      name: mailroom-queue-credentials
-                      key: password
-                - name: QUEUE_URL
-                  valueFrom:
-                    secretKeyRef:
-                      name: mailroom-queue-credentials
-                      key: uri

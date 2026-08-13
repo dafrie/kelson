@@ -128,6 +128,12 @@ func TestRenderResourceSet(t *testing.T) {
 // TestRenderEnvSecretKeyRef: bindings become secretKeyRefs against the
 // service credential Secret, and no Secret resource is ever emitted
 // (ADR-0009).
+//
+// This is now the only place binding rendering is exercised. Issue #141 gates
+// `services:` and `from:` in validation until M9, and every golden fixture
+// goes through full validation, so the fixtures lost their bindings. The
+// renderer's support for them did not: it is reached here by building the
+// Resolved directly, which is the seam M9 will use.
 func TestRenderEnvSecretKeyRef(t *testing.T) {
 	ms, err := Render(resolvedFixture(), gatewayProfile(), nil)
 	if err != nil {

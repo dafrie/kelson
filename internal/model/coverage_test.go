@@ -1,0 +1,466 @@
+package model
+
+import (
+	"reflect"
+	"slices"
+	"sort"
+	"strings"
+	"testing"
+)
+
+// Field-coverage harness for issue #141.
+//
+// The model used to accept fields nothing downstream consumed: an author wrote
+// `services:` or `policy:`, validation passed, and the renderer emitted
+// nothing for it. Nobody noticed because nothing said anything.
+//
+// These tests make that failure impossible to reintroduce. Every field
+// reachable from a Project or Environment spec must be accounted for exactly
+// once: either it is on renderedFields below (something consumes it), or a row
+// in notImplementedFields gates it (validation rejects it and names the
+// milestone). A new field that is on neither list fails TestSpecFieldCoverage
+// with instructions, which is the point — the default for a new field is
+// "explain yourself", not "silently do nothing".
+
+// renderedFields lists the spec paths that something actually consumes, with
+// the consumer named. Paths are canonical: `[]` for a sequence entry, `*` for
+// a map key, matching what specFieldPaths derives from the yaml tags.
+//
+// Adding a field here is a claim that it has an observable effect. If it does
+// not, it belongs in notImplementedFields instead.
+var renderedFields = map[string]map[string]string{
+	KindProject: {
+		"$.apiVersion":    "decode: rejects anything but kelson.dev/v1alpha1",
+		"$.kind":          "decode: selects the document type",
+		"$.metadata.name": "renderer: project label and resource naming",
+
+		"$.spec.source.git":       "internal/build: clone URL (build.Request.SourceURL)",
+		"$.spec.source.ref":       "internal/build: checkout ref (build.Request.SourceRef)",
+		"$.spec.build.strategy":   "internal/build/detect: strategy selection",
+		"$.spec.build.dockerfile": "internal/build/detect: Dockerfile path",
+
+		"$.spec.image": "renderer: container image, and the P3 fallback for applications",
+		"$.spec.env.*": "renderer: container env (literal form)",
+
+		"$.spec.applications[].name":                      "renderer: workload name and selector labels",
+		"$.spec.applications[].image":                     "renderer: container image (P3 override)",
+		"$.spec.applications[].command":                   "renderer: container command",
+		"$.spec.applications[].port":                      "renderer: Service, containerPort, workload kind",
+		"$.spec.applications[].health":                    "renderer: liveness/readiness probes",
+		"$.spec.applications[].schedule":                  "renderer: CronJob schedule and workload kind",
+		"$.spec.applications[].domains":                   "renderer: HTTPRoute hostnames and Certificate",
+		"$.spec.applications[].replicas.min":              "renderer: replica count and HPA floor",
+		"$.spec.applications[].replicas.max":              "renderer: HPA ceiling",
+		"$.spec.applications[].resources.requests.cpu":    "renderer: container resource requests",
+		"$.spec.applications[].resources.requests.memory": "renderer: container resource requests",
+		"$.spec.applications[].resources.limits.cpu":      "renderer: container resource limits",
+		"$.spec.applications[].resources.limits.memory":   "renderer: container resource limits",
+		"$.spec.applications[].env.*":                     "renderer: container env (literal form)",
+
+		"$.spec.defaults.deliveryMode": "resolve P4 → internal/delivery: adapter selection",
+
+		"$.spec.overlays[].patch":    "renderer: strategic-merge patch against rendered resources",
+		"$.spec.overlays[].manifest": "renderer: extra manifest emitted as-is",
+	},
+	KindEnvironment: {
+		"$.apiVersion":    "decode: rejects anything but kelson.dev/v1alpha1",
+		"$.kind":          "decode: selects the document type",
+		"$.metadata.name": "renderer: environment label; default namespace",
+
+		"$.spec.project":   "resolve: binds the Environment to its Project",
+		"$.spec.namespace": "renderer: target namespace on every resource",
+
+		"$.spec.routing.domainSuffix": "renderer: default hostname for ported applications",
+		"$.spec.routing.gatewayClass": "renderer: HTTPRoute parentRef",
+		"$.spec.routing.tls":          "renderer: Certificate and HTTPRoute TLS",
+
+		"$.spec.delivery.mode":       "internal/delivery: adapter selection",
+		"$.spec.delivery.git.repo":   "internal/delivery/git: deployment repository",
+		"$.spec.delivery.git.branch": "internal/delivery/git: target branch",
+		"$.spec.delivery.git.path":   "internal/delivery/git: directory for rendered manifests",
+
+		"$.spec.applications[].name":                      "resolve P1/P2: selects the Project application to override",
+		"$.spec.applications[].replicas.min":              "renderer: replica count and HPA floor",
+		"$.spec.applications[].replicas.max":              "renderer: HPA ceiling",
+		"$.spec.applications[].resources.requests.cpu":    "renderer: container resource requests",
+		"$.spec.applications[].resources.requests.memory": "renderer: container resource requests",
+		"$.spec.applications[].resources.limits.cpu":      "renderer: container resource limits",
+		"$.spec.applications[].resources.limits.memory":   "renderer: container resource limits",
+		"$.spec.applications[].env.*":                     "renderer: container env (literal form)",
+
+		"$.spec.overlays[].patch":    "renderer: strategic-merge patch against rendered resources",
+		"$.spec.overlays[].manifest": "renderer: extra manifest emitted as-is",
+	},
+}
+
+func specDocuments() map[string]reflect.Type {
+	return map[string]reflect.Type{
+		KindProject:     reflect.TypeOf(Project{}),
+		KindEnvironment: reflect.TypeOf(Environment{}),
+	}
+}
+
+// TestSpecFieldCoverage is the guard of issue #141: no field may be silent by
+// default. Every leaf of every spec document must be claimed by exactly one of
+// the two lists.
+func TestSpecFieldCoverage(t *testing.T) {
+	for kind, typ := range specDocuments() {
+		t.Run(kind, func(t *testing.T) {
+			rendered := renderedFields[kind]
+			for _, path := range specFieldPaths(typ) {
+				_, isRendered := rendered[path]
+				gate, isGated := gatedBy(kind, path)
+				switch {
+				case isRendered && isGated:
+					t.Errorf("%s %s is both on renderedFields and gated by %q — decide which is true: "+
+						"if the field now renders, delete the gate row from notImplementedFields; "+
+						"if it does not, delete the renderedFields entry", kind, path, gate.Path)
+				case !isRendered && !isGated:
+					t.Errorf(`%s %s is reachable in the spec but neither rendered nor gated (issue #141).
+
+A field that validates and renders nothing tells an author their spec worked when it did not.
+Do one of these:
+
+  1. If something consumes this field, add it to renderedFields in this file,
+     naming the consumer (e.g. "renderer: container env").
+  2. If nothing consumes it yet, add a row to notImplementedFields in
+     internal/model/notimplemented.go with the milestone that will implement it,
+     and call v.gate() from the validator so the field is rejected. Add an
+     enforcement case to gateEnforcement in this file.`, kind, path)
+				}
+			}
+		})
+	}
+}
+
+// TestRenderedFieldsAreReal keeps the allow-list honest in the other
+// direction: a field renamed or removed from the model must not leave a stale
+// claim behind that would cover a future field of the same name.
+func TestRenderedFieldsAreReal(t *testing.T) {
+	for kind, typ := range specDocuments() {
+		actual := map[string]bool{}
+		for _, p := range specFieldPaths(typ) {
+			actual[p] = true
+		}
+		for path := range renderedFields[kind] {
+			if !actual[path] {
+				t.Errorf("renderedFields[%s] claims %q, which no longer exists in the spec; remove it", kind, path)
+			}
+		}
+	}
+}
+
+// TestGateTableIsReal is the same check for the gate table: a gate on a path
+// the model no longer has would silently stop gating anything.
+func TestGateTableIsReal(t *testing.T) {
+	docs := specDocuments()
+	for _, g := range notImplementedFields {
+		typ, ok := docs[g.Kind]
+		if !ok {
+			t.Errorf("gate %q has unknown kind %q", g.Path, g.Kind)
+			continue
+		}
+		covered := false
+		for _, p := range specFieldPaths(typ) {
+			if p == g.Path || strings.HasPrefix(p, g.Path+".") || strings.HasPrefix(p, g.Path+"[") {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			t.Errorf("gate %s %q covers no field in the spec; remove the row or fix the path", g.Kind, g.Path)
+		}
+		if g.TrackedBy == "" || g.What == "" {
+			t.Errorf("gate %s %q must name what it gates and where it is tracked", g.Kind, g.Path)
+		}
+	}
+}
+
+// gateEnforcement pins every gate row to a document that must trigger it. A
+// row in the table with no call site in the validator gates nothing, which is
+// exactly the silence issue #141 is about.
+var gateEnforcement = map[string]string{
+	KindProject + " $.spec.services": `
+spec:
+  image: i:1
+  services:
+    - {name: db, type: postgres, preset: shared}
+  applications:
+    - {name: web, port: 8080}`,
+
+	KindProject + " $.spec.env.*.from": `
+spec:
+  image: i:1
+  env:
+    DATABASE_URL: {from: {service: db, key: uri}}
+  services:
+    - {name: db, type: postgres}
+  applications:
+    - {name: web, port: 8080}`,
+
+	KindProject + " $.spec.applications[].env.*.from": `
+spec:
+  image: i:1
+  services:
+    - {name: db, type: postgres}
+  applications:
+    - name: web
+      port: 8080
+      env:
+        DATABASE_URL: {from: {service: db, key: uri}}`,
+
+	KindProject + " $.spec.defaults.policy": `
+spec:
+  image: i:1
+  applications:
+    - {name: web, port: 8080}
+  defaults:
+    policy: {agents: allow}`,
+
+	KindProject + " $.spec.defaults.secrets": `
+spec:
+  image: i:1
+  applications:
+    - {name: web, port: 8080}
+  defaults:
+    secrets: {backend: cluster}`,
+
+	KindEnvironment + " $.spec.cluster": `
+spec:
+  project: p
+  cluster: prod-eu`,
+
+	KindEnvironment + " $.spec.policy": `
+spec:
+  project: p
+  policy: {agents: allow, require: [dry-run], deployers: [team]}`,
+
+	KindEnvironment + " $.spec.secrets": `
+spec:
+  project: p
+  secrets: {backend: sops}`,
+
+	KindEnvironment + " $.spec.services": `
+spec:
+  project: p
+  services:
+    - {name: db, preset: ha-small}`,
+
+	KindEnvironment + " $.spec.applications[].env.*.from": `
+spec:
+  project: p
+  applications:
+    - name: web
+      env:
+        DATABASE_URL: {from: {service: db, key: uri}}`,
+}
+
+// TestGateTableIsEnforced renders each gated field into a document and demands
+// a schema/not-implemented error naming it, so the table cannot drift away
+// from the validator.
+func TestGateTableIsEnforced(t *testing.T) {
+	for _, g := range notImplementedFields {
+		key := g.Kind + " " + g.Path
+		t.Run(key, func(t *testing.T) {
+			body, ok := gateEnforcement[key]
+			if !ok {
+				t.Fatalf("gate %s has no case in gateEnforcement; add a document that carries the field "+
+					"so the gate is proven to fire", key)
+			}
+			src := "apiVersion: " + APIVersion + "\nkind: " + g.Kind + "\nmetadata: {name: p}\n" + body + "\n"
+			_, errs := DecodeDocuments([]byte(src))
+
+			// A binding case has to declare the service it binds to, so the
+			// document trips more than one gate: match on the field, not on
+			// "the first not-implemented error".
+			var got *Error
+			for i := range errs {
+				if errs[i].Code != ErrNotImplemented {
+					continue
+				}
+				if strings.HasPrefix(canonicalize(errs[i].Field), g.Path) {
+					got = &errs[i]
+					break
+				}
+			}
+			if got == nil {
+				t.Fatalf("%s must be rejected as %s, got:\n%v", g.Path, ErrNotImplemented, errs)
+			}
+			if !strings.Contains(got.Remediation, g.TrackedBy) {
+				t.Errorf("remediation must name where the work is tracked (%q), got %q", g.TrackedBy, got.Remediation)
+			}
+			if !strings.Contains(got.Remediation, "#141") {
+				t.Errorf("remediation should cite issue #141, got %q", got.Remediation)
+			}
+			if got.Line == 0 {
+				t.Errorf("gate error must carry a source line: %+v", got)
+			}
+		})
+	}
+}
+
+// TestGateErrorsAreStructured holds gate errors to the same bar as every other
+// code in the taxonomy (issue #28).
+func TestGateErrorsAreStructured(t *testing.T) {
+	_, errs := DecodeDocuments([]byte(`apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata: {name: prod}
+spec:
+  project: shop
+  cluster: eu-west
+`))
+	var got *Error
+	for i := range errs {
+		if errs[i].Code == ErrNotImplemented {
+			got = &errs[i]
+		}
+	}
+	if got == nil {
+		t.Fatalf("spec.cluster must be gated, got:\n%v", errs)
+	}
+	if got.Field != "$.spec.cluster" {
+		t.Errorf("field = %q, want $.spec.cluster", got.Field)
+	}
+	if got.Line != 6 {
+		t.Errorf("line = %d, want 6 (the cluster: key)", got.Line)
+	}
+	if got.DocsURL != DocsBaseURL+"/schema-not-implemented" {
+		t.Errorf("docsURL = %q", got.DocsURL)
+	}
+	if got.Resource == "" || got.Message == "" || got.Remediation == "" {
+		t.Errorf("gate error missing structure: %+v", got)
+	}
+}
+
+// canonicalize collapses a concrete error path ($.spec.applications[2].env.DB)
+// into the canonical form the tables use ($.spec.applications[].env.*).
+func canonicalize(path string) string {
+	var out strings.Builder
+	for i := 0; i < len(path); i++ {
+		if path[i] == '[' {
+			out.WriteString("[]")
+			for i < len(path) && path[i] != ']' {
+				i++
+			}
+			continue
+		}
+		out.WriteByte(path[i])
+	}
+	// Map keys are the segments the schema does not name. The only maps in the
+	// spec are env maps, and a path holds at most one, so the segment after
+	// ".env." is the key and collapses to "*".
+	s := out.String()
+	idx := strings.Index(s, ".env.")
+	if idx < 0 {
+		return s
+	}
+	rest := s[idx+len(".env."):]
+	end := strings.IndexAny(rest, ".[")
+	if end < 0 {
+		return s[:idx] + ".env.*"
+	}
+	return s[:idx] + ".env.*" + rest[end:]
+}
+
+// specFieldPaths derives every leaf path of a document type from its yaml
+// tags — the same tag walk decode.go uses for unknown-field detection, so the
+// two agree on what a field is. Sequences collapse to `[]`, maps to `*`, and a
+// sequence of scalars is a leaf at the sequence itself (`domains`, not
+// `domains[]`).
+func specFieldPaths(t reflect.Type) []string {
+	var out []string
+	walkFieldPaths(t, "$", &out, nil)
+	sort.Strings(out)
+	return slices.Compact(out)
+}
+
+func walkFieldPaths(t reflect.Type, path string, out *[]string, stack []reflect.Type) {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if slices.Contains(stack, t) { // no recursive types today; cheap insurance
+		return
+	}
+	stack = append(stack, t)
+
+	// EnvValue is a union with a custom unmarshaller and no yaml tags: a plain
+	// scalar, or {from: {service, key}}. Both arms are spec surface.
+	if t == reflect.TypeOf(EnvValue{}) {
+		*out = append(*out, path)
+		walkFieldPaths(reflect.TypeOf(ServiceBinding{}), path+".from", out, stack)
+		return
+	}
+
+	switch t.Kind() {
+	case reflect.Struct:
+		for i := 0; i < t.NumField(); i++ {
+			f := t.Field(i)
+			tag := f.Tag.Get("yaml")
+			name := strings.Split(tag, ",")[0]
+			if name == "-" {
+				continue
+			}
+			if f.Anonymous && strings.Contains(tag, "inline") {
+				walkFieldPaths(f.Type, path, out, stack)
+				continue
+			}
+			if name == "" {
+				name = strings.ToLower(f.Name)
+			}
+			walkFieldPaths(f.Type, path+"."+name, out, stack)
+		}
+	case reflect.Slice, reflect.Array:
+		if isLeafKind(deref(t.Elem())) {
+			*out = append(*out, path) // []string and friends are one field
+			return
+		}
+		walkFieldPaths(t.Elem(), path+"[]", out, stack)
+	case reflect.Map:
+		walkFieldPaths(t.Elem(), path+".*", out, stack)
+	default:
+		*out = append(*out, path)
+	}
+}
+
+func deref(t reflect.Type) reflect.Type {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	return t
+}
+
+func isLeafKind(t reflect.Type) bool {
+	switch t.Kind() {
+	case reflect.Struct, reflect.Map, reflect.Slice, reflect.Array:
+		return false
+	}
+	return true
+}
+
+// TestSpecFieldPathsWalksTheModel guards the walker itself: a broken
+// enumerator would make TestSpecFieldCoverage pass vacuously.
+func TestSpecFieldPathsWalksTheModel(t *testing.T) {
+	got := specFieldPaths(reflect.TypeOf(Project{}))
+	for _, want := range []string{
+		"$.apiVersion",
+		"$.metadata.name",
+		"$.spec.applications[].name",
+		"$.spec.applications[].domains",
+		"$.spec.applications[].replicas.min",
+		"$.spec.applications[].resources.limits.memory",
+		"$.spec.applications[].env.*",
+		"$.spec.applications[].env.*.from.service",
+		"$.spec.services[].preset",
+		"$.spec.defaults.policy.deployers",
+	} {
+		if !slices.Contains(got, want) {
+			t.Errorf("specFieldPaths missing %q; got:\n%s", want, strings.Join(got, "\n"))
+		}
+	}
+	if slices.Contains(got, "$.spec.applications[].domains[]") {
+		t.Errorf("a sequence of scalars must be one leaf, not an indexed one")
+	}
+	if len(got) < 30 {
+		t.Errorf("walker found only %d paths, which cannot be the whole model: %v", len(got), got)
+	}
+}

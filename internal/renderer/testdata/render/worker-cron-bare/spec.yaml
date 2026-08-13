@@ -7,15 +7,8 @@ metadata:
   name: mailroom
 spec:
   image: registry.acme.run/mailroom:2.0.7
-  env:
-    QUEUE_URL:
-      from: { service: queue, key: uri }
-    QUEUE_PASSWORD:
-      from: { service: queue, key: password }
-  services:
-    - name: queue
-      type: valkey
-      preset: small
+  # The queue service and its QUEUE_URL/QUEUE_PASSWORD bindings are gated
+  # until M9 (#141).
   applications:
     - name: worker
       command: ["mailroom", "work"]
