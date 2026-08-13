@@ -1,0 +1,66 @@
+.k-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  font-family: var(--kelson-font-mono);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.k-pill__dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+
+.k-pill--synced {
+  color: var(--kelson-synced);
+  background: var(--kelson-synced-fill);
+  border-color: var(--kelson-synced-border);
+}
+
+.k-pill--reconciling {
+  color: var(--kelson-reconciling);
+  background: var(--kelson-reconciling-fill);
+  border-color: var(--kelson-reconciling-border);
+}
+
+/* The only animated element in the UI: reconciling means work is in flight. */
+.k-pill--reconciling .k-pill__dot {
+  animation: kelson-pulse 1.4s ease-in-out infinite;
+}
+
+.k-pill--degraded {
+  color: var(--kelson-degraded);
+  background: var(--kelson-degraded-fill);
+  border-color: var(--kelson-degraded-border);
+}
+
+.k-pill--failed {
+  color: var(--kelson-failed);
+  background: var(--kelson-failed-fill);
+  border-color: var(--kelson-failed-border);
+}
+
+.k-pill--suspended {
+  color: var(--kelson-suspended);
+  background: var(--kelson-suspended-fill);
+  border-color: var(--kelson-suspended-border);
+}
+
+.k-pill--unknown {
+  color: var(--kelson-muted-2);
+  background: var(--kelson-inset);
+  border-color: var(--kelson-inset-border);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .k-pill--reconciling .k-pill__dot {
+    animation: none;
+  }
+}

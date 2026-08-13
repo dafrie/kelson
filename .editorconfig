@@ -19,5 +19,10 @@ indent_size = 2
 [*.json]
 indent_size = 2
 
+# The web UI. Two spaces is the TypeScript/React convention the whole
+# toolchain assumes, and the repo default of four fights it.
+[*.{ts,tsx,js,jsx,css,html}]
+indent_size = 2
+
 [Makefile]
 indent_style = tab

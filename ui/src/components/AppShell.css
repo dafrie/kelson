@@ -1,0 +1,87 @@
+.k-header {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  height: var(--kelson-header-height);
+  padding: 0 32px;
+  background: var(--kelson-header);
+  border-bottom: 1px solid var(--kelson-hairline);
+}
+
+.k-header__brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--kelson-text);
+}
+
+.k-header__brand:hover {
+  color: var(--kelson-text);
+}
+
+.k-header__wordmark {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+.k-nav {
+  display: flex;
+  gap: 22px;
+  font-size: 14px;
+}
+
+.k-nav__item {
+  color: var(--kelson-text-3);
+  padding-bottom: 2px;
+  border-bottom: 2px solid transparent;
+}
+
+.k-nav__item:hover {
+  color: var(--kelson-text);
+}
+
+.k-nav__item--active,
+.k-nav__item--active:hover {
+  color: var(--kelson-text);
+  border-bottom-color: var(--kelson-green);
+}
+
+.k-header__right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.k-header__docs {
+  font-size: 13.5px;
+  color: var(--kelson-text-3);
+}
+
+.k-header__docs:hover {
+  color: var(--kelson-text);
+}
+
+.k-main {
+  max-width: var(--kelson-content-max);
+  margin: 0 auto;
+  padding: 36px 32px 72px;
+}
+
+.k-page-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 8px;
+}
+
+.k-page-sub {
+  display: flex;
+  gap: 22px;
+  margin-bottom: 28px;
+  font-family: var(--kelson-font-mono);
+  font-size: 12.5px;
+  color: var(--kelson-muted);
+}

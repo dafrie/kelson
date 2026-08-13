@@ -1,0 +1,74 @@
+/*
+ * kelson design tokens.
+ *
+ * Values are taken verbatim from docs/design/assets/README.md and
+ * docs/design/README.md, and the names follow website/src/css/custom.css so
+ * the docs site and the app speak one vocabulary. Where the two files agree,
+ * they agree; where the mockups add a value the READMEs do not name (the chip
+ * inset, the status pill fills), it is recorded here rather than inlined at
+ * the use site.
+ *
+ * Dark-only, deliberately. The mockups explore no light palette
+ * (docs/design/README.md), so there is no light theme and no toggle — a
+ * half-designed second theme is worse than one that was decided.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* Surfaces */
+  --kelson-page: #0b0f13;
+  --kelson-panel: #10171f;
+  --kelson-panel-dim: #0e141a;
+  --kelson-header: #0d1218;
+  --kelson-border: #1d2732;
+  --kelson-hairline: #18202a;
+  --kelson-border-hover: #2b3a47;
+
+  /* Inset chips: the header's environment pill and anything else that reads as
+     a recessed control rather than a raised panel. */
+  --kelson-inset: #131c24;
+  --kelson-inset-border: #1f2a34;
+
+  /* Text */
+  --kelson-text: #e6ebf0;
+  --kelson-text-2: #9aa7b4;
+  --kelson-text-3: #8b98a6;
+  --kelson-muted: #6f7b89;
+  --kelson-muted-2: #5d6875;
+  --kelson-muted-deep: #4d5763;
+  --kelson-code: #cdd8e3;
+
+  /* Brand */
+  --kelson-green: #0fa36b;
+  --kelson-green-hover: #3ed49b;
+
+  /* Status */
+  --kelson-synced: #0fa36b;
+  --kelson-reconciling: #4ea3ff;
+  --kelson-degraded: #e0a944;
+  --kelson-failed: #e2543a;
+  --kelson-suspended: #6f7b89;
+
+  /* Status pill fills and borders */
+  --kelson-synced-fill: #0f2620;
+  --kelson-synced-border: #164436;
+  --kelson-reconciling-fill: #101d2a;
+  --kelson-reconciling-border: #1c3a55;
+  --kelson-degraded-fill: #241c0f;
+  --kelson-degraded-border: #3f3016;
+  --kelson-failed-fill: #26130f;
+  --kelson-failed-border: #4a221a;
+  --kelson-suspended-fill: #151b22;
+  --kelson-suspended-border: #232d38;
+
+  /* Type. Self-hosted via @fontsource — the mockups pull Space Grotesk and IBM
+     Plex Mono from the Google Fonts CDN, which an app that binds loopback and
+     may run in an air-gapped cluster must not do. */
+  --kelson-font: "Space Grotesk", Helvetica, Arial, sans-serif;
+  --kelson-font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* Layout */
+  --kelson-header-height: 56px;
+  --kelson-content-max: 1240px;
+}
