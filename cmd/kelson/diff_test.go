@@ -197,6 +197,40 @@ func TestDiffServerPolicyBlockerExitsThree(t *testing.T) {
 	}
 }
 
+// TestDiffServerCoverageGapReportsWithoutBlocking is the other half of the
+// admission contract (#45): a validating webhook the dry-run cannot reach is a
+// hole in the preview, not a verdict. It must be printed — an incomplete
+// preview may never read as a clean one — but it must not fail the pipeline,
+// because nothing rejected anything.
+func TestDiffServerCoverageGapReportsWithoutBlocking(t *testing.T) {
+	verdict := &diff.Diff{
+		Level:       diff.LevelServer,
+		Project:     "hello",
+		Environment: "development",
+		Resources: []diff.ResourceDiff{{
+			APIVersion: "apps/v1", Kind: "Deployment", Name: "web",
+			Namespace: "hello-development", Op: diff.OpModified, Risk: diff.RiskRestart,
+		}},
+		Unvalidated: []diff.Unvalidated{{
+			Resource: "ValidatingWebhookConfiguration/platform-guards webhook quota.example.com",
+			Reason:   diff.ReasonWebhookExcludesDryRun,
+			Message:  "admission webhook quota.example.com declares sideEffects: Some, so the API server does not run it for a dry-run request",
+		}},
+		Summary: diff.Summary{Modified: 1, MaxRisk: diff.RiskRestart},
+	}
+	spec := writeSpec(t, t.TempDir(), "spec.yaml", "1.4.2")
+	stdout, _, code, _ := runEngineKelson(t, previewEngine(verdict, nil), "diff", "-f", spec, "--dry-run=server")
+	if code != exitDiff {
+		t.Fatalf("exit code = %d, want %d (changes present, nothing blocked)", code, exitDiff)
+	}
+	if !strings.Contains(stdout, "quota.example.com") {
+		t.Fatalf("stdout must name the webhook the preview could not reach:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "BLOCKED") {
+		t.Fatalf("a coverage gap is not a blocker:\n%s", stdout)
+	}
+}
+
 // TestDiffServerUnreachableFailsLoudly is issue #46's separation contract for
 // L2: when the cluster cannot be reached the command fails with a clear error
 // (exit 1) — it never silently falls back to an L1 render.

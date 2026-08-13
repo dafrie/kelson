@@ -20,6 +20,7 @@ wrong, open an issue — it is far cheaper to reverse a decision now than after 
 | [0013](0013-server-state-and-api-v0.md) | Server state lives in the cluster; API v0 shape | Proposed |
 | [0014](0014-components.md) | One `components` list, per-component identity (amends 0006) | Proposed |
 | [0015](0015-valkey-operator.md) | `kind: valkey` delegates to valkey-io/valkey-operator | Accepted |
+| [0016](0016-delivery-flows-v0.md) | The four M10 delivery flows, and what each one is in v0 | Accepted |
 
 *Process note (2026-08-12):* ADR-0003 and ADR-0005 were revised in place before the immutability rule
 below hardened; their in-place revisions stand as recorded. From ADR-0012 on, changes supersede.

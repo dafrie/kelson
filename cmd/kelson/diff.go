@@ -216,19 +216,13 @@ func printDiff(cmd *cobra.Command, d *diff.Diff, opts *diffOptions) error {
 	return diff.Write(cmd.OutOrStdout(), d, color)
 }
 
-// diffExitCode maps a preview onto the CI exit contract. A blocker (an
-// enforce-mode policy violation, or an Unvalidated resource whose prerequisite
-// is genuinely absent) is 3; any change present is 2; otherwise 0.
+// diffExitCode maps a preview onto the CI exit contract: a blocker is 3, any
+// change present is 2, otherwise 0. What counts as a blocker is diff.Blocked's
+// answer, not this command's — the API's Diff RPC branches on the same
+// predicate so the two gates cannot diverge.
 func diffExitCode(d *diff.Diff) int {
-	for _, v := range d.Violations {
-		if v.Enforcement == diff.EnforcementEnforce {
-			return exitBlk
-		}
-	}
-	for _, u := range d.Unvalidated {
-		if !u.InBatch {
-			return exitBlk
-		}
+	if diff.Blocked(d) {
+		return exitBlk
 	}
 	if len(d.Resources) > 0 {
 		return exitDiff

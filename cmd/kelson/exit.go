@@ -11,8 +11,11 @@ import (
 //	0  no changes
 //	1  usage or runtime error
 //	2  changes present
-//	3  a blocker: an enforce-mode PolicyViolation, or an Unvalidated resource
-//	   whose prerequisite is genuinely absent (InBatch false)
+//	3  a blocker: an enforce-mode PolicyViolation (an admission policy or
+//	   webhook that denied the dry-run), or an Unvalidated resource whose
+//	   prerequisite is genuinely absent. A coverage gap — a webhook the dry-run
+//	   never reached — is reported but is not a blocker, because nothing
+//	   rejected anything (diff.Unvalidated.Blocking).
 //
 // Codes 2 and 3 are *expected* outcomes, not failures, so they must not print
 // cobra's spurious "Error:" line. rootError() centralises error reporting so

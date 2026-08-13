@@ -258,7 +258,11 @@ no export/import step.
 
 L2 deserves emphasis: it is the API server's own answer, not kelson's model of what the API server would
 do. You see the exact object that *would* be persisted, including every mutation applied on the way in. No
-PaaS in this category surfaces it, and it is the cheapest high-fidelity signal available.
+PaaS in this category surfaces it, and it is the cheapest high-fidelity signal available. That includes
+admission control: a Kyverno, Gatekeeper or `ValidatingAdmissionPolicy` denial is surfaced at preview time
+naming the policy and quoting its message, and the webhooks a dry-run *cannot* reach are named too —
+[the delivery plane](delivery.md#preview-admission-rejections-and-what-the-dry-run-cannot-see-45) has both
+halves.
 
 L3 shares all its machinery with pull-request preview environments — built once, used for both.
 

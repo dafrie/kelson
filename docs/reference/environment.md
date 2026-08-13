@@ -36,6 +36,7 @@ This reference is **generated** from the committed JSON Schema [`schema/environm
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `env` | map of one of: string, object | no |  |  |
+| `image` | string | no |  | pins this component's image in this environment only; the promotion primitive (rule P3) |
 | `name` | string | yes |  |  |
 | `preset` | string enum `"shared"`, `"small"`, `"ha-small"`, `"ha-medium"`, `"branch"` | no |  | data components only |
 | `replicas` | object | no |  |  |

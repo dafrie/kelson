@@ -53,7 +53,7 @@ type ResolvedRouting struct {
 type ResolvedComponent struct {
 	Name      string
 	Kind      ComponentKind
-	Image     string
+	Image     string // after P3: environment pin, else component, else project
 	Command   []string
 	Port      int
 	Health    string
@@ -197,7 +197,16 @@ func resolveComponent(p *Project, r *Resolved, c Component, ov ComponentOverride
 	for k, ev := range c.Env {
 		rc.Env[k] = ev
 	}
-	rc.Image, rc.Command = c.Image, c.Command
+	// P3, innermost first: the Environment's pin, the component's image, the
+	// Project's. The pin is the promotion primitive (ADR-0016) and sits at the
+	// top of that chain on purpose — `--image` stands in for the Project's
+	// image, so a pinned environment stays where it was pinned until someone
+	// promotes it.
+	rc.Command = c.Command
+	rc.Image = ov.Image
+	if rc.Image == "" {
+		rc.Image = c.Image
+	}
 	if rc.Image == "" {
 		rc.Image = p.Spec.Image
 	}

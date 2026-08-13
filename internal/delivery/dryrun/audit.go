@@ -79,12 +79,14 @@ func policyReportViolations(report *unstructured.Unstructured) []diff.PolicyViol
 		msg, _ := r["message"].(string)
 		resource := reportResource(r)
 		out = append(out, diff.PolicyViolation{
+			Code:        diff.CodeAuditFinding,
 			Engine:      "kyverno",
 			Policy:      policy,
 			Rule:        rule,
 			Resource:    resource,
 			Message:     msg,
 			Enforcement: diff.EnforcementAudit,
+			Remediation: kyvernoRemediation(policy),
 		})
 	}
 	return out

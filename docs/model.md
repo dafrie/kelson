@@ -154,16 +154,31 @@ Project-level variable for one Environment, override it to an empty string.
 (no deep merge of `requests` vs `limits`). Absent override → the Component's values; absent there →
 `replicas: {min: 1}` fixed and no resource requests/limits.
 
-**P3 — Image and command:** Component `image:` wins over Project `image:`. A built artifact
-(Project `source` + `build`) supplies the image when neither sets one; `build.strategy: none` with no
-image anywhere is a validation error (`semantic/no-image-source`). Component `command:` always wins;
-Project has no command.
+**P3 — Image and command:** the innermost scope that names an image wins:
+
+```
+Project.spec.image
+  < Component.image
+    < Environment.spec.components[].image   (the per-environment pin, matched by component name)
+```
+
+A built artifact (Project `source` + `build`) supplies the image when none of the three sets one;
+`build.strategy: none` with no image anywhere is a validation error (`semantic/no-image-source`).
+Component `command:` always wins; Project has no command, and an Environment override does not set one.
 
 Until a build produces that artifact, such a component resolves to an *unresolved* image, and
 rendering it fails with the structured render error `image/unresolved` naming each component —
 kelson never emits a placeholder image into a manifest. Supply the built reference with `--image`
 (`kelson render`, `diff`, `deploy`, `status`, `rollback`), which stands in for Project `image:` and so
-still loses to a Component `image:`.
+loses to a Component `image:` **and to an Environment pin**.
+
+The pin is the promotion primitive ([ADR-0016](adr/0016-delivery-flows-v0.md)); see
+[Promotion](#promotion) below. It satisfies the build machinery exactly the way `--image` does: a
+component built from source whose Environment pins an image is resolved, not unresolved. All three
+image fields are held to the same reference check — a blank or whitespace-bearing reference is
+`schema/invalid-format` wherever it is written; tag and digest grammar is the registry's to judge.
+An image on an override whose target is a data component is `schema/mutually-exclusive`: what a
+`kind: postgres` runs is its operator's business (ADR-0005).
 
 **P4 — Environment-scoped concerns (delivery, policy, secrets):** an explicit Environment value always
 wins over the Project `defaults` value; otherwise the Project default; otherwise the built-in default:
@@ -183,8 +198,8 @@ its own repo/branch/path).
 **P5 — Data-component presets:** `Environment.spec.components[].preset` (matched by component name) replaces
 the Project component's preset for that Environment — `shared` in development, `ha-small` in production,
 from one Project spec ([ADR-0007](adr/0007-data-services.md)). An override block carries the fields its
-target's kind uses and nothing else: `preset` for a data component, `replicas`/`resources`/`env` for a
-workload. Crossing that line is a validation error, not a silent no-op.
+target's kind uses and nothing else: `preset` for a data component, `image`/`replicas`/`resources`/`env`
+for a workload. Crossing that line is a validation error, not a silent no-op.
 
 **P6 — Overlays:** concatenate, Project first, then Environment. Each patch applies in order to the
 resources rendered so far; manifests are emitted as extra resources in order. Overlays are the escape
@@ -194,6 +209,44 @@ hatch of record: any long-tail requirement not in the schema goes here ([docs/ar
 win. If a Component has `port:` but no `domains:`, and the Environment sets `routing.domainSuffix`,
 the default hostname is `<component>.<domainSuffix>` — e.g. `web.staging.acme.run`. Environments should
 carry distinct suffixes so defaults never collide.
+
+## Promotion
+
+**Promoting in kelson v0 is editing one field.** `Environment.spec.components[].image` pins a component
+to one image reference in that environment only, and it is the innermost scope of rule P3. Promoting
+staging to production is: read the digest staging deployed, write it as production's pin, deploy.
+
+```yaml
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: production
+spec:
+  project: checkout
+  components:
+    - name: web
+      image: ghcr.io/acme/checkout@sha256:9f6ad2c1…   # ← the whole promotion
+```
+
+The diff shows exactly that: one image line per promoted component, and nothing else, because nothing
+else changed. History records the deploy the way it records any other, and rollback is the same
+rollback — a promotion is a spec edit, so every mechanism that already handles spec edits handles it
+([ADR-0016](adr/0016-delivery-flows-v0.md)).
+
+Three consequences worth stating before they surprise anyone:
+
+- **The pin lives in the document you own**, not in server state, so an ejected Git repo still
+  reproduces what runs. That is the reason it is a spec field and not a release record.
+- **A pinned environment stops moving.** `--image` stands in for Project `image:` and therefore loses
+  to a pin: a CI job passing a fresh digest will not change a pinned environment. Unpinning is deleting
+  the field. This is what "pinned" means, and it is the point — production changes when someone
+  promotes to it.
+- **Promotion gates nothing.** There is no approval step, no ordering between environments, no
+  "production may only receive what staging ran", and no automatic promotion. The gate is wherever spec
+  edits are already gated: pull request review in Flux mode, and `policy` when M7 lands.
+
+A `kelson promote` command, an API affordance and a UI action are porcelain over this field and are not
+implemented yet.
 
 ## Identity: one ServiceAccount per component
 
@@ -310,6 +363,7 @@ spec:
     backend: sops                    # cluster | externalSecrets | sops
   components:                        # one override list, matched by name
     - name: web                      # must name a Component in the Project
+      image: ghcr.io/acme/checkout@sha256:9f6ad2c1…   # P3: the promotion pin
       replicas: { min: 3, max: 20 }
       resources:
         requests: { cpu: 500m, memory: 512Mi }

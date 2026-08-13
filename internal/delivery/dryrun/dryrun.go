@@ -89,10 +89,18 @@ func (r ResourceRef) String() string {
 //
 // It submits every resource in the renderer's order with DryRun:"All" under
 // kelson's field manager, diffs each returned object against live state, and
-// parses rejections into diff.PolicyViolation entries (issue #45). If the user
-// lacks dry-run permission (a 403/401 that is not a policy rejection) it
-// degrades to a rendered (L1) diff with Degraded set rather than failing the
-// whole preview — the L2 failure must never toast the preview.
+// parses rejections into diff.PolicyViolation entries (issue #45). A dry-run
+// apply runs the cluster's ValidatingAdmissionPolicies and validating webhooks,
+// so a denial is a real admission verdict and is reported as a blocker naming
+// the policy or webhook — never as a generic apply error, and never left to
+// surface at deploy time after a preview that claimed to be clean.
+//
+// What the dry-run cannot see is reported too, as diff.Unvalidated: a webhook
+// that refuses dry-run requests, and (from the cluster's webhook
+// configurations) one the request would not reach at all. If the user lacks
+// dry-run permission (a 403/401 that is not a policy rejection) it degrades to
+// a rendered (L1) diff with Degraded set rather than failing the whole preview
+// — the L2 failure must never toast the preview.
 func (d *DryRun) Preview(ctx context.Context, set delivery.ManifestSet) (*diff.Diff, error) {
 	targets, err := d.targets(set)
 	if err != nil {
@@ -129,6 +137,10 @@ func (d *DryRun) Preview(ctx context.Context, set delivery.ManifestSet) (*diff.D
 	}
 
 	out.Violations = append(out.Violations, audit...)
+	// What the dry-run could not see. A validating webhook the request never
+	// reaches has not approved anything, and a preview that stayed quiet about
+	// it would be claiming a coverage it does not have (issue #45).
+	out.Unvalidated = append(out.Unvalidated, d.coverageGaps(ctx, targets)...)
 	out.Summary = summarize(out)
 	// L2 is the one preview level that reads live objects back, so it is the one
 	// that can pull a Secret's stored content into a diff even for a spec that
@@ -201,6 +213,7 @@ func (d *DryRun) rejection(t target, liveMap map[string]any, batch batchInfo, er
 				Resource: t.ref.String(),
 				Requires: batch.requirementOf(t, err),
 				InBatch:  true,
+				Reason:   diff.ReasonMissingPrerequisite,
 				Message:  errorMessage(err),
 			}
 			return &target, findings{unvalidated: []diff.Unvalidated{u}}, nil
@@ -213,6 +226,7 @@ func (d *DryRun) rejection(t target, liveMap map[string]any, batch batchInfo, er
 			Resource: t.ref.String(),
 			Requires: batch.requirementOf(t, err),
 			InBatch:  false,
+			Reason:   diff.ReasonMissingPrerequisite,
 			Message:  errorMessage(err),
 		}
 		return rd, findings{unvalidated: []diff.Unvalidated{u}}, nil
@@ -223,6 +237,19 @@ func (d *DryRun) rejection(t target, liveMap map[string]any, batch batchInfo, er
 		// RBAC: the caller lacks permission to dry-run. Surfaces as
 		// degradation to L1 at the Preview level.
 		return nil, findings{}, err
+	}
+	if c.dryRunUnsupported {
+		// A webhook the dry-run request cannot reach. Nothing rejected this
+		// resource, so it is neither a violation nor disruptive: report the
+		// rendered-vs-live change we can still compute honestly, and say that
+		// the admission verdict is missing (#45).
+		return l1Resource(t, liveMap), findings{unvalidated: []diff.Unvalidated{{
+			Resource: t.ref.String(),
+			Requires: "admission webhook " + c.webhook,
+			InBatch:  false,
+			Reason:   diff.ReasonDryRunUnsupported,
+			Message:  errorMessage(err),
+		}}}, nil
 	}
 	if c.policyRejected {
 		rd := disrupting(t, liveMap)
@@ -239,6 +266,7 @@ func (d *DryRun) rejection(t target, liveMap map[string]any, batch batchInfo, er
 	return rd, findings{unvalidated: []diff.Unvalidated{{
 		Resource: t.ref.String(),
 		InBatch:  false,
+		Reason:   diff.ReasonUnattributedRejection,
 		Message:  unattributedMessage(d.profile, errorMessage(err)),
 	}}}, nil
 }
@@ -253,6 +281,29 @@ func unattributedMessage(p clusterprofile.ClusterProfile, msg string) string {
 		return prefix + "; the cluster runs admission-policy engines, so this may be a policy rejection in an unrecognised shape: " + msg
 	}
 	return prefix + "; the cluster runs no policy engine, so this is not a policy finding: " + msg
+}
+
+// l1Resource builds the rendered-vs-live (L1) diff for one resource, used
+// wherever the API server's own verdict is unavailable: the caller lacks
+// dry-run permission, or a webhook the request cannot reach leaves the resource
+// unevaluated. The change is still reported with its real risk — what is
+// missing is the admission verdict, not the diff.
+func l1Resource(t target, liveMap map[string]any) *diff.ResourceDiff {
+	op := diff.OpAdded
+	if len(liveMap) > 0 {
+		op = diff.OpModified
+	}
+	fields := diffSetAndLive(t.obj.Object, liveMap)
+	rd := &diff.ResourceDiff{
+		APIVersion: t.ref.APIVersion,
+		Kind:       t.ref.Kind,
+		Name:       t.ref.Name,
+		Namespace:  t.ref.Namespace,
+		Op:         op,
+		Fields:     fields,
+	}
+	rd.Risk = resourceRisk(op, fields, t.ref.Kind)
+	return rd
 }
 
 // disrupting builds a resource diff for a resource the API server rejected: the
@@ -303,21 +354,7 @@ func (d *DryRun) degraded(ctx context.Context, _ diff.Level, set delivery.Manife
 		if err == nil && live != nil {
 			liveMap = live.Object
 		}
-		op := diff.OpAdded
-		if len(liveMap) > 0 {
-			op = diff.OpModified
-		}
-		fields := diffSetAndLive(t.obj.Object, liveMap)
-		rd := &diff.ResourceDiff{
-			APIVersion: t.ref.APIVersion,
-			Kind:       t.ref.Kind,
-			Name:       t.ref.Name,
-			Namespace:  t.ref.Namespace,
-			Op:         op,
-			Fields:     fields,
-		}
-		rd.Risk = resourceRisk(op, fields, t.ref.Kind)
-		out.Resources = append(out.Resources, *rd)
+		out.Resources = append(out.Resources, *l1Resource(t, liveMap))
 	}
 	out.Summary = summarize(out)
 	return diff.Redact(out)

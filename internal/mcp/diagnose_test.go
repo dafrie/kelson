@@ -73,6 +73,49 @@ func TestDiagnoseComposesTheWholeAnswer(t *testing.T) {
 	}
 }
 
+// TestDiagnoseSpecShowsEnvironmentImagePin: since ADR-0016 the image a
+// component runs is an environment-scoped fact — a pinned component must be
+// reported with the pin for the diagnosed environment, marked as such, while
+// its unpinned siblings keep the Project-level answer.
+func TestDiagnoseSpecShowsEnvironmentImagePin(t *testing.T) {
+	const environmentDoc = `apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: production
+spec:
+  project: hello
+  components:
+    - name: web
+      image: ghcr.io/acme/hello@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+`
+	h := start(t, &fakeServer{
+		status: func(*kelsonv1alpha1.StatusRequest) (*kelsonv1alpha1.StatusResponse, error) {
+			return healthyStatus(), nil
+		},
+		queryLogs: func(*kelsonv1alpha1.QueryLogsRequest) (*kelsonv1alpha1.QueryLogsResponse, error) {
+			return logLines(1), nil
+		},
+		history: func(*kelsonv1alpha1.HistoryRequest) (*kelsonv1alpha1.HistoryResponse, error) {
+			return &kelsonv1alpha1.HistoryResponse{}, nil
+		},
+		getSpec: func(*kelsonv1alpha1.GetSpecRequest) (*kelsonv1alpha1.GetSpecResponse, error) {
+			return &kelsonv1alpha1.GetSpecResponse{Spec: &kelsonv1alpha1.Spec{
+				Project: "hello",
+				Documents: &kelsonv1alpha1.SpecDocuments{
+					Project:      []byte(projectDoc),
+					Environments: map[string][]byte{"production": []byte(environmentDoc)},
+				},
+			}}, nil
+		},
+	})
+
+	out := h.call(t, "diagnose_application", map[string]any{"project": "hello", "environment": "production"})
+	mustContain(t, out,
+		"ghcr.io/acme/hello@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef (pinned)",
+		"ghcr.io/acme/hello:1.4.2", // the unpinned worker keeps the Project answer
+	)
+}
+
 // TestDiagnoseHealthyUsesTail: a healthy environment has no termination to look
 // before, so the window is a plain tail. Which window is a relay of the
 // server's verdict, never this tool's own classification.
