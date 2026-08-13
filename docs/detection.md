@@ -25,8 +25,16 @@ names the missing permission so a human can grant it and re-run.
 
 Presence is established once, with a single read of `/apis`: an API group being registered means the
 component that owns it is installed. That one call tells us about Gateway API, cert-manager,
-external-secrets, CloudNativePG, Flux, ArgoCD, metrics-server, the policy engines and Prometheus
-without issuing a list per group.
+external-secrets, CloudNativePG, Flux, flux-operator, ArgoCD, metrics-server, the policy engines and
+Prometheus without issuing a list per group.
+
+Flux and flux-operator are two findings, not one: most Flux installs have no operator, and the
+delivery plane prefers the operator's `FluxReport` for "is Flux itself healthy" where it exists
+([#137](https://github.com/dafrie/kelson/issues/137)). Recording `fluxOperator` is what keeps that
+preference a finding instead of something the adapter establishes by attempting the read and falling
+back ([#157](https://github.com/dafrie/kelson/issues/157)) — the inversion ADR-0003 exists to prevent.
+Detection reads the `fluxcd.controlplane.io` group's registration and nothing else: flux-operator is
+AGPL-3.0 and kelson is MIT, so no Go module of theirs is imported anywhere.
 
 The per-resource details (which classes, issuers, stores exist) are layered on top with their own
 lists, and each is individually allowed to fail into a `Gap` without demoting the owning component to

@@ -19,8 +19,10 @@ metadata:
 rules:
   # Discovery: /version for the server version and platform, /apis for the
   # registered groups that mark cert-manager, gateway API, external-secrets,
-  # cnpg, flux, argocd, metrics-server and the policy engines as present, and
-  # the monitoring group's resources to tell ServiceMonitor from PodMonitor.
+  # cnpg, flux, flux-operator, argocd, metrics-server and the policy engines as
+  # present, and the monitoring group's resources to tell ServiceMonitor from
+  # PodMonitor. flux-operator needs no rule of its own: its presence is the
+  # group registration, and kelson never lists its CRs from here.
   - nonResourceURLs: ["/version", "/api", "/api/*", "/apis", "/apis/*"]
     verbs: ["get"]
   - apiGroups: [""]

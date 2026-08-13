@@ -10,7 +10,7 @@ LDFLAGS := -s -w \
   -X github.com/dafrie/kelson/internal/version.Version=$(VERSION) \
   -X github.com/dafrie/kelson/internal/version.Commit=$(COMMIT)
 
-.PHONY: all build binaries test lint fmt clean install release release-snapshot e2e-up e2e e2e-down
+.PHONY: all build binaries proto test lint fmt clean install release release-snapshot e2e-up e2e e2e-down
 
 all: lint test build
 
@@ -23,6 +23,14 @@ build:
 binaries:
 	$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN)/kelson       ./cmd/kelson
 	$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN)/kelson-server ./cmd/kelson-server
+
+# Regenerates internal/api/gen from proto/ (ADR-0013 §4). The output is
+# committed, so a change to proto/ that is not followed by this target leaves
+# the schema and the served code disagreeing. Needs buf, protoc-gen-go and
+# protoc-gen-connect-go on PATH; it is deliberately not part of `all`, because
+# the checkout must build without them.
+proto:
+	buf generate
 
 test:
 	$(GO) test -race ./...

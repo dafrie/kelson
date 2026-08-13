@@ -126,6 +126,13 @@ var componentGroups = []struct {
 	{"external-secrets.io", "externalSecrets"},
 	{"postgresql.cnpg.io", "cnpg"},
 	{"source.toolkit.fluxcd.io", "flux"},
+	// flux-operator owns this group, and it is the same group the delivery
+	// plane reads FluxReport from (internal/delivery/flux/dynamic.go) — the two
+	// must name the same coordinates or the profile would promise a CR the
+	// adapter looks for somewhere else. LICENSE: flux-operator is AGPL-3.0 and
+	// kelson is MIT, so detection stays at discovery of the group; no Go module
+	// of theirs is imported (issue #157, docs/architecture.md).
+	{"fluxcd.controlplane.io", "fluxOperator"},
 	{"argoproj.io", "argocd"},
 	{"metrics.k8s.io", "metricsServer"},
 	{"monitoring.coreos.com", "prometheus"},
@@ -201,6 +208,8 @@ func (p *prober) applyGroupPresence(prof clusterprofile.ClusterProfile, group, f
 		prof.CloudNativePG = &clusterprofile.Component{}
 	case "flux":
 		prof.Flux = &clusterprofile.Component{}
+	case "fluxOperator":
+		prof.FluxOperator = &clusterprofile.Component{}
 	case "argocd":
 		prof.ArgoCD = &clusterprofile.Component{}
 	case "metricsServer":

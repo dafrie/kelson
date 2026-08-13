@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dafrie/kelson/internal/clusterprofile"
 	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/delivery/direct"
 	"github.com/dafrie/kelson/internal/delivery/flux"
@@ -260,6 +261,32 @@ type deliveryTarget struct {
 	namespace string
 	mode      string
 	git       *model.GitTarget
+	// fluxOperator carries the profile's flux-operator finding to the flux
+	// adapter's health readback (issue #157). Nil when no profile was captured
+	// — see fluxOperatorFinding.
+	fluxOperator *bool
+}
+
+// fluxOperatorFinding reduces a ClusterProfile to the tri-state the flux status
+// reader gates its FluxReport read on (issue #157). Detection is what tells the
+// planes what a cluster has (ADR-0003), so the adapter should not have to
+// establish flux-operator's availability by attempting the read.
+//
+// Nil means nobody looked, and the reader keeps probing: a zero profile (no
+// --profile) reports every component absent because none was asked about, and a
+// probe that could not read /apis records the gap rather than absence — neither
+// is a finding this may act on.
+func fluxOperatorFinding(flag string, p clusterprofile.ClusterProfile) *bool {
+	if flag == "" {
+		return nil
+	}
+	for _, g := range p.Incomplete {
+		if g.Field == "fluxOperator" {
+			return nil
+		}
+	}
+	present := p.FluxOperator != nil
+	return &present
 }
 
 // deliveryPlane is the assembled delivery plane for one command run.
@@ -320,7 +347,7 @@ func connectDelivery(t deliveryTarget) (*deliveryPlane, error) {
 			// configure it yet, so the annotation patch — what `flux reconcile`
 			// does under the hood — is what the CLI wires today.
 			Reconciler: flux.AnnotationReconciler{Client: cluster.Dynamic},
-			Status:     flux.DynamicStatusReader{Client: cluster.Dynamic},
+			Status:     flux.DynamicStatusReader{Client: cluster.Dynamic, FluxOperator: t.fluxOperator},
 		}); err != nil {
 			return nil, err
 		}
@@ -375,7 +402,7 @@ func selectAdapter(connect deliveryConnector, t deliveryTarget) (delivery.Adapte
 // it in one place is what stops the three commands drifting on what "the
 // current render" or "this environment's mode" means.
 func resolveDeliveryTarget(in specInput, history, mode string) (deliveryTarget, delivery.ManifestSet, error) {
-	project, environment, manifests, _, err := resolveAndRender(in)
+	project, environment, manifests, profile, err := resolveAndRender(in)
 	if err != nil {
 		return deliveryTarget{}, delivery.ManifestSet{}, err
 	}
@@ -398,13 +425,14 @@ func resolveDeliveryTarget(in specInput, history, mode string) (deliveryTarget, 
 		return deliveryTarget{}, delivery.ManifestSet{}, err
 	}
 	t := deliveryTarget{
-		kubeconfig:  in.kubeconfig,
-		history:     dir,
-		project:     project.Metadata.Name,
-		environment: environment.Metadata.Name,
-		namespace:   resolved.Environment.Namespace,
-		mode:        mode,
-		git:         resolved.Environment.Delivery.Git,
+		kubeconfig:   in.kubeconfig,
+		history:      dir,
+		project:      project.Metadata.Name,
+		environment:  environment.Metadata.Name,
+		namespace:    resolved.Environment.Namespace,
+		mode:         mode,
+		git:          resolved.Environment.Delivery.Git,
+		fluxOperator: fluxOperatorFinding(in.profile, profile),
 	}
 	if t.mode == "" {
 		t.mode = string(resolved.Environment.Mode)

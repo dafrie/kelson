@@ -1,0 +1,71 @@
+// Shared vocabulary of the kelson API (issue #69, ADR-0013).
+//
+// One wire error shape covers the three plane taxonomies (model, renderer,
+// delivery) plus the server's store codes: agents branch on `code` strings
+// like "schema/not-implemented" or "delivery/apply-failed", and the wire must
+// not invent a second taxonomy. Codes pass through verbatim from the Go
+// packages that own them.
+syntax = "proto3";
+
+package kelson.v1alpha1;
+
+option go_package = "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1;kelsonv1alpha1";
+
+// Error is the single structured error shape of the API. It is the field
+// union of model.Error, renderer.Error and delivery.Error; producers fill
+// what they know and leave the rest empty. Attached to ConnectRPC errors as
+// error details, and returned inline where a call reports many errors at
+// once (validation).
+message Error {
+  // Slash-separated code, e.g. "schema/unknown-field", "image/unresolved",
+  // "delivery/conflict", "store/version-conflict". The authoritative
+  // vocabularies live with the Go packages that own each prefix.
+  string code = 1;
+  // Resource the error is about, e.g. "Project/checkout" or
+  // "Deployment/checkout-production/web".
+  string resource = 2;
+  // JSONPath-like field locator, e.g. "$.spec.applications[2].port".
+  string field = 3;
+  // Application whose spec is at fault (renderer errors).
+  string application = 4;
+  // Overlay path (renderer overlay errors).
+  string overlay = 5;
+  // Target of the failing operation, "Kind/name" (renderer errors).
+  string target = 6;
+  string message = 7;
+  // The fix, stated as an action.
+  string remediation = 8;
+  string docs_url = 9;
+  // 1-based source position in the authored YAML, when known.
+  int32 line = 10;
+  int32 column = 11;
+  // Underlying cause detail (delivery errors).
+  string cause = 12;
+}
+
+// DryRun is the standard dry-run ladder every mutating RPC carries (#69).
+enum DryRun {
+  DRY_RUN_UNSPECIFIED = 0; // treated as DRY_RUN_NONE
+  DRY_RUN_NONE = 1;        // do it
+  DRY_RUN_RENDER = 2;      // validate and render only; touch nothing
+  DRY_RUN_SERVER = 3;      // Kubernetes server-side dry-run where the operation supports it
+}
+
+// Manifest is one rendered Kubernetes document, byte-faithful to the
+// renderer's output (delivery.Manifest).
+message Manifest {
+  string api_version = 1;
+  string kind = 2;
+  string name = 3;
+  string namespace = 4;
+  bytes yaml = 5;
+}
+
+// SpecDocuments is a spec as authored: named YAML documents, verbatim.
+// `project` holds the Project document; `environments` maps environment file
+// name (without extension) to its YAML. The server stores and returns these
+// byte-faithfully (ADR-0013: the spec is the user's document).
+message SpecDocuments {
+  bytes project = 1;
+  map<string, bytes> environments = 2;
+}

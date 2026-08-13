@@ -1,0 +1,12 @@
+# buf configuration for the kelson API schema (issue #69, ADR-0002/0013).
+# `buf breaking` joins CI when the schema first ships in a release — the
+# compatibility promise starts at the first tag that serves it.
+version: v2
+modules:
+  - path: proto
+lint:
+  use:
+    - STANDARD
+breaking:
+  use:
+    - FILE

@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dafrie/kelson/internal/clusterprofile"
 	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/delivery/rollback"
 	"github.com/dafrie/kelson/internal/observation"
@@ -512,3 +513,43 @@ func TestHistoryDirPrecedence(t *testing.T) {
 		t.Fatalf("XDG_DATA_HOME should be used, got %q (%v)", got, err)
 	}
 }
+
+// TestFluxOperatorFinding: the flux adapter's FluxReport preference rides on a
+// detection finding (issue #157), and "nobody looked" must stay distinct from
+// "looked and found nothing" — a zero profile, or one whose probe could not
+// read the group, leaves the adapter probing rather than skipping a source it
+// was never told about.
+func TestFluxOperatorFinding(t *testing.T) {
+	present := clusterprofile.ClusterProfile{FluxOperator: &clusterprofile.Component{}}
+	absent := clusterprofile.ClusterProfile{Flux: &clusterprofile.Component{}}
+	gapped := clusterprofile.ClusterProfile{
+		Incomplete: []clusterprofile.Gap{{Field: "fluxOperator", Reason: "forbidden: needs get on /apis"}},
+	}
+
+	cases := []struct {
+		name    string
+		flag    string
+		profile clusterprofile.ClusterProfile
+		want    *bool
+	}{
+		{"no profile flag", "", present, nil},
+		{"detected", "cluster.yaml", present, boolPtr(true)},
+		{"flux without the operator", "cluster.yaml", absent, boolPtr(false)},
+		{"hidden by a gap", "from-cluster", gapped, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := fluxOperatorFinding(tc.flag, tc.profile)
+			switch {
+			case tc.want == nil && got != nil:
+				t.Fatalf("got %v, want nil (unknown)", *got)
+			case tc.want != nil && got == nil:
+				t.Fatalf("got nil, want %v", *tc.want)
+			case tc.want != nil && *got != *tc.want:
+				t.Fatalf("got %v, want %v", *got, *tc.want)
+			}
+		})
+	}
+}
+
+func boolPtr(b bool) *bool { return &b }

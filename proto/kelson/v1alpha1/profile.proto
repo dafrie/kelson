@@ -1,0 +1,31 @@
+// ProfileService: live ClusterProfile capture (issue #56's detection, served).
+//
+// Gaps are data: what detection could not read travels in the profile itself
+// (ClusterProfile.Incomplete), not on a side channel, so every client renders
+// the same three-state truth (present / absent / could-not-tell).
+syntax = "proto3";
+
+package kelson.v1alpha1;
+
+option go_package = "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1;kelsonv1alpha1";
+
+message GetProfileRequest {}
+
+message GetProfileResponse {
+  // The profile, in its canonical YAML wire form (the same document
+  // `kelson profile` prints and `--profile` consumes). The YAML tags on
+  // internal/clusterprofile are the schema of record; the API does not
+  // duplicate them as proto fields it would then have to keep in sync.
+  bytes yaml = 1;
+  // Gap summaries, duplicated out of the document for cheap display.
+  repeated ProfileGap gaps = 2;
+}
+
+message ProfileGap {
+  string field = 1;
+  string reason = 2;
+}
+
+service ProfileService {
+  rpc GetProfile(GetProfileRequest) returns (GetProfileResponse);
+}

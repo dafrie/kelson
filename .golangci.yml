@@ -50,6 +50,9 @@ linters:
             - "!**/internal/delivery/**"
             - "!**/internal/observation/**"
             - "!**/internal/clusterprofile/detect/**"
+            - "!**/internal/serverstate/**"
+            - "!**/internal/api/**"
+            - "!**/cmd/kelson-server/**"
           allow:
             - $gostd
             - github.com/dafrie/kelson
@@ -67,6 +70,10 @@ linters:
             - "**/internal/delivery/**"
             - "**/internal/observation/**"
             - "**/internal/clusterprofile/detect/**"
+            # ADR-0013: all kelson-server state is cluster state. The spec and
+            # history stores are ConfigMap clients, so they belong to the
+            # cluster-facing plane rather than the api plane below.
+            - "**/internal/serverstate/**"
           allow:
             - $gostd
             - github.com/dafrie/kelson
@@ -76,4 +83,18 @@ linters:
             - sigs.k8s.io/yaml
             - github.com/go-git/go-git/v5
             - github.com/go-git/go-billy/v5
+        # The api plane (ADR-0013 §2): the ConnectRPC handlers and the server
+        # binary. It gets the transport and the generated code, and nothing
+        # else — the cluster clients stay behind the store interfaces in
+        # internal/serverstate, so a handler cannot reach for a client-go call
+        # instead of going through the store.
+        api:
+          files:
+            - "**/internal/api/**"
+            - "**/cmd/kelson-server/**"
+          allow:
+            - $gostd
+            - github.com/dafrie/kelson
+            - connectrpc.com/connect
+            - google.golang.org/protobuf
 

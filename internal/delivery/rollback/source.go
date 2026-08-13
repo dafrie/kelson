@@ -32,8 +32,12 @@ type Source interface {
 // (internal/delivery/direct). It wraps the store's Rendered output and splits
 // it back into manifests with direct.SplitDocuments — the inverse of the
 // recorded stream, so the bytes replayed are exactly the bytes applied.
+//
+// Store is the direct.History seam, not the JSONL *direct.Store concretely, so
+// a rollback preview reads the same recorded bytes whether the deploy was made
+// by the CLI (local journal) or by kelson-server (ConfigMaps, ADR-0013 §1).
 type DirectSource struct {
-	Store       *direct.Store
+	Store       direct.History
 	Project     string
 	Environment string
 }

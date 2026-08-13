@@ -1,0 +1,69 @@
+// RenderService: the pure calls — render and diff (issues #69/#139).
+//
+// A spec is addressed either by store reference (SpecService) or supplied
+// inline, keeping the CLI's `-f` mode a first-class peer of the stored path.
+// Rendering is the same pure function `kelson render` runs (ADR-0001): the
+// profile is an input, never a lookup the renderer performs itself.
+syntax = "proto3";
+
+package kelson.v1alpha1;
+
+import "kelson/v1alpha1/common.proto";
+
+option go_package = "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1;kelsonv1alpha1";
+
+// SpecRef addresses the spec for a call: stored (by project name) or inline.
+message SpecRef {
+  oneof spec {
+    string project = 1;          // stored spec, by project name
+    SpecDocuments documents = 2; // inline, the CLI's -f mode
+  }
+}
+
+// ProfileRef addresses the ClusterProfile for a call.
+message ProfileRef {
+  oneof profile {
+    bool from_cluster = 1;   // capture live from the server's cluster
+    bytes yaml = 2;          // caller-supplied profile document
+  }
+  // Unset (neither field) means the zero profile, matching the CLI.
+}
+
+message RenderRequest {
+  SpecRef spec = 1;
+  string environment = 2; // optional when the spec holds exactly one
+  ProfileRef profile = 3;
+  string image = 4;       // resolves a source+build spec, like --image (#136)
+}
+
+message RenderResponse {
+  repeated Manifest manifests = 1;
+  // Structured validation/render errors; non-empty means no manifests.
+  repeated Error errors = 2;
+}
+
+message DiffRequest {
+  SpecRef spec = 1;
+  string environment = 2;
+  ProfileRef profile = 3;
+  string image = 4;
+  // Rendered-level diff: compare against these previous documents
+  // (the CLI's --from). Server-level diff: leave unset and set
+  // dry_run = DRY_RUN_SERVER to preview against the live cluster.
+  SpecDocuments from = 5;
+  DryRun dry_run = 6; // RENDER (default) or SERVER
+}
+
+// Wire projection of internal/diff's Diff: resources, ops, risk, origin,
+// policy violations and the Unvalidated tri-state. Field layout mirrors the
+// Go types; see internal/diff/diff.go for the authoritative vocabulary.
+message DiffResponse {
+  bytes diff_json = 1;     // diff.EncodeJSON output — one canonical encoding
+  int32 exit_semantics = 2; // 0 clean, 2 differences, 3 blocked (CLI parity)
+  repeated Error errors = 3;
+}
+
+service RenderService {
+  rpc Render(RenderRequest) returns (RenderResponse);
+  rpc Diff(DiffRequest) returns (DiffResponse);
+}

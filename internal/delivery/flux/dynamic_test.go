@@ -320,6 +320,59 @@ func TestHealthUnknownWhenNothingAnswers(t *testing.T) {
 	}
 }
 
+// TestHealthSkipsFluxReportWhenProfileSaysAbsent is the #157 inversion fixed:
+// where detection reports no flux-operator, the reader must not establish that
+// by attempting the read. Both sources are seeded and would answer, so the
+// source name is proof of which one was asked.
+func TestHealthSkipsFluxReportWhenProfileSaysAbsent(t *testing.T) {
+	dyn := newFakeCluster(t, allFluxKinds()...)
+	seed(t, dyn, fluxReportGVR, object(fluxReportGVK, DefaultNamespace, "flux", map[string]any{
+		"spec": map[string]any{"distribution": map[string]any{"version": "v2.4.0", "status": "Installed"}},
+	}))
+	seed(t, dyn, deploymentGVR, availableController(t, "source-controller"))
+
+	h, err := DynamicStatusReader{Client: dyn, FluxOperator: boolPtr(false)}.Health(context.Background())
+	if err != nil {
+		t.Fatalf("health: %v", err)
+	}
+	if h.Source != HealthFromControllers {
+		t.Fatalf("source = %q, want %q — a profile that says absent must not be re-probed", h.Source, HealthFromControllers)
+	}
+	if !h.Ready {
+		t.Fatalf("health = %+v, want ready", h)
+	}
+}
+
+// TestHealthUsesFluxReportWhenProfileSaysPresent covers the other finding, and
+// that a profile is never allowed to turn a health read into a failure: an
+// operator the profile promised but whose CRD does not answer still falls back.
+func TestHealthUsesFluxReportWhenProfileSaysPresent(t *testing.T) {
+	dyn := newFakeCluster(t, allFluxKinds()...)
+	seed(t, dyn, fluxReportGVR, object(fluxReportGVK, DefaultNamespace, "flux", map[string]any{
+		"spec": map[string]any{"distribution": map[string]any{"version": "v2.4.0", "status": "Installed"}},
+	}))
+	h, err := DynamicStatusReader{Client: dyn, FluxOperator: boolPtr(true)}.Health(context.Background())
+	if err != nil {
+		t.Fatalf("health: %v", err)
+	}
+	if h.Source != HealthFromReport || h.Version != "v2.4.0" {
+		t.Fatalf("health = %+v, want the FluxReport answer", h)
+	}
+
+	gone := newFakeCluster(t, allFluxKinds()...)
+	withoutCRD(gone, "fluxreports")
+	seed(t, gone, deploymentGVR, availableController(t, "source-controller"))
+	h, err = DynamicStatusReader{Client: gone, FluxOperator: boolPtr(true)}.Health(context.Background())
+	if err != nil {
+		t.Fatalf("health: %v", err)
+	}
+	if h.Source != HealthFromControllers {
+		t.Fatalf("source = %q, want the fallback when the promised report cannot be read", h.Source)
+	}
+}
+
+func boolPtr(b bool) *bool { return &b }
+
 func availableController(t *testing.T, name string) *unstructured.Unstructured {
 	t.Helper()
 	return object(deploymentGVK, DefaultNamespace, name, map[string]any{
