@@ -4,7 +4,7 @@ A self-hosted PaaS that runs on your Kubernetes cluster and writes standard mani
 
 **Pre-alpha, and not usable yet.** What works end to end today: `kelson render`, `kelson diff`
 (including server-side dry-run), `kelson deploy`, `kelson status`, `kelson rollback`,
-`kelson eject` and `kelson profile`, plus `kelson-server`, which serves the same capabilities over
+`kelson promote`, `kelson eject` and `kelson profile`, plus `kelson-server`, which serves the same capabilities over
 ConnectRPC — loopback-only and unauthenticated in v0
 ([ADR-0013](docs/adr/0013-server-state-and-api-v0.md)) — and `kelson-mcp`, the agent surface over that
 API ([docs/mcp.md](docs/mcp.md)). There is no UI and no install path yet.

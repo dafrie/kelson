@@ -12,6 +12,7 @@ import { EditSpecPage } from "./pages/EditSpecPage";
 import { HistoryPage } from "./pages/HistoryPage";
 import { LogsPage } from "./pages/LogsPage";
 import { NewAppPage } from "./pages/NewAppPage";
+import { PromotePage } from "./pages/PromotePage";
 import { RollbackPage } from "./pages/RollbackPage";
 import { EmptyState } from "./components/States";
 import "./pages/pages.css";
@@ -62,6 +63,11 @@ export const routes = createRoutesFromElements(
         <Route path="apps/:project/:env/diff" element={<DiffPage />} />
         <Route path="apps/:project/:env/history" element={<HistoryPage />} />
         <Route path="apps/:project/:env/logs" element={<LogsPage />} />
+        {/* The environment in the path is the promotion's *target* — the one
+            whose pins are written — and the source is picked on the screen.
+            Naming the target is what makes this route reachable from the
+            environment a reader is already looking at. */}
+        <Route path="apps/:project/:env/promote" element={<PromotePage />} />
         <Route path="apps/:project/:env/rollback" element={<RollbackPage />} />
         <Route path="cluster" element={<ClusterPage />} />
         <Route

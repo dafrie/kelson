@@ -77,6 +77,7 @@ a deploy or a log tail is a link that keeps working.
 | `/apps/:project/:env/diff` | Two tabs: the live cluster's own dry-run verdict, or today's render against a recorded revision. `?from=<revision>` opens the second one preselected | `Diff` at `SERVER`, or with `from_revision`; `History` for the picker |
 | `/apps/:project/:env/history` | The recorded revisions, newest first: what each was, when, the spec hash, the author the mode recorded, and a phase pill on the live one. Links out to diff and rollback | `History`, `Status` |
 | `/apps/:project/:env/logs` | Bounded Query, and a live tail that pauses, filters, reconnects and saves | `QueryLogs`, `FollowLogs` |
+| `/apps/:project/:env/promote` | The environment in the path is the **target**: pick a source, read the plan and the diff it produces, then write the pins. It never deploys | `GetSpec`, `Promote` at `RENDER` then `NONE` |
 | `/apps/:project/:env/rollback` | Revision picker, irreversibility preview, then the apply. `?to=<revision>` preselects and previews a target, never applies it | `History`, `Rollback` at `RENDER` then `NONE` |
 | `/cluster` | Server build and the detected ClusterProfile | `/healthz`, `GetProfile` |
 
@@ -113,6 +114,50 @@ client-side either. So the per-revision action is named for what it does —
 compare against what is deployed now — and links to the diff screen rather than
 growing a second copy of it. Rollback is linked the same way, because the
 irreversibility preview must not be duplicated into a screen that might skip it.
+
+## Promotion, which never deploys
+
+The promote screen ([#11](https://github.com/dafrie/kelson/issues/11),
+[ADR-0016](../docs/adr/0016-delivery-flows-v0.md) decision 2) is addressed by the
+environment it writes **into**. That is the direction a reader arrives with: they
+are looking at production and want what staging is running, so the screen is
+named from production's side — "promote into this environment" — and the source
+is the thing it asks for. Both entry points say it that way, on the app detail
+page next to the environment's other actions and once above the history
+timeline.
+
+What it refuses to do, in the order a reader meets the refusals:
+
+- **It never deploys.** Promoting is editing one field (docs/model.md's
+  Promotion section: the pin *is* the promotion), so a successful promotion
+  leaves the target running exactly what it was running a moment earlier, with a
+  new pin in the store. The success state says so and offers the deploy screen
+  as the next, separate act; it does not deploy on the reader's behalf, because
+  that would merge the two acts ADR-0016 keeps apart.
+- **It never plans and writes in one click.** Picking a source runs
+  `Promote` at `dry_run=RENDER` — every pin computed, nothing stored — and the
+  confirm re-sends the same promotion at `NONE`. There is no path from the
+  picker to a written pin that does not pass through the table, and a plan that
+  would pin nothing gets no confirm button at all, the way `kelson promote`
+  stops with "nothing to write".
+- **It never hides a component it did nothing to.** The response carries every
+  component the promotion considered, pinned, unchanged and skipped alike
+  (`internal/api`'s `wirePromoted`), and the table shows all of them with the
+  server's own `promote/*` code and prose under each skip. A component missing
+  from the table would be indistinguishable from one kelson forgot.
+- **It never retries a stale plan.** A `store/version-conflict` means someone
+  stored the spec between the plan and the confirm, so the offer is to *plan
+  again*, not to retry and not to force. The pins on screen were computed from
+  documents that no longer exist; unlike a half-typed edit, a promotion can be
+  recomputed exactly, so it is.
+
+The diff comes back on the promotion's own response and goes through the same
+decoder and the same `DiffView` every other preview uses — the server computes
+it because a dry run stores nothing, so there is no "after" for a follow-up
+`Diff` to compare against. Image references are digests, so the table elides
+their middles (`src/pages/promote.ts`) and keeps the whole value on the tooltip
+and on the clipboard: the head and tail are what a reader compares, and a digest
+is exactly the value that must not be retyped from a screenshot.
 
 Five things the screens are deliberate about:
 

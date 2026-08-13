@@ -29,6 +29,7 @@ var (
 	rpcHistory   = rpc{kelsonv1alpha1connect.DeployServiceName, "History"}
 	rpcDeploy    = rpc{kelsonv1alpha1connect.DeployServiceName, "Deploy"}
 	rpcRollback  = rpc{kelsonv1alpha1connect.DeployServiceName, "Rollback"}
+	rpcPromote   = rpc{kelsonv1alpha1connect.DeployServiceName, "Promote"}
 	rpcQueryLogs = rpc{kelsonv1alpha1connect.LogServiceName, "QueryLogs"}
 	rpcWatch     = rpc{kelsonv1alpha1connect.EventServiceName, "Watch"}
 )
@@ -43,7 +44,7 @@ type tool struct {
 
 // surface is the whole agent-facing surface, in registration order.
 //
-// Seven tools, and the number is a design decision rather than a stopping
+// Eight tools, and the number is a design decision rather than a stopping
 // point: every tool added costs selection accuracy for the ones already here
 // (ADR-0008). Read-only tools come first, mutating ones after, and each says
 // which it is in its own description as well as in its annotations — a model
@@ -55,6 +56,7 @@ func surface(c *clients) []tool {
 		logsWindowTool(c),
 		deployTool(c),
 		rollbackTool(c),
+		promoteTool(c),
 		putSpecTool(c),
 		waitForOutcomeTool(c),
 	}

@@ -166,9 +166,82 @@ message HistoryEntry {
   string author = 5;
 }
 
+// Promotion (issue #11, ADR-0016 decision 2). Promoting is reading the digest
+// the source environment deployed, writing it as the target environment's
+// image pin, and deploying through the ordinary path. This RPC is the first
+// two; the third is Deploy, unchanged.
+//
+// It lives on DeployService because its input is a delivery revision: the
+// images promoted are extracted from the manifests the source environment's
+// latest revision recorded, which is the same history History and Rollback
+// read. Putting it on SpecService would have made the spec store depend on the
+// delivery plane to answer one call.
+message PromoteRequest {
+  // Project names the stored spec. Promotion writes a spec document, so there
+  // is no inline-documents form: there would be nowhere to write it back to.
+  string project = 1;
+  string from_environment = 2;   // where the deployed digest is read
+  string to_environment = 3;     // where the pin is written
+  // Components restricts the promotion. Empty promotes every workload
+  // component the project declares; a name the project does not declare is
+  // promote/component-unknown rather than a silent no-op.
+  repeated string components = 4;
+  ProfileRef profile = 5;        // renders the before/after diff below
+  string mode = 6;               // delivery adapter override for reading the source's history
+  DryRun dry_run = 7;            // RENDER: compute the pins and the diff, write nothing
+  string idempotency_key = 8;
+  // Version is the spec version the caller read before promoting; a mismatch
+  // fails with store/version-conflict, the same optimistic concurrency PutSpec
+  // carries.
+  string version = 9;
+}
+
+message PromoteResponse {
+  // Components is every component the promotion considered, in the Project's
+  // own order, including the ones it did not write.
+  repeated PromotedComponent components = 1;
+  // FromRevision is the source environment's revision the images were read
+  // from — the deployed truth this promotion is built on.
+  string from_revision = 2;
+  // Version is the spec store's version after the write. Empty for a dry run,
+  // which stores nothing.
+  string version = 3;
+  // The diff of the target environment, before and after the pins, computed
+  // server-side and encoded like DiffResponse.diff_json. The promotion returns
+  // it rather than leaving the caller to call Diff: the two document sets are
+  // already in the server's hands here, and a dry run has no stored "after"
+  // for a follow-up Diff to compare against.
+  bytes diff_json = 4;
+  int32 exit_semantics = 5; // 0 no changes, 2 changes, 3 blocked — as DiffResponse
+  // Validation and render findings. A non-empty list means nothing was
+  // written, the same contract PutSpec has.
+  repeated Error errors = 6;
+}
+
+// PromotionStatus is what the promotion decided for one component.
+enum PromotionStatus {
+  PROMOTION_STATUS_UNSPECIFIED = 0;
+  PROMOTION_STATUS_PINNED = 1;    // the pin was (or would be) written
+  PROMOTION_STATUS_UNCHANGED = 2; // already pinned to what the source runs
+  PROMOTION_STATUS_SKIPPED = 3;   // not promoted, and `code`/`reason` say why
+}
+
+message PromotedComponent {
+  string component = 1;
+  // FromImage is the target environment's pin before the promotion; empty
+  // means it was unpinned and following the component or project image.
+  string from_image = 2;
+  // ToImage is the image the source environment's latest revision runs.
+  string to_image = 3;
+  PromotionStatus status = 4;
+  string code = 5;   // promote/* code for a skip, e.g. "promote/not-in-revision"
+  string reason = 6; // the skip in prose
+}
+
 service DeployService {
   rpc Deploy(DeployRequest) returns (stream DeployResponse);
   rpc Status(StatusRequest) returns (StatusResponse);
   rpc Rollback(RollbackRequest) returns (stream RollbackResponse);
   rpc History(HistoryRequest) returns (HistoryResponse);
+  rpc Promote(PromoteRequest) returns (PromoteResponse);
 }

@@ -35,5 +35,6 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newDeployCmd())
 	root.AddCommand(newStatusCmd())
 	root.AddCommand(newRollbackCmd())
+	root.AddCommand(newPromoteCmd())
 	return root
 }

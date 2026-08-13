@@ -10,17 +10,18 @@ import (
 	"github.com/dafrie/kelson/internal/build"
 	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/model"
+	"github.com/dafrie/kelson/internal/promote"
 	"github.com/dafrie/kelson/internal/redact"
 	"github.com/dafrie/kelson/internal/renderer"
 	"github.com/dafrie/kelson/internal/serverstate"
 )
 
-// One wire error shape, five plane vocabularies (ADR-0013 §2). model.Error,
-// renderer.Error, delivery.Error, serverstate.Error and build.Error each fill
-// the subset of kelson.v1alpha1.Error they know. Codes pass through verbatim — an agent
-// branching on "schema/not-implemented" or "store/version-conflict" sees the
-// same string here that the owning Go package defines, and the wire must not
-// invent a second taxonomy.
+// One wire error shape, six plane vocabularies (ADR-0013 §2). model.Error,
+// renderer.Error, delivery.Error, serverstate.Error, build.Error and
+// promote.Error each fill the subset of kelson.v1alpha1.Error they know. Codes
+// pass through verbatim — an agent branching on "schema/not-implemented" or
+// "store/version-conflict" sees the same string here that the owning Go package
+// defines, and the wire must not invent a second taxonomy.
 
 // wireErrors projects a plane error onto the API's structured error list. It
 // returns nil for an error that carries no plane taxonomy, which is how the
@@ -101,6 +102,11 @@ func planeErrors(err error) []*kelsonv1alpha1.Error {
 	if errors.As(err, &buildErr) {
 		return []*kelsonv1alpha1.Error{fromBuild(buildErr)}
 	}
+
+	var promoteErr promote.Error
+	if errors.As(err, &promoteErr) {
+		return []*kelsonv1alpha1.Error{fromPromote(promoteErr)}
+	}
 	return nil
 }
 
@@ -180,6 +186,17 @@ func fromStore(e serverstate.Error) *kelsonv1alpha1.Error {
 	}
 }
 
+func fromPromote(e promote.Error) *kelsonv1alpha1.Error {
+	return &kelsonv1alpha1.Error{
+		Code:        string(e.Code),
+		Resource:    e.Resource,
+		Field:       e.Field,
+		Message:     e.Message,
+		Remediation: e.Remediation,
+		DocsUrl:     e.DocsURL,
+	}
+}
+
 // fail wraps err as a ConnectRPC error, attaching every structured error it
 // carries as an error detail. A client that speaks the taxonomy reads the
 // details; one that does not still gets the message.
@@ -212,6 +229,23 @@ func failStore(err error) error {
 		return fail(connect.CodeResourceExhausted, err)
 	default:
 		return nil
+	}
+}
+
+// failPromote maps a promotion refusal onto its ConnectRPC code. Two of the
+// codes are statements about the world rather than about the request — nothing
+// has been deployed to the source, this document cannot be spliced — and a
+// caller must be able to tell them from a request it could fix by editing.
+func failPromote(err error) error {
+	var pe promote.Error
+	if !errors.As(err, &pe) {
+		return nil
+	}
+	switch pe.Code {
+	case promote.ErrNothingDeployed, promote.ErrDocumentUnwritable:
+		return fail(connect.CodeFailedPrecondition, err)
+	default:
+		return fail(connect.CodeInvalidArgument, err)
 	}
 }
 
@@ -250,6 +284,9 @@ func unimplemented(what string) error {
 // caller's request being wrong.
 func failRequest(err error) error {
 	if cerr := failStore(err); cerr != nil {
+		return cerr
+	}
+	if cerr := failPromote(err); cerr != nil {
 		return cerr
 	}
 	var cerr *connect.Error

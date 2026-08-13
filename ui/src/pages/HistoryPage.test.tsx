@@ -261,6 +261,28 @@ describe("HistoryPage", () => {
       .toBeNull();
   });
 
+  it("offers promotion once, above the list, and not per revision (#11)", async () => {
+    renderHistory();
+
+    const promote = await screen.findByRole("link", {
+      name: "Promote into this environment",
+    });
+    expect(promote.getAttribute("href")).toBe(
+      "/apps/checkout/production/promote",
+    );
+    // It reads the *source* environment's latest revision, so no row offers it:
+    // a per-revision button would promise a promotion the RPC does not make.
+    const newest = await row("rev-00000003");
+    expect(
+      within(newest).queryByRole("link", {
+        name: "Promote into this environment",
+      }),
+    ).toBeNull();
+    expect(
+      screen.getByText(/it writes the spec and deploys nothing/),
+    ).toBeTruthy();
+  });
+
   it("says what the record does not carry", async () => {
     renderHistory();
 

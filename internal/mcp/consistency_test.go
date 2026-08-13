@@ -92,8 +92,8 @@ func TestNoToolComposesAnUnboundedStream(t *testing.T) {
 // mutates, so the answer is in the prose and not only in the annotations.
 func TestSurfaceIsSmallAndDescribed(t *testing.T) {
 	tools := surface(&clients{})
-	if len(tools) != 7 {
-		t.Errorf("the surface has %d tools, want 7: adding one is a deliberate design change (ADR-0008), not a detail", len(tools))
+	if len(tools) != 8 {
+		t.Errorf("the surface has %d tools, want 8: adding one is a deliberate design change (ADR-0008), not a detail", len(tools))
 	}
 
 	seen := map[string]bool{}

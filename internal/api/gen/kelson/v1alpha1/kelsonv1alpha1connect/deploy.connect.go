@@ -48,6 +48,8 @@ const (
 	DeployServiceRollbackProcedure = "/kelson.v1alpha1.DeployService/Rollback"
 	// DeployServiceHistoryProcedure is the fully-qualified name of the DeployService's History RPC.
 	DeployServiceHistoryProcedure = "/kelson.v1alpha1.DeployService/History"
+	// DeployServicePromoteProcedure is the fully-qualified name of the DeployService's Promote RPC.
+	DeployServicePromoteProcedure = "/kelson.v1alpha1.DeployService/Promote"
 )
 
 // DeployServiceClient is a client for the kelson.v1alpha1.DeployService service.
@@ -56,6 +58,7 @@ type DeployServiceClient interface {
 	Status(context.Context, *connect.Request[v1alpha1.StatusRequest]) (*connect.Response[v1alpha1.StatusResponse], error)
 	Rollback(context.Context, *connect.Request[v1alpha1.RollbackRequest]) (*connect.ServerStreamForClient[v1alpha1.RollbackResponse], error)
 	History(context.Context, *connect.Request[v1alpha1.HistoryRequest]) (*connect.Response[v1alpha1.HistoryResponse], error)
+	Promote(context.Context, *connect.Request[v1alpha1.PromoteRequest]) (*connect.Response[v1alpha1.PromoteResponse], error)
 }
 
 // NewDeployServiceClient constructs a client for the kelson.v1alpha1.DeployService service. By
@@ -93,6 +96,12 @@ func NewDeployServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 			connect.WithSchema(deployServiceMethods.ByName("History")),
 			connect.WithClientOptions(opts...),
 		),
+		promote: connect.NewClient[v1alpha1.PromoteRequest, v1alpha1.PromoteResponse](
+			httpClient,
+			baseURL+DeployServicePromoteProcedure,
+			connect.WithSchema(deployServiceMethods.ByName("Promote")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -102,6 +111,7 @@ type deployServiceClient struct {
 	status   *connect.Client[v1alpha1.StatusRequest, v1alpha1.StatusResponse]
 	rollback *connect.Client[v1alpha1.RollbackRequest, v1alpha1.RollbackResponse]
 	history  *connect.Client[v1alpha1.HistoryRequest, v1alpha1.HistoryResponse]
+	promote  *connect.Client[v1alpha1.PromoteRequest, v1alpha1.PromoteResponse]
 }
 
 // Deploy calls kelson.v1alpha1.DeployService.Deploy.
@@ -124,12 +134,18 @@ func (c *deployServiceClient) History(ctx context.Context, req *connect.Request[
 	return c.history.CallUnary(ctx, req)
 }
 
+// Promote calls kelson.v1alpha1.DeployService.Promote.
+func (c *deployServiceClient) Promote(ctx context.Context, req *connect.Request[v1alpha1.PromoteRequest]) (*connect.Response[v1alpha1.PromoteResponse], error) {
+	return c.promote.CallUnary(ctx, req)
+}
+
 // DeployServiceHandler is an implementation of the kelson.v1alpha1.DeployService service.
 type DeployServiceHandler interface {
 	Deploy(context.Context, *connect.Request[v1alpha1.DeployRequest], *connect.ServerStream[v1alpha1.DeployResponse]) error
 	Status(context.Context, *connect.Request[v1alpha1.StatusRequest]) (*connect.Response[v1alpha1.StatusResponse], error)
 	Rollback(context.Context, *connect.Request[v1alpha1.RollbackRequest], *connect.ServerStream[v1alpha1.RollbackResponse]) error
 	History(context.Context, *connect.Request[v1alpha1.HistoryRequest]) (*connect.Response[v1alpha1.HistoryResponse], error)
+	Promote(context.Context, *connect.Request[v1alpha1.PromoteRequest]) (*connect.Response[v1alpha1.PromoteResponse], error)
 }
 
 // NewDeployServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -163,6 +179,12 @@ func NewDeployServiceHandler(svc DeployServiceHandler, opts ...connect.HandlerOp
 		connect.WithSchema(deployServiceMethods.ByName("History")),
 		connect.WithHandlerOptions(opts...),
 	)
+	deployServicePromoteHandler := connect.NewUnaryHandler(
+		DeployServicePromoteProcedure,
+		svc.Promote,
+		connect.WithSchema(deployServiceMethods.ByName("Promote")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/kelson.v1alpha1.DeployService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case DeployServiceDeployProcedure:
@@ -173,6 +195,8 @@ func NewDeployServiceHandler(svc DeployServiceHandler, opts ...connect.HandlerOp
 			deployServiceRollbackHandler.ServeHTTP(w, r)
 		case DeployServiceHistoryProcedure:
 			deployServiceHistoryHandler.ServeHTTP(w, r)
+		case DeployServicePromoteProcedure:
+			deployServicePromoteHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -196,4 +220,8 @@ func (UnimplementedDeployServiceHandler) Rollback(context.Context, *connect.Requ
 
 func (UnimplementedDeployServiceHandler) History(context.Context, *connect.Request[v1alpha1.HistoryRequest]) (*connect.Response[v1alpha1.HistoryResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("kelson.v1alpha1.DeployService.History is not implemented"))
+}
+
+func (UnimplementedDeployServiceHandler) Promote(context.Context, *connect.Request[v1alpha1.PromoteRequest]) (*connect.Response[v1alpha1.PromoteResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("kelson.v1alpha1.DeployService.Promote is not implemented"))
 }

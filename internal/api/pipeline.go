@@ -192,6 +192,14 @@ func (s *Server) renderSpec(ctx context.Context, ref *kelsonv1alpha1.SpecRef, en
 	if err != nil {
 		return nil, err
 	}
+	return s.renderWith(ctx, ref, envName, image, profile)
+}
+
+// renderWith is renderSpec with the ClusterProfile already resolved. Promote
+// renders the same environment twice — before and after the pin — and a
+// from_cluster profile must be captured once for both, or the two sides could
+// be judged against two different clusters.
+func (s *Server) renderWith(ctx context.Context, ref *kelsonv1alpha1.SpecRef, envName, image string, profile clusterprofile.ClusterProfile) (*rendered, error) {
 	project, environment, resolved, err := s.resolve(ctx, ref, envName, image)
 	if err != nil {
 		return nil, err

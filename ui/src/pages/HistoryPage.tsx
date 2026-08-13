@@ -57,6 +57,11 @@ import {
  * revision to them as a query parameter and stays out of the way, so there is
  * one rollback flow in the UI and not two.
  *
+ * Promotion is linked the same way and deliberately *not* per revision: it pins
+ * this environment to what another environment's latest revision runs, so the
+ * revision it reads is never one picked from this list. A "promote this
+ * revision" button would be a promise the RPC does not make.
+ *
  * Note what "diff" means here, because the honest version is narrower than it
  * sounds: `RenderService.Diff` compares the *current* spec against the manifests
  * a recorded revision actually rendered (`from_revision`). Revision A against
@@ -126,6 +131,22 @@ export function HistoryPage() {
         what differs is that Git commits carry an author and direct-mode journal
         entries do not.
       </p>
+
+      {/* Promotion is the one action here that is not about a revision in this
+          list, so it is offered once, above it, rather than on every row: it
+          reads whatever the *source* environment's latest revision runs, and a
+          per-row button would suggest a reader could promote the revision they
+          clicked. */}
+      <div className="k-actions k-history__actions">
+        <Link className="k-button" to={`${base}/promote`}>
+          Promote into this environment
+        </Link>
+        <span className="k-mono k-deploy__note">
+          pins {env} to the images another environment's latest revision runs —
+          it writes the spec and deploys nothing, and it never promotes a
+          revision picked from the list below
+        </span>
+      </div>
 
       {history.loading && history.data === undefined ? (
         <LoadingState what="the recorded revisions" />

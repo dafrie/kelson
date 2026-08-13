@@ -93,6 +93,42 @@ describe("AppDetailPage", () => {
     ).toBe("/apps/checkout/production/history");
   });
 
+  it("offers promotion into the environment on screen, named from its side (#11)", async () => {
+    renderDetail();
+
+    // The label is the target's perspective: this environment is where the
+    // pins land, and the source is picked on the promote screen.
+    expect(
+      (
+        await screen.findByRole("link", {
+          name: "Promote into this environment",
+        })
+      ).getAttribute("href"),
+    ).toBe("/apps/checkout/production/promote");
+  });
+
+  it("disables promotion when the project declares nowhere to promote from", async () => {
+    const alone = createRouterTransport((router) => {
+      router.service(SpecService, {
+        getSpec: () => ({
+          spec: { project: "checkout", version: "7", environments: ["production"] },
+        }),
+      });
+      router.service(DeployService, {
+        status: () => ({ phase: "Healthy", revision: "8f2c1ad", verdicts: [] }),
+      });
+    });
+    renderAt(alone, "/apps/checkout", "/apps/:project", <AppDetailPage />);
+
+    const promote = await screen.findByRole("button", {
+      name: "Promote into this environment",
+    });
+    expect((promote as HTMLButtonElement).disabled).toBe(true);
+    expect(promote.getAttribute("title")).toContain(
+      "declares no other environment to promote from",
+    );
+  });
+
   it("disables rollback with the server's own reason when there is no delivery plane", async () => {
     renderDetail();
 

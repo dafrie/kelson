@@ -183,7 +183,7 @@ func TestNewDefaultsToTheLoopbackServer(t *testing.T) {
 	if DefaultServer != "http://127.0.0.1:8420" {
 		t.Errorf("DefaultServer = %q, want kelson-server's own --listen default", DefaultServer)
 	}
-	if server := New(Options{}); server == nil || len(server.tools) != 7 {
+	if server := New(Options{}); server == nil || len(server.tools) != 8 {
 		t.Errorf("New with no options must still register the whole surface")
 	}
 }
