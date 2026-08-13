@@ -1,6 +1,6 @@
 // Package api serves the kelson v1alpha1 schema over ConnectRPC (issue #139,
 // ADR-0013 §2). It is the transport half of kelson-server: one Server
-// implements all five generated service interfaces, and cmd/kelson-server
+// implements all six generated service interfaces, and cmd/kelson-server
 // mounts them on an http.ServeMux.
 //
 // # Everything that touches a cluster arrives as a seam
@@ -194,9 +194,12 @@ type Options struct {
 	// PollInterval is the adapter status poll interval. Zero selects
 	// [DefaultPollInterval].
 	PollInterval time.Duration
+	// WatchInterval is how often the event broker re-observes a watched scope.
+	// Zero selects [DefaultWatchInterval].
+	WatchInterval time.Duration
 }
 
-// Server implements all five kelson.v1alpha1 services.
+// Server implements all six kelson.v1alpha1 services.
 type Server struct {
 	specs    SpecStore
 	profile  ProfileCapture
@@ -206,6 +209,11 @@ type Server struct {
 
 	deployTimeout time.Duration
 	pollInterval  time.Duration
+
+	// events is the watch broker (#76). It holds goroutines only while a Watch
+	// stream is open — the last watcher of a scope leaving stops its poller —
+	// so a server nobody is watching costs nothing.
+	events *broker
 }
 
 var (
@@ -214,6 +222,7 @@ var (
 	_ kelsonv1alpha1connect.ProfileServiceHandler = (*Server)(nil)
 	_ kelsonv1alpha1connect.DeployServiceHandler  = (*Server)(nil)
 	_ kelsonv1alpha1connect.LogServiceHandler     = (*Server)(nil)
+	_ kelsonv1alpha1connect.EventServiceHandler   = (*Server)(nil)
 )
 
 // New returns a Server over the given seams.
@@ -233,6 +242,7 @@ func New(opts Options) *Server {
 	if s.pollInterval <= 0 {
 		s.pollInterval = DefaultPollInterval
 	}
+	s.events = newBroker(s.observeScope, opts.WatchInterval, watchRingSize)
 	return s
 }
 
@@ -246,6 +256,7 @@ func (s *Server) Register(mux *http.ServeMux, opts ...connect.HandlerOption) {
 		func() (string, http.Handler) { return kelsonv1alpha1connect.NewProfileServiceHandler(s, opts...) },
 		func() (string, http.Handler) { return kelsonv1alpha1connect.NewDeployServiceHandler(s, opts...) },
 		func() (string, http.Handler) { return kelsonv1alpha1connect.NewLogServiceHandler(s, opts...) },
+		func() (string, http.Handler) { return kelsonv1alpha1connect.NewEventServiceHandler(s, opts...) },
 	}
 	for _, build := range handlers {
 		mux.Handle(build())

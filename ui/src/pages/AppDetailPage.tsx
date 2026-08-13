@@ -1,13 +1,16 @@
-import { useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { useAsync, useClients } from "../api/data";
+import { useWatch } from "../api/watch";
 import { toFailure } from "../api/errors";
 import type { SpecDocuments } from "../gen/kelson/v1alpha1/common_pb";
 import type { WorkloadVerdict } from "../gen/kelson/v1alpha1/deploy_pb";
+import type { WatchResponse_Event } from "../gen/kelson/v1alpha1/events_pb";
 import { Copyable } from "../components/Copyable";
 import { Disclosure, YamlBlock } from "../components/Disclosure";
 import { ErrorPanel } from "../components/ErrorPanel";
+import { LiveIndicator } from "../components/LiveIndicator";
 import { StatusPill } from "../components/StatusPill";
 import { phaseToStatus } from "../components/phase";
 import { EmptyState, LoadingState } from "../components/States";
@@ -81,7 +84,13 @@ export function AppDetailPage() {
             ))}
           </nav>
           {selected ? (
-            <EnvironmentPanel project={project} environment={selected} />
+            // Keyed by the pair: switching tabs must not carry one
+            // environment's live deltas onto another's status.
+            <EnvironmentPanel
+              key={`${project}/${selected}`}
+              project={project}
+              environment={selected}
+            />
           ) : null}
         </>
       ) : null}
@@ -92,6 +101,24 @@ export function AppDetailPage() {
     </>
   );
 }
+
+/** A verdict row as rendered: the fetched one, or the stream's delta over it. */
+interface VerdictRow {
+  resource: string;
+  code: string;
+  healthy: boolean;
+  degraded: boolean;
+  message: string;
+  remediation: string;
+}
+
+/** What the stream has said about this environment since Status was read. */
+interface PanelLive {
+  transition?: { phase: string; revision: string; cause: string };
+  verdicts: Record<string, { code: string; healthy: boolean; message: string }>;
+}
+
+const NO_LIVE: PanelLive = { verdicts: {} };
 
 function EnvironmentPanel({
   project,
@@ -110,8 +137,56 @@ function EnvironmentPanel({
     [clients, project, environment],
   );
 
+  // The same watch the apps list opens (#76), narrowed to this one
+  // environment: the status block follows transitions, the workload list
+  // follows health changes.
+  const [live, setLive] = useState<PanelLive>(NO_LIVE);
+  const onEvent = useCallback((event: WatchResponse_Event) => {
+    const payload = event.payload;
+    setLive((prev) => {
+      if (payload.case === "statusTransition") {
+        const { phase, revision, cause } = payload.value;
+        return { ...prev, transition: { phase, revision, cause } };
+      }
+      if (payload.case === "healthChange") {
+        const v = payload.value;
+        return {
+          ...prev,
+          verdicts: {
+            ...prev.verdicts,
+            [v.resource]: {
+              code: v.code,
+              healthy: v.healthy,
+              message: v.message,
+            },
+          },
+        };
+      }
+      return prev;
+    });
+  }, []);
+  const reload = status.reload;
+  const onResync = useCallback(() => {
+    setLive(NO_LIVE);
+    reload();
+  }, [reload]);
+  const scopes = useMemo(
+    () => [{ project, environment }],
+    [project, environment],
+  );
+  const watch = useWatch({ scopes, onEvent, onResync });
+
   const failure =
     status.error === undefined ? undefined : toFailure(status.error);
+  const phase = live.transition?.phase ?? status.data?.phase;
+  const revision = live.transition
+    ? live.transition.revision
+    : status.data?.revision;
+  const cause = live.transition ? live.transition.cause : status.data?.cause;
+  const verdicts = useMemo(
+    () => mergeVerdicts(status.data?.verdicts, live.verdicts),
+    [status.data, live.verdicts],
+  );
   // Rollback is the one action with a precondition the server has already
   // answered: a delivery plane this build was started without is Unimplemented,
   // and there is no adapter to restore anything with. Everything else stays
@@ -132,10 +207,13 @@ function EnvironmentPanel({
               <StatusPill status="unknown" label="reading…" />
             ) : (
               <StatusPill
-                status={phaseToStatus(status.data?.phase ?? "")}
-                label={status.data?.phase.toLowerCase() || "unknown"}
+                status={phaseToStatus(phase ?? "")}
+                label={phase?.toLowerCase() || "unknown"}
               />
             )}
+            <span className="k-mono">
+              <LiveIndicator state={watch} />
+            </span>
           </div>
           <div className="k-actions">
             <Link className="k-button k-button--primary" to={`${base}/deploy`}>
@@ -176,16 +254,12 @@ function EnvironmentPanel({
             <div className="k-kv">
               <span className="k-kv__key">revision</span>
               <span>
-                {status.data.revision ? (
-                  <Copyable value={status.data.revision} />
-                ) : (
-                  "none recorded"
-                )}
+                {revision ? <Copyable value={revision} /> : "none recorded"}
               </span>
-              {status.data.cause ? (
+              {cause ? (
                 <>
                   <span className="k-kv__key">cause</span>
-                  <span>{status.data.cause}</span>
+                  <span>{cause}</span>
                 </>
               ) : null}
               {Object.entries(status.data.detail)
@@ -196,10 +270,8 @@ function EnvironmentPanel({
             </div>
 
             <div className="k-env__verdicts">
-              <div className="k-eyebrow">
-                Workloads ({status.data.verdicts.length})
-              </div>
-              {status.data.verdicts.length === 0 ? (
+              <div className="k-eyebrow">Workloads ({verdicts.length})</div>
+              {verdicts.length === 0 ? (
                 <p className="k-mono k-env__note">
                   no verdicts — this build has no health probe wired, or the set
                   declares no Deployments. That is not the same as “nothing is
@@ -207,7 +279,7 @@ function EnvironmentPanel({
                 </p>
               ) : (
                 <ul className="k-verdicts">
-                  {status.data.verdicts.map((v) => (
+                  {verdicts.map((v) => (
                     <Verdict key={v.resource} verdict={v} />
                   ))}
                 </ul>
@@ -230,10 +302,64 @@ function Fragmented({ name, value }: { name: string; value: string }) {
 }
 
 /**
+ * The fetched verdicts with the stream's deltas applied.
+ *
+ * A HEALTH_CHANGE carries a code, a verdict and a message — not the
+ * remediation, which is the fix for the code it replaced, so it is dropped
+ * rather than left pointing at the wrong problem. `degraded` is likewise
+ * recomputed as the softer claim the event supports: the failure-code set is
+ * observation's (IsFailure) and lives in Go, so the browser must not guess
+ * which side of it a live code falls on.
+ *
+ * A workload the event names but Status never returned is appended: a
+ * Deployment that appeared since the last read is real, and hiding it until
+ * the next refetch would be the staleness this stream exists to remove.
+ */
+function mergeVerdicts(
+  fetched: readonly WorkloadVerdict[] | undefined,
+  live: PanelLive["verdicts"],
+): VerdictRow[] {
+  const pending = { ...live };
+  const rows: VerdictRow[] = (fetched ?? []).map((v) => {
+    const update = pending[v.resource];
+    if (update === undefined) {
+      return {
+        resource: v.resource,
+        code: v.code,
+        healthy: v.healthy,
+        degraded: v.degraded,
+        message: v.message,
+        remediation: v.remediation,
+      };
+    }
+    delete pending[v.resource];
+    return {
+      resource: v.resource,
+      code: update.code,
+      healthy: update.healthy,
+      degraded: !update.healthy,
+      message: update.message,
+      remediation: "",
+    };
+  });
+  for (const [resource, update] of Object.entries(pending)) {
+    rows.push({
+      resource,
+      code: update.code,
+      healthy: update.healthy,
+      degraded: !update.healthy,
+      message: update.message,
+      remediation: "",
+    });
+  }
+  return rows;
+}
+
+/**
  * A verdict row, shaped like the CLI's (#151): the health code as a mono chip,
  * the message, and the remediation as a "fix:" line.
  */
-function Verdict({ verdict }: { verdict: WorkloadVerdict }) {
+function Verdict({ verdict }: { verdict: VerdictRow }) {
   const kind = verdict.healthy
     ? "synced"
     : verdict.degraded

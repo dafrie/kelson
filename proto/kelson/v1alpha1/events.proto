@@ -1,0 +1,126 @@
+// EventService: the watch stream agents and the UI react to (#76).
+//
+// Every other RPC answers a question that was asked. This one answers the
+// question nobody wants to keep asking: "did anything change?". Without it an
+// agent polls Status in a loop and a UI card is stale until someone reloads.
+//
+// # What an event is
+//
+// The taxonomy is deliberately the one that exists today. A STATUS_TRANSITION
+// is a change of delivery phase or revision for one (project, environment) —
+// which is what a deployment landing looks like from the outside, so there is
+// no separate "deployment" event type. A HEALTH_CHANGE is a change of the
+// observation plane's verdict for one workload. Policy decisions are the third
+// item of #76's taxonomy and are not here: no policy engine exists yet (#75).
+// When it does, it adds an event type and a payload to this file; nothing
+// already on the wire changes meaning.
+syntax = "proto3";
+
+package kelson.v1alpha1;
+
+option go_package = "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1;kelsonv1alpha1";
+
+// EventType selects which events a watch receives. An empty filter is every
+// type, including types added to this enum later — a client that wants only
+// what it understands must list the types it understands.
+enum EventType {
+  EVENT_TYPE_UNSPECIFIED = 0;
+  // A change of delivery phase or revision. Deployments arrive as these.
+  EVENT_TYPE_STATUS_TRANSITION = 1;
+  // A change of one workload's observation verdict.
+  EVENT_TYPE_HEALTH_CHANGE = 2;
+}
+
+message WatchRequest {
+  // Scope is one (project, environment) the watch covers. An empty
+  // `environment` means every environment the project declares at the moment
+  // the watch starts.
+  message Scope {
+    string project = 1;
+    string environment = 2;
+  }
+
+  // Empty = every project the server has stored, resolved once when the watch
+  // starts. A project created *after* that is not added to a running watch:
+  // the server would have to re-list on a timer to notice, and a watch that
+  // silently half-covers is worse than one whose coverage is stated. An agent
+  // watching "everything" re-watches after it creates a project.
+  repeated Scope scopes = 1;
+  // Empty = all types.
+  repeated EventType types = 2;
+  // Resume point: the cursor of the last event the client processed. Empty
+  // starts from now, delivering nothing that happened before the watch.
+  //
+  // Cursors are opaque and scoped to one server instance — the encoding is the
+  // server's business and a client must never parse, compare or persist one
+  // across a restart. See Watch for what happens when a cursor cannot be
+  // honoured.
+  string cursor = 3;
+}
+
+message WatchResponse {
+  oneof body {
+    Event event = 1;
+    Resync resync = 2;
+  }
+
+  message Event {
+    // Pass this back as WatchRequest.cursor to resume after this event.
+    string cursor = 1;
+    int64 at_unix_ms = 2;
+    string project = 3;
+    string environment = 4;
+
+    oneof payload {
+      StatusTransition status_transition = 5;
+      HealthChange health_change = 6;
+    }
+  }
+
+  // Resync says: your view of this scope may have gaps. Relist with
+  // DeployService.Status and keep reading — the stream continues from now.
+  message Resync {
+    // Why the gap happened, for a human reading a log. A client branches on
+    // the message being present, never on this text.
+    string reason = 1;
+  }
+
+  // StatusTransition mirrors what DeployService.Status reports, as a delta.
+  message StatusTransition {
+    string phase = 1;           // delivery.Phase string
+    string previous_phase = 2;  // the phase this transition left
+    string revision = 3;
+    string cause = 4;
+  }
+
+  // HealthChange mirrors one WorkloadVerdict, as a delta.
+  message HealthChange {
+    string resource = 1;       // "Deployment/ns/name"
+    string code = 2;           // observation health code, e.g. "crash-loop-back-off"
+    string previous_code = 3;  // empty when the workload had no verdict before
+    bool healthy = 4;
+    string message = 5;
+  }
+}
+
+service EventService {
+  // Watch streams events for the requested scopes until the client goes away.
+  //
+  // # Resumption is honest within a window, and explicit beyond it
+  //
+  // The server retains a bounded ring of recent events per instance. A cursor
+  // inside that window replays everything after it, in order, so a client that
+  // reconnects within seconds misses nothing. A cursor outside it — evicted by
+  // newer events, or minted by a different server instance, which is what a
+  // restart looks like — cannot be honoured, and the server says so with a
+  // Resync instead of guessing.
+  //
+  // This is Kubernetes' "resourceVersion too old" (HTTP 410 Gone) contract. The
+  // alternative — pretending durable history exists — would make a client
+  // believe it had seen everything when it had not, and a missed
+  // crash-loop event is exactly the failure this stream exists to prevent. A
+  // Resync also arrives when a consumer falls too far behind to be served from
+  // the window. On either, the client relists via DeployService.Status and
+  // keeps reading this same stream.
+  rpc Watch(WatchRequest) returns (stream WatchResponse);
+}

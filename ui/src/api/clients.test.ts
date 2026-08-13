@@ -11,10 +11,14 @@ import {
   DeployService,
 } from "../gen/kelson/v1alpha1/deploy_pb";
 import { LogService } from "../gen/kelson/v1alpha1/logs_pb";
+import {
+  EventService,
+  WatchResponseSchema,
+} from "../gen/kelson/v1alpha1/events_pb";
 
 /**
  * Proves the generated schemas and the client wiring actually fit together, for
- * all five services, without a server.
+ * all six services, without a server.
  *
  * This is deliberately a wiring test, not a behaviour test: the value is that
  * it fails to compile — or fails to route — the moment protoc-gen-es output,
@@ -63,6 +67,28 @@ const transport = createRouterTransport((router) => {
       lines: [{ pod: "web-0", container: "web", message: "listening" }],
     }),
   });
+
+  router.service(EventService, {
+    watch: async function* () {
+      yield create(WatchResponseSchema, {
+        body: {
+          case: "event",
+          value: {
+            cursor: "nonce.1",
+            project: "checkout",
+            environment: "production",
+            payload: {
+              case: "statusTransition",
+              value: { phase: "Healthy", previousPhase: "Reconciling" },
+            },
+          },
+        },
+      });
+      yield create(WatchResponseSchema, {
+        body: { case: "resync", value: { reason: "the window moved" } },
+      });
+    },
+  });
 });
 
 const clients = createClients(transport);
@@ -106,5 +132,16 @@ describe("generated clients", () => {
   it("round-trips LogService.QueryLogs", async () => {
     const res = await clients.log.queryLogs({});
     expect(res.lines[0]?.message).toBe("listening");
+  });
+
+  it("consumes EventService.Watch as a server stream, both oneof arms", async () => {
+    const bodies = [];
+    for await (const res of clients.event.watch({})) {
+      bodies.push(res.body.case);
+      if (res.body.case === "event") {
+        expect(res.body.value.payload.case).toBe("statusTransition");
+      }
+    }
+    expect(bodies).toEqual(["event", "resync"]);
   });
 });

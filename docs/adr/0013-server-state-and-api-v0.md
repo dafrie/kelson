@@ -1,6 +1,10 @@
 # ADR-0013: Server state lives in the cluster; API v0 shape
 
-- **Status:** Proposed
+- **Status:** Proposed (amended 2026-08-13: `EventService` added as the sixth service — the watch
+  stream of [#76](https://github.com/dafrie/kelson/issues/76). It adds no new state and no new seam;
+  it observes through the same DeliveryConnector and health evaluator the Status RPC uses, so §1's
+  "the process holds no state" is unchanged: the retained event window is a cache a restart is
+  allowed to lose, and says so with a Resync.)
 - **Date:** 2026-08-13
 
 ## Context
@@ -68,7 +72,7 @@ identities (M7) give deploys an attributable author regardless of entry point.
 
 ### 2. v0 API surface: the full working set, one schema, structured errors on the wire
 
-Five services under `kelson.v1alpha1` (details in `proto/kelson/v1alpha1/`):
+Six services under `kelson.v1alpha1` (details in `proto/kelson/v1alpha1/`):
 
 | Service | RPCs | Notes |
 |---|---|---|
@@ -77,6 +81,7 @@ Five services under `kelson.v1alpha1` (details in `proto/kelson/v1alpha1/`):
 | `ProfileService` | GetProfile | Live capture against the server's cluster; gaps are data, not warnings on a side channel |
 | `DeployService` | Deploy, Status, Rollback, History | Deploy/Rollback are server-streaming: each state-machine transition is an event; the final event carries the settled state |
 | `LogService` | Query, Follow | First consumer of `observation/logquery`; Query is bounded (the engine's `requireBound`), Follow is the deliberate unbounded stream |
+| `EventService` | Watch | Server-streaming watch over (project, environment) scopes (#76). Cursors resume within a bounded in-memory window; past it the server sends `Resync` (relist via Status) rather than pretending to durable history |
 
 **Every mutating RPC** (PutSpec, DeleteSpec, Deploy, Rollback) carries `dry_run`
 (`DRY_RUN_UNSPECIFIED | NONE | RENDER | SERVER`) and `idempotency_key`, per #69. Idempotency in v0 is

@@ -6,9 +6,10 @@ import { RenderService } from "../gen/kelson/v1alpha1/render_pb";
 import { ProfileService } from "../gen/kelson/v1alpha1/profile_pb";
 import { DeployService } from "../gen/kelson/v1alpha1/deploy_pb";
 import { LogService } from "../gen/kelson/v1alpha1/logs_pb";
+import { EventService } from "../gen/kelson/v1alpha1/events_pb";
 
 /**
- * Clients for the five kelson services.
+ * Clients for the six kelson services.
  *
  * Connect-ES v2 needs no per-service generated client: `createClient` takes the
  * service descriptor protoc-gen-es emits and produces the typed client from it.
@@ -35,6 +36,7 @@ export function createClients(transport: Transport) {
     profile: createClient(ProfileService, transport),
     deploy: createClient(DeployService, transport),
     log: createClient(LogService, transport),
+    event: createClient(EventService, transport),
   };
 }
 

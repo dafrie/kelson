@@ -1,0 +1,33 @@
+/* The watch-stream indicator: a dot and one mono word, muted enough to read as
+   status rather than as content. */
+.k-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  color: var(--kelson-muted-2);
+}
+
+.k-live__dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+
+.k-live[data-state="live"] {
+  color: var(--kelson-synced);
+}
+
+/* The same pulse the reconciling pill uses, for the same reason: something is
+   in flight. A live stream is steady; a reconnecting one is working. */
+.k-live[data-state="reconnecting"] .k-live__dot {
+  animation: kelson-pulse 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .k-live[data-state="reconnecting"] .k-live__dot {
+    animation: none;
+  }
+}

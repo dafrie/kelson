@@ -41,12 +41,21 @@ type clients struct {
 	profile kelsonv1alpha1connect.ProfileServiceClient
 	deploy  kelsonv1alpha1connect.DeployServiceClient
 	logs    kelsonv1alpha1connect.LogServiceClient
+	events  kelsonv1alpha1connect.EventServiceClient
 }
 
 func serve(t *testing.T, opts Options) clients {
 	t.Helper()
+	return serveServer(t, New(opts))
+}
+
+// serveServer is serve for a test that also needs the *Server itself — the
+// watch tests assert on the broker's poller count, which is a property of the
+// server rather than of any response.
+func serveServer(t *testing.T, server *Server) clients {
+	t.Helper()
 	mux := http.NewServeMux()
-	New(opts).Register(mux)
+	server.Register(mux)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
@@ -57,6 +66,7 @@ func serve(t *testing.T, opts Options) clients {
 		profile: kelsonv1alpha1connect.NewProfileServiceClient(hc, srv.URL),
 		deploy:  kelsonv1alpha1connect.NewDeployServiceClient(hc, srv.URL),
 		logs:    kelsonv1alpha1connect.NewLogServiceClient(hc, srv.URL),
+		events:  kelsonv1alpha1connect.NewEventServiceClient(hc, srv.URL),
 	}
 }
 
@@ -377,6 +387,31 @@ func (f fakeEvaluator) Evaluate(_ context.Context, namespace, name string) (obse
 		return v, nil
 	}
 	return observation.Verdict{Healthy: true, Resource: "Deployment/" + namespace + "/" + name}, nil
+}
+
+// steppingEvaluator answers healthy once and crash-looping thereafter, so the
+// broker's second observation of a scope carries a real health change. It is
+// called from a poller goroutine while the test reads the stream, hence the
+// lock.
+type steppingEvaluator struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (e *steppingEvaluator) Evaluate(_ context.Context, namespace, name string) (observation.Verdict, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.calls++
+	resource := "Deployment/" + namespace + "/" + name
+	if e.calls == 1 {
+		return observation.Verdict{Healthy: true, Code: observation.CodeHealthy, Resource: resource}, nil
+	}
+	return observation.Verdict{
+		Resource:    resource,
+		Code:        observation.CodeCrashLoopBackOff,
+		Reason:      "back-off restarting failed container",
+		Remediation: "the container keeps crashing: read its logs",
+	}, nil
 }
 
 // fakeProfile is a ProfileCapture returning a fixture.
