@@ -842,3 +842,89 @@
 .k-edit__conflict-actions {
   margin-top: 4px;
 }
+
+/* ------------------------------------------------------------------ history */
+
+/* The timeline is a list of records, not a feed: each item is a bordered row
+   like the revision picker's, with a rail down the left so successive states of
+   one environment read as a sequence. The live item is the only filled one,
+   because it is the only revision anything can currently answer for. */
+.k-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.k-timeline__item {
+  padding: 12px 16px;
+  background: var(--kelson-panel);
+  border: 1px solid var(--kelson-border);
+  border-left: 3px solid var(--kelson-hairline);
+  border-radius: 5px;
+}
+
+.k-timeline__item--live {
+  background: var(--kelson-panel-dim);
+  border-left-color: var(--kelson-accent);
+}
+
+.k-timeline__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.k-timeline__rev {
+  font-size: 13px;
+}
+
+.k-timeline__live {
+  color: var(--kelson-accent);
+}
+
+.k-timeline__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 8px;
+  color: var(--kelson-muted-deep);
+}
+
+/* An absent author is dimmer than a present one and never shouted: it is a fact
+   about what the delivery mode records, not a warning. */
+.k-timeline__unattributed {
+  color: var(--kelson-muted-2);
+}
+
+.k-timeline__message {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--kelson-text-2);
+}
+
+.k-timeline__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* The lines under the list that say what the record does not carry. */
+.k-timeline__note {
+  max-width: 78ch;
+  margin: 14px 0 0;
+  color: var(--kelson-muted);
+}
+
+.k-timeline__note a {
+  color: inherit;
+}
+
+.k-rollback__requested {
+  margin: 0 0 10px;
+  color: var(--kelson-muted);
+}

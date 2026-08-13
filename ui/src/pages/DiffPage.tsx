@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 
 import { useAsync, useClients } from "../api/data";
 import { DryRun } from "../gen/kelson/v1alpha1/common_pb";
@@ -31,7 +31,15 @@ import type { Async } from "../api/data";
  */
 export function DiffPage() {
   const { project = "", env = "" } = useParams();
-  const [mode, setMode] = useState<"server" | "revision">("server");
+  // `?from=<revision>` is how the history screen (#67) arrives: it names a
+  // recorded revision, which is only meaningful in the rendered mode, so the
+  // parameter selects that tab as well as the revision. Without it the screen
+  // opens where it always did, on the live cluster's verdict.
+  const [params] = useSearchParams();
+  const from = params.get("from") ?? "";
+  const [mode, setMode] = useState<"server" | "revision">(
+    from === "" ? "server" : "revision",
+  );
 
   return (
     <>
@@ -78,7 +86,7 @@ export function DiffPage() {
       {mode === "server" ? (
         <ServerDiff project={project} env={env} />
       ) : (
-        <RevisionDiff project={project} env={env} />
+        <RevisionDiff project={project} env={env} initial={from} />
       )}
     </>
   );
@@ -102,9 +110,18 @@ function ServerDiff({ project, env }: { project: string; env: string }) {
   return <DiffResult result={result} what="the server dry-run preview" />;
 }
 
-function RevisionDiff({ project, env }: { project: string; env: string }) {
+function RevisionDiff({
+  project,
+  env,
+  initial,
+}: {
+  project: string;
+  env: string;
+  /** A revision named in the URL, preselected. Empty means none. */
+  initial: string;
+}) {
   const clients = useClients();
-  const [revision, setRevision] = useState("");
+  const [revision, setRevision] = useState(initial);
   const history = useAsync(
     (signal) =>
       clients.deploy.history(
