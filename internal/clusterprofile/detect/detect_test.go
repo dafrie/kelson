@@ -168,6 +168,12 @@ func TestProbeFullCluster(t *testing.T) {
 	if sc := prof.StorageClasses[0]; !sc.Default || sc.Provisioner != "pd.csi.storage.gke.io" || sc.VolumeSnapshotClass != "gke-snap" {
 		t.Fatalf("storage class = %+v", sc)
 	}
+	// issue #91: snapshot support and what a snapshot costs are two answers.
+	if sc := prof.StorageClasses[0]; sc.SnapshotDriver != "pd.csi.storage.gke.io" ||
+		sc.CloneCapability != clusterprofile.CloneFullCopy ||
+		sc.CloneConfidence != clusterprofile.CloneConfidenceKnownDriver {
+		t.Fatalf("storage class clone capability = %+v, want full-copy from a known driver", sc)
+	}
 	if prof.CloudNativePG == nil || prof.Flux == nil || prof.ArgoCD == nil || prof.MetricsServer == nil {
 		t.Fatalf("expected cnpg/flux/argocd/metrics present, got %+v", prof)
 	}
@@ -272,6 +278,71 @@ func TestProbeForbiddenStorageKeepsSnapshotGap(t *testing.T) {
 	// than being guessed to something.
 	if len(prof.StorageClasses) != 1 || prof.StorageClasses[0].VolumeSnapshotClass != "" {
 		t.Fatalf("storage classes = %+v", prof.StorageClasses)
+	}
+	// And the clone capability must be unknown, not none: local-path really has
+	// no snapshot driver, but we could not read the snapshot classes, so
+	// reporting "none" here would be right by luck and wrong by method (#91).
+	if sc := prof.StorageClasses[0]; sc.CloneCapability != clusterprofile.CloneUnknown ||
+		sc.CloneConfidence != clusterprofile.CloneConfidenceUnreadable {
+		t.Fatalf("clone capability = %+v, want unknown/unreadable behind a gap", sc)
+	}
+}
+
+// TestProbeStorageCloneCapabilities is issue #91's detection acceptance: three
+// storage classes, three different answers, and the unrecognised driver gets an
+// unknown rather than a guess in either direction.
+func TestProbeStorageCloneCapabilities(t *testing.T) {
+	f := newFakeProber(t, []*metav1.APIResourceList{
+		resourceList("storage.k8s.io/v1"), resourceList("snapshot.storage.k8s.io/v1"),
+	})
+	storageClass := func(name, provisioner string, isDefault bool) *unstructured.Unstructured {
+		body := map[string]any{"provisioner": provisioner}
+		if isDefault {
+			body["metadata"] = map[string]any{"annotations": map[string]any{"storageclass.kubernetes.io/is-default-class": "true"}}
+		}
+		return unstruct(schema.GroupVersionKind{Group: "storage.k8s.io", Version: "v1", Kind: "StorageClass"}, name, body)
+	}
+	snapshotClass := func(name, driver string) *unstructured.Unstructured {
+		return unstruct(schema.GroupVersionKind{Group: "snapshot.storage.k8s.io", Version: "v1", Kind: "VolumeSnapshotClass"},
+			name, map[string]any{"driver": driver})
+	}
+	f.seed(t, storageClassGVR, storageClass("local-path", "rancher.io/local-path", true))
+	f.seed(t, storageClassGVR, storageClass("ceph-rbd", "rbd.csi.ceph.com", false))
+	f.seed(t, storageClassGVR, storageClass("mystery", "storage.example.com", false))
+	f.seed(t, volumeSnapshotClassGVR, snapshotClass("csi-rbd-snap", "rbd.csi.ceph.com"))
+	f.seed(t, volumeSnapshotClassGVR, snapshotClass("mystery-snap", "storage.example.com"))
+
+	prof, err := f.probe(context.Background())
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	byName := map[string]clusterprofile.StorageClass{}
+	for _, sc := range prof.StorageClasses {
+		byName[sc.Name] = sc
+	}
+	want := map[string]struct {
+		capability clusterprofile.CloneCapability
+		confidence clusterprofile.CloneConfidence
+		snapshot   string
+	}{
+		"local-path": {clusterprofile.CloneNone, clusterprofile.CloneConfidenceKnownDriver, ""},
+		"ceph-rbd":   {clusterprofile.CloneThin, clusterprofile.CloneConfidenceKnownDriver, "csi-rbd-snap"},
+		"mystery":    {clusterprofile.CloneUnknown, clusterprofile.CloneConfidenceUnknownDriver, "mystery-snap"},
+	}
+	for name, w := range want {
+		got, ok := byName[name]
+		if !ok {
+			t.Fatalf("storage class %q missing from %+v", name, prof.StorageClasses)
+		}
+		if got.CloneCapability != w.capability || got.CloneConfidence != w.confidence || got.VolumeSnapshotClass != w.snapshot {
+			t.Errorf("%s = %+v, want %s/%s via %q", name, got, w.capability, w.confidence, w.snapshot)
+		}
+	}
+	if byName["ceph-rbd"].SnapshotDriver != "rbd.csi.ceph.com" {
+		t.Errorf("snapshot driver = %q, want the CSI driver that decides the cost", byName["ceph-rbd"].SnapshotDriver)
+	}
+	if byName["local-path"].SnapshotDriver != "" {
+		t.Errorf("a class with no snapshot class must report no snapshot driver, got %q", byName["local-path"].SnapshotDriver)
 	}
 }
 
@@ -417,7 +488,7 @@ func TestImageTag(t *testing.T) {
 		"registry.local:5000/cloudnative-pg/cloudnative-pg":  "",
 		"ghcr.io/cloudnative-pg/cloudnative-pg:1.26.0@sha25": "1.26.0",
 		"ghcr.io/cloudnative-pg/cloudnative-pg@sha256:abc":   "",
-		"cloudnative-pg":                                     "",
+		"cloudnative-pg": "",
 	}
 	for in, want := range cases {
 		if got := imageTag(in); got != want {

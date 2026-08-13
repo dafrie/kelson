@@ -240,7 +240,23 @@ type PolicyEngine struct {
 	Version string `yaml:"version,omitempty" json:"version,omitempty"`
 }
 
-// StorageClass is one storage class and whether it can snapshot.
+// StorageClass is one storage class, whether it can snapshot, and what a
+// snapshot on it actually costs (issues #108, #91).
+//
+// The cost is the part that decides whether database branching is a feature or
+// a trap: a thin copy-on-write clone is seconds and no extra space, a full-copy
+// snapshot is minutes and a second copy of the database, and the k3s default
+// has no snapshot driver at all (ADR-0007). Recording all three states, plus
+// how confidently each was determined, is what lets the branching judgement
+// name the mechanism instead of silently doing something expensive.
+//
+// Not recorded here: whether an object-store backup destination is configured,
+// which ADR-0007 makes the universal branching fallback. Nothing in the spec
+// model configures one yet — that is issue #94's scope (a destination per
+// environment) — and inventing a field the rest of kelson cannot fill would
+// make an unconfigured cluster indistinguishable from an unread one. Until
+// then, the fallback's availability is unknown by construction and the
+// branching verdict says so (internal/clusterprofile/storage).
 type StorageClass struct {
 	Name        string `yaml:"name" json:"name"`
 	Provisioner string `yaml:"provisioner,omitempty" json:"provisioner,omitempty"`
@@ -250,6 +266,77 @@ type StorageClass struct {
 	// unavailable on this class and the restore-based path applies instead
 	// (issue #108).
 	VolumeSnapshotClass string `yaml:"volumeSnapshotClass,omitempty" json:"volumeSnapshotClass,omitempty"`
+	// SnapshotDriver is the CSI driver of that snapshot class, e.g.
+	// rbd.csi.ceph.com. It is reported separately from the class name because
+	// the driver — not the name an administrator chose — is what determines
+	// what a snapshot costs.
+	SnapshotDriver string `yaml:"snapshotDriver,omitempty" json:"snapshotDriver,omitempty"`
+	// CloneCapability is what cloning this class's volumes costs.
+	// Empty is read as CloneUnknown, so a hand-written profile that omits it
+	// cannot read as a promise.
+	CloneCapability CloneCapability `yaml:"cloneCapability,omitempty" json:"cloneCapability,omitempty"`
+	// CloneConfidence is how that answer was reached, because a lookup by
+	// driver name and a direct observation are not equally trustworthy and the
+	// difference has to survive into the report (issue #91).
+	CloneConfidence CloneConfidence `yaml:"cloneConfidence,omitempty" json:"cloneConfidence,omitempty"`
+}
+
+// CloneCapability is what it costs to clone a volume on a storage class: the
+// three-way distinction issue #91's acceptance criterion asks the profile to
+// make, plus the unknown that keeps a guess from masquerading as an answer.
+type CloneCapability string
+
+const (
+	// CloneUnknown means the cost could not be determined — an unrecognised CSI
+	// driver, or snapshot classes the probe could not read. Never a guess.
+	CloneUnknown CloneCapability = "unknown"
+	// CloneNone means volumes here cannot be snapshotted at all: no snapshot
+	// class matches the provisioner. The k3s local-path default is this case,
+	// and branching must fall back to a restore (ADR-0007).
+	CloneNone CloneCapability = "none"
+	// CloneFullCopy means a snapshot restores into a full-size volume: EBS, GCE
+	// PD, Azure Disk. Branching works and costs time and space proportional to
+	// the database.
+	CloneFullCopy CloneCapability = "full-copy"
+	// CloneThin means copy-on-write clones: Ceph RBD, ZFS, LVM-thin. Branching
+	// is seconds and near-zero extra space.
+	CloneThin CloneCapability = "thin"
+)
+
+// CloneConfidence records how a [CloneCapability] was arrived at. It exists
+// because issue #91 asks explicitly for the confidence to be recorded rather
+// than for the answer to look uniform: "the driver is in our table" and "we
+// watched the cluster report no snapshot class" are different kinds of true,
+// and an unrecognised driver is neither.
+type CloneConfidence string
+
+const (
+	// CloneConfidenceObserved means the answer came from cluster state alone:
+	// no snapshot class serves this provisioner, so nothing can clone it. No
+	// table was consulted and none would change the answer.
+	CloneConfidenceObserved CloneConfidence = "observed"
+	// CloneConfidenceKnownDriver means the CSI driver is in the maintained
+	// table in internal/clusterprofile/storage.
+	CloneConfidenceKnownDriver CloneConfidence = "known-driver"
+	// CloneConfidenceUnknownDriver means snapshots exist but the driver is not
+	// in the table, so whether they are thin is unknown — reported as such
+	// rather than assumed either way.
+	CloneConfidenceUnknownDriver CloneConfidence = "unknown-driver"
+	// CloneConfidenceUnreadable means the snapshot classes could not be listed
+	// at all; the matching Gap in Incomplete carries the permission that would
+	// settle it.
+	CloneConfidenceUnreadable CloneConfidence = "unreadable"
+)
+
+// Capability normalises the recorded capability, treating the empty value a
+// hand-written profile may omit as [CloneUnknown]. Judgements read this rather
+// than the field, so "not written down" and "written down as unknown" behave
+// identically and neither can be mistaken for a yes.
+func (s StorageClass) Capability() CloneCapability {
+	if s.CloneCapability == "" {
+		return CloneUnknown
+	}
+	return s.CloneCapability
 }
 
 // Prometheus is the monitoring stack's CRDs. ServiceMonitor and PodMonitor are

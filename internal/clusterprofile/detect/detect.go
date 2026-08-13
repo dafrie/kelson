@@ -38,6 +38,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/dafrie/kelson/internal/clusterprofile"
+	"github.com/dafrie/kelson/internal/clusterprofile/storage"
 )
 
 // FromCluster probes a live cluster for its capabilities (Gateway API, ingress
@@ -535,9 +536,15 @@ func (p *prober) probeStorageClasses(ctx context.Context) []clusterprofile.Stora
 		return nil
 	}
 
+	// snapshotsReadable separates "this cluster has no snapshot class for that
+	// driver" from "we were not allowed to look". Both leave
+	// VolumeSnapshotClass empty, and only the first one may be reported as a
+	// capability of none (issue #91).
+	snapshotsReadable := true
 	vscByDriver := map[string]string{}
 	vscs, err := p.dyn.Resource(volumeSnapshotClassGVR).List(ctx, metav1.ListOptions{})
 	if err != nil {
+		snapshotsReadable = false
 		p.gap("storageClasses", p.reasonFor(err, "volumesnapshotclasses.snapshot.storage.k8s.io"))
 	} else {
 		for _, v := range vscs.Items {
@@ -556,9 +563,20 @@ func (p *prober) probeStorageClasses(ctx context.Context) []clusterprofile.Stora
 		cls.Default = strings.EqualFold(sc.GetAnnotations()["storageclass.kubernetes.io/is-default-class"], "true")
 		// A snapshot class whose driver matches this class's provisioner is
 		// the enablement for database branching (issue #108); without one the
-		// restore-based path applies and the field stays empty.
+		// restore-based path applies and the field stays empty. What that
+		// snapshot *costs* is the driver's business, classified from the
+		// maintained table in internal/clusterprofile/storage (issue #91).
 		if cls.Provisioner != "" {
 			cls.VolumeSnapshotClass = vscByDriver[cls.Provisioner]
+			if cls.VolumeSnapshotClass != "" {
+				cls.SnapshotDriver = cls.Provisioner
+			}
+		}
+		if snapshotsReadable {
+			cls.CloneCapability, cls.CloneConfidence = storage.Classify(cls.Provisioner, cls.VolumeSnapshotClass)
+		} else {
+			cls.CloneCapability = clusterprofile.CloneUnknown
+			cls.CloneConfidence = clusterprofile.CloneConfidenceUnreadable
 		}
 		out = append(out, cls)
 	}
