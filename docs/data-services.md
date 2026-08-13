@@ -19,6 +19,12 @@ vocabulary, the naming rule, the provenance stamps, the render ordering, and the
 capability check. The [Valkey](#valkey) section states only what differs, and it differs more
 than the shared parts suggest.
 
+**Not on this page: `kind: helm`.** It delegates to an operator the same way these do
+([ADR-0005](adr/0005-delegate-to-operators.md)) and it is deliberately not a data service — it has no
+preset, nothing binds to it, and what it installs is the chart's business rather than kelson's. It is
+documented with the model ([helm components](model.md#helm-components-a-chart-delegated),
+[ADR-0016](adr/0016-delivery-flows-v0.md)).
+
 **Baseline.** kelson targets the latest CloudNativePG release (owner decision, 2026-08-13,
 recorded in `internal/clusterprofile/postgres`). The declarative surface — `Cluster
 .spec.managed.roles`, the `Database` CRD, declarative schemas and extensions — is relied on

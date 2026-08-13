@@ -113,6 +113,35 @@ implying a coverage it does not have. Two cases, both reported as
   without permission gets no gap entries, never a failed preview — and the grant
   is in `deploy/rbac/detect-clusterrole.yaml`.
 
+### Preview of a helm component
+
+One component type previews less than the rest, and it says so rather than looking complete.
+
+A `kind: helm` component renders two resources — a chart source and a `HelmRelease` — and nothing else
+([the model](model.md#helm-components-a-chart-delegated),
+[ADR-0016](adr/0016-delivery-flows-v0.md)). **The preview therefore shows the `HelmRelease` changing:
+the chart, the version and the values. It never shows the workloads the chart produces.** A chart
+upgrade that rewrites every manifest it ships appears as one changed `version:` line, and a reviewer
+approving it is approving a version number, not a set of manifests.
+
+This is a documented v0 downgrade, taken deliberately, and it is worth being blunt about why it cannot
+simply be fixed here. Expanding a chart means fetching it and running `helm template` against it, which
+is network I/O — the one thing the renderer may never do
+([ADR-0001](adr/0001-hybrid-state-model.md), [#20](https://github.com/dafrie/kelson/issues/20)) — so a
+manifest-level chart preview is not a renderer feature that was skipped. The upgrade path is an
+**advisory server-side** `helm template`: server-side because it needs to fetch the chart, advisory
+because it is a second opinion about what the cluster will do rather than the rendered truth every other
+diff shows. It changes the preview and not the delegation.
+
+Two consequences follow, and neither is a defect in the diff:
+
+- **Nothing is missing from the diff.** The two resources kelson owns are diffed exactly the way every
+  other resource is, including under a server-side dry-run. What is absent from the diff is absent from
+  kelson's inventory too — the chart's objects are helm-controller's, created under Helm's own release
+  ownership, never pruned or adopted by kelson.
+- **Drift inside the release is helm-controller's.** It has its own drift detection and its own
+  reconcile interval; kelson does not police that layer and does not report on it.
+
 ### Exit semantics
 
 `kelson diff` exit codes and the Diff RPC's `exit_semantics` are the same

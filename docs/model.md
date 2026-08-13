@@ -8,7 +8,8 @@ otherwise.
 
 **The leaf is a Component.** ADR-0006 called it an Application and put managed data services in a second
 list beside it; ADR-0014 unified the two into one `spec.components` list with a closed set of kinds —
-`service`, `worker`, `cron`, `agent`, `postgres`, `valkey`. Where this page says *component*, ADR-0006 says
+`service`, `worker`, `cron`, `agent`, `postgres`, `valkey`, and `helm` since
+[ADR-0016](adr/0016-delivery-flows-v0.md). Where this page says *component*, ADR-0006 says
 *application*, and the shape it decided is otherwise unchanged.
 
 Target shape: one HA, TLS-terminated, database-backed service with a worker and a cron job in about
@@ -39,12 +40,16 @@ fields and the `from:` bindings left the table exactly that way with
 Not every refusal is a gate. A field can be consumed and still have values kelson will not render:
 `preset: branch`, and a preset the target cluster's operator cannot host, are structured *render*
 errors, because the check needs a ClusterProfile and validation deliberately has none. See
-[docs/data-services.md](data-services.md).
+[docs/data-services.md](data-services.md). A `kind: helm` component in a non-Flux environment is a
+render error for a different reason — the refusal depends on the *Environment*, and a Project document
+is valid on its own terms against every environment it will ever meet (`render/helm-requires-flux`,
+[below](#the-flux-only-gate-and-why-it-exists)).
 
 And not every refusal is either: a field that belongs to another kind is a plain validation error, because
 one list means one type carrying fields only some of its kinds use. `preset` on a worker, `port` on a
-`kind: postgres`, `tools` on anything but an agent, and a written `kind:` that contradicts the component's
-shape are all `schema/mutually-exclusive` rather than fields that quietly resolve into nothing.
+`kind: postgres`, `chart` on anything but a `kind: helm`, `tools` on anything but an agent, and a written
+`kind:` that contradicts the component's shape are all `schema/mutually-exclusive` rather than fields
+that quietly resolve into nothing.
 
 ## Documents
 
@@ -99,15 +104,16 @@ The kind is *derived* from the shape wherever the shape can say it, and written 
 | neither                       | `worker` — Deployment, no routing |
 | `kind: agent`                 | worker-shaped, with its own identity and (later) tool policy |
 | `kind: postgres`, `kind: valkey` | a managed data service; nothing to derive |
+| `kind: helm`                  | a third-party chart delegated to helm-controller; nothing to derive |
 
 `schedule:` and `port:` are mutually exclusive (validation error `schema/mutually-exclusive`), as are
 `schedule:` with `domains:`/`health:`. A cron job that also serves traffic is two Components. The rule
 keeps the happy path free of vocabulary; every kind is reachable, none needs to be named.
 
-Writing `kind:` is allowed for every kind and required for the data kinds. When written it is checked
-against the enum *and* against the shape — `kind: service` needs a port, `kind: cron` needs a schedule,
-`kind: worker` and `kind: agent` need neither — so an explicit kind states what a component is and never
-silently overrules the fields that say otherwise ([ADR-0014](adr/0014-components.md)).
+Writing `kind:` is allowed for every kind and required for the data kinds and for `helm`. When written it
+is checked against the enum *and* against the shape — `kind: service` needs a port, `kind: cron` needs a
+schedule, `kind: worker` and `kind: agent` need neither — so an explicit kind states what a component is
+and never silently overrules the fields that say otherwise ([ADR-0014](adr/0014-components.md)).
 
 **5. Hiding the Project when there is only one Component.**
 Presentation, not schema. The schema keeps the Project level always (uniformity beats special cases for
@@ -351,6 +357,120 @@ credentials live in the shared cluster's namespace and a pod cannot reference a 
 database is still created; distributing its credentials is
 [#93](https://github.com/dafrie/kelson/issues/93). See [docs/data-services.md](data-services.md).
 
+## Helm components: a chart, delegated
+
+> Implemented since [ADR-0016](adr/0016-delivery-flows-v0.md) decision 4. Available in **Flux mode
+> only** — see the gate below, which is the first delivery-mode-dependent field in the model and is
+> accepted deliberately, for chart delegation and nothing else.
+
+Some dependencies ship as a chart and nothing else. `kind: helm` runs one beside your components:
+kelson renders a `HelmRelease` and the source it fetches from, and helm-controller installs and
+upgrades it. It is the same delegation rule every managed data type gets
+([ADR-0005](adr/0005-delegate-to-operators.md)) — **kelson writes a CR, kelson does not template an
+engine**. There is no Helm library in the codebase and there is not going to be one.
+
+```yaml
+spec:
+  components:
+    - name: ingress
+      kind: helm
+      chart: ingress-nginx           # the chart's name inside its source
+      chartVersion: 4.11.3           # required — see "Pinning" below
+      source:
+        repository: https://kubernetes.github.io/ingress-nginx   # or: oci: oci://ghcr.io/acme/charts
+      values:                        # plain configuration, verbatim into the HelmRelease
+        controller:
+          replicaCount: 2
+      valuesFrom:                    # where secret material goes
+        - secretRef: ingress-tls-values
+```
+
+| Field | Meaning |
+|---|---|
+| `chart` | the chart's name within its source |
+| `chartVersion` | the exact version. Required |
+| `source.repository` | a classic Helm repository URL (the one serving `index.yaml`) → renders a `HelmRepository` |
+| `source.oci` | an OCI registry URL *without* the chart name → renders an `OCIRepository` |
+| `values` | chart values, written verbatim into `HelmRelease.spec.values` |
+| `valuesFrom` | `secretRef`/`configMapRef` names helm-controller merges in before `values` |
+
+Exactly one of `source.repository` and `source.oci` is set; both is `schema/mutually-exclusive` and
+neither is `schema/missing-required`, because the two render different Flux source kinds and kelson will
+not pick for you. Every workload field — `image`, `command`, `port`, `health`, `schedule`, `domains`,
+`replicas`, `resources`, `env` — and `preset` are `schema/mutually-exclusive` on a helm component, and
+the chart fields are the same error on every other kind. A helm component takes **no per-environment
+override**: the chart version and its values live on the Project component, and an environment that needs
+different values needs its own component.
+
+### What kelson owns, and what it does not
+
+kelson's inventory for a helm component is **two resources**: the source and the `HelmRelease`.
+Everything the chart expands into — its Deployments, its Services, its CRDs — is created by
+helm-controller under Helm's own release ownership. kelson never prunes it, never adopts it, and never
+diffs it. `targetNamespace` is the environment's namespace, so the chart's objects land beside your
+components.
+
+### The preview downgrade, stated plainly
+
+**A preview of a helm component shows the `HelmRelease` changing — the chart, the version, the values —
+and never the workloads the chart produces.** A chart upgrade that rewrites every manifest it ships
+appears in the diff as one changed `version:` line. This is worse than what kelson promises everywhere
+else, where a diff is the concrete manifests, and ADR-0016 accepts it as a **documented v0 downgrade**
+rather than a bug: honest previews of a chart require `helm template` against a fetched chart, which is
+network I/O and therefore not something the pure renderer may do
+([ADR-0001](adr/0001-hybrid-state-model.md), [#20](https://github.com/dafrie/kelson/issues/20)). The
+upgrade path is an advisory *server-side* `helm template`, and it does not change the delegation
+decision. Drift *inside* the release belongs to helm-controller's own drift detection, which is the
+layer kelson explicitly does not police. See [delivery](delivery.md#preview-of-a-helm-component).
+
+### Pinning is required
+
+`chartVersion` has no default and an empty one is `schema/missing-required`. An unpinned chart resolves
+at apply time, which means the same document installs different manifests on different days — and
+because the diff only ever shows the `HelmRelease`, it would report *no change at all* while the cluster
+changed underneath it. Pinning is what makes the values-only preview survivable.
+
+### `values` is not a secret store
+
+`values` is plain configuration. It is written verbatim into the `HelmRelease`, which is **not** a
+Secret and is **not** redacted anywhere: it appears in the rendered output, in every diff, and — in
+Flux mode, which is the only mode this kind runs in — committed in the delivery repository in plain
+text. Secret manifests kelson renders are redacted in display surfaces; a `HelmRelease` is not one of
+them, and pretending otherwise would be the more dangerous mistake.
+
+So chart credentials go in `valuesFrom`, as a `secretRef` to a Secret somebody else manages in the
+environment's namespace. helm-controller reads it at release time and kelson never sees the value
+([ADR-0009](adr/0009-secrets.md), [#79](https://github.com/dafrie/kelson/issues/79)).
+
+**Nothing enforces this beyond saying it.** kelson does *not* inspect the content of a value to guess
+whether it is a credential: a key called `password` is accepted, because content-sniffing would block
+legitimate chart configuration (charts have `passwordSecretName` keys and `auth.existingSecret` keys and
+plenty of harmless `token` fields) and would still miss anything under a name nobody predicted. The rule
+is a rule you follow, not a check you pass. The one thing validation does require of `values` is string
+keys, which Helm requires anyway.
+
+### The Flux-only gate, and why it exists
+
+A helm component renders **only** when the target Environment's `delivery.mode` is `flux`. Anything else
+is the structured render error `render/helm-requires-flux`, naming the component, the mode and the fix.
+
+The reason is that there is nothing to delegate to otherwise: direct mode applies manifests to the API
+server itself, and a `HelmRelease` applied where no helm-controller runs is an object that is accepted
+and then does nothing — the silent success [#141](https://github.com/dafrie/kelson/issues/141) exists to
+prevent. The gate is decided from **spec data**, in the pure renderer, so the same document renders the
+same way against every cluster; whether helm-controller is actually *installed* is a separate question,
+reported as a capability finding (`internal/clusterprofile/helm`), never as a rendering decision.
+
+This is the first field in the model whose availability depends on the delivery mode, which means an
+author can write a valid Project that becomes unrenderable by changing one line of an Environment.
+ADR-0016 takes that cost knowingly and scopes it to chart delegation: *any* future field that wants the
+same exemption has to argue for it against that paragraph.
+
+Installing helm-controller is not kelson's to do. A cluster needs source-controller and helm-controller;
+a flux-operator `FluxInstance` naming just those two components is a supported and common shape
+([#60](https://github.com/dafrie/kelson/issues/60)), and `kelson profile` reports which of them a cluster
+has.
+
 ## Secrets: references, never literals
 
 Per [ADR-0009](adr/0009-secrets.md), enforcement lives in one place and validation mirrors it so authors
@@ -456,7 +576,7 @@ Stable code taxonomy:
 | `schema/out-of-range` | schema | `port: 70000` |
 | `schema/invalid-enum` | schema | `delivery.mode: github` |
 | `schema/duplicate-name` | schema | two Components named `web` |
-| `schema/mutually-exclusive` | semantic-shape | `schedule:` with `port:`; `preset:` on a worker; `kind:` against the shape |
+| `schema/mutually-exclusive` | semantic-shape | `schedule:` with `port:`; `preset:` on a worker; `chart:` on a service; `kind:` against the shape |
 | `schema/not-implemented` | schema | `tools:`, `policy:`, `secrets:`, `cluster:` — validated, not yet rendered |
 | `ref/unknown-component` | semantic | Environment override for an undeclared component |
 | `ref/unknown-service` | semantic | `from: {service: cache}` names no data component |
