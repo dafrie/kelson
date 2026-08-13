@@ -86,6 +86,51 @@ This is the gap Coolify has.
 message or a diff. This is Coolify's other documented gap, and it needs to be a tested property rather
 than a convention.
 
+### Amendment (2026-08-13): redaction is enforced, and here is its boundary
+
+[#117](https://github.com/dafrie/kelson/issues/117) implements the "logs are redacted" clause above as a
+tested property rather than a convention. `internal/redact` is the mechanism and its package doc is the
+normative statement; what follows is the summary and, more importantly, the boundary.
+
+**Two mechanisms, because there are two kinds of knowledge.**
+
+- *Structural.* Kubernetes Secret `data` and `stringData` values are replaced with `[redacted]`, keys kept,
+  selected by the resource's own `kind` and never by what the value looks like. This is what protects the
+  surface the spec cannot create but an overlay can: a Secret injected by `spec.overlays` is rendered,
+  applied, recorded in history, and read back into every diff.
+- *Known-value.* Literal strings kelson has itself resolved — today only a registry credential read through
+  `registry.Resolver` — are registered the moment they are learned and are replaced everywhere after that.
+  Under this ADR kelson resolves almost nothing, so this set is normally empty; it exists so that a future
+  backend which *does* hold a value cannot leak it by a caller forgetting a parameter.
+
+**Display bytes are redacted; delivery bytes are not.** A diff, a preview, an error, a log stream, an
+agent's tool response and a manifest returned over the API for inspection are read. `kelson render`'s own
+output, the bytes an adapter applies, what a Git writer commits, what the rendered-history store records
+and what a rollback replays from it are applied. Redacting a delivery path would write the string
+`[redacted]` into the cluster as a credential — a silent, successful corruption, worse than the leak it
+prevents. So the rendered-history store keeps real bytes and the *readback for display* is what is
+redacted, and the renderer is untouched.
+
+**kelson does not content-sniff user output.** There is deliberately no heuristic that guesses whether an
+arbitrary string is a secret. A workload's stdout is the workload's; kelson streams it through and cannot
+know which of its bytes are credentials. Pattern-matching over user log lines would corrupt legitimate
+output and still miss the credential shaped like a word. The guarantee is the one kelson can keep: **kelson
+never adds a secret to a log.** What a user's own process prints — including a Dockerfile that cats its own
+mounted secret — is the user's to control, and this ADR says so rather than implying a protection that does
+not exist.
+
+**Build-time secrets are mounts.** `buildkit.Config.Secrets` projects a named Kubernetes Secret key as a
+BuildKit secret mount (`--secret id=…,src=…`), which lives on a tmpfs for the duration of one `RUN` and is
+never committed to a layer. There is no field on it that could carry a value: kelson mounts a reference and
+the kubelet does the projection. Build *arguments* are refused outright when their name is
+credential-shaped (the same heuristic `model.SecretShapedName` applies to spec literals) — a build arg is
+recorded in image history and in the Job's own command line, so by the time anything could be redacted the
+value is already in the pushed image.
+
+This amendment does not decide the reference model. `spec`-level secret references, the backend field and
+the `kelson secret set` command remain [#79](https://github.com/dafrie/kelson/issues/79) and
+[#116](https://github.com/dafrie/kelson/issues/116); nothing here invents spec surface for them.
+
 ## Consequences
 
 **Positive.**
