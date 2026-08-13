@@ -1,0 +1,15 @@
+# Code generation for the kelson API (ADR-0013 §4). Generated output is
+# committed and drift-tested, like schema/*.json and docs/reference/*.
+# Regenerate with `make proto` (buf generate).
+version: v2
+plugins:
+  - local: protoc-gen-go
+    out: internal/api/gen
+    opt: paths=source_relative
+  - local: protoc-gen-connect-go
+    out: internal/api/gen
+    opt: paths=source_relative
+# The TypeScript client is deliberately not generated in v0; M6 (UI) turns
+# this on rather than designs it (ADR-0013).
+# - remote: buf.build/bufbuild/es
+#   out: web/src/gen

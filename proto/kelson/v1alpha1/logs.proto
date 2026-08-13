@@ -1,0 +1,70 @@
+// LogService: the first consumer of internal/observation/logquery (#69).
+//
+// Query is bounded — the engine's requireBound rule travels to the wire:
+// a query must carry tail, since or around. Follow is the deliberate
+// unbounded stream (ADR-0008: the API streams; MCP tools return windows).
+syntax = "proto3";
+
+package kelson.v1alpha1;
+
+option go_package = "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1;kelsonv1alpha1";
+
+message LogSelector {
+  string namespace = 1;    // required
+  string application = 2;  // required — pods are selected by kelson.dev/application
+  repeated string containers = 3; // empty = all
+}
+
+message LogMatch {
+  string substring = 1;
+  string regex = 2; // takes precedence over substring
+}
+
+message LogAround {
+  int32 lines = 1;            // 0 = engine default (200)
+  int64 time_unix_ms = 2;     // lines nearest this instant
+  bool at_termination = 3;    // last lines before termination — the crash-loop diagnosis
+}
+
+message QueryLogsRequest {
+  LogSelector selector = 1;
+  // Bounds: exactly the engine's rules — around and tail are mutually
+  // exclusive; at least one of tail/since/around must be set.
+  int32 tail = 2;
+  int64 since_unix_ms = 3;
+  int64 until_unix_ms = 4;
+  LogAround around = 5;
+  LogMatch match = 6;
+}
+
+message LogLine {
+  int64 timestamp_unix_ms = 1; // 0 = line had no parseable timestamp
+  string pod = 2;
+  string container = 3;
+  string message = 4;
+}
+
+message QueryLogsResponse {
+  repeated LogLine lines = 1;
+}
+
+message FollowLogsRequest {
+  LogSelector selector = 1;
+  LogMatch match = 2;
+  int64 since_unix_ms = 3;
+  int32 backlog = 4; // 0 = engine default (1000)
+}
+
+// FollowLogsResponse streams lines; dropped reports loss under backpressure so
+// the client knows the stream is lossy rather than believing a gap was quiet.
+message FollowLogsResponse {
+  oneof event {
+    LogLine line = 1;
+    int64 dropped = 2; // cumulative lines dropped so far
+  }
+}
+
+service LogService {
+  rpc QueryLogs(QueryLogsRequest) returns (QueryLogsResponse);
+  rpc FollowLogs(FollowLogsRequest) returns (stream FollowLogsResponse);
+}

@@ -1,0 +1,72 @@
+// SpecService: the server-side spec store (ADR-0013 §1).
+//
+// Specs are stored as authored documents, validated on write with the full
+// structured-error taxonomy, and versioned by the underlying store's
+// resourceVersion — optimistic concurrency is Kubernetes' own, surfaced as an
+// opaque version string (#69's "optimistic concurrency on spec version").
+syntax = "proto3";
+
+package kelson.v1alpha1;
+
+import "kelson/v1alpha1/common.proto";
+
+option go_package = "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1;kelsonv1alpha1";
+
+message Spec {
+  // Project name — the store key, from the Project document's metadata.name.
+  string project = 1;
+  SpecDocuments documents = 2;
+  // Opaque version for optimistic concurrency. Echo it back in PutSpecRequest
+  // to require the store be unchanged since this read.
+  string version = 3;
+  // Environments declared by the documents, by name (informational).
+  repeated string environments = 4;
+}
+
+message PutSpecRequest {
+  SpecDocuments documents = 1;
+  // Empty on create. On update, the version from the last read; a mismatch
+  // fails with store/version-conflict. Clients that deliberately want
+  // last-write-wins pass force=true instead of a version.
+  string version = 2;
+  bool force = 3;
+  DryRun dry_run = 4;      // RENDER validates and renders every environment, stores nothing
+  string idempotency_key = 5;
+}
+
+message PutSpecResponse {
+  Spec spec = 1;
+  // Validation errors when dry_run rejected the spec (the RPC itself
+  // succeeds; an invalid spec is an answer, not a transport failure).
+  repeated Error errors = 2;
+}
+
+message GetSpecRequest {
+  string project = 1;
+}
+
+message GetSpecResponse {
+  Spec spec = 1;
+}
+
+message ListSpecsRequest {}
+
+message ListSpecsResponse {
+  repeated Spec specs = 1; // documents omitted; project/version/environments only
+}
+
+message DeleteSpecRequest {
+  string project = 1;
+  string version = 2; // same optimistic-concurrency contract as PutSpec
+  bool force = 3;
+  string idempotency_key = 4;
+}
+
+message DeleteSpecResponse {}
+
+service SpecService {
+  rpc PutSpec(PutSpecRequest) returns (PutSpecResponse);
+  rpc GetSpec(GetSpecRequest) returns (GetSpecResponse);
+  rpc ListSpecs(ListSpecsRequest) returns (ListSpecsResponse);
+  rpc DeleteSpec(DeleteSpecRequest) returns (DeleteSpecResponse);
+}

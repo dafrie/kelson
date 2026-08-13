@@ -1,0 +1,168 @@
+// DeployService: deploy, status, rollback, history (issues #69/#139).
+//
+// Deploy and Rollback are server-streaming: every state-machine transition is
+// an event, and the final event carries the settled state. The stream speaks
+// statemachine.State (issue #37: the engine is the single owner of what a
+// phase means — the CLI, this API and any UI render the same transitions).
+syntax = "proto3";
+
+package kelson.v1alpha1;
+
+import "kelson/v1alpha1/common.proto";
+import "kelson/v1alpha1/render.proto";
+
+option go_package = "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1;kelsonv1alpha1";
+
+message DeployRequest {
+  SpecRef spec = 1;
+  string environment = 2;
+  ProfileRef profile = 3;
+  string image = 4;
+  string mode = 5;             // delivery adapter override ("direct", "flux"); empty = spec's mode
+  int64 timeout_seconds = 6;   // budget to reach a healthy phase; 0 = server default (5m)
+  DryRun dry_run = 7;          // RENDER: render only; SERVER: k8s dry-run apply; NONE: deploy
+  string idempotency_key = 8;
+}
+
+// DeployResponse streams the deployment as it happens: each message is one event.
+message DeployResponse {
+  oneof event {
+    Proposed proposed = 1;   // first event: what would be / is being applied
+    Committed committed = 2; // the apply landed; revision assigned
+    Transition transition = 3;
+    Settled settled = 4;     // terminal event, exactly one, last
+  }
+
+  message Proposed {
+    string project = 1;
+    string environment = 2;
+    int32 resources = 3;
+    string mode = 4;
+    // Dry-run outcomes end the stream after this event (RENDER) or after a
+    // server-side preview Transition (SERVER).
+    repeated Manifest manifests = 5; // populated for dry-run render only
+  }
+
+  message Committed {
+    string revision = 1;
+    string adapter = 2;
+  }
+
+  // Transition mirrors statemachine.State.
+  message Transition {
+    string phase = 1;    // delivery.Phase string
+    string answer = 2;   // waiting|progressing|live|stuck|rejected|degraded
+    bool stuck = 3;
+    Cause cause = 4;
+    string observed_revision = 5;
+    int64 since_unix_ms = 6;
+  }
+
+  message Settled {
+    Transition final = 1;
+    // Structured error when the deployment settled unhealthy; the stream
+    // itself completes cleanly — an unhealthy deployment is an answer,
+    // not a transport failure (statemachine.Run's contract).
+    Error error = 2;
+  }
+
+  message Cause {
+    string component = 1;
+    string reason = 2;
+    string message = 3;
+  }
+}
+
+message StatusRequest {
+  SpecRef spec = 1;
+  string environment = 2;
+  ProfileRef profile = 3;
+  string image = 4;
+  string mode = 5;
+}
+
+message StatusResponse {
+  string phase = 1;
+  string revision = 2;
+  string cause = 3;
+  map<string, string> detail = 4; // adapter detail: resources/live/degraded, ...
+  repeated WorkloadVerdict verdicts = 5;
+}
+
+// WorkloadVerdict mirrors observation's classification (the same predicate
+// the CLI's summary uses, #151).
+message WorkloadVerdict {
+  string resource = 1;   // "Deployment/ns/name"
+  string code = 2;       // observation health code, e.g. "crash-loop-back-off"
+  bool healthy = 3;
+  bool degraded = 4;
+  string message = 5;
+  string remediation = 6;
+}
+
+message RollbackRequest {
+  SpecRef spec = 1;
+  string environment = 2;
+  ProfileRef profile = 3;
+  string mode = 4;
+  string to_revision = 5;     // empty = previous revision
+  DryRun dry_run = 6;         // RENDER = preview only (the CLI always previews; so does the API)
+  string idempotency_key = 7;
+}
+
+// RollbackResponse streams: preview first (always), then the apply outcome unless dry-run.
+message RollbackResponse {
+  oneof event {
+    Preview preview = 1;
+    Committed committed = 2;
+    Settled settled = 3;
+  }
+
+  message Preview {
+    string to_revision = 1;
+    bytes diff_json = 2;             // diff.EncodeJSON of what changes
+    repeated Finding findings = 3;   // what a rollback cannot revert
+  }
+
+  message Finding {
+    string resource = 1;
+    string path = 2;
+    string cause = 3;   // rollback.Cause vocabulary
+    string message = 4;
+    bool unrecoverable = 5;
+  }
+
+  message Committed {
+    string restored_revision = 1; // the revision restored
+    string as_revision = 2;       // the new history entry it was recorded as
+  }
+
+  message Settled {
+    Error error = 1; // set when the rollback failed
+  }
+}
+
+message HistoryRequest {
+  SpecRef spec = 1;
+  string environment = 2;
+  string mode = 3;
+}
+
+message HistoryResponse {
+  repeated HistoryEntry entries = 1; // newest first, like the adapters
+}
+
+message HistoryEntry {
+  string revision = 1;
+  string spec_hash = 2;
+  string committed_at = 3;
+  string message = 4;
+  string author = 5;
+}
+
+service DeployService {
+  rpc Deploy(DeployRequest) returns (stream DeployResponse);
+  rpc Status(StatusRequest) returns (StatusResponse);
+  rpc Rollback(RollbackRequest) returns (stream RollbackResponse);
+  rpc History(HistoryRequest) returns (HistoryResponse);
+}
