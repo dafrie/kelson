@@ -45,8 +45,8 @@ var renderedFields = map[string]map[string]string{
 		"$.spec.env.*.from.key":     "renderer: secretKeyRef key, mapped onto the operator's own key names",
 
 		"$.spec.components[].name":                      "renderer: workload or data-service resource name, and the binding target",
-		"$.spec.components[].kind":                      "model: selects workload versus data rendering; postgres renders, valkey is a structured render error (#98)",
-		"$.spec.components[].preset":                    "renderer: CNPG topology and sizing (docs/data-services.md)",
+		"$.spec.components[].kind":                      "model: selects workload versus data rendering, and which operator a data component delegates to (postgres → CloudNativePG, valkey → the Valkey operator)",
+		"$.spec.components[].preset":                    "renderer: operator topology and sizing (docs/data-services.md)",
 		"$.spec.components[].image":                     "renderer: container image (P3 override)",
 		"$.spec.components[].command":                   "renderer: container command",
 		"$.spec.components[].port":                      "renderer: Service, containerPort, derived kind",

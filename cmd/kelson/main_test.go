@@ -49,8 +49,12 @@ func profileFile(t *testing.T, body string) string {
 // used: say what the cluster provides rather than weakening the judgement so a
 // zero profile passes. Rendering on Unknown is a different case and is
 // exercised in internal/renderer (docs/data-services.md).
+//
+// The Valkey operator joined on the same terms with #98: the examples now
+// declare cache components, and a cluster that cannot host one refuses them.
 const gatewayProfileYAML = "gatewayAPI:\n  version: v1.6.0\n  classes: [envoy]\n" +
-	"cnpg:\n  version: 1.30.0\n  namespace: cnpg-system\n  crds: [clusters, databases]\n"
+	"cnpg:\n  version: 1.30.0\n  namespace: cnpg-system\n  crds: [clusters, databases]\n" +
+	"valkey:\n  version: 0.5.0\n  namespace: valkey-operator-system\n  crds: [valkeyclusters, valkeynodes]\n"
 
 func TestRenderToStdout(t *testing.T) {
 	project, env := examplesHello(t)

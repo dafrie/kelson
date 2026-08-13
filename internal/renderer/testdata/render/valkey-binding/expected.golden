@@ -1,0 +1,205 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: checkout-staging
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/environment: staging
+    kelson.dev/project: checkout
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:390d1e9fdf0a284bf9a6450928bd721e42fd79c0d49742a8a0246aa4effe0313
+    kelson.dev/namespace-ownership: declared
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: checkout-staging-db
+  namespace: checkout-staging
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/environment: staging
+    kelson.dev/project: checkout
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:994be2ebf7ae97bed94df134ba8e490c3cd3db9519f9087a06a81bb748be53ba
+spec:
+  instances: 1
+  storage:
+    size: 5Gi
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      memory: 1Gi
+  bootstrap:
+    initdb:
+      database: app
+      owner: app
+---
+apiVersion: valkey.io/v1alpha1
+kind: ValkeyCluster
+metadata:
+  name: checkout-staging-cache
+  namespace: checkout-staging
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/environment: staging
+    kelson.dev/project: checkout
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:90309856c803d5d3482fa4654d29b56c9fc77060116f72ff2c916ba3d397d1d8
+spec:
+  shards: 1
+  replicas: 0
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      memory: 512Mi
+  config:
+    maxmemory: 384mb
+    maxmemory-policy: allkeys-lru
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: web
+  namespace: checkout-staging
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: web
+    kelson.dev/environment: staging
+    kelson.dev/project: checkout
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:df01a17f11a50a88188fa8614f5c6491b0c364aaf63584b4fadb22380d2fa219
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: checkout-staging
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: web
+    kelson.dev/environment: staging
+    kelson.dev/project: checkout
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:df01a17f11a50a88188fa8614f5c6491b0c364aaf63584b4fadb22380d2fa219
+spec:
+  selector:
+    kelson.dev/project: checkout
+    kelson.dev/application: web
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: checkout-staging
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: web
+    kelson.dev/environment: staging
+    kelson.dev/project: checkout
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:df01a17f11a50a88188fa8614f5c6491b0c364aaf63584b4fadb22380d2fa219
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      kelson.dev/project: checkout
+      kelson.dev/application: web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/managed-by: kelson
+        kelson.dev/application: web
+        kelson.dev/environment: staging
+        kelson.dev/project: checkout
+    spec:
+      serviceAccountName: web
+      containers:
+        - name: web
+          image: ghcr.io/acme/checkout:1.4.2
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: CACHE_HOST
+              value: valkey-checkout-staging-cache.checkout-staging.svc
+            - name: CACHE_PORT
+              value: "6379"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: checkout-staging-db-app
+                  key: uri
+            - name: LOG_LEVEL
+              value: info
+            - name: REDIS_URL
+              value: redis://valkey-checkout-staging-cache.checkout-staging.svc:6379
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: worker
+  namespace: checkout-staging
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: worker
+    kelson.dev/environment: staging
+    kelson.dev/project: checkout
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:f5ad7fc3f08ce4d39141b2f6facb3aa0f0880ed8658ebf6d386ebeb5644ed01c
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: checkout-staging
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: worker
+    kelson.dev/environment: staging
+    kelson.dev/project: checkout
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:f5ad7fc3f08ce4d39141b2f6facb3aa0f0880ed8658ebf6d386ebeb5644ed01c
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      kelson.dev/project: checkout
+      kelson.dev/application: worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/managed-by: kelson
+        kelson.dev/application: worker
+        kelson.dev/environment: staging
+        kelson.dev/project: checkout
+    spec:
+      serviceAccountName: worker
+      containers:
+        - name: worker
+          image: ghcr.io/acme/checkout:1.4.2
+          command:
+            - bundle
+            - exec
+            - sidekiq
+          env:
+            - name: LOG_LEVEL
+              value: info
+            - name: REDIS_URL
+              value: redis://valkey-checkout-staging-cache.checkout-staging.svc:6379

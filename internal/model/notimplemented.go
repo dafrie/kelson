@@ -24,11 +24,12 @@ import (
 // CloudNativePG resources for them (issue #89), and nothing else had to move.
 //
 // What replaced their rows is *not* silence. A data component the renderer
-// cannot emit — `kind: valkey`, `preset: branch` — is a structured render error naming
-// its issue, and so is a preset the ClusterProfile says the cluster cannot
-// host. That check needs a cluster profile, which validation deliberately does
-// not have (ADR-0001), so it lives in the renderer; every surface that can
-// reach a cluster goes through it (docs/data-services.md).
+// cannot emit — `preset: branch`, `preset: shared`, or a preset that is not a
+// topology of the component's kind — is a structured render error naming its
+// issue, and so is a preset the ClusterProfile says the cluster cannot host.
+// That check needs a cluster profile, which validation deliberately does not
+// have (ADR-0001), so it lives in the renderer; every surface that can reach a
+// cluster goes through it (docs/data-services.md).
 
 // notImplemented is one gated field: where it lives in the schema and where
 // the work that would make it real is tracked.

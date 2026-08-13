@@ -1,0 +1,8 @@
+# The operator is present but its version could not be read — an install shape
+# the probe does not recognise, or an image pinned by digest. That is Unknown,
+# not No: the served resources still settle both capabilities, because each of
+# them *is* a served resource rather than evidence about one, so this renders
+# (issue #144).
+valkey:
+  namespace: valkey-operator-system
+  crds: [valkeyclusters, valkeynodes]

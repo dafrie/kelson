@@ -11,16 +11,21 @@ spec:
   build:
     strategy: dockerfile
 
-  # A `kind: valkey` component and the `REDIS_URL` binding onto it belong here.
-  # Postgres components render since #89; valkey does not, and kelson refuses it
-  # loudly rather than rendering nothing (#98).
-
   components:
+    # Rendered as a ValkeyCluster by the operator kelson delegates to
+    # (ADR-0015). Its whole configuration is its preset: the topology, the
+    # memory limit and the eviction policy come with it (#98).
+    - name: cache
+      kind: valkey
+      preset: ha-small
+
     - name: transcoder
       port: 8443
       domains: [stream.acme.com]
       resources:
         requests: { cpu: 4, memory: 8Gi }
+      env:
+        REDIS_URL: { from: { service: cache, key: uri } }
 
   # Escape hatch. Always available, never required (rule P6: project first).
   overlays:

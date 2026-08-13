@@ -8,14 +8,23 @@ metadata:
 spec:
   image: registry.acme.run/mailroom:2.0.7
 
-  # A `kind: valkey` queue component and the QUEUE_URL/QUEUE_PASSWORD bindings
-  # onto it belong here. Postgres components render since #89; valkey does not,
-  # and kelson refuses it loudly rather than rendering nothing (#98).
-
   components:
+    # A cache, not the queue. kelson renders a valkey component with
+    # persistence off (docs/data-services.md), so anything whose loss is an
+    # incident — the queue itself — belongs in Postgres; a dedupe set that can
+    # be rebuilt from the queue belongs here. The distinction is the whole
+    # design of the type (#98, ADR-0015).
+    - name: seen
+      kind: valkey
+      preset: small
+
     - name: worker            # no port, no schedule → worker (Deployment)
       command: ["mailroom", "work"]
       replicas: { min: 2 }
+      env:
+        # A cache binding is a plain value: a Service name and a port are not
+        # credentials, and a valkey component has no password at all.
+        SEEN_URL: { from: { service: seen, key: uri } }
 
     - name: digest            # schedule present → CronJob
       schedule: "30 6 * * 1-5"

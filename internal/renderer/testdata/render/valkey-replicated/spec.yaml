@@ -1,0 +1,40 @@
+# Fixture: the replicated cache presets (#98, ADR-0015). Two valkey components
+# whose presets differ — `ha-small` as authored, and `ha-medium` reached through
+# the Environment's P5 preset override of a `small` component, which is the same
+# per-environment topology rule the postgres presets get (ADR-0007).
+#
+# It pins the part of the cache sizing table that surprises people: an HA cache
+# is three shards, not one primary with one replica. The operator always runs
+# Valkey in cluster mode and cluster-mode failover is a vote among primaries, so
+# a single-shard cache would have a replica and no failover — see
+# docs/data-services.md.
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: checkout
+spec:
+  image: ghcr.io/acme/checkout:1.4.2
+
+  components:
+    - name: sessions
+      kind: valkey
+      preset: ha-small
+    - name: fragments
+      kind: valkey
+      preset: small
+
+    - name: worker
+      command: ["bundle", "exec", "sidekiq"]
+---
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: production
+spec:
+  project: checkout
+  namespace: checkout-prod
+
+  # P5: the fragment cache is bigger in production than the Project asks for.
+  components:
+    - name: fragments
+      preset: ha-medium

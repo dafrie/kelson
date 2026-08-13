@@ -32,13 +32,19 @@ const (
 	// floor, or a CRD the API server does not serve. Only a definite No lands
 	// here; an Unknown verdict renders (docs/data-services.md, issue #144).
 	ErrPostgresUnsupported = "render/postgres-unsupported"
+	// ErrValkeyUnsupported: the same judgement for a `kind: valkey` component —
+	// no Valkey operator, a version below the floor, or a CRD the API server
+	// does not serve (#98, ADR-0015). It is a separate code from the Postgres
+	// one because the remediation is a different operator and a caller that
+	// switches on the code should not have to parse prose to tell which.
+	ErrValkeyUnsupported = "render/valkey-unsupported"
 	// ErrServiceNotImplemented: a service the model accepts and the renderer
-	// does not render yet — `type: valkey` (#98), `preset: branch` (#99). The
-	// error names the issue rather than rendering something else quietly
-	// (issue #141).
+	// does not render yet — `preset: shared` (#93), `preset: branch` (#99), or a
+	// preset that is not a topology of the component's kind at all. The error
+	// names the issue rather than rendering something else quietly (issue #141).
 	ErrServiceNotImplemented = "render/service-not-implemented"
 	// ErrServiceName: <project>-<environment>-<service> is too long for the
-	// object names CloudNativePG derives from it.
+	// object names the component's operator derives from it.
 	ErrServiceName = "render/service-name-too-long"
 	// ErrBindingUnknownService: an env binding names a service the resolved
 	// spec does not declare. Model validation catches this for authored specs;
@@ -47,6 +53,14 @@ const (
 	// ErrBindingUnknownKey: an env binding names a key kelson does not map to
 	// a key of the credential Secret the operator generates.
 	ErrBindingUnknownKey = "render/binding-unknown-key"
+	// ErrBindingUnavailableKey: an env binding names a well-known key of the
+	// component's kind that this service genuinely cannot supply — today, the
+	// `password` of a `kind: valkey` component, because the Valkey operator
+	// generates no application credential and a pure renderer has no random
+	// source (#20, #98). It is not ErrBindingUnknownKey: the key is real and the
+	// spelling is right, so the message must say what is missing rather than
+	// offer a list of alternatives that does not contain the answer.
+	ErrBindingUnavailableKey = "render/binding-unavailable-key"
 	// ErrInternal: an invariant failed inside the renderer itself.
 	ErrInternal = "render/internal"
 )
