@@ -64,6 +64,7 @@ Direct mode is Git mode with an implicit repository. It still versions rendered 
 - [ADR-0006](docs/adr/0006-project-application-environment.md) — Project, Application, Environment
 - [ADR-0007](docs/adr/0007-data-services.md) — Data services: presets, delegation, branching
 - [ADR-0012](docs/adr/0012-flux-only-gitops.md) — Flux-only GitOps delivery; Argo CD deferred
+- [ADR-0014](docs/adr/0014-components.md) — One `components` list, per-component identity
 
 ## Docs
 

@@ -23,7 +23,7 @@ metadata:
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:cdee0914eabe15b5cd40555c43319ee4f56b5bb121501e9c17b1f7d5786a5cb0
+    kelson.dev/spec-hash: sha256:9bd32dfae03a87e3b38635c5d3aaaf817504ce08302a1ec6783a983e9aace96e
 spec:
   instances: 3
   minSyncReplicas: 1
@@ -52,7 +52,7 @@ metadata:
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:6d3c49a08faad1968dd5c20febb311ae1fb61deca26313f0b6d769f7e409329d
+    kelson.dev/spec-hash: sha256:1eacad1d516557379655fb5b339c1707051ccd470132b29ed523aa6dd86c3f2d
 spec:
   instances: 3
   minSyncReplicas: 1

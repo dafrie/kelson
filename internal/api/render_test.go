@@ -29,7 +29,7 @@ spec:
   image: ghcr.io/acme/hello:1.4.2
   env:
     LOG_LEVEL: info
-  applications:
+  components:
     - name: web
       port: 8080
       health: /healthz
@@ -55,7 +55,7 @@ spec:
   image: ghcr.io/acme/hello:1.5.0
   env:
     LOG_LEVEL: info
-  applications:
+  components:
     - name: web
       port: 8080
       health: /healthz
@@ -74,7 +74,7 @@ metadata:
   name: hello
 spec:
   image: ghcr.io/acme/hello:1.4.2
-  applications:
+  components:
     - name: web
       port: 8080
   overlays:

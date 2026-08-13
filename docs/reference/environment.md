@@ -21,8 +21,8 @@ This reference is **generated** from the committed JSON Schema [`schema/environm
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `applications` | array of object | no |  |  |
 | `cluster` | string | no |  |  |
+| `components` | array of object | no |  |  |
 | `delivery` | object | no |  |  |
 | `namespace` | string | no |  |  |
 | `overlays` | array of object | no |  |  |
@@ -30,39 +30,39 @@ This reference is **generated** from the committed JSON Schema [`schema/environm
 | `project` | string | yes |  |  |
 | `routing` | object | no |  |  |
 | `secrets` | object | no |  |  |
-| `services` | array of object | no |  |  |
 
-#### `spec.applications[]`
+#### `spec.components[]`
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `env` | map of one of: string, object | no |  |  |
 | `name` | string | yes |  |  |
+| `preset` | string enum `"shared"`, `"small"`, `"ha-small"`, `"ha-medium"`, `"branch"` | no |  | data components only |
 | `replicas` | object | no |  |  |
 | `resources` | object | no |  |  |
 
-##### `spec.applications[].replicas`
+##### `spec.components[].replicas`
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `max` | integer min 0 | no |  |  |
 | `min` | integer min 0 | yes |  |  |
 
-##### `spec.applications[].resources`
+##### `spec.components[].resources`
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `limits` | object | no |  |  |
 | `requests` | object | no |  |  |
 
-###### `spec.applications[].resources.limits`
+###### `spec.components[].resources.limits`
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `cpu` | string | no |  | Kubernetes quantity |
 | `memory` | string | no |  | Kubernetes quantity |
 
-###### `spec.applications[].resources.requests`
+###### `spec.components[].resources.requests`
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
@@ -113,10 +113,3 @@ This reference is **generated** from the committed JSON Schema [`schema/environm
 |-------|------|----------|---------|-------------|
 | `backend` | string enum `"cluster"`, `"externalSecrets"`, `"sops"` | yes |  |  |
 | `store` | string | no |  |  |
-
-#### `spec.services[]`
-
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `name` | string | yes |  |  |
-| `preset` | string enum `"shared"`, `"small"`, `"ha-small"`, `"ha-medium"`, `"branch"` | yes |  |  |

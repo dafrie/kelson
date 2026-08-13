@@ -14,7 +14,7 @@ import (
 // Certificate, ServiceMonitor. Kinds that do not apply are simply absent.
 func appManifests(
 	resolved *model.Resolved,
-	app *model.ResolvedApplication,
+	app *model.ResolvedComponent,
 	profile clusterprofile.ClusterProfile,
 	services map[string]boundService,
 ) ([]Manifest, error) {
@@ -35,16 +35,16 @@ func appManifests(
 	}
 
 	var out []Manifest
-	if app.Kind == model.WorkloadService {
+	if app.Kind == model.ComponentService {
 		out = append(out, serviceAccount(prov), service(app, prov))
 	}
 	switch app.Kind {
-	case model.WorkloadService, model.WorkloadWorker:
+	case model.ComponentService, model.ComponentWorker:
 		out = append(out, deployment(app, prov, env))
 		if hpa, ok := autoscaler(app, prov); ok {
 			out = append(out, hpa)
 		}
-	case model.WorkloadCron:
+	case model.ComponentCron:
 		out = append(out, cronJob(app, prov, env))
 	}
 	routes, err := routingResources(resolved, app, profile, prov)
@@ -52,7 +52,7 @@ func appManifests(
 		return nil, err
 	}
 	out = append(out, routes...)
-	if app.Kind == model.WorkloadService && profile.Prometheus != nil {
+	if app.Kind == model.ComponentService && profile.Prometheus != nil {
 		out = append(out, serviceMonitor(app, prov))
 	}
 	return out, nil
@@ -70,7 +70,7 @@ func serviceAccount(prov provenance) Manifest {
 	return Manifest{APIVersion: "v1", Kind: "ServiceAccount", Name: prov.name(), Namespace: prov.namespace, doc: docNode(root)}
 }
 
-func service(app *model.ResolvedApplication, prov provenance) Manifest {
+func service(app *model.ResolvedComponent, prov provenance) Manifest {
 	spec := mapNode(
 		"selector", selectorLabels(prov),
 		"ports", seqNode(mapNode(
@@ -82,7 +82,7 @@ func service(app *model.ResolvedApplication, prov provenance) Manifest {
 	return baseManifest("v1", "Service", prov, spec)
 }
 
-func deployment(app *model.ResolvedApplication, prov provenance, env *yaml.Node) Manifest {
+func deployment(app *model.ResolvedComponent, prov provenance, env *yaml.Node) Manifest {
 	specKV := []any{}
 	if !autoscaling(app) {
 		// With an HPA the replicas field is owned by the autoscaler; setting
@@ -96,12 +96,12 @@ func deployment(app *model.ResolvedApplication, prov provenance, env *yaml.Node)
 	return baseManifest("apps/v1", "Deployment", prov, mapNode(specKV...))
 }
 
-func autoscaling(app *model.ResolvedApplication) bool {
+func autoscaling(app *model.ResolvedComponent) bool {
 	return app.Replicas.Max > app.Replicas.Min
 }
 
-func autoscaler(app *model.ResolvedApplication, prov provenance) (Manifest, bool) {
-	if !autoscaling(app) || app.Kind == model.WorkloadCron {
+func autoscaler(app *model.ResolvedComponent, prov provenance) (Manifest, bool) {
+	if !autoscaling(app) || app.Kind == model.ComponentCron {
 		return Manifest{}, false
 	}
 	spec := mapNode(
@@ -123,7 +123,7 @@ func autoscaler(app *model.ResolvedApplication, prov provenance) (Manifest, bool
 	return baseManifest("autoscaling/v2", "HorizontalPodAutoscaler", prov, spec), true
 }
 
-func cronJob(app *model.ResolvedApplication, prov provenance, env *yaml.Node) Manifest {
+func cronJob(app *model.ResolvedComponent, prov provenance, env *yaml.Node) Manifest {
 	spec := mapNode(
 		"schedule", app.Schedule,
 		"jobTemplate", mapNode(
@@ -135,9 +135,9 @@ func cronJob(app *model.ResolvedApplication, prov provenance, env *yaml.Node) Ma
 	return baseManifest("batch/v1", "CronJob", prov, spec)
 }
 
-func podTemplate(app *model.ResolvedApplication, prov provenance, env *yaml.Node) *yaml.Node {
+func podTemplate(app *model.ResolvedComponent, prov provenance, env *yaml.Node) *yaml.Node {
 	specKV := []any{}
-	if app.Kind == model.WorkloadService {
+	if app.Kind == model.ComponentService {
 		specKV = append(specKV, "serviceAccountName", app.Name)
 	}
 	specKV = append(specKV, "containers", seqNode(container(app, env)))
@@ -147,7 +147,7 @@ func podTemplate(app *model.ResolvedApplication, prov provenance, env *yaml.Node
 	)
 }
 
-func cronPodTemplate(app *model.ResolvedApplication, prov provenance, env *yaml.Node) *yaml.Node {
+func cronPodTemplate(app *model.ResolvedComponent, prov provenance, env *yaml.Node) *yaml.Node {
 	c := container(app, env)
 	return mapNode(
 		"metadata", mapNode("labels", prov.labels()),
@@ -158,7 +158,7 @@ func cronPodTemplate(app *model.ResolvedApplication, prov provenance, env *yaml.
 	)
 }
 
-func container(app *model.ResolvedApplication, env *yaml.Node) *yaml.Node {
+func container(app *model.ResolvedComponent, env *yaml.Node) *yaml.Node {
 	kv := []any{
 		"name", app.Name,
 		"image", app.Image,
@@ -190,7 +190,7 @@ func container(app *model.ResolvedApplication, env *yaml.Node) *yaml.Node {
 //
 // Every unresolvable binding is reported, not just the first: one run should
 // list all the work.
-func envList(app *model.ResolvedApplication, services map[string]boundService) (*yaml.Node, Errors) {
+func envList(app *model.ResolvedComponent, services map[string]boundService) (*yaml.Node, Errors) {
 	if len(app.Env) == 0 {
 		return nil, nil
 	}

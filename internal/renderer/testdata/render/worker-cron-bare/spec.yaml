@@ -9,7 +9,7 @@ spec:
   image: registry.acme.run/mailroom:2.0.7
   # The queue service and its QUEUE_URL/QUEUE_PASSWORD bindings are gated
   # until M9 (#141).
-  applications:
+  components:
     - name: worker
       command: ["mailroom", "work"]
       replicas: { min: 2 }
@@ -29,7 +29,7 @@ spec:
   namespace: mailroom
   delivery:
     mode: direct
-  applications:
+  components:
     - name: worker
       resources:
         requests: { cpu: 100m, memory: 128Mi }

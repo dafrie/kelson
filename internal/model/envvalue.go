@@ -9,12 +9,16 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ServiceBinding references one well-known key of a declared Project service.
-// Rendered as a secretKeyRef against the service's credential Secret
-// (<project>-<service>-credentials). Values never appear in the spec
-// (ADR-0009).
+// ServiceBinding references one well-known key of a Project's data component.
+// Rendered as a secretKeyRef against the credential Secret the component's
+// operator generates. Values never appear in the spec (ADR-0009).
+//
+// The key stays `service:` after ADR-0014 renamed the list it points into:
+// what a binding names is the service a data component provides, and renaming
+// it to `component:` would have widened the field's apparent range to every
+// kind — most of which nothing can bind to.
 type ServiceBinding struct {
-	Service string `yaml:"service" json:"service" jsonschema:"required,description=name of a service declared in the Project"`
+	Service string `yaml:"service" json:"service" jsonschema:"required,description=name of a data component (kind postgres or valkey) declared in the Project"`
 	Key     string `yaml:"key" json:"key" jsonschema:"required,description=well-known key of the service type, e.g. uri for postgres"`
 }
 
@@ -118,10 +122,10 @@ type envValueRef struct {
 	From *ServiceBinding `json:"from" jsonschema:"required"`
 }
 
-// ServiceKeys lists the well-known binding keys per service type. Validation
-// rejects anything not on this list (ref/unknown-service-key); the renderer
-// renders exactly these keys as secretKeyRefs.
-var ServiceKeys = map[string][]string{
-	"postgres": {"uri", "host", "port", "database", "username", "password"},
-	"valkey":   {"uri", "host", "port", "password"},
+// ServiceKeys lists the well-known binding keys per data-component kind.
+// Validation rejects anything not on this list (ref/unknown-service-key); the
+// renderer renders exactly these keys as secretKeyRefs.
+var ServiceKeys = map[ComponentKind][]string{
+	ComponentPostgres: {"uri", "host", "port", "database", "username", "password"},
+	ComponentValkey:   {"uri", "host", "port", "password"},
 }

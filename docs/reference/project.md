@@ -21,16 +21,22 @@ This reference is **generated** from the committed JSON Schema [`schema/project.
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `applications` | array of object · min 1 item(s) | yes |  |  |
 | `build` | object | no |  |  |
+| `components` | array of object · min 1 item(s) | yes |  |  |
 | `defaults` | object | no |  |  |
 | `env` | map of one of: string, object | no |  |  |
 | `image` | string | no |  | pre-built image reference |
 | `overlays` | array of object | no |  |  |
-| `services` | array of object | no |  | data services this project's applications bind to |
 | `source` | object | no |  |  |
 
-#### `spec.applications[]`
+#### `spec.build`
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `dockerfile` | string | no |  |  |
+| `strategy` | string enum `"auto"`, `"dockerfile"`, `"buildpacks"`, `"none"` | no | `"auto"` |  |
+
+#### `spec.components[]`
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
@@ -39,46 +45,42 @@ This reference is **generated** from the committed JSON Schema [`schema/project.
 | `env` | map of one of: string, object | no |  |  |
 | `health` | string | no |  | HTTP liveness/readiness path |
 | `image` | string | no |  | overrides the Project image (rule P3) |
+| `kind` | string enum `"service"`, `"worker"`, `"cron"`, `"agent"`, `"postgres"`, `"valkey"` | no |  | derived from port/schedule when omitted; required for postgres and valkey |
 | `name` | string pattern `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$` | yes |  |  |
 | `port` | integer min 1, max 65535 | no |  |  |
+| `preset` | string enum `"shared"`, `"small"`, `"ha-small"`, `"ha-medium"`, `"branch"` | no | `"shared"` | data components only |
 | `replicas` | object | no |  |  |
 | `resources` | object | no |  |  |
 | `schedule` | string | no |  | five-field cron expression |
+| `tools` | array of string | no |  | agent components only; refused until issue #75 |
 
-##### `spec.applications[].replicas`
+##### `spec.components[].replicas`
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `max` | integer min 0 | no |  |  |
 | `min` | integer min 0 | yes |  |  |
 
-##### `spec.applications[].resources`
+##### `spec.components[].resources`
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `limits` | object | no |  |  |
 | `requests` | object | no |  |  |
 
-###### `spec.applications[].resources.limits`
+###### `spec.components[].resources.limits`
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `cpu` | string | no |  | Kubernetes quantity |
 | `memory` | string | no |  | Kubernetes quantity |
 
-###### `spec.applications[].resources.requests`
+###### `spec.components[].resources.requests`
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `cpu` | string | no |  | Kubernetes quantity |
 | `memory` | string | no |  | Kubernetes quantity |
-
-#### `spec.build`
-
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `dockerfile` | string | no |  |  |
-| `strategy` | string enum `"auto"`, `"dockerfile"`, `"buildpacks"`, `"none"` | no | `"auto"` |  |
 
 #### `spec.defaults`
 
@@ -109,14 +111,6 @@ This reference is **generated** from the committed JSON Schema [`schema/project.
 |-------|------|----------|---------|-------------|
 | `manifest` | string | no |  | path to an extra Kubernetes manifest |
 | `patch` | string | no |  | YAML document merged into the resource it targets |
-
-#### `spec.services[]`
-
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `name` | string | yes |  |  |
-| `preset` | string enum `"shared"`, `"small"`, `"ha-small"`, `"ha-medium"`, `"branch"` | no | `"shared"` |  |
-| `type` | string enum `"postgres"`, `"valkey"` | yes |  |  |
 
 #### `spec.source`
 

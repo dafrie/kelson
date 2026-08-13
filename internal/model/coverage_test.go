@@ -11,7 +11,7 @@ import (
 // Field-coverage harness for issue #141.
 //
 // The model used to accept fields nothing downstream consumed: an author wrote
-// `services:` or `policy:`, validation passed, and the renderer emitted
+// a data service or `policy:`, validation passed, and the renderer emitted
 // nothing for it. Nobody noticed because nothing said anything.
 //
 // These tests make that failure impossible to reintroduce. Every field
@@ -39,31 +39,29 @@ var renderedFields = map[string]map[string]string{
 		"$.spec.build.strategy":   "internal/build/detect: strategy selection",
 		"$.spec.build.dockerfile": "internal/build/detect: Dockerfile path",
 
-		"$.spec.image":              "renderer: container image, and the P3 fallback for applications",
+		"$.spec.image":              "renderer: container image, and the P3 fallback for components",
 		"$.spec.env.*":              "renderer: container env (literal form)",
-		"$.spec.env.*.from.service": "renderer: secretKeyRef name — the credentials Secret of the bound service",
+		"$.spec.env.*.from.service": "renderer: secretKeyRef name — the credentials Secret of the bound data component",
 		"$.spec.env.*.from.key":     "renderer: secretKeyRef key, mapped onto the operator's own key names",
 
-		"$.spec.services[].name":   "renderer: CloudNativePG resource name <project>-<environment>-<service>, and the binding target",
-		"$.spec.services[].type":   "renderer: selects the operator; postgres renders, valkey is a structured render error (#98)",
-		"$.spec.services[].preset": "renderer: CNPG topology and sizing (docs/data-services.md)",
-
-		"$.spec.applications[].name":                      "renderer: workload name and selector labels",
-		"$.spec.applications[].image":                     "renderer: container image (P3 override)",
-		"$.spec.applications[].command":                   "renderer: container command",
-		"$.spec.applications[].port":                      "renderer: Service, containerPort, workload kind",
-		"$.spec.applications[].health":                    "renderer: liveness/readiness probes",
-		"$.spec.applications[].schedule":                  "renderer: CronJob schedule and workload kind",
-		"$.spec.applications[].domains":                   "renderer: HTTPRoute hostnames and Certificate",
-		"$.spec.applications[].replicas.min":              "renderer: replica count and HPA floor",
-		"$.spec.applications[].replicas.max":              "renderer: HPA ceiling",
-		"$.spec.applications[].resources.requests.cpu":    "renderer: container resource requests",
-		"$.spec.applications[].resources.requests.memory": "renderer: container resource requests",
-		"$.spec.applications[].resources.limits.cpu":      "renderer: container resource limits",
-		"$.spec.applications[].resources.limits.memory":   "renderer: container resource limits",
-		"$.spec.applications[].env.*":                     "renderer: container env (literal form)",
-		"$.spec.applications[].env.*.from.service":        "renderer: secretKeyRef name — the credentials Secret of the bound service",
-		"$.spec.applications[].env.*.from.key":            "renderer: secretKeyRef key, mapped onto the operator's own key names",
+		"$.spec.components[].name":                      "renderer: workload or data-service resource name, and the binding target",
+		"$.spec.components[].kind":                      "model: selects workload versus data rendering; postgres renders, valkey is a structured render error (#98)",
+		"$.spec.components[].preset":                    "renderer: CNPG topology and sizing (docs/data-services.md)",
+		"$.spec.components[].image":                     "renderer: container image (P3 override)",
+		"$.spec.components[].command":                   "renderer: container command",
+		"$.spec.components[].port":                      "renderer: Service, containerPort, derived kind",
+		"$.spec.components[].health":                    "renderer: liveness/readiness probes",
+		"$.spec.components[].schedule":                  "renderer: CronJob schedule and derived kind",
+		"$.spec.components[].domains":                   "renderer: HTTPRoute hostnames and Certificate",
+		"$.spec.components[].replicas.min":              "renderer: replica count and HPA floor",
+		"$.spec.components[].replicas.max":              "renderer: HPA ceiling",
+		"$.spec.components[].resources.requests.cpu":    "renderer: container resource requests",
+		"$.spec.components[].resources.requests.memory": "renderer: container resource requests",
+		"$.spec.components[].resources.limits.cpu":      "renderer: container resource limits",
+		"$.spec.components[].resources.limits.memory":   "renderer: container resource limits",
+		"$.spec.components[].env.*":                     "renderer: container env (literal form)",
+		"$.spec.components[].env.*.from.service":        "renderer: secretKeyRef name — the credentials Secret of the bound data component",
+		"$.spec.components[].env.*.from.key":            "renderer: secretKeyRef key, mapped onto the operator's own key names",
 
 		"$.spec.defaults.deliveryMode": "resolve P4 → internal/delivery: adapter selection",
 
@@ -78,7 +76,7 @@ var renderedFields = map[string]map[string]string{
 		"$.spec.project":   "resolve: binds the Environment to its Project",
 		"$.spec.namespace": "renderer: target namespace on every resource",
 
-		"$.spec.routing.domainSuffix": "renderer: default hostname for ported applications",
+		"$.spec.routing.domainSuffix": "renderer: default hostname for ported components",
 		"$.spec.routing.gatewayClass": "renderer: HTTPRoute parentRef",
 		"$.spec.routing.tls":          "renderer: Certificate and HTTPRoute TLS",
 
@@ -87,19 +85,17 @@ var renderedFields = map[string]map[string]string{
 		"$.spec.delivery.git.branch": "internal/delivery/git: target branch",
 		"$.spec.delivery.git.path":   "internal/delivery/git: directory for rendered manifests",
 
-		"$.spec.applications[].name":                      "resolve P1/P2: selects the Project application to override",
-		"$.spec.applications[].replicas.min":              "renderer: replica count and HPA floor",
-		"$.spec.applications[].replicas.max":              "renderer: HPA ceiling",
-		"$.spec.applications[].resources.requests.cpu":    "renderer: container resource requests",
-		"$.spec.applications[].resources.requests.memory": "renderer: container resource requests",
-		"$.spec.applications[].resources.limits.cpu":      "renderer: container resource limits",
-		"$.spec.applications[].resources.limits.memory":   "renderer: container resource limits",
-		"$.spec.applications[].env.*":                     "renderer: container env (literal form)",
-		"$.spec.applications[].env.*.from.service":        "renderer: secretKeyRef name — the credentials Secret of the bound service",
-		"$.spec.applications[].env.*.from.key":            "renderer: secretKeyRef key, mapped onto the operator's own key names",
-
-		"$.spec.services[].name":   "resolve P5: selects the Project service whose preset this overrides",
-		"$.spec.services[].preset": "resolve P5 → renderer: the per-environment CNPG topology",
+		"$.spec.components[].name":                      "resolve P1/P2/P5: selects the Project component to override",
+		"$.spec.components[].replicas.min":              "renderer: replica count and HPA floor",
+		"$.spec.components[].replicas.max":              "renderer: HPA ceiling",
+		"$.spec.components[].resources.requests.cpu":    "renderer: container resource requests",
+		"$.spec.components[].resources.requests.memory": "renderer: container resource requests",
+		"$.spec.components[].resources.limits.cpu":      "renderer: container resource limits",
+		"$.spec.components[].resources.limits.memory":   "renderer: container resource limits",
+		"$.spec.components[].env.*":                     "renderer: container env (literal form)",
+		"$.spec.components[].env.*.from.service":        "renderer: secretKeyRef name — the credentials Secret of the bound data component",
+		"$.spec.components[].env.*.from.key":            "renderer: secretKeyRef key, mapped onto the operator's own key names",
+		"$.spec.components[].preset":                    "resolve P5 → renderer: the per-environment CNPG topology",
 
 		"$.spec.overlays[].patch":    "renderer: strategic-merge patch against rendered resources",
 		"$.spec.overlays[].manifest": "renderer: extra manifest emitted as-is",
@@ -193,10 +189,17 @@ func TestGateTableIsReal(t *testing.T) {
 // row in the table with no call site in the validator gates nothing, which is
 // exactly the silence issue #141 is about.
 var gateEnforcement = map[string]string{
+	KindProject + " $.spec.components[].tools": `
+spec:
+  image: i:1
+  components:
+    - {name: web, port: 8080}
+    - {name: triage, kind: agent, tools: [search, deploy]}`,
+
 	KindProject + " $.spec.defaults.policy": `
 spec:
   image: i:1
-  applications:
+  components:
     - {name: web, port: 8080}
   defaults:
     policy: {agents: allow}`,
@@ -204,7 +207,7 @@ spec:
 	KindProject + " $.spec.defaults.secrets": `
 spec:
   image: i:1
-  applications:
+  components:
     - {name: web, port: 8080}
   defaults:
     secrets: {backend: cluster}`,
@@ -414,20 +417,22 @@ func TestSpecFieldPathsWalksTheModel(t *testing.T) {
 	for _, want := range []string{
 		"$.apiVersion",
 		"$.metadata.name",
-		"$.spec.applications[].name",
-		"$.spec.applications[].domains",
-		"$.spec.applications[].replicas.min",
-		"$.spec.applications[].resources.limits.memory",
-		"$.spec.applications[].env.*",
-		"$.spec.applications[].env.*.from.service",
-		"$.spec.services[].preset",
+		"$.spec.components[].name",
+		"$.spec.components[].kind",
+		"$.spec.components[].domains",
+		"$.spec.components[].replicas.min",
+		"$.spec.components[].resources.limits.memory",
+		"$.spec.components[].env.*",
+		"$.spec.components[].env.*.from.service",
+		"$.spec.components[].preset",
+		"$.spec.components[].tools",
 		"$.spec.defaults.policy.deployers",
 	} {
 		if !slices.Contains(got, want) {
 			t.Errorf("specFieldPaths missing %q; got:\n%s", want, strings.Join(got, "\n"))
 		}
 	}
-	if slices.Contains(got, "$.spec.applications[].domains[]") {
+	if slices.Contains(got, "$.spec.components[].domains[]") {
 		t.Errorf("a sequence of scalars must be one leaf, not an indexed one")
 	}
 	if len(got) < 30 {

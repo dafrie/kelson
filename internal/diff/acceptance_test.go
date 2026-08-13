@@ -21,10 +21,10 @@ func resolveOne(t *testing.T, logLevel string) *model.Resolved {
 			Namespace: "checkout-prod",
 			Routing:   model.ResolvedRouting{DomainSuffix: "acme.com", GatewayClass: "envoy", TLS: true},
 		},
-		Applications: []model.ResolvedApplication{
+		Components: []model.ResolvedComponent{
 			{
 				Name:     "web",
-				Kind:     model.WorkloadService,
+				Kind:     model.ComponentService,
 				Image:    "ghcr.io/acme/checkout:1.2.3",
 				Port:     8080,
 				Health:   "/healthz",

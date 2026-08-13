@@ -18,7 +18,7 @@ const (
 	maxProjects     = 25
 	maxEnvironments = 10
 	maxVerdicts     = 12
-	maxApplications = 20
+	maxComponents   = 20
 	maxManifests    = 30
 	maxHistory      = 5
 	maxFindings     = 15

@@ -19,12 +19,11 @@ metadata:
 spec:
   image: ghcr.io/acme/shop:3.0.0
 
-  services:
+  components:
     - name: db
-      type: postgres
+      kind: postgres
       preset: shared
 
-  applications:
     - name: api
       port: 3000
 ---

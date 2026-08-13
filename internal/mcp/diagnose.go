@@ -233,11 +233,11 @@ func (c *clients) reportSpec(ctx context.Context, r *report, in diagnoseApplicat
 		r.addf("  unavailable — %s", err)
 		return
 	}
-	applications, dropped := limit(project.Spec.Applications, maxApplications)
-	for _, app := range applications {
-		r.addf("  %s %s %s", pad(app.Name, 16), pad(applicationImage(project, app), 40), workloadShape(app))
+	components, dropped := limit(project.Spec.Components, maxComponents)
+	for _, c := range components {
+		r.addf("  %s %s %s", pad(c.Name, 16), pad(componentImage(project, c), 40), componentShape(c))
 	}
-	r.truncated(dropped, "applications")
+	r.truncated(dropped, "components")
 }
 
 // decodeProject reads the Project document with the authoring plane's own
@@ -258,10 +258,14 @@ func decodeProject(document []byte) (*model.Project, error) {
 	return nil, fmt.Errorf("the stored spec carries no Project document")
 }
 
-func applicationImage(project *model.Project, app model.Application) string {
+// componentImage is the image a workload component runs. A data component has
+// none: its pods are the operator's, not the spec's (ADR-0005).
+func componentImage(project *model.Project, c model.Component) string {
 	switch {
-	case app.Image != "":
-		return app.Image
+	case c.EffectiveKind().IsData():
+		return "(operator-managed)"
+	case c.Image != "":
+		return c.Image
 	case project.Spec.Image != "":
 		return project.Spec.Image
 	default:
@@ -269,14 +273,23 @@ func applicationImage(project *model.Project, app model.Application) string {
 	}
 }
 
-func workloadShape(app model.Application) string {
-	switch {
-	case app.Port > 0:
-		return fmt.Sprintf("port %d", app.Port)
-	case app.Schedule != "":
-		return "schedule " + app.Schedule
+// componentShape is the one-phrase summary of what a component renders to:
+// the kind, plus the field that distinguishes it from its siblings.
+func componentShape(c model.Component) string {
+	kind := c.EffectiveKind()
+	switch kind {
+	case model.ComponentService:
+		return fmt.Sprintf("port %d", c.Port)
+	case model.ComponentCron:
+		return "schedule " + c.Schedule
+	case model.ComponentPostgres, model.ComponentValkey:
+		preset := c.Preset
+		if preset == "" {
+			preset = model.PresetShared
+		}
+		return fmt.Sprintf("%s preset %s", kind, preset)
 	default:
-		return "worker"
+		return string(kind)
 	}
 }
 

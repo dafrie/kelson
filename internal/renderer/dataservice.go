@@ -138,16 +138,16 @@ func appSecretName(cluster string) string { return cluster + "-app" }
 // worst possible place to reintroduce it.
 func serviceManifests(
 	resolved *model.Resolved,
-	svc *model.ResolvedService,
+	svc *model.ResolvedDataService,
 	profile clusterprofile.ClusterProfile,
 ) ([]Manifest, boundService, error) {
-	if svc.Type != "postgres" {
+	if svc.Kind != model.ComponentPostgres {
 		return nil, boundService{}, Errors{{
 			Code: ErrServiceNotImplemented,
-			Message: "service " + quoted(svc.Name) + " has type " + quoted(svc.Type) +
+			Message: "component " + quoted(svc.Name) + " has kind " + quoted(string(svc.Kind)) +
 				", which kelson does not render yet",
-			Remediation: "only type: postgres renders today; valkey is tracked by " +
-				"milestone M9b · Data services, issue #98. Remove the service, or install the " +
+			Remediation: "only kind: postgres renders today; valkey is tracked by " +
+				"milestone M9b · Data services, issue #98. Remove the component, or install the " +
 				"engine yourself and bind to it as an ordinary workload (ADR-0005)",
 		}}
 	}
@@ -218,7 +218,7 @@ func serviceManifests(
 // a cluster that very likely works. The cost is an apply-time failure from the
 // API server, which is a specific error from the component that actually knows.
 // Unknown is not No (docs/data-services.md, issue #144).
-func supportedPreset(svc *model.ResolvedService, profile clusterprofile.ClusterProfile, name string) error {
+func supportedPreset(svc *model.ResolvedDataService, profile clusterprofile.ClusterProfile, name string) error {
 	verdict := postgres.SupportsPreset(profile, postgres.Preset(svc.Preset))
 	if verdict.Outcome != clusterprofile.OutcomeNo {
 		return nil
@@ -247,7 +247,7 @@ func supportedPreset(svc *model.ResolvedService, profile clusterprofile.ClusterP
 // author supplies — and a pure renderer has no random source (issue #20).
 // managed.roles enters when a spec needs more than the owner role; nothing in
 // the model expresses that yet.
-func dedicatedCluster(resolved *model.Resolved, svc *model.ResolvedService, name, hash string) Manifest {
+func dedicatedCluster(resolved *model.Resolved, svc *model.ResolvedDataService, name, hash string) Manifest {
 	p := dedicatedPresets[svc.Preset]
 	prov := serviceProvenance(resolved, name, hash)
 
@@ -314,13 +314,13 @@ func serviceProvenance(resolved *model.Resolved, name, hash string) provenance {
 // serviceHash is the service's kelson.dev/spec-hash. It covers only what the
 // service's own manifest is built from, so an unrelated spec edit — a new
 // application, a changed image — leaves a database's annotation untouched.
-func serviceHash(resolved *model.Resolved, svc *model.ResolvedService, name string) (string, error) {
+func serviceHash(resolved *model.Resolved, svc *model.ResolvedDataService, name string) (string, error) {
 	return hashJSON(struct {
-		Project     string                `json:"project"`
-		Environment string                `json:"environment"`
-		Namespace   string                `json:"namespace"`
-		Resource    string                `json:"resource"`
-		Service     model.ResolvedService `json:"service"`
+		Project     string                    `json:"project"`
+		Environment string                    `json:"environment"`
+		Namespace   string                    `json:"namespace"`
+		Resource    string                    `json:"resource"`
+		Service     model.ResolvedDataService `json:"service"`
 	}{
 		Project:     resolved.Project,
 		Environment: resolved.Environment.Name,

@@ -54,7 +54,7 @@ func runEngineKelson(t *testing.T, factory func(string, clusterprofile.ClusterPr
 // rendering one Deployment whose imageVersion feeds the image tag.
 func writeSpec(t *testing.T, dir, name, imageVersion string) string {
 	t.Helper()
-	project := "apiVersion: kelson.dev/v1alpha1\nkind: Project\nmetadata:\n  name: hello\n\nspec:\n  image: ghcr.io/acme/hello:" + imageVersion + "\n\n  env:\n    LOG_LEVEL: info\n\n  applications:\n    - name: web\n      port: 8080\n      health: /healthz\n"
+	project := "apiVersion: kelson.dev/v1alpha1\nkind: Project\nmetadata:\n  name: hello\n\nspec:\n  image: ghcr.io/acme/hello:" + imageVersion + "\n\n  env:\n    LOG_LEVEL: info\n\n  components:\n    - name: web\n      port: 8080\n      health: /healthz\n"
 	environment := "apiVersion: kelson.dev/v1alpha1\nkind: Environment\nmetadata:\n  name: development\n\nspec:\n  project: hello\n"
 	path := filepath.Join(dir, name)
 	data := project + "---\n" + environment

@@ -22,7 +22,7 @@ spec:
       branch: main
       path: billing/production
 
-  applications:
+  components:
     - name: api
       replicas: { min: 3, max: 50 }
       resources:

@@ -93,7 +93,7 @@ func TestRenderNamespaceHashIsIndependent(t *testing.T) {
 		t.Fatalf("namespaceHash failed: %v", err)
 	}
 	changed := resolvedFixture()
-	changed.Applications[0].Image = "ghcr.io/acme/checkout:9.9.9"
+	changed.Components[0].Image = "ghcr.io/acme/checkout:9.9.9"
 	after, err := namespaceHash(changed)
 	if err != nil {
 		t.Fatalf("namespaceHash failed: %v", err)

@@ -1,41 +1,47 @@
-// Package model defines the authoring-plane data model: Project, Application
-// and Environment (ADR-0006, issues #24, #25). The types here are what users
-// write and what agents generate; they are the shared contract consumed by
-// the renderer.
+// Package model defines the authoring-plane data model: Project, Component
+// and Environment (ADR-0006 as amended by ADR-0014, issues #24, #25). The
+// types here are what users write and what agents generate; they are the
+// shared contract consumed by the renderer.
 //
 // # Documents
 //
 // Two document kinds exist — Project and Environment — both carrying
-// apiVersion kelson.dev/v1alpha1. A Project names its Applications inline
-// (spec.applications); an Environment binds to a Project by name
-// (spec.project) and carries everything that differs per deployment target:
-// cluster, namespace, routing, delivery mode, policy, secret backend and
-// per-Application overrides.
+// apiVersion kelson.dev/v1alpha1. A Project names its Components inline
+// (spec.components); an Environment binds to a Project by name (spec.project)
+// and carries everything that differs per deployment target: cluster,
+// namespace, routing, delivery mode, policy, secret backend and per-Component
+// overrides.
 //
 // # Design rules
 //
 //   - Thin on purpose: model what genuinely recurs, hand the rest to
 //     overlays (always available, never required).
-//   - One Application renders to one workload. The workload kind is derived:
-//     port set → web service, schedule set → CronJob, neither → worker.
-//     schedule and port are mutually exclusive.
-//   - An Application belongs to exactly one Project, identified by the pair
-//     (project, application).
+//   - One list of Components, one closed set of kinds: service, worker, cron,
+//     agent, postgres, valkey (ADR-0014). Workload kinds are derived from the
+//     shape — port set → web service, schedule set → CronJob, neither →
+//     worker — and an explicit kind: is checked against the enum and against
+//     the shape rather than overriding it silently. Data kinds are always
+//     explicit.
+//   - No field is silently inert. A field that belongs to the other half of
+//     the kind set — preset on a worker, port on a database, tools on
+//     anything but an agent — is a validation error (issue #141).
+//   - A Component belongs to exactly one Project, identified by the pair
+//     (project, component).
 //   - Secret values are never literals: environment values are plain strings
 //     or {from: {service, key}} bindings (ADR-0009). Literal-looking secrets
 //     are validation errors (secret/literal).
-//   - The Project document is the versioned unit; Applications deploy
+//   - The Project document is the versioned unit; Components deploy
 //     independently from any version.
 //
 // # Precedence (docs/model.md rules P1–P6)
 //
 // Environment variables merge key-by-key, innermost scope first:
-// Project env < Application env < Environment per-Application override env.
-// Per-Application replicas/resources, Environment service preset overrides and
-// the Environment-scoped concerns (delivery, policy, secrets) are taken whole
-// from the innermost scope that sets them; delivery/policy/secrets fall back
-// to Project defaults, then to built-in defaults (direct, propose-only,
-// cluster). Overlays concatenate Project-first.
+// Project env < Component env < Environment per-Component override env.
+// Per-Component replicas/resources, the Environment preset override on a data
+// component and the Environment-scoped concerns (delivery, policy, secrets)
+// are taken whole from the innermost scope that sets them; delivery/policy/
+// secrets fall back to Project defaults, then to built-in defaults (direct,
+// propose-only, cluster). Overlays concatenate Project-first.
 //
 // # Constraints
 //

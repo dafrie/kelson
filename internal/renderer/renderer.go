@@ -73,8 +73,8 @@ func Render(resolved *model.Resolved, profile clusterprofile.ClusterProfile, res
 	// by failing to find a Secret. Nothing waits for readiness — ordering is
 	// the only sequencing a rendered set can express (issue #89).
 	services := map[string]boundService{}
-	for i := range resolved.Services {
-		svc := &resolved.Services[i]
+	for i := range resolved.DataServices {
+		svc := &resolved.DataServices[i]
 		ms, bound, err := serviceManifests(resolved, svc, profile)
 		if err != nil {
 			return nil, err
@@ -83,8 +83,8 @@ func Render(resolved *model.Resolved, profile clusterprofile.ClusterProfile, res
 		services[svc.Name] = bound
 	}
 
-	for i := range resolved.Applications {
-		ms, err := appManifests(resolved, &resolved.Applications[i], profile, services)
+	for i := range resolved.Components {
+		ms, err := appManifests(resolved, &resolved.Components[i], profile, services)
 		if err != nil {
 			return nil, err
 		}
@@ -116,8 +116,8 @@ func Render(resolved *model.Resolved, profile clusterprofile.ClusterProfile, res
 // reported, not just the first — one run should list all the work.
 func unresolvedImages(resolved *model.Resolved) Errors {
 	var errs Errors
-	for i := range resolved.Applications {
-		app := &resolved.Applications[i]
+	for i := range resolved.Components {
+		app := &resolved.Components[i]
 		var message string
 		switch app.Image {
 		case model.ImageUnresolved:
@@ -224,11 +224,11 @@ func selectorLabels(prov provenance) *yaml.Node {
 // inputs hash identically. Per-application scoping means an unchanged
 // application produces an unchanged artifact across sibling edits
 // (docs/model.md, "What is versioned").
-func specHash(resolved *model.Resolved, app *model.ResolvedApplication) (string, error) {
+func specHash(resolved *model.Resolved, app *model.ResolvedComponent) (string, error) {
 	payload := struct {
-		Project     string                    `json:"project"`
-		Environment hashEnv                   `json:"environment"`
-		Application model.ResolvedApplication `json:"application"`
+		Project     string                  `json:"project"`
+		Environment hashEnv                 `json:"environment"`
+		Application model.ResolvedComponent `json:"application"`
 	}{
 		Project: resolved.Project,
 		Environment: hashEnv{

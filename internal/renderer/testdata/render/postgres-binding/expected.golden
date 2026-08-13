@@ -23,7 +23,7 @@ metadata:
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:6d4d92ad4955efd52c3599753af3afab268a247dcf016c74e91023a5dc11961f
+    kelson.dev/spec-hash: sha256:994be2ebf7ae97bed94df134ba8e490c3cd3db9519f9087a06a81bb748be53ba
 spec:
   instances: 1
   storage:

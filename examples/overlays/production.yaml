@@ -20,6 +20,6 @@ spec:
 
   # `policy: {agents: propose-only}` returns with M7 (#141).
 
-  applications:
+  components:
     - name: transcoder
       replicas: { min: 2, max: 8 }

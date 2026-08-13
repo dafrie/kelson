@@ -38,11 +38,11 @@ mechanism chosen from the profile and a TTL; none of that exists, and rendering 
 empty `small` cluster for it would be the silent-success failure
 [#141](https://github.com/dafrie/kelson/issues/141) exists to prevent.
 
-`type: valkey` is the same story against [#98](https://github.com/dafrie/kelson/issues/98).
+`kind: valkey` is the same story against [#98](https://github.com/dafrie/kelson/issues/98).
 
 ### The dedicated presets
 
-One `postgresql.cnpg.io/v1` `Cluster` per service, named `<project>-<environment>-<service>`
+One `postgresql.cnpg.io/v1` `Cluster` per data component, named `<project>-<environment>-<component>`
 in the environment's namespace.
 
 ```yaml
@@ -71,7 +71,7 @@ the application database and its owning role *and generates their credentials*, 
 as a `basic-auth` Secret named `<cluster>-app`. `.spec.managed.roles` does not: a managed role
 with a password requires a `passwordSecret` the author supplies, and the renderer cannot invent
 a password — it is a pure function with no random source ([ADR-0001](adr/0001-hybrid-state-model.md),
-[#20](https://github.com/dafrie/kelson/issues/20)). So the owner role kelson binds applications
+[#20](https://github.com/dafrie/kelson/issues/20)). So the owner role kelson binds workloads
 to is the `initdb` owner, and `managed.roles` enters only when a spec needs *more* than the
 owner role — a read-only reporting user, a migration role with different privileges. Nothing in
 the spec model expresses that yet, so nothing renders it yet; the capability is still required
@@ -138,7 +138,7 @@ spec:
   the only pure input that identifies the tier, so it is what the convention is built from; two
   projects' `development` environments share one cluster, which is the point. #93 owns making
   both real and may make them configurable.
-- **`metadata.name`, `spec.name` and `spec.owner` are all `<project>-<environment>-<service>`.**
+- **`metadata.name`, `spec.name` and `spec.owner` are all `<project>-<environment>-<component>`.**
   In a cluster shared across projects, a database called `db` collides on the first collision;
   the qualified name is what makes the shared topology safe. The same name is used for the
   dedicated presets' `Cluster` so there is one naming rule rather than two.
@@ -231,7 +231,7 @@ spec edit. These are not equally cheap.
 | `ha-medium` → `ha-small` | **safe, lossy of headroom** | Requests shrink; **storage does not** — `spec.storage.size` cannot be decreased, so the PVCs stay at the larger size and the cost stays with them. |
 | `ha-*` → `small` | **safe, lossy of replicas** | `instances: 3 → 1`; the standbys and their PVCs are removed and synchronous replication stops. The data survives on the primary; the *availability* does not, and neither does the read capacity. |
 | `shared` → any dedicated | **migration, not in place** | Different cluster, different storage. The database has to be dumped and restored, or replicated and cut over. [#105](https://github.com/dafrie/kelson/issues/105). |
-| any dedicated → `shared` | **migration, not in place** | Same, in reverse, plus a name change: the database becomes `<project>-<environment>-<service>` inside the shared cluster instead of `app` inside its own. |
+| any dedicated → `shared` | **migration, not in place** | Same, in reverse, plus a name change: the database becomes `<project>-<environment>-<component>` inside the shared cluster instead of `app` inside its own. |
 | anything → `branch` | **not a transition** | A branch is a *new* service bootstrapped from a source, with a TTL and a lifecycle of its own (ADR-0007). Rewriting an existing service's preset to `branch` is not a topology change, it is a different object. [#99](https://github.com/dafrie/kelson/issues/99). |
 
 **What is enforced today: nothing beyond validation and the capability check.** The renderer is
@@ -301,7 +301,7 @@ them. Nothing rendered is hidden; nothing rendered is claimed to be verified eit
 
 ### Binding keys
 
-An application binds to a service by key: `env: {DATABASE_URL: {from: {service: db, key: uri}}}`.
+A workload component binds to a data component by key: `env: {DATABASE_URL: {from: {service: db, key: uri}}}`.
 Validation checks the key against `model.ServiceKeys`; the renderer turns it into a
 `secretKeyRef` against the Secret CloudNativePG generates, `<cluster>-app` (type `basic-auth`).
 
@@ -331,22 +331,24 @@ one kelson maps.
 
 ## What renders, in what order
 
-For each service, in spec order, **after the Namespace and before any application** — a
-workload that binds to a service should not be applied before the resource that produces its
-credentials:
+For each data component, in spec order, **after the Namespace and before any workload** — a
+workload that binds to a data component should not be applied before the resource that produces
+its credentials. The one `spec.components` list of [ADR-0014](adr/0014-components.md) does not
+change this: the data components render first whatever position the author gave them in the list,
+because ordering is the only sequencing a rendered set can express.
 
 ```
 Namespace
   postgresql.cnpg.io/v1 Cluster    (small | ha-small | ha-medium)
   postgresql.cnpg.io/v1 Database   (shared)
-  ServiceAccount / Service / Deployment / … per application
+  ServiceAccount / Service / Deployment / … per workload component
 ```
 
 Ordering is advisory rather than a guarantee — nothing waits for the cluster to be ready, and a
 workload whose database is still bootstrapping will crash-loop until it is. That is the same
 deal every other resource in the set gets, and it is visible in `kelson status`.
 
-Names are `<project>-<environment>-<service>`, capped at 53 characters. CloudNativePG derives
+Names are `<project>-<environment>-<component>`, capped at 53 characters. CloudNativePG derives
 its own object names from the cluster's — `<cluster>-app`, `<cluster>-superuser`,
 `<cluster>-rw`, `<cluster>-1` — and the longest suffix (`-superuser`, ten characters) has to
 fit inside the 63-character DNS label limit. A longer name is a structured render error rather
@@ -354,11 +356,13 @@ than a resource the API server rejects with an arithmetic complaint.
 
 Provenance is identical to every other rendered resource: `app.kubernetes.io/managed-by`,
 `kelson.dev/project`, `kelson.dev/environment`, `kelson.dev/renderer-version` and a
-`kelson.dev/spec-hash` computed over the service's own resolved input, so an unrelated edit
+`kelson.dev/spec-hash` computed over the data component's own resolved input, so an unrelated edit
 elsewhere in the spec does not churn the database's annotation.
 
-Services carry no `kelson.dev/application` label. They are not owned by one application — that
-is what makes them bindable by several.
+Data components carry no `kelson.dev/application` label and render no ServiceAccount of their own.
+They are not owned by one workload — that is what makes them bindable by several — and the identity
+their pods run under is CloudNativePG's to create, not kelson's
+([ADR-0005](adr/0005-delegate-to-operators.md), [ADR-0014](adr/0014-components.md) decision D).
 
 ---
 
@@ -372,7 +376,7 @@ is what makes them bindable by several.
 | bindings against `shared` | **structured error**, [#93](https://github.com/dafrie/kelson/issues/93) |
 | the shared cluster itself | not rendered, [#93](https://github.com/dafrie/kelson/issues/93) |
 | `preset: branch` | **structured error**, [#99](https://github.com/dafrie/kelson/issues/99) |
-| `type: valkey` | **structured error**, [#98](https://github.com/dafrie/kelson/issues/98) |
+| `kind: valkey` | **structured error**, [#98](https://github.com/dafrie/kelson/issues/98) |
 | backups, WAL archiving, PITR | not rendered, [#94](https://github.com/dafrie/kelson/issues/94) |
 | declarative schemas and extensions | not authorable; the capability is judged, nothing consumes it |
 | preset transitions beyond rendering | not enforced, [#105](https://github.com/dafrie/kelson/issues/105) |

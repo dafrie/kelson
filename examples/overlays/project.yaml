@@ -11,11 +11,11 @@ spec:
   build:
     strategy: dockerfile
 
-  # A valkey `services:` entry and the `REDIS_URL` binding onto it belong here.
-  # Postgres services render since #89; valkey does not, and kelson refuses it
+  # A `kind: valkey` component and the `REDIS_URL` binding onto it belong here.
+  # Postgres components render since #89; valkey does not, and kelson refuses it
   # loudly rather than rendering nothing (#98).
 
-  applications:
+  components:
     - name: transcoder
       port: 8443
       domains: [stream.acme.com]

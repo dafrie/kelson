@@ -1,10 +1,12 @@
 # Fixture: the dedicated presets (#89). One project, one worker, and two
-# postgres services whose presets differ — `small` as authored, and `ha-medium`
-# reached through the Environment's P5 preset override of a `small` service.
+# postgres components whose presets differ — `small` as authored, and
+# `ha-medium` reached through the Environment's P5 preset override of a `small`
+# component.
 #
 # It pins the sizing table of docs/data-services.md into rendered YAML, and the
-# ordering rule: every service CR sorts after the Namespace and before the
-# workloads that would bind to it.
+# ordering rule: every data-service CR sorts after the Namespace and before the
+# workloads that would bind to it, whatever order the one components list puts
+# them in (ADR-0014).
 #
 # No bindings here. Binding rendering is postgres-binding's fixture, so a change
 # to the Cluster shape and a change to the secretKeyRef shape fail separately.
@@ -15,15 +17,14 @@ metadata:
 spec:
   image: ghcr.io/acme/checkout:1.4.2
 
-  services:
+  components:
     - name: db
-      type: postgres
+      kind: postgres
       preset: ha-small
     - name: reporting
-      type: postgres
+      kind: postgres
       preset: small
 
-  applications:
     - name: worker
       command: ["bundle", "exec", "sidekiq"]
 ---
@@ -37,6 +38,6 @@ spec:
 
   # P5: the reporting database is bigger in production than the Project asks
   # for. One spec, different topology per environment (ADR-0007).
-  services:
+  components:
     - name: reporting
       preset: ha-medium

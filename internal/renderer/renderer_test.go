@@ -23,10 +23,10 @@ func resolvedFixture() *model.Resolved {
 				TLS:          true,
 			},
 		},
-		Applications: []model.ResolvedApplication{
+		Components: []model.ResolvedComponent{
 			{
 				Name:     "web",
-				Kind:     model.WorkloadService,
+				Kind:     model.ComponentService,
 				Image:    "ghcr.io/acme/checkout:1.2.3",
 				Port:     8080,
 				Health:   "/healthz",
@@ -38,14 +38,14 @@ func resolvedFixture() *model.Resolved {
 			},
 			{
 				Name:     "worker",
-				Kind:     model.WorkloadWorker,
+				Kind:     model.ComponentWorker,
 				Image:    "ghcr.io/acme/checkout:1.2.3",
 				Command:  []string{"bundle", "exec", "sidekiq"},
 				Replicas: model.Replicas{Min: 1},
 			},
 			{
 				Name:     "nightly-report",
-				Kind:     model.WorkloadCron,
+				Kind:     model.ComponentCron,
 				Image:    "ghcr.io/acme/checkout:1.2.3",
 				Schedule: "0 3 * * *",
 				Replicas: model.Replicas{Min: 1},
@@ -79,8 +79,8 @@ func cnpgProfile() clusterprofile.ClusterProfile {
 // preset and the web application bound to it.
 func boundFixture(preset model.ServicePreset) *model.Resolved {
 	r := resolvedFixture()
-	r.Services = []model.ResolvedService{{Name: "db", Type: "postgres", Preset: preset}}
-	r.Applications[0].Env["DATABASE_URL"] = model.EnvValue{
+	r.DataServices = []model.ResolvedDataService{{Name: "db", Kind: model.ComponentPostgres, Preset: preset}}
+	r.Components[0].Env["DATABASE_URL"] = model.EnvValue{
 		From: &model.ServiceBinding{Service: "db", Key: "uri"},
 	}
 	return r
@@ -180,7 +180,7 @@ func TestRenderEnvSecretKeyRef(t *testing.T) {
 // TestRenderEnvSorted: env emission is key-sorted, independent of map order.
 func TestRenderEnvSorted(t *testing.T) {
 	resolved := resolvedFixture()
-	resolved.Applications[0].Env = map[string]model.EnvValue{
+	resolved.Components[0].Env = map[string]model.EnvValue{
 		"ZULU":  {Literal: "1"},
 		"ALPHA": {Literal: "2"},
 		"MIKE":  {Literal: "3"},
@@ -262,7 +262,7 @@ func TestRenderNoDomainsNoRoute(t *testing.T) {
 	for _, profile := range []clusterprofile.ClusterProfile{gatewayProfile(), {}} {
 		resolved := resolvedFixture()
 		resolved.Environment.Routing.DomainSuffix = ""
-		resolved.Applications[0].Domains = nil
+		resolved.Components[0].Domains = nil
 		ms, err := Render(resolved, profile, nil)
 		if err != nil {
 			t.Fatalf("Render failed: %v", err)
@@ -352,11 +352,11 @@ func TestRenderGatewayAPIPresentUnaffected(t *testing.T) {
 // only that application's hash.
 func TestSpecHashStable(t *testing.T) {
 	resolved := resolvedFixture()
-	h1, err := specHash(resolved, &resolved.Applications[0])
+	h1, err := specHash(resolved, &resolved.Components[0])
 	if err != nil {
 		t.Fatalf("specHash failed: %v", err)
 	}
-	h2, err := specHash(resolved, &resolved.Applications[0])
+	h2, err := specHash(resolved, &resolved.Components[0])
 	if err != nil {
 		t.Fatalf("specHash failed: %v", err)
 	}
@@ -367,12 +367,12 @@ func TestSpecHashStable(t *testing.T) {
 		t.Fatalf("specHash missing sha256: prefix: %s", h1)
 	}
 
-	resolved.Applications[1].Env = map[string]model.EnvValue{"X": {Literal: "y"}}
-	h3, err := specHash(resolved, &resolved.Applications[1])
+	resolved.Components[1].Env = map[string]model.EnvValue{"X": {Literal: "y"}}
+	h3, err := specHash(resolved, &resolved.Components[1])
 	if err != nil {
 		t.Fatalf("specHash failed: %v", err)
 	}
-	h4, err := specHash(resolvedFixture(), &resolvedFixture().Applications[1])
+	h4, err := specHash(resolvedFixture(), &resolvedFixture().Components[1])
 	if err != nil {
 		t.Fatalf("specHash failed: %v", err)
 	}

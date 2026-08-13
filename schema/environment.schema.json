@@ -138,7 +138,7 @@
             "backend"
           ]
         },
-        "applications": {
+        "components": {
           "items": {
             "properties": {
               "name": {
@@ -207,7 +207,7 @@
                           "properties": {
                             "service": {
                               "type": "string",
-                              "description": "name of a service declared in the Project"
+                              "description": "name of a data component (kind postgres or valkey) declared in the Project"
                             },
                             "key": {
                               "type": "string",
@@ -231,21 +231,6 @@
                   ]
                 },
                 "type": "object"
-              }
-            },
-            "additionalProperties": false,
-            "type": "object",
-            "required": [
-              "name"
-            ]
-          },
-          "type": "array"
-        },
-        "services": {
-          "items": {
-            "properties": {
-              "name": {
-                "type": "string"
               },
               "preset": {
                 "type": "string",
@@ -255,14 +240,14 @@
                   "ha-small",
                   "ha-medium",
                   "branch"
-                ]
+                ],
+                "description": "data components only"
               }
             },
             "additionalProperties": false,
             "type": "object",
             "required": [
-              "name",
-              "preset"
+              "name"
             ]
           },
           "type": "array"

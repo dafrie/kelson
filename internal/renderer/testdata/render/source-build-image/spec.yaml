@@ -16,7 +16,7 @@ spec:
   image: ghcr.io/acme/checkout@sha256:9f6ad2c1b4d5e8073a1c2f4b6d8e0a1c3e5f7091b2d4c6e8a0f2b4d6c8e0a2f4
   env:
     LOG_LEVEL: info
-  applications:
+  components:
     - name: web
       port: 8080
       health: /healthz

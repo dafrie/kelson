@@ -20,8 +20,8 @@ import (
 // legacy installed base to serve, and SIG Network retired ingress-nginx in
 // March 2026. Profile.IngressClasses stays detected but is never consumed
 // here — it is advisory data for the migration nudge (#112).
-func routingResources(resolved *model.Resolved, app *model.ResolvedApplication, profile clusterprofile.ClusterProfile, prov provenance) ([]Manifest, error) {
-	if app.Kind != model.WorkloadService || len(app.Domains) == 0 {
+func routingResources(resolved *model.Resolved, app *model.ResolvedComponent, profile clusterprofile.ClusterProfile, prov provenance) ([]Manifest, error) {
+	if app.Kind != model.ComponentService || len(app.Domains) == 0 {
 		// No domains means nothing to route: a cluster with no Gateway API is
 		// only a problem for a spec that actually asks to be reachable.
 		return nil, nil
@@ -42,7 +42,7 @@ func routingResources(resolved *model.Resolved, app *model.ResolvedApplication, 
 // old silent Ingress fallback. It names the application whose domains cannot
 // be served and points at installing a Gateway implementation; Envoy Gateway
 // is kelson's default candidate (#60).
-func gatewayMissingError(app *model.ResolvedApplication, prov provenance, profile clusterprofile.ClusterProfile) Error {
+func gatewayMissingError(app *model.ResolvedComponent, prov provenance, profile clusterprofile.ClusterProfile) Error {
 	msg := "declares domains (" + strings.Join(app.Domains, ", ") +
 		") but the cluster profile reports no Gateway API; kelson renders Gateway API only and will not fall back to Ingress"
 	remediation := "install a Gateway API implementation (Envoy Gateway is the default candidate) and re-detect the cluster profile, or remove the domains from this application"
@@ -90,7 +90,7 @@ func hostnamesNode(domains []string) *yaml.Node {
 	return seqNode(items...)
 }
 
-func httpRoute(app *model.ResolvedApplication, routing model.ResolvedRouting, profile clusterprofile.ClusterProfile, prov provenance) Manifest {
+func httpRoute(app *model.ResolvedComponent, routing model.ResolvedRouting, profile clusterprofile.ClusterProfile, prov provenance) Manifest {
 	specKV := []any{}
 	if parent := gatewayParentName(routing, profile); parent != "" {
 		specKV = append(specKV, "parentRefs", seqNode(mapNode("name", parent)))
@@ -110,11 +110,11 @@ func httpRoute(app *model.ResolvedApplication, routing model.ResolvedRouting, pr
 	return baseManifest("gateway.networking.k8s.io/v1", "HTTPRoute", prov, mapNode(specKV...))
 }
 
-func tlsSecretName(app *model.ResolvedApplication) string {
+func tlsSecretName(app *model.ResolvedComponent) string {
 	return app.Name + "-tls"
 }
 
-func certificate(app *model.ResolvedApplication, profile clusterprofile.ClusterProfile, prov provenance) Manifest {
+func certificate(app *model.ResolvedComponent, profile clusterprofile.ClusterProfile, prov provenance) Manifest {
 	certProv := prov
 	// The Certificate shares its name with the TLS secret it provisions.
 	certProv.resourceName = tlsSecretName(app)
@@ -129,7 +129,7 @@ func certificate(app *model.ResolvedApplication, profile clusterprofile.ClusterP
 	return baseManifest("cert-manager.io/v1", "Certificate", certProv, spec)
 }
 
-func serviceMonitor(app *model.ResolvedApplication, prov provenance) Manifest {
+func serviceMonitor(app *model.ResolvedComponent, prov provenance) Manifest {
 	spec := mapNode(
 		"selector", mapNode("matchLabels", selectorLabels(prov)),
 		"endpoints", seqNode(mapNode(
