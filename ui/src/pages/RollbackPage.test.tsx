@@ -92,6 +92,16 @@ function renderRollback() {
   );
 }
 
+/** The screen as the history timeline links to it: a target in the URL. */
+function renderRollbackTo(revision: string) {
+  return renderAt(
+    transport,
+    `/apps/checkout/production/rollback?to=${revision}`,
+    "/apps/:project/:env/rollback",
+    <RollbackPage />,
+  );
+}
+
 describe("RollbackPage", () => {
   it("offers the recorded revisions newest first, with the current one marked", async () => {
     renderRollback();
@@ -139,5 +149,50 @@ describe("RollbackPage", () => {
     expect(await screen.findByText("rev-8")).toBeTruthy();
     expect(await screen.findByText("rev-10")).toBeTruthy();
     expect(await screen.findByText("Rollback settled")).toBeTruthy();
+  });
+
+  it("preselects and previews a revision named in the URL, but never applies it (#67)", async () => {
+    renderRollbackTo("rev-8");
+
+    // The history screen's link lands on the preview, not on a fresh picker.
+    expect(
+      await screen.findByText(
+        "the volume was expanded to 50Gi; a rollback cannot shrink it back to 20Gi",
+      ),
+    ).toBeTruthy();
+    const radios = (await screen.findAllByRole("radio")) as HTMLInputElement[];
+    expect(radios[1]?.checked).toBe(true);
+
+    // Nothing was written: the apply is still the button it always was. A link
+    // that deployed on arrival is a link someone can be handed.
+    expect(screen.queryByText("Rollback settled")).toBeNull();
+    expect(
+      screen.getByRole("button", {
+        name: "Restore rev-8 to checkout/production",
+      }),
+    ).toBeTruthy();
+  });
+
+  it("ignores a URL target the history does not offer, and says why", async () => {
+    renderRollbackTo("rev-9");
+
+    // rev-9 is what is deployed now, so the picker disables it; preselecting it
+    // would preview a rollback to where the environment already is.
+    expect(
+      await screen.findByText(/rev-9 is what is deployed now/),
+    ).toBeTruthy();
+    const radios = (await screen.findAllByRole("radio")) as HTMLInputElement[];
+    expect(radios.some((r) => r.checked)).toBe(false);
+    expect(screen.queryByText("cannot revert")).toBeNull();
+  });
+
+  it("says when a URL target is not among the recorded revisions", async () => {
+    renderRollbackTo("rev-404");
+
+    expect(
+      await screen.findByText(/rev-404 is not among the recorded revisions/),
+    ).toBeTruthy();
+    const radios = (await screen.findAllByRole("radio")) as HTMLInputElement[];
+    expect(radios.some((r) => r.checked)).toBe(false);
   });
 });

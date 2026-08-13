@@ -85,6 +85,14 @@ describe("AppDetailPage", () => {
     ).toBe("/apps/checkout/edit");
   });
 
+  it("links each environment to its release history (#67)", async () => {
+    renderDetail();
+
+    expect(
+      (await screen.findByRole("link", { name: "History" })).getAttribute("href"),
+    ).toBe("/apps/checkout/production/history");
+  });
+
   it("disables rollback with the server's own reason when there is no delivery plane", async () => {
     renderDetail();
 

@@ -118,6 +118,34 @@ kubectl create secret docker-registry ghcr-push \
 Omitting `--push-secret` means an unauthenticated push. That is correct for a
 cluster-internal registry and fails at push time for anything else.
 
+## Build-time secrets
+
+A credential the *build itself* needs — a private npm token, a corporate CA —
+goes through a **BuildKit secret mount**, never a build argument and never an
+image layer ([ADR-0009](adr/0009-secrets.md), issue #117):
+
+```dockerfile
+RUN --mount=type=secret,id=npm-token \
+    npm config set //registry.npmjs.org/:_authToken="$(cat /run/secrets/npm-token)" && npm ci
+```
+
+The executor projects one key of an existing Kubernetes Secret per mount
+(`buildkit.Config.Secrets`), read-only and mode `0400`, and points `buildctl` at
+it with `--secret id=…,src=…`. Only the Secret's *name* enters the rendered Job:
+kelson never holds the value, so it cannot leak it. The mount exists for the
+duration of one `RUN` on a tmpfs and is not committed to a layer.
+
+A **build argument** whose name looks like a credential (`NPM_TOKEN`,
+`DB_PASSWORD`, `…_API_KEY`) is refused rather than redacted. A build arg is
+recorded in the image's own history and in the Job's command line, so by the
+time output could be cleaned up the value is already in the pushed image,
+readable by anyone who can pull it. This is the documented gap in Coolify that
+ADR-0009 names.
+
+There is no spec field or CLI flag for build secrets yet — the reference model
+is [#79](https://github.com/dafrie/kelson/issues/79). What exists today is the
+executor-level mount, so the safe path is already the only path when it lands.
+
 ## Strategy selection
 
 Precedence is [ADR-0010](adr/0010-build-strategy.md)'s, unchanged:

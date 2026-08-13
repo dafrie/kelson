@@ -80,6 +80,16 @@ function renderDiff() {
   );
 }
 
+/** The screen as the history timeline links to it: a revision in the URL. */
+function renderDiffFrom(revision: string) {
+  return renderAt(
+    transport,
+    `/apps/checkout/production/diff?from=${revision}`,
+    "/apps/:project/:env/diff",
+    <DiffPage />,
+  );
+}
+
 describe("DiffPage", () => {
   it("opens against the live cluster and reports its failure as one", async () => {
     renderDiff();
@@ -121,5 +131,23 @@ describe("DiffPage", () => {
     await waitFor(() =>
       expect(screen.getByText(/checkout:v2/)).toBeTruthy(),
     );
+  });
+
+  it("opens on a revision named in the URL, which is how history links here (#67)", async () => {
+    renderDiffFrom("rev-00000001");
+
+    // `?from=` only means something in the rendered mode, so it selects the tab
+    // as well as the revision — and the diff is requested without a click,
+    // because the link already made the choice this screen would ask for.
+    expect(
+      screen
+        .getByRole("button", { name: "Against deployed revision" })
+        .getAttribute("aria-current"),
+    ).toBe("true");
+    await waitFor(() => expect(screen.getByText(/checkout:v1/)).toBeTruthy());
+    expect(screen.getByText(/checkout:v3/)).toBeTruthy();
+
+    const picked = await screen.findByDisplayValue("rev-00000001");
+    expect((picked as HTMLInputElement).checked).toBe(true);
   });
 });

@@ -1,5 +1,5 @@
-import { useCallback, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 
 import { useAsync, useClients } from "../api/data";
 import { useRun } from "../api/stream";
@@ -31,9 +31,13 @@ import { decodeDiff, summaryLine, type Diff } from "../diff/parse";
  * and never folded in with the rest, because a reader who skims past one is
  * exactly the person the preview exists for.
  *
- * The revision list comes from the History RPC. That is not a history screen
- * (#67 defers that): it is the picker for this action, showing which revisions
- * can be restored and which one is already live.
+ * The revision list comes from the History RPC. It is the picker for this
+ * action — which revisions can be restored, and which one is already live —
+ * while the history screen (#67) is the screen about the past; it links here
+ * with `?to=<revision>` and this screen preselects it and previews it. What it
+ * cannot do is arrive with the rollback already applied: the parameter selects
+ * a target and runs the dry run, and the apply stays behind the button, because
+ * a link that deploys is a link someone can be handed.
  */
 
 interface PreviewState {
@@ -49,6 +53,8 @@ interface Applied {
 
 export function RollbackPage() {
   const { project = "", env = "" } = useParams();
+  const [params] = useSearchParams();
+  const requested = params.get("to") ?? "";
   const clients = useClients();
   const history = useAsync(
     (signal) =>
@@ -132,10 +138,36 @@ export function RollbackPage() {
     [applyRun, clients, project, env],
   );
 
-  const select = (revision: string) => {
-    setTarget(revision);
-    runPreview(revision);
-  };
+  const select = useCallback(
+    (revision: string) => {
+      setTarget(revision);
+      runPreview(revision);
+    },
+    [runPreview],
+  );
+
+  // A `?to=` that the history screen sent, applied once the revisions are
+  // known. It is honoured only for a revision this environment actually
+  // recorded and that the picker would let a click reach — the newest one is
+  // disabled here, since restoring what is already live is not a rollback — so
+  // a stale or hand-edited link cannot preview something the list does not
+  // offer. The ref makes it a one-shot: after that the picker owns the target,
+  // and re-running the preview under the reader would be the screen arguing
+  // with them.
+  const honoured = useRef(false);
+  const requestable =
+    requested !== "" && entries.slice(1).some((e) => e.revision === requested);
+  useEffect(() => {
+    if (honoured.current || !requestable) return;
+    honoured.current = true;
+    select(requested);
+  }, [requestable, requested, select]);
+
+  const unknownRequest =
+    requested !== "" &&
+    !requestable &&
+    history.data !== undefined &&
+    entries.length > 0;
 
   return (
     <>
@@ -165,6 +197,13 @@ export function RollbackPage() {
               no recorded history — nothing has been deployed for this
               environment, so there is nothing to roll back to
             </div>
+          ) : null}
+          {unknownRequest ? (
+            <p className="k-mono k-rollback__requested">
+              {entries[0]?.revision === requested
+                ? `${requested} is what is deployed now — restoring it is not a rollback, so nothing is preselected`
+                : `${requested} is not among the recorded revisions for this environment — pick a target below`}
+            </p>
           ) : null}
           {entries.length > 0 ? (
             <ul className="k-revisions">

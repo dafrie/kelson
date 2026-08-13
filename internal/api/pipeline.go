@@ -13,6 +13,7 @@ import (
 	"github.com/dafrie/kelson/internal/clusterprofile"
 	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/model"
+	"github.com/dafrie/kelson/internal/redact"
 	"github.com/dafrie/kelson/internal/renderer"
 )
 
@@ -277,13 +278,29 @@ func setSpecHash(manifests []delivery.Manifest) string {
 	return "sha256:" + hex.EncodeToString(h.Sum(nil))
 }
 
-// wireManifests projects a render onto the wire.
+// wireManifests projects a render onto the wire, with Secret values redacted
+// (issue #117).
+//
+// Redacting here and not in [manifestSet] is the display/delivery split the
+// internal/redact package doc states. These two are the only wire surfaces that
+// carry manifest bytes — RenderResponse.manifests and the dry-run RENDER
+// Proposed event — and both exist to be *read*: a caller that wants a change
+// applied calls Deploy, which renders again and hands manifestSet's real bytes
+// to the adapter without passing through here. A caller that wants appliable
+// bytes on disk runs `kelson render`, which never touches this package.
+//
+// The alternative — shipping real Secret values to every client that previews a
+// spec — is the leak this issue is about, and the cost of the choice is bounded
+// and visible: a redacted document says so where the value was.
 func wireManifests(manifests []renderer.Manifest) ([]*kelsonv1alpha1.Manifest, error) {
 	out := make([]*kelsonv1alpha1.Manifest, 0, len(manifests))
 	for _, m := range manifests {
 		body, err := m.YAML()
 		if err != nil {
 			return nil, fmt.Errorf("api: encoding manifest %s/%s: %w", m.Kind, m.Name, err)
+		}
+		if body, err = redact.Document(body); err != nil {
+			return nil, fmt.Errorf("api: redacting manifest %s/%s: %w", m.Kind, m.Name, err)
 		}
 		out = append(out, &kelsonv1alpha1.Manifest{
 			ApiVersion: m.APIVersion,

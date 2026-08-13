@@ -44,6 +44,19 @@ var (
 	envVarNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 )
 
+// SecretShapedName reports whether a variable name is one people put
+// credentials in. It is exported so the build plane can refuse the same names
+// as build arguments (issue #117): a build arg ends up in image history and in
+// the build log, so PASSWORD-as-a-build-arg is the same defect as
+// PASSWORD-as-a-spec-literal and must not be caught by a second, drifting copy
+// of this pattern.
+//
+// It is a heuristic and ADR-0009 says so in its own honesty note: a literal
+// under a creatively named key passes. The structural replacement is #82.
+func SecretShapedName(name string) bool {
+	return secretNameRE.MatchString(name)
+}
+
 func (v *validator) name(field, s, what string) {
 	if s == "" {
 		v.err(ErrMissingRequired, field, what+" name is required",
@@ -155,7 +168,7 @@ func (v *validator) secretLiteral(field, name, literal string) {
 			return
 		}
 	}
-	if secretNameRE.MatchString(name) {
+	if SecretShapedName(name) {
 		v.err(ErrSecretLiteral, field,
 			fmt.Sprintf("%q looks like a secret but is a plaintext literal", name),
 			secretRemediation)

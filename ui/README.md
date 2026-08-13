@@ -74,14 +74,45 @@ a deploy or a log tail is a link that keeps working.
 | `/apps/:project` | Environment tabs with status, workload verdicts, data services and the stored documents; buttons into the four flows | `GetSpec`, `Status`, `GetProfile`, `Render` (deferred presets only) |
 | `/apps/:project/edit` | Edit the stored spec: a form tab and a raw YAML tab, a diff before saving, an optimistic-concurrency save | `GetSpec`, `PutSpec` at `RENDER` then for real, `Diff` |
 | `/apps/:project/:env/deploy` | Preview (render dry-run) then a confirm that streams the deployment live | `Deploy` at `RENDER`, then at `NONE`; optional `Diff` at `SERVER` |
-| `/apps/:project/:env/diff` | The live cluster's own dry-run verdict, rendered from `diff_json` | `Diff` at `SERVER` |
+| `/apps/:project/:env/diff` | Two tabs: the live cluster's own dry-run verdict, or today's render against a recorded revision. `?from=<revision>` opens the second one preselected | `Diff` at `SERVER`, or with `from_revision`; `History` for the picker |
+| `/apps/:project/:env/history` | The recorded revisions, newest first: what each was, when, the spec hash, the author the mode recorded, and a phase pill on the live one. Links out to diff and rollback | `History`, `Status` |
 | `/apps/:project/:env/logs` | Bounded Query, and a live tail that pauses, filters, reconnects and saves | `QueryLogs`, `FollowLogs` |
-| `/apps/:project/:env/rollback` | Revision picker, irreversibility preview, then the apply | `History`, `Rollback` at `RENDER` then `NONE` |
+| `/apps/:project/:env/rollback` | Revision picker, irreversibility preview, then the apply. `?to=<revision>` preselects and previews a target, never applies it | `History`, `Rollback` at `RENDER` then `NONE` |
 | `/cluster` | Server build and the detected ClusterProfile | `/healthz`, `GetProfile` |
 
-There is **no history screen**: [#67](https://github.com/dafrie/kelson/issues/67)
-defers it. Rollback calls the History RPC to offer target revisions, which is a
-picker for an action and not a screen about the past.
+The history screen ([#67](https://github.com/dafrie/kelson/issues/67)) is bounded
+by what `DeployService.History` actually returns, which is five strings per
+revision — `revision`, `spec_hash`, `committed_at`, `message`, `author` — and
+nothing else. Four consequences are visible on the screen rather than hidden by
+it:
+
+- **No per-revision outcome is recorded.** Nothing on `HistoryEntry` says whether
+  a revision became healthy or was stuck. The phase pill therefore appears on
+  exactly one row — the revision `Status` reports as live, the only one anything
+  can currently answer for — and the other rows carry the *act* the mode wrote
+  down (deploy or rollback, parsed conservatively from the recorded message) and
+  no health claim at all.
+- **No image, so no image-embedded commit.** A built image's tag carries the
+  short revision (`internal/build`'s `DestinationTag`), but History does not
+  carry the image. What it does carry is the revision id, and in the Git modes
+  that id *is* the manifests-repository commit — so it is labelled as one when
+  it is a full forty-character sha, and never otherwise.
+- **No repository URL, so no commit or pull-request links.** Both would be a
+  guess at someone else's forge. The sha is shown and copyable instead, and a
+  muted line says why there is no link.
+- **No human-vs-agent attribution.** The Git modes write `Kelson-Actor` and
+  `Kelson-Agent-Id` commit trailers, but `History()` projects only the commit
+  *signature* as `author`, and direct mode records no author at all — so an entry
+  without one reads "unattributed" rather than being attributed to anybody.
+  Agent identity is [#74](https://github.com/dafrie/kelson/issues/74).
+
+The same absence rules out an A-against-B revision diff: `RenderService.Diff`
+compares the *current* spec against one recorded revision (`from_revision`) and
+offers no A-vs-B call, and `HistoryEntry` carries no rendered manifests to do it
+client-side either. So the per-revision action is named for what it does —
+compare against what is deployed now — and links to the diff screen rather than
+growing a second copy of it. Rollback is linked the same way, because the
+irreversibility preview must not be duplicated into a screen that might skip it.
 
 Five things the screens are deliberate about:
 

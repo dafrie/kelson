@@ -276,6 +276,13 @@ function EnvironmentPanel({
             <Link className="k-button" to={`${base}/logs`}>
               Logs
             </Link>
+            {/* History is a read of the delivery mode's own record and needs no
+                cluster, so it is offered even when Status could not be read —
+                the past is exactly what a reader wants when the present is
+                unavailable. */}
+            <Link className="k-button" to={`${base}/history`}>
+              History
+            </Link>
             {rollbackBlocked ? (
               <button
                 type="button"

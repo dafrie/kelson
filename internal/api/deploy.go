@@ -13,6 +13,7 @@ import (
 	"github.com/dafrie/kelson/internal/delivery/statemachine"
 	"github.com/dafrie/kelson/internal/diff"
 	"github.com/dafrie/kelson/internal/observation"
+	"github.com/dafrie/kelson/internal/redact"
 )
 
 // Deploy renders the spec, hands the manifests to the environment's adapter and
@@ -532,7 +533,7 @@ func firstWireError(err error) *kelsonv1alpha1.Error {
 		if err == nil {
 			return nil
 		}
-		return &kelsonv1alpha1.Error{Code: string(delivery.ErrApplyFailed), Message: err.Error()}
+		return &kelsonv1alpha1.Error{Code: string(delivery.ErrApplyFailed), Message: redact.Scrub(err.Error())}
 	}
 	return wire[0]
 }

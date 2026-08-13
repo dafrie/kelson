@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"github.com/dafrie/kelson/internal/build"
+	"github.com/dafrie/kelson/internal/redact"
 )
 
 // StrategyName is the builder strategy id for Dockerfile builds (ADR-0010).
@@ -81,6 +82,11 @@ type Config struct {
 	// registry (kind, a cluster-internal registry) and fails at push time for
 	// anything that requires auth.
 	PushSecret string
+	// Secrets are build-time secrets, projected as BuildKit secret mounts and
+	// never as build arguments or image layers (ADR-0009, issue #117). Each
+	// names an existing Kubernetes Secret in Namespace; see secrets.go for why
+	// there is no field here that could carry a value.
+	Secrets []SecretMount
 	// Resources applied to the build container. May be zero.
 	Resources ResourceRequirements
 	// Timeout bounds the whole build; "" means no deadline. Non-empty values
@@ -142,6 +148,19 @@ func (d *Driver) Workload(req build.Request) ([]byte, error) {
 // streams its logs to w until completion. Safe to call concurrently for
 // different Requests: each Request renders its own Job with no shared mutable
 // state.
+//
+// The log stream passes through the known-value scrubber (issue #117) so a
+// credential kelson has resolved cannot reach a build log even if the builder
+// echoes it — buildkitd has printed registry auth config in debug modes, and
+// "the builder would not do that" is not a property. Everything kelson holds
+// only as a reference (the push Secret, Config.Secrets) is not scrubbed here
+// because it was never in this process to begin with; the Job carries names and
+// paths, and the kubelet does the projection.
+//
+// kelson does not sniff the rest of the build's output. A Dockerfile that cats
+// its own secret into stdout is printing the user's bytes, and guessing which
+// of them are credentials would corrupt real output while still missing the
+// credential that looks like a word (internal/redact package doc).
 func (d *Driver) Build(ctx context.Context, req build.Request, w io.Writer) (build.Result, error) {
 	manifest, err := d.cfg.Workload(req)
 	if err != nil {
@@ -151,5 +170,12 @@ func (d *Driver) Build(ctx context.Context, req build.Request, w io.Writer) (bui
 	if err != nil {
 		return build.Result{}, err
 	}
-	return d.cluster.Wait(ctx, name, w)
+	logs := redact.Registered().Writer(w)
+	res, werr := d.cluster.Wait(ctx, name, logs)
+	if flusher, ok := logs.(*redact.ScrubWriter); ok {
+		if ferr := flusher.Flush(); ferr != nil && werr == nil {
+			werr = ferr
+		}
+	}
+	return res, werr
 }

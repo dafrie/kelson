@@ -85,13 +85,16 @@ func between(project, environment string, prevRes, curRes []resource, origin Ori
 		out = append(out, addedResource(curIndex[ref]))
 	}
 
-	return &Diff{
+	// Redact here rather than at each caller: this is the single constructor
+	// both L1 entry points funnel through, and a Diff is a display artifact by
+	// construction (see Redact).
+	return Redact(&Diff{
 		Level:       LevelRendered,
 		Project:     project,
 		Environment: environment,
 		Resources:   out,
 		Summary:     summarize(out),
-	}
+	})
 }
 
 // scalarAt returns the scalar value of key in a mapping node, or "".

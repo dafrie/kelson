@@ -9,6 +9,7 @@ import { ClusterPage } from "./pages/ClusterPage";
 import { DeployPage } from "./pages/DeployPage";
 import { DiffPage } from "./pages/DiffPage";
 import { EditSpecPage } from "./pages/EditSpecPage";
+import { HistoryPage } from "./pages/HistoryPage";
 import { LogsPage } from "./pages/LogsPage";
 import { NewAppPage } from "./pages/NewAppPage";
 import { RollbackPage } from "./pages/RollbackPage";
@@ -23,8 +24,9 @@ import "./pages/pages.css";
  * is enough to reach any of them and a link into a deploy or a log tail is a
  * link that keeps working.
  *
- * There is deliberately no history screen: #67 defers it, and the Rollback flow
- * calls the History RPC only to offer target revisions.
+ * The history screen (#67) is the one read-only flow: it shows the recorded
+ * revisions and hands them to the diff and rollback screens as a query
+ * parameter, rather than growing its own copy of either action.
  *
  * The routes are exported as objects rather than rendered as <Routes>, because
  * the spec editor (#65) has unsaved changes to protect and `useBlocker` — the
@@ -58,6 +60,7 @@ export const routes = createRoutesFromElements(
         <Route path="apps/:project/edit" element={<EditSpecPage />} />
         <Route path="apps/:project/:env/deploy" element={<DeployPage />} />
         <Route path="apps/:project/:env/diff" element={<DiffPage />} />
+        <Route path="apps/:project/:env/history" element={<HistoryPage />} />
         <Route path="apps/:project/:env/logs" element={<LogsPage />} />
         <Route path="apps/:project/:env/rollback" element={<RollbackPage />} />
         <Route path="cluster" element={<ClusterPage />} />
