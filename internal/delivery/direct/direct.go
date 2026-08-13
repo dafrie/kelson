@@ -79,8 +79,10 @@ type Options struct {
 	Client dynamic.Interface
 	// Mapper resolves kinds to resources.
 	Mapper Mapper
-	// History is the rendered-history store (issue #38).
-	History *Store
+	// History is the rendered-history store (issue #38). *Store is the CLI's
+	// local JSONL journal; kelson-server passes a cluster-backed one
+	// (ADR-0013).
+	History History
 	// FieldManager overrides the field-manager identity. Defaults to
 	// FieldManager; overriding it is for tests and for running two kelson
 	// instances against one cluster deliberately.
@@ -93,7 +95,7 @@ type Options struct {
 type Adapter struct {
 	client  dynamic.Interface
 	mapper  Mapper
-	history *Store
+	history History
 	manager string
 	now     func() time.Time
 }
@@ -158,7 +160,15 @@ func (a *Adapter) Apply(ctx context.Context, set delivery.ManifestSet) (delivery
 // History implements delivery.Adapter: newest first, in the same shape the Git
 // modes derive from their repository.
 func (a *Adapter) History(_ context.Context, set delivery.ManifestSet) ([]delivery.Entry, error) {
-	return a.history.Entries(set.Project, set.Environment)
+	recs, err := a.history.List(set.Project, set.Environment)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]delivery.Entry, 0, len(recs))
+	for _, r := range recs {
+		out = append(out, r.Entry())
+	}
+	return out, nil
 }
 
 // Rollback re-applies the rendered output recorded for entry `to` — the exact

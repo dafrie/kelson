@@ -55,6 +55,40 @@ import (
 // older journal lines and their rendered blobs are pruned.
 const DefaultKeep = 20
 
+// History is the rendered-history the direct adapter records deploys in and
+// replays rollbacks from.
+//
+// It is an interface because the CLI and kelson-server keep history in
+// different places by design (ADR-0013 §1): the CLI keeps the local JSONL
+// journal below, which is the right shape for a single-user tool that must
+// work without a server, while kelson-server stores every revision as a
+// ConfigMap so a restart or a second replica loses nothing
+// (internal/serverstate). Both are the same six calls, so the adapter — and
+// with it apply ordering, pruning and rollback semantics — is written once.
+//
+// The methods take no context because the adapter's own history calls are
+// synchronous bookkeeping around an apply that already carries one; a
+// cluster-backed implementation binds its context at construction (issue #139).
+type History interface {
+	// Append records one revision: the rendered output and the journal record
+	// that makes it visible to List.
+	Append(project, environment string, rec Record, rendered []byte) (delivery.Entry, error)
+	// List returns the recorded revisions, newest first.
+	List(project, environment string) ([]Record, error)
+	// Latest returns the newest record, or nil when nothing has been recorded.
+	Latest(project, environment string) (*Record, error)
+	// Get returns the record for one revision, or nil when retention has
+	// dropped it. A pruned revision is (nil, nil), not an error.
+	Get(project, environment, revision string) (*Record, error)
+	// Rendered returns the rendered output recorded for one revision, verbatim
+	// and in apply order — the bytes that were applied, not a re-render.
+	Rendered(project, environment, revision string) ([]byte, error)
+	// NextRevision allocates the next revision id for an environment.
+	NextRevision(project, environment string) (string, error)
+}
+
+var _ History = (*Store)(nil)
+
 const (
 	journalFile   = "journal.jsonl"
 	renderedDir   = "rendered"
