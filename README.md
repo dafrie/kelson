@@ -6,7 +6,8 @@ A self-hosted PaaS that runs on your Kubernetes cluster and writes standard mani
 (including server-side dry-run), `kelson deploy`, `kelson status`, `kelson rollback`,
 `kelson eject` and `kelson profile`, plus `kelson-server`, which serves the same capabilities over
 ConnectRPC — loopback-only and unauthenticated in v0
-([ADR-0013](docs/adr/0013-server-state-and-api-v0.md)). There is no UI and no install path yet.
+([ADR-0013](docs/adr/0013-server-state-and-api-v0.md)) — and `kelson-mcp`, the agent surface over that
+API ([docs/mcp.md](docs/mcp.md)). There is no UI and no install path yet.
 The [roadmap](docs/roadmap.md) and
 [issues](https://github.com/dafrie/kelson/issues) track the assembly work.
 
@@ -49,7 +50,7 @@ Direct mode is Git mode with an implicit repository. It still versions rendered 
 
 **It adopts what you already run.** kelson detects Gateway API, cert-manager, external-secrets, Prometheus, CloudNativePG and Flux, and renders to fit. Routing is Gateway API only — clusters without it get a clear capability gap and an offer to install a Gateway implementation, never a parallel ingress stack next to yours.
 
-**Agents get guardrails, not just tools** *(designed; lands with the agent surface milestone, [M7](https://github.com/dafrie/kelson/issues/8))*. Every mutation supports dry-run. Errors are structured with remediation hints. Agents authenticate as themselves with scoped, expiring credentials, and per-environment policy decides what they can do unsupervised. In production the default is propose-only, which is the same pull-request path a human uses.
+**Agents get guardrails, not just tools.** The MCP server ships (`kelson-mcp`, [docs/mcp.md](docs/mcp.md)): seven task-shaped tools over the same API, every mutation defaulting to a dry run, every error structured with a code and a remediation. *Still designed rather than built ([M7](https://github.com/dafrie/kelson/issues/8))*: agents authenticating as themselves with scoped, expiring credentials, and per-environment policy deciding what they may do unsupervised. In production the intended default is propose-only, which is the same pull-request path a human uses.
 
 **It doesn't reimplement operators.** CloudNativePG for Postgres, Strimzi for Kafka, cert-manager for TLS, external-secrets for secrets. Kubero vendored Bitnami charts and broke working installs when the catalog was withdrawn.
 

@@ -23,6 +23,7 @@ build:
 binaries:
 	$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN)/kelson       ./cmd/kelson
 	$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN)/kelson-server ./cmd/kelson-server
+	$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN)/kelson-mcp    ./cmd/kelson-mcp
 
 # Regenerates internal/api/gen and ui/src/gen from proto/ (ADR-0013 §4). Both
 # outputs are committed, so a change to proto/ that is not followed by this
