@@ -1,6 +1,8 @@
 # ADR-0006: Project, Application, Environment
 
-- **Status:** Accepted
+- **Status:** Accepted (leaf shape amended by [ADR-0014](0014-components.md), 2026-08-13: `applications`
+  and `services` unify into one `components` list with kinds, and every component gets its own
+  ServiceAccount. The Project → leaf → Environment shape decided here is confirmed, not replaced.)
 - **Date:** 2026-08-11
 
 ## Context
