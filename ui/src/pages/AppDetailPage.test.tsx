@@ -3,6 +3,7 @@ import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { Code, ConnectError, createRouterTransport } from "@connectrpc/connect";
 
 import { DeployService } from "../gen/kelson/v1alpha1/deploy_pb";
+import { ProfileService } from "../gen/kelson/v1alpha1/profile_pb";
 import { SpecService } from "../gen/kelson/v1alpha1/spec_pb";
 import { renderAt } from "../test/render";
 import { healthEvent, transitionEvent, watchStub } from "../test/watch";
@@ -96,6 +97,85 @@ describe("AppDetailPage", () => {
     );
     // Deploy stays available: a render dry-run needs no cluster at all.
     expect(screen.getByRole("link", { name: "Deploy" })).toBeTruthy();
+  });
+});
+
+describe("AppDetailPage data services", () => {
+  const DATA_PROJECT = `kind: Project
+metadata:
+  name: checkout
+
+spec:
+  components:
+    - name: db
+      kind: postgres
+      preset: small
+    - name: web
+      port: 8080
+`;
+
+  const withData = createRouterTransport((router) => {
+    router.service(SpecService, {
+      getSpec: () => ({
+        spec: {
+          project: "checkout",
+          version: "7",
+          environments: ["production"],
+          documents: {
+            project: new TextEncoder().encode(DATA_PROJECT),
+            environments: { production: new TextEncoder().encode(ENV_YAML) },
+          },
+        },
+      }),
+    });
+    router.service(DeployService, {
+      status: () => ({
+        phase: "Healthy",
+        revision: "8f2c1ad",
+        verdicts: [
+          {
+            resource: "Deployment/checkout-production/web",
+            code: "healthy",
+            healthy: true,
+            degraded: false,
+            message: "web is available",
+            remediation: "",
+          },
+          {
+            resource: "Cluster/checkout-production/checkout-production-db",
+            code: "healthy",
+            healthy: true,
+            degraded: false,
+            message: "3/3 instances ready",
+            remediation: "",
+          },
+        ],
+      }),
+    });
+    router.service(ProfileService, {
+      getProfile: () => ({
+        yaml: new TextEncoder().encode(
+          "storageClasses:\n    - name: local-path\n      provisioner: rancher.io/local-path\n      default: true\n      cloneCapability: none\n      cloneConfidence: observed\n",
+        ),
+      }),
+    });
+  });
+
+  it("gives a database its own section and keeps it out of the workload list", async () => {
+    renderAt(withData, "/apps/checkout", "/apps/:project", <AppDetailPage />);
+
+    expect(await screen.findByText("Data services (1)")).toBeTruthy();
+    expect(screen.getByText("1 instance")).toBeTruthy();
+    // The spec is readable before the status is; the health arrives with it.
+    expect(await screen.findByText("3/3 instances ready")).toBeTruthy();
+    // The Cluster verdict belongs to the data section; the workload count is
+    // the Deployment alone.
+    expect(screen.getByText("Workloads (1)")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Fast branching unavailable — your storage class (local-path) has no snapshot driver.",
+      ),
+    ).toBeTruthy();
   });
 });
 

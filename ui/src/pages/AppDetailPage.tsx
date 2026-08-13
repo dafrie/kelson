@@ -14,6 +14,8 @@ import { LiveIndicator } from "../components/LiveIndicator";
 import { StatusPill } from "../components/StatusPill";
 import { phaseToStatus } from "../components/phase";
 import { EmptyState, LoadingState } from "../components/States";
+import { DataServices } from "../dataservices/DataServices";
+import { isDataServiceVerdict } from "../dataservices/parse";
 
 /**
  * One project: its environments' delivery state, its documents, its actions.
@@ -22,6 +24,11 @@ import { EmptyState, LoadingState } from "../components/States";
  * other (issue #53): the phase says whether the change arrived, the verdicts
  * say whether it works. Both are shown, always, and a phase of Healthy with a
  * crash-looping verdict underneath is a real and important thing to see.
+ *
+ * Data components are a third thing and get their own section (issue #107): a
+ * database has no image to roll and no replicas to scale, its topology is a
+ * preset an operator implements, and listing it among the workloads would
+ * invite every wrong instinct at once.
  *
  * The spec documents are printed byte-faithfully. The server stores what was
  * authored (ADR-0013: the spec is the user's document) and re-serialising YAML
@@ -90,6 +97,7 @@ export function AppDetailPage() {
               key={`${project}/${selected}`}
               project={project}
               environment={selected}
+              documents={spec.data?.spec?.documents}
             />
           ) : null}
         </>
@@ -123,9 +131,12 @@ const NO_LIVE: PanelLive = { verdicts: {} };
 function EnvironmentPanel({
   project,
   environment,
+  documents,
 }: {
   project: string;
   environment: string;
+  /** The stored documents, which is where a data component's preset lives. */
+  documents: SpecDocuments | undefined;
 }) {
   const clients = useClients();
   const status = useAsync(
@@ -186,6 +197,20 @@ function EnvironmentPanel({
   const verdicts = useMemo(
     () => mergeVerdicts(status.data?.verdicts, live.verdicts),
     [status.data, live.verdicts],
+  );
+  // A data component's own resource is not a workload, so it is taken out of
+  // the workload list and handed to the section that knows what it is. The
+  // verdicts themselves are untouched: one health source, two readers.
+  const workloads = useMemo(
+    () => verdicts.filter((v) => !isDataServiceVerdict(v.resource)),
+    [verdicts],
+  );
+  const documentText = useMemo(
+    () => ({
+      project: decodeDocument(documents?.project),
+      environment: decodeDocument(documents?.environments[environment]),
+    }),
+    [documents, environment],
   );
   // Rollback is the one action with a precondition the server has already
   // answered: a delivery plane this build was started without is Unimplemented,
@@ -270,8 +295,8 @@ function EnvironmentPanel({
             </div>
 
             <div className="k-env__verdicts">
-              <div className="k-eyebrow">Workloads ({verdicts.length})</div>
-              {verdicts.length === 0 ? (
+              <div className="k-eyebrow">Workloads ({workloads.length})</div>
+              {workloads.length === 0 ? (
                 <p className="k-mono k-env__note">
                   no verdicts — this build has no health probe wired, or the set
                   declares no Deployments. That is not the same as “nothing is
@@ -279,7 +304,7 @@ function EnvironmentPanel({
                 </p>
               ) : (
                 <ul className="k-verdicts">
-                  {verdicts.map((v) => (
+                  {workloads.map((v) => (
                     <Verdict key={v.resource} verdict={v} />
                   ))}
                 </ul>
@@ -287,9 +312,31 @@ function EnvironmentPanel({
             </div>
           </>
         ) : null}
+
+        {/* Outside the status block on purpose: what a spec declares is
+            readable without a cluster, and an environment whose status cannot
+            be read still has databases worth describing. */}
+        <DataServices
+          project={project}
+          environment={environment}
+          projectDoc={documentText.project}
+          environmentDoc={documentText.environment}
+          health={
+            status.data !== undefined
+              ? { state: "read", verdicts }
+              : status.loading
+                ? { state: "loading" }
+                : { state: "unavailable" }
+          }
+        />
       </div>
     </section>
   );
+}
+
+/** The stored bytes as text. Absent documents are an empty document. */
+function decodeDocument(bytes: Uint8Array | undefined): string {
+  return bytes === undefined ? "" : new TextDecoder().decode(bytes);
 }
 
 function Fragmented({ name, value }: { name: string; value: string }) {
