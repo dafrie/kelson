@@ -101,6 +101,7 @@ var testKinds = []schema.GroupVersionKind{
 	{Group: "example.com", Version: "v1", Kind: "Widget"},
 	{Group: "kyverno.io", Version: "v1alpha2", Kind: "PolicyReport"},
 	{Group: "kyverno.io", Version: "v1alpha2", Kind: "ClusterPolicyReport"},
+	{Group: "admissionregistration.k8s.io", Version: "v1", Kind: "ValidatingWebhookConfiguration"},
 }
 
 func testScheme() *runtime.Scheme {
@@ -122,7 +123,8 @@ func testMapper() meta.RESTMapper {
 	m := meta.NewDefaultRESTMapper(versions)
 	for _, k := range testKinds {
 		scope := meta.RESTScopeNamespace
-		if k.Kind == "Namespace" || k.Kind == "CustomResourceDefinition" || k.Kind == "ClusterPolicyReport" {
+		if k.Kind == "Namespace" || k.Kind == "CustomResourceDefinition" || k.Kind == "ClusterPolicyReport" ||
+			k.Kind == "ValidatingWebhookConfiguration" {
 			scope = meta.RESTScopeRoot
 		}
 		m.Add(k, scope)

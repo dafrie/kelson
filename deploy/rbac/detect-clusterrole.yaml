@@ -1,4 +1,5 @@
-# ClusterRole for `kelson profile` and `kelson render --profile from-cluster`.
+# ClusterRole for `kelson profile`, `kelson render --profile from-cluster` and
+# the cluster reads the L2 preview makes (`kelson diff --dry-run=server`).
 #
 # Detection is read-only by design (issue #56): every verb below is a get or a
 # list, there is no "*" verb, and no write verb appears anywhere. A cluster
@@ -56,4 +57,22 @@ rules:
     verbs: ["get", "list"]
   - apiGroups: ["external-secrets.io"]
     resources: ["clustersecretstores", "secretstores"]
+    verbs: ["get", "list"]
+  # The two reads the L2 server-side dry-run preview issues beyond the applies
+  # themselves (issue #45). Both are optional: without them the preview loses a
+  # capability, never correctness.
+  #
+  #  - validatingwebhookconfigurations: which validating webhooks a dry-run
+  #    request does not reach. A webhook whose sideEffects is neither None nor
+  #    NoneOnDryRun is not called for a dry-run, and with failurePolicy Ignore
+  #    the API server skips it silently — so a preview that cannot read these
+  #    cannot tell the user which checks did not run.
+  #  - policyreports/clusterpolicyreports: Kyverno's audit-mode findings, which
+  #    never appear in a rejection because an audit policy does not veto the
+  #    request.
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["validatingwebhookconfigurations"]
+    verbs: ["get", "list"]
+  - apiGroups: ["kyverno.io"]
+    resources: ["policyreports", "clusterpolicyreports"]
     verbs: ["get", "list"]

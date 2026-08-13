@@ -65,6 +65,70 @@ path, whichever adapter that environment uses. No adapter knows what a promotion
 ([ADR-0016](adr/0016-delivery-flows-v0.md); the field is documented in
 [the model](model.md#promotion)).
 
+## Preview: admission rejections and what the dry-run cannot see (#45)
+
+A server-side dry-run (`kelson diff --dry-run=server`, `internal/delivery/dryrun`)
+is not kelson's model of what the API server would do — it is the API server's
+own answer, and that answer includes admission control. A dry-run apply runs the
+cluster's `ValidatingAdmissionPolicy` objects and its validating webhooks, so a
+Kyverno, Gatekeeper or plain-webhook denial arrives at preview time. It is
+reported as a structured finding, never as a generic apply failure, and never
+left to appear at deploy time after a preview that read clean.
+
+Each denial becomes a `diff.PolicyViolation` carrying:
+
+| field | what it holds |
+|---|---|
+| `code` | `policy/webhook-denied`, `policy/admission-policy-denied`, `policy/validation-failed`, `policy/audit-finding` |
+| `policy` / `rule` | the policy, constraint or webhook name the server named — for a `ValidatingAdmissionPolicy`, the policy and its binding |
+| `resource`, `path` | what was rejected, and the field where the server pointed at one |
+| `message` | the server's own words, verbatim: the policy author wrote that sentence for this moment |
+| `remediation` | the object to go and read (`kubectl get clusterpolicy …`, `kubectl get constraints …`, `kubectl get validatingadmissionpolicy …`, `kubectl get validatingwebhookconfigurations …`) |
+| `enforcement` | `enforce` (a veto, a blocker) or `audit` (a policy-report finding, a warning) |
+
+Parsing is conservative. Each engine formats its rejection as prose rather than
+as a protocol, so the recognisers match the shapes those engines actually write;
+a message that merely mentions a webhook, or says a request was denied without
+the denial shape, is **not** attributed to anything. An unattributable rejection
+is reported as unvalidated with the server's message intact — kelson never
+invents a policy name for an agent or a human to go chasing.
+
+### The honesty boundary
+
+A dry-run does not reach every check, and the preview says so rather than
+implying a coverage it does not have. Two cases, both reported as
+`diff.Unvalidated` with a `reason`:
+
+- **`dry-run-unsupported`** — a webhook whose `sideEffects` is neither `None`
+  nor `NoneOnDryRun` is never called for a dry-run request. With
+  `failurePolicy: Fail` the API server fails the request outright; that failure
+  names the webhook and is reported as a gap, not as a rejection.
+- **`webhook-excludes-dry-run`** — the same webhook with `failurePolicy: Ignore`
+  is skipped *silently*: the dry-run succeeds and the preview would otherwise
+  look like a complete verdict. So the preview lists the cluster's
+  `ValidatingWebhookConfigurations` and reports each unreachable webhook that
+  could match the batch. The match is coarse (group/version/resource);
+  `namespaceSelector` and `objectSelector` are not evaluated, so this
+  over-reports rather than under-reports. The read is best-effort — a caller
+  without permission gets no gap entries, never a failed preview — and the grant
+  is in `deploy/rbac/detect-clusterrole.yaml`.
+
+### Exit semantics
+
+`kelson diff` exit codes and the Diff RPC's `exit_semantics` are the same
+contract, and both call `diff.Blocked` rather than restating it:
+
+| code | meaning |
+|---|---|
+| 0 | no changes |
+| 2 | changes present |
+| 3 | blocked: an enforce-mode violation, or an unvalidated resource whose prerequisite is genuinely absent (`reason` `missing-prerequisite` or `unattributed-rejection`) |
+
+A coverage gap is deliberately **not** a blocker. Nothing rejected anything, so
+failing a pipeline on it would punish a hole in the preview as if it were a
+verdict — but it is always printed and always present in the JSON, because an
+incomplete preview must never read as a clean one.
+
 ## Optimistic concurrency (#40)
 
 Concurrent edits — agent vs human, or a hand-edit in Git mode vs a commit —

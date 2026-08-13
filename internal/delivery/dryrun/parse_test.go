@@ -2,6 +2,7 @@ package dryrun
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -196,6 +197,43 @@ func TestClassifyValidatingAdmissionPolicy(t *testing.T) {
 	if v.Enforcement != diff.EnforcementEnforce {
 		t.Errorf("enforcement = %q, want enforce", v.Enforcement)
 	}
+	if v.Code != diff.CodeAdmissionPolicyDenied {
+		t.Errorf("code = %q, want %q", v.Code, diff.CodeAdmissionPolicyDenied)
+	}
+	if !strings.Contains(v.Remediation, "validatingadmissionpolicy require-owner") ||
+		!strings.Contains(v.Remediation, "require-owner-binding") {
+		t.Errorf("remediation must name the policy and the binding: %q", v.Remediation)
+	}
+}
+
+// TestClassifyValidatingAdmissionPolicyDetails: the API server wraps the
+// denial in its own framing and repeats the policy's message in
+// status.details.causes. The policy and binding names exist only in the
+// sentence, so they are parsed from there; the causes are a fallback for the
+// detail, never a source of names.
+func TestClassifyValidatingAdmissionPolicyDetails(t *testing.T) {
+	ref := ResourceRef{APIVersion: "apps/v1", Kind: "Deployment", Name: "checkout", Namespace: "shop-prod"}
+
+	// Double-quoted variant, and a detail that lives only in the causes.
+	err := &apierrors.StatusError{ErrStatus: metav1.Status{
+		Status:  metav1.StatusFailure,
+		Reason:  metav1.StatusReasonInvalid,
+		Message: `deployments.apps "checkout" is forbidden: ValidatingAdmissionPolicy "require-limits" with binding "require-limits-all" denied request`,
+		Details: &metav1.StatusDetails{Causes: []metav1.StatusCause{
+			{Type: metav1.CauseType("FieldValueInvalid"), Message: "containers must set memory limits"},
+		}},
+	}}
+	c := classify(ref, err)
+	if len(c.violations) != 1 {
+		t.Fatalf("violations = %+v, want exactly one", c.violations)
+	}
+	v := c.violations[0]
+	if v.Policy != "require-limits" || v.Rule != "require-limits-all" {
+		t.Errorf("policy/binding = %q/%q, want require-limits/require-limits-all", v.Policy, v.Rule)
+	}
+	if v.Message != "containers must set memory limits" {
+		t.Errorf("message = %q, want the cause the API server carried", v.Message)
+	}
 }
 
 func TestClassifyAPIServerValidation(t *testing.T) {
@@ -220,16 +258,112 @@ func TestClassifyAPIServerValidation(t *testing.T) {
 	}
 }
 
+// TestClassifyValidatingWebhook covers the shape every
+// ValidatingWebhookConfiguration produces, whatever engine sits behind it. The
+// webhook's name is the API server's own word for who said no, so it is
+// reported as the finding's target — an engine kelson has never heard of still
+// yields a policy object the developer can go and read (#45).
+func TestClassifyValidatingWebhook(t *testing.T) {
+	ref := ResourceRef{APIVersion: "apps/v1", Kind: "Deployment", Name: "checkout", Namespace: "shop-prod"}
+	cases := []struct {
+		name    string
+		msg     string
+		webhook string
+		detail  string
+	}{
+		{
+			name:    "lowercase form",
+			msg:     `admission webhook "policy.example.com" denied the request: every container must set resource limits`,
+			webhook: "policy.example.com",
+			detail:  "every container must set resource limits",
+		},
+		{
+			name:    "capitalised form, as the API server frames a 403",
+			msg:     `deployments.apps "checkout" is forbidden: Admission webhook "vpolicy.acme.io" denied the request: image registry acme.io/ is required`,
+			webhook: "vpolicy.acme.io",
+			detail:  "image registry acme.io/ is required",
+		},
+		{
+			name:    "multi-line detail is kept whole",
+			msg:     "admission webhook \"guard.example.com\" denied the request: two problems:\n  - no owner label\n  - no runAsNonRoot",
+			webhook: "guard.example.com",
+			detail:  "two problems:\n  - no owner label\n  - no runAsNonRoot",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := classify(ref, rejected(tc.msg))
+			if !c.policyRejected {
+				t.Fatalf("policyRejected = false; a webhook denial is a rejection")
+			}
+			if c.permission {
+				t.Fatalf("permission = true; a webhook denial is not RBAC")
+			}
+			if len(c.violations) != 1 {
+				t.Fatalf("violations = %+v, want exactly one", c.violations)
+			}
+			v := c.violations[0]
+			if v.Engine != "validating-webhook" {
+				t.Errorf("engine = %q, want validating-webhook", v.Engine)
+			}
+			if v.Policy != tc.webhook {
+				t.Errorf("policy = %q, want the webhook name %q", v.Policy, tc.webhook)
+			}
+			if v.Message != tc.detail {
+				t.Errorf("message = %q, want the server's own words %q", v.Message, tc.detail)
+			}
+			if v.Code != diff.CodeWebhookDenied {
+				t.Errorf("code = %q, want %q", v.Code, diff.CodeWebhookDenied)
+			}
+			if v.Enforcement != diff.EnforcementEnforce {
+				t.Errorf("enforcement = %q, want enforce", v.Enforcement)
+			}
+			if v.Resource != ref.String() {
+				t.Errorf("resource = %q, want the rejected resource %q", v.Resource, ref.String())
+			}
+			if !strings.Contains(v.Remediation, "validatingwebhookconfigurations") ||
+				!strings.Contains(v.Remediation, tc.webhook) {
+				t.Errorf("remediation must name the object to inspect and the webhook: %q", v.Remediation)
+			}
+		})
+	}
+}
+
+// TestClassifyDryRunUnsupportedIsNotAViolation: a webhook whose sideEffects
+// forbid dry-run makes the API server fail the request with a 400 that looks
+// like validation but is nothing of the sort — nobody rejected the object, it
+// was never shown to that webhook. Reporting it as a violation would invent a
+// verdict; it is a coverage gap (#45).
+func TestClassifyDryRunUnsupportedIsNotAViolation(t *testing.T) {
+	ref := ResourceRef{APIVersion: "apps/v1", Kind: "Deployment", Name: "checkout", Namespace: "shop-prod"}
+	err := apierrors.NewBadRequest(`admission webhook "sidecar.example.com" does not support dry run`)
+	c := classify(ref, err)
+	if !c.dryRunUnsupported {
+		t.Fatalf("dryRunUnsupported = false for %q", err)
+	}
+	if c.policyRejected {
+		t.Error("policyRejected = true; nothing rejected this resource")
+	}
+	if len(c.violations) != 0 {
+		t.Errorf("violations = %+v, want none — the webhook never saw the object", c.violations)
+	}
+	if c.webhook != "sidecar.example.com" {
+		t.Errorf("webhook = %q, want sidecar.example.com", c.webhook)
+	}
+}
+
 func TestClassifyMalformedOrUnrecognized(t *testing.T) {
 	ref := ResourceRef{APIVersion: "apps/v1", Kind: "Deployment", Name: "checkout", Namespace: "shop-prod"}
 
-	// An opaque webhook rejection carrying no engine signature, or a generic
-	// conflict — either way the recognisers must refuse to invent a policy.
+	// Prose that mentions a webhook, or a denial, without the shape either
+	// recogniser needs — plus a generic conflict. The parsers must stay silent
+	// rather than name a webhook or a policy they did not actually read.
 	cases := []struct {
 		name string
 		err  error
 	}{
-		{"opaque webhook", rejected("admission webhook \"not-policy.example\" denied the request: something weird happened")},
+		{"webhook call failed, nothing denied", rejected(`Internal error occurred: failed calling webhook "guard.example.com": context deadline exceeded`)},
+		{"prose about a denial", rejected("the request was denied by the platform team's admission webhook; ask #platform")},
 		{"conflict", apierrors.NewConflict(schema.GroupResource{Group: "apps", Resource: "deployments"}, "checkout", fmt.Errorf("object has been modified"))},
 	}
 	for _, tc := range cases {
