@@ -99,6 +99,7 @@ export function AppDetailPage() {
               key={`${project}/${selected}`}
               project={project}
               environment={selected}
+              others={environments.filter((name) => name !== selected)}
               documents={spec.data?.spec?.documents}
             />
           ) : null}
@@ -139,10 +140,17 @@ const NO_LIVE: PanelLive = { verdicts: {} };
 function EnvironmentPanel({
   project,
   environment,
+  others,
   documents,
 }: {
   project: string;
   environment: string;
+  /**
+   * The project's other environments — the promotion's possible sources. A
+   * project with only this one has nothing to promote from, and the action says
+   * so rather than opening a screen with an empty picker.
+   */
+  others: string[];
   /** The stored documents, which is where a data component's preset lives. */
   documents: SpecDocuments | undefined;
 }) {
@@ -273,6 +281,25 @@ function EnvironmentPanel({
             <Link className="k-button" to={`${base}/diff`}>
               Diff
             </Link>
+            {/* Named from this environment's side, because that is the side the
+                reader is standing on: the environment in the tab is the one the
+                pins are written to, and the source is picked on the screen.
+                Promotion writes the spec and deploys nothing, so it sits with
+                the other spec-shaped actions and not next to Deploy. */}
+            {others.length === 0 ? (
+              <button
+                type="button"
+                className="k-button"
+                disabled
+                title={`${project} declares no other environment to promote from — a promotion has a source and a target`}
+              >
+                Promote into this environment
+              </button>
+            ) : (
+              <Link className="k-button" to={`${base}/promote`}>
+                Promote into this environment
+              </Link>
+            )}
             <Link className="k-button" to={`${base}/logs`}>
               Logs
             </Link>

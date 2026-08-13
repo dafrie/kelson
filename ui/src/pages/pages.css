@@ -928,3 +928,123 @@
   margin: 0 0 10px;
   color: var(--kelson-muted);
 }
+
+/* ------------------------------------------------------------------ promote */
+
+/* The plan is a table because it is tabular: one row per component, the pin it
+   has against the pin it would get. The wrapper scrolls rather than the page —
+   a digest reference is long, and a horizontal scrollbar under the whole
+   window is not the affordance for "this column is wide". */
+.k-promote__scroll {
+  overflow-x: auto;
+}
+
+.k-promote__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.k-promote__table th,
+.k-promote__table td {
+  padding: 9px 14px 9px 0;
+  text-align: left;
+  vertical-align: baseline;
+  border-bottom: 1px solid var(--kelson-hairline);
+}
+
+.k-promote__table thead th {
+  font-family: var(--kelson-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--kelson-muted);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.k-promote__component {
+  font-weight: 500;
+  color: var(--kelson-text);
+  white-space: nowrap;
+}
+
+/* An absent image is a fact about the target's spec, not a warning: today the
+   component follows the project's image, and after the promotion it will not. */
+.k-promote__absent {
+  color: var(--kelson-muted-2);
+}
+
+.k-promote__image {
+  font-size: 12.5px;
+}
+
+/* The three decisions, in the vocabulary internal/promote uses. Pinned is the
+   accent because it is the write; unchanged is muted because nothing happens;
+   skipped is amber because it is the row a reader must not scroll past — the
+   component is not being promoted, and the reason underneath says why. */
+.k-promote__status--pinned {
+  color: var(--kelson-accent);
+  border-color: var(--kelson-accent);
+}
+
+.k-promote__status--unchanged {
+  color: var(--kelson-muted);
+}
+
+.k-promote__status--skipped,
+.k-promote__status--unknown {
+  color: var(--kelson-degraded);
+  border-color: var(--kelson-degraded-border);
+}
+
+/* The skip reason, under the row it belongs to rather than squeezed into it. */
+.k-promote__why td {
+  padding-top: 0;
+  padding-bottom: 10px;
+  font-size: 12.5px;
+  color: var(--kelson-text-2);
+}
+
+.k-promote__code {
+  margin-right: 8px;
+  font-family: var(--kelson-font-mono);
+  font-size: 11.5px;
+  color: var(--kelson-degraded);
+}
+
+.k-promote__summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-bottom: 14px;
+  color: var(--kelson-text-2);
+}
+
+.k-promote__nothing {
+  margin-top: 24px;
+  max-width: 78ch;
+}
+
+.k-promote__written {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.k-promote__written li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+}
+
+/* The one action on the history screen that is not about a revision, so it sits
+   above the timeline with its own sentence rather than inside a row. */
+.k-history__actions {
+  align-items: baseline;
+  margin-bottom: 20px;
+}
