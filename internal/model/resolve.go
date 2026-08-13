@@ -15,20 +15,25 @@ const ImageUnresolved = "@"
 // pair — the concrete input the renderer consumes (issue #26). Resolution
 // applies every rule from docs/model.md (P1–P6) and the built-in defaults.
 //
-// The spec's one components list (ADR-0014) resolves into two slices, because
-// the two halves are consumed differently and by different rules: a workload
-// carries the P1/P2/P3 merge and renders pods, a data component carries the P5
-// preset override and renders an operator's resources. Keeping them apart here
-// is what lets resolve() read as one rule per paragraph, and lets Render state
-// its ordering contract — data services before the workloads that bind to
-// them — as two loops rather than two passes over one list with a kind test in
-// each.
+// The spec's one components list (ADR-0014) resolves into three slices, because
+// each part is consumed differently and by different rules: a workload carries
+// the P1/P2/P3 merge and renders pods, a data component carries the P5 preset
+// override and renders an operator's resources, and a helm component carries no
+// rule at all and renders a HelmRelease (ADR-0016). Keeping them apart here is
+// what lets resolve() read as one rule per paragraph, and lets Render state its
+// ordering contract — the things workloads depend on before the workloads — as
+// separate loops rather than passes over one list with a kind test in each.
 type Resolved struct {
 	Project      string
 	Environment  ResolvedEnvironment
 	Components   []ResolvedComponent
 	DataServices []ResolvedDataService
-	Overlays     []Overlay
+	// Charts are the `kind: helm` components, in spec order. They resolve into
+	// a third slice for the same reason data services do: nothing in P1–P5
+	// reaches them (a chart has no image, no env merge and no preset), and the
+	// renderer emits a different pair of resources for them.
+	Charts   []ResolvedChart
+	Overlays []Overlay
 }
 
 type ResolvedEnvironment struct {
@@ -69,6 +74,24 @@ type ResolvedDataService struct {
 	Name   string
 	Kind   ComponentKind // postgres | valkey
 	Preset ServicePreset // after the P5 environment override
+}
+
+// ResolvedChart is one `kind: helm` component after resolution. There is
+// nothing to resolve — no precedence rule reaches a chart — so it is the spec's
+// own values, carried through in the shape the renderer writes.
+//
+// The environment's delivery mode is deliberately not copied here. It lives
+// once, on ResolvedEnvironment, and the renderer's Flux-only gate reads it
+// there: two copies of a mode would be two chances for them to disagree.
+type ResolvedChart struct {
+	Name    string         `json:"name"`
+	Chart   string         `json:"chart"`
+	Version string         `json:"version"`
+	Source  ChartSource    `json:"source"`
+	Values  map[string]any `json:"values,omitempty"`
+	// ValuesFrom keeps spec order: helm-controller merges these in the order
+	// they are listed, so it is meaning, not presentation.
+	ValuesFrom []ValuesFrom `json:"valuesFrom,omitempty"`
 }
 
 // Resolve validates the (Project, Environment) pair and returns the effective
@@ -145,19 +168,22 @@ func resolve(p *Project, e *Environment) *Resolved {
 	r.Overlays = append(r.Overlays, p.Spec.Overlays...)
 	r.Overlays = append(r.Overlays, e.Spec.Overlays...)
 
-	// One spec list, two resolutions: P5 for data components, P1/P2/P3 for
-	// workloads. Spec order is preserved within each.
+	// One spec list, three resolutions: P5 for data components, P1/P2/P3 for
+	// workloads, and none at all for charts. Spec order is preserved within each.
 	overrides := map[string]ComponentOverride{}
 	for _, ov := range e.Spec.Components {
 		overrides[ov.Name] = ov
 	}
 	builtFromSource := p.Spec.Source != nil && (p.Spec.Build == nil || p.Spec.Build.Strategy != BuildNone)
 	for _, c := range p.Spec.Components {
-		if kind := c.EffectiveKind(); kind.IsData() {
+		switch kind := c.EffectiveKind(); {
+		case kind.IsData():
 			r.DataServices = append(r.DataServices, resolveDataService(c, kind, overrides[c.Name]))
-			continue
+		case kind.IsChart():
+			r.Charts = append(r.Charts, resolveChart(c))
+		default:
+			r.Components = append(r.Components, resolveComponent(p, r, c, overrides[c.Name], builtFromSource))
 		}
-		r.Components = append(r.Components, resolveComponent(p, r, c, overrides[c.Name], builtFromSource))
 	}
 
 	return r
@@ -174,6 +200,23 @@ func resolveDataService(c Component, kind ComponentKind, ov ComponentOverride) R
 		preset = ov.Preset
 	}
 	return ResolvedDataService{Name: c.Name, Kind: kind, Preset: preset}
+}
+
+// resolveChart carries a helm component through unchanged. It takes no
+// override argument because there is none to take: an Environment override on a
+// helm component is a validation error, not a merge (ADR-0016).
+func resolveChart(c Component) ResolvedChart {
+	rc := ResolvedChart{
+		Name:       c.Name,
+		Chart:      c.Chart,
+		Version:    c.ChartVersion,
+		Values:     c.Values,
+		ValuesFrom: c.ValuesFrom,
+	}
+	if c.Source != nil {
+		rc.Source = *c.Source
+	}
+	return rc
 }
 
 // resolveComponent applies P1 (env merge), P2 (replicas/resources) and P3

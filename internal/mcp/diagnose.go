@@ -291,11 +291,15 @@ func decodeProject(document []byte) (*model.Project, error) {
 // componentImage is the image a workload component runs in the diagnosed
 // environment: the environment's pin wins over the component's image, which
 // wins over the Project's (rule P3). A data component has none: its pods are
-// the operator's, not the spec's (ADR-0005).
+// the operator's, not the spec's (ADR-0005). Neither does a helm component:
+// what its chart runs is the chart's, and kelson's inventory ends at the
+// HelmRelease (ADR-0016).
 func componentImage(project *model.Project, pins map[string]string, c model.Component) string {
 	switch {
 	case c.EffectiveKind().IsData():
 		return "(operator-managed)"
+	case c.EffectiveKind().IsChart():
+		return "(chart-managed)"
 	case pins[c.Name] != "":
 		return pins[c.Name] + " (pinned)"
 	case c.Image != "":
@@ -322,6 +326,10 @@ func componentShape(c model.Component) string {
 			preset = model.PresetShared
 		}
 		return fmt.Sprintf("%s preset %s", kind, preset)
+	case model.ComponentHelm:
+		// The version belongs in the summary: it is the whole of what a chart
+		// component pins, and the field a diagnosis most often turns on.
+		return fmt.Sprintf("chart %s %s", c.Chart, c.ChartVersion)
 	default:
 		return string(kind)
 	}

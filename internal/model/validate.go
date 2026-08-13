@@ -457,6 +457,10 @@ func (v *validator) components(field string, comps []Component, services map[str
 			v.dataComponent(f, c, kind)
 			continue
 		}
+		if kind.IsChart() {
+			v.chartComponent(f, c, kind)
+			continue
+		}
 		v.workloadComponent(f, c, kind, services, projectImage)
 	}
 }
@@ -475,7 +479,9 @@ func (v *validator) componentKind(field string, c Component) (ComponentKind, boo
 			"valid kinds: "+strings.Join(kindNames(), ", ")+" — new kinds land via ADR, not ad hoc strings")
 		return "", false
 	}
-	if c.Kind.IsData() {
+	if c.Kind.IsData() || c.Kind.IsChart() {
+		// Neither has a shape to contradict: a data component's topology is its
+		// operator's, and a helm component's is the chart's.
 		return c.Kind, true
 	}
 	if c.Port != 0 && c.Schedule != "" {
@@ -537,6 +543,183 @@ func (v *validator) dataComponent(field string, c Component, kind ComponentKind)
 			"remove "+set+"; a data component's whole configuration is its preset, because its topology belongs to the "+
 				"operator (ADR-0005). Bind a workload to it with {from: {service: "+c.Name+", key: uri}}")
 	}
+	v.chartOnlyFields(field, c, kind)
+}
+
+// chartComponent validates a `kind: helm` component (ADR-0016 decision 4):
+// the chart coordinates it must name, and the absence of everything belonging
+// to the other two halves of the list.
+//
+// What is *not* checked here is the delivery mode. A helm component renders
+// only in Flux mode, and that refusal lives in the renderer rather than in
+// validation, because the mode is an Environment's and a Project document is
+// valid on its own terms against every environment it will ever meet. See
+// internal/renderer/helm.go.
+func (v *validator) chartComponent(field string, c Component, kind ComponentKind) {
+	if c.Chart == "" {
+		v.err(ErrMissingRequired, field+".chart",
+			fmt.Sprintf("component %q has kind %q and names no chart", c.Name, kind),
+			"set chart to the chart's name within its source, e.g. chart: ingress-nginx")
+	}
+	if c.ChartVersion == "" {
+		v.err(ErrMissingRequired, field+".chartVersion",
+			fmt.Sprintf("component %q does not pin a chart version", c.Name),
+			"set chartVersion to an exact version, e.g. chartVersion: 4.11.3. kelson refuses an unpinned chart "+
+				"rather than resolving one at apply time: the same document would install different manifests on "+
+				"different days, and the diff — which only ever shows the HelmRelease — would report no change "+
+				"at all (ADR-0016)")
+	}
+	v.chartSource(field, c)
+	v.chartValues(field+".values", c.Values)
+	for i, vf := range c.ValuesFrom {
+		v.valuesFrom(fmt.Sprintf("%s.valuesFrom[%d]", field, i), vf)
+	}
+	for _, set := range workloadOnlyFields(c) {
+		v.err(ErrMutuallyExclusive, field+"."+set,
+			fmt.Sprintf("component %q has kind %q, which delegates a chart to helm-controller, but sets %s", c.Name, kind, set),
+			"remove "+set+"; what a chart runs is the chart's business, configured through values and valuesFrom. "+
+				"kelson writes the HelmRelease and never templates the chart (ADR-0005, ADR-0016)")
+	}
+	if c.Preset != "" {
+		v.err(ErrMutuallyExclusive, field+".preset",
+			fmt.Sprintf("component %q has kind %q, and a preset is the topology of a data component", c.Name, kind),
+			"remove preset; a chart's topology is configured with values, not with a kelson preset")
+	}
+}
+
+// chartSource holds a helm component to exactly one chart source. Both set is
+// as wrong as neither: they render different Flux source kinds, so kelson would
+// have to pick one and the author would not know which.
+func (v *validator) chartSource(field string, c Component) {
+	if c.Source == nil {
+		v.err(ErrMissingRequired, field+".source",
+			fmt.Sprintf("component %q names no chart source", c.Name),
+			"set source.repository to a classic Helm repository URL, or source.oci to an OCI registry URL")
+		return
+	}
+	repo, oci := c.Source.Repository, c.Source.OCI
+	switch {
+	case repo == "" && oci == "":
+		v.err(ErrMissingRequired, field+".source",
+			fmt.Sprintf("component %q has an empty chart source", c.Name),
+			"set exactly one of source.repository (a classic Helm repository URL) or source.oci (an OCI registry URL)")
+		return
+	case repo != "" && oci != "":
+		v.err(ErrMutuallyExclusive, field+".source",
+			fmt.Sprintf("component %q sets both source.repository and source.oci", c.Name),
+			"keep one: a repository renders a HelmRepository and an OCI URL renders an OCIRepository, "+
+				"and a chart is fetched from one of them")
+		return
+	}
+	if repo != "" {
+		v.chartURL(field+".source.repository", repo, []string{"https", "http"},
+			"use an https URL to the repository that serves index.yaml, e.g. https://kubernetes.github.io/ingress-nginx")
+		return
+	}
+	v.chartURL(field+".source.oci", oci, []string{"oci"},
+		"use an oci:// URL to the registry path holding the chart, without the chart name, "+
+			"e.g. oci://ghcr.io/acme/charts")
+}
+
+// chartURL checks a chart source URL for the one thing kelson can judge without
+// a network: that it is a URL at all, with a scheme this source kind uses.
+// Whether the registry answers is the registry's to say.
+func (v *validator) chartURL(field, raw string, schemes []string, remediation string) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || !slices.Contains(schemes, u.Scheme) {
+		v.err(ErrInvalidFormat, field,
+			fmt.Sprintf("%q is not a %s URL", raw, strings.Join(schemes, "/")),
+			remediation)
+	}
+}
+
+// chartValues walks the inline values for the one property the renderer and the
+// spec hash both need: string keys all the way down. YAML permits `1: true` as
+// a mapping key and Helm itself does not, so refusing here costs an author
+// nothing and keeps rendering and hashing total functions.
+//
+// Nothing else about a value is inspected. In particular kelson does not guess
+// which key holds a credential: content-sniffing would be a heuristic that
+// blocks legitimate configuration and misses the interesting cases, so the rule
+// is documented rather than enforced (docs/model.md, ADR-0009).
+func (v *validator) chartValues(field string, values map[string]any) {
+	for _, k := range sortedMapKeys(values) {
+		v.chartValue(field+"."+k, values[k])
+	}
+}
+
+func (v *validator) chartValue(field string, value any) {
+	switch t := value.(type) {
+	case map[string]any:
+		for _, k := range sortedMapKeys(t) {
+			v.chartValue(field+"."+k, t[k])
+		}
+	case map[any]any:
+		v.err(ErrInvalidFormat, field,
+			"chart values must be keyed by strings",
+			"quote the keys of this mapping; YAML allows non-string keys and Helm values do not")
+	case []any:
+		for i, item := range t {
+			v.chartValue(fmt.Sprintf("%s[%d]", field, i), item)
+		}
+	}
+}
+
+// valuesFrom holds one valuesFrom entry to exactly one reference.
+func (v *validator) valuesFrom(field string, vf ValuesFrom) {
+	switch {
+	case vf.SecretRef == "" && vf.ConfigMapRef == "":
+		v.err(ErrMissingRequired, field,
+			"a valuesFrom entry names a Secret or a ConfigMap",
+			"set secretRef for credentials, or configMapRef for plain configuration held outside the spec")
+	case vf.SecretRef != "" && vf.ConfigMapRef != "":
+		v.err(ErrMutuallyExclusive, field,
+			"a valuesFrom entry sets both secretRef and configMapRef",
+			"keep one; use two entries if the release needs both")
+	case vf.SecretRef != "":
+		v.name(field+".secretRef", vf.SecretRef, "secret")
+	default:
+		v.name(field+".configMapRef", vf.ConfigMapRef, "configmap")
+	}
+}
+
+// chartOnlyFields reports the helm fields set on a component that is not one.
+// It is the mirror of workloadOnlyFields and exists for the same reason: a
+// `chart:` on a worker configures nothing, and silence about it is the failure
+// issue #141 named.
+func (v *validator) chartOnlyFields(field string, c Component, kind ComponentKind) {
+	var set []string
+	if c.Chart != "" {
+		set = append(set, "chart")
+	}
+	if c.ChartVersion != "" {
+		set = append(set, "chartVersion")
+	}
+	if c.Source != nil {
+		set = append(set, "source")
+	}
+	if len(c.Values) > 0 {
+		set = append(set, "values")
+	}
+	if len(c.ValuesFrom) > 0 {
+		set = append(set, "valuesFrom")
+	}
+	for _, f := range set {
+		v.err(ErrMutuallyExclusive, field+"."+f,
+			fmt.Sprintf("component %q has kind %q, and %s configures a Helm chart", c.Name, kind, f),
+			"remove "+f+", or set kind: helm — a chart field on any other kind attaches to nothing (ADR-0016)")
+	}
+}
+
+// sortedMapKeys keeps every walk over an authored map deterministic, so a
+// document with two problems reports them in the same order every run.
+func sortedMapKeys[V any](m map[string]V) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	slices.Sort(out)
+	return out
 }
 
 // workloadOnlyFields lists the workload fields a component actually sets, in
@@ -625,6 +808,7 @@ func (v *validator) workloadComponent(
 			v.gate("$.spec.components[].tools", field+".tools")
 		}
 	}
+	v.chartOnlyFields(field, c, kind)
 	v.imageRef(field+".image", c.Image)
 	v.replicas(field+".replicas", c.Replicas)
 	v.resources(field+".resources", c.Resources)
@@ -799,6 +983,10 @@ func validateServiceRefs(e *Environment, services map[string]Component, v *valid
 // is in hand, so this is a cross-document check even though it reads like a
 // shape one.
 func (v *validator) overrideShape(field string, ov ComponentOverride, kind ComponentKind) {
+	if kind.IsChart() {
+		v.chartOverrideShape(field, ov, kind)
+		return
+	}
 	if !kind.IsData() {
 		if ov.Preset != "" {
 			v.err(ErrMutuallyExclusive, field+".preset",
@@ -807,6 +995,51 @@ func (v *validator) overrideShape(field string, ov ComponentOverride, kind Compo
 		}
 		return
 	}
+	set := workloadOverrideFields(ov)
+	for _, f := range set {
+		v.err(ErrMutuallyExclusive, field+"."+f,
+			fmt.Sprintf("component %q has kind %q, which renders a managed data service, but the override sets %s", ov.Name, kind, f),
+			"remove "+f+"; a data component is overridden per environment with preset only (rule P5)")
+	}
+	if ov.Preset == "" {
+		v.err(ErrMissingRequired, field+".preset",
+			fmt.Sprintf("the override for data component %q sets nothing", ov.Name),
+			"set preset to the topology this environment wants (shared, small, ha-small, ha-medium, branch), or remove the block")
+	}
+}
+
+// chartOverrideShape refuses every per-environment override on a helm
+// component, because there is not one it could apply.
+//
+// The override block carries image, replicas, resources, env and preset, and a
+// chart uses none of them: what it installs is decided by the chart version and
+// the values, which live on the Project component. Per-environment values are a
+// real ask and deliberately not in v0 (ADR-0016 scopes the kind to the
+// HelmRelease and its source); until they exist, an override that silently did
+// nothing would be the failure issue #141 is about.
+func (v *validator) chartOverrideShape(field string, ov ComponentOverride, kind ComponentKind) {
+	set := workloadOverrideFields(ov)
+	if ov.Preset != "" {
+		set = append(set, "preset")
+	}
+	for _, f := range set {
+		v.err(ErrMutuallyExclusive, field+"."+f,
+			fmt.Sprintf("component %q has kind %q, which delegates a chart to helm-controller, but the override sets %s", ov.Name, kind, f),
+			"remove "+f+"; a helm component has no per-environment overrides in v0 — the chart version and its "+
+				"values live on the Project component, and an environment that needs different values needs its "+
+				"own component (ADR-0016)")
+	}
+	if len(set) == 0 {
+		v.err(ErrMissingRequired, field,
+			fmt.Sprintf("the override for helm component %q sets nothing", ov.Name),
+			"remove the block; there is nothing a helm component can be overridden with per environment")
+	}
+}
+
+// workloadOverrideFields lists the workload override fields an Environment
+// block actually sets, in spec order. Both kinds that reject them — data and
+// helm — name every offending key at once rather than one per pass.
+func workloadOverrideFields(ov ComponentOverride) []string {
 	var set []string
 	if ov.Image != "" {
 		set = append(set, "image")
@@ -820,16 +1053,7 @@ func (v *validator) overrideShape(field string, ov ComponentOverride, kind Compo
 	if len(ov.Env) > 0 {
 		set = append(set, "env")
 	}
-	for _, f := range set {
-		v.err(ErrMutuallyExclusive, field+"."+f,
-			fmt.Sprintf("component %q has kind %q, which renders a managed data service, but the override sets %s", ov.Name, kind, f),
-			"remove "+f+"; a data component is overridden per environment with preset only (rule P5)")
-	}
-	if ov.Preset == "" {
-		v.err(ErrMissingRequired, field+".preset",
-			fmt.Sprintf("the override for data component %q sets nothing", ov.Name),
-			"set preset to the topology this environment wants (shared, small, ha-small, ha-medium, branch), or remove the block")
-	}
+	return set
 }
 
 // dataComponents indexes the components a binding may target, by name.

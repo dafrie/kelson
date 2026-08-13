@@ -122,9 +122,10 @@
                   "cron",
                   "agent",
                   "postgres",
-                  "valkey"
+                  "valkey",
+                  "helm"
                 ],
-                "description": "derived from port/schedule when omitted; required for postgres and valkey"
+                "description": "derived from port/schedule when omitted; required for postgres and valkey and helm"
               },
               "image": {
                 "type": "string",
@@ -255,6 +256,52 @@
                 ],
                 "description": "data components only",
                 "default": "shared"
+              },
+              "chart": {
+                "type": "string",
+                "description": "helm components only; the chart name within its source"
+              },
+              "chartVersion": {
+                "type": "string",
+                "description": "helm components only; the exact chart version — required because an unpinned chart is not reproducible"
+              },
+              "source": {
+                "properties": {
+                  "repository": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "classic Helm repository URL — the one serving index.yaml"
+                  },
+                  "oci": {
+                    "type": "string",
+                    "description": "OCI registry URL holding the chart — the registry path without the chart name (oci://ghcr.io/acme/charts)"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "description": "helm components only; exactly one of repository or oci"
+              },
+              "values": {
+                "type": "object",
+                "description": "helm components only; chart values rendered verbatim into the HelmRelease — plain configuration only and never secret material (put that in valuesFrom)"
+              },
+              "valuesFrom": {
+                "items": {
+                  "properties": {
+                    "secretRef": {
+                      "type": "string",
+                      "description": "name of a Secret in the environment namespace"
+                    },
+                    "configMapRef": {
+                      "type": "string",
+                      "description": "name of a ConfigMap in the environment namespace"
+                    }
+                  },
+                  "additionalProperties": false,
+                  "type": "object"
+                },
+                "type": "array",
+                "description": "helm components only; Secrets and ConfigMaps merged into the chart values by helm-controller"
               },
               "tools": {
                 "items": {

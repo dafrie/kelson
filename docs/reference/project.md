@@ -40,19 +40,24 @@ This reference is **generated** from the committed JSON Schema [`schema/project.
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
+| `chart` | string | no |  | helm components only; the chart name within its source |
+| `chartVersion` | string | no |  | helm components only; the exact chart version — required because an unpinned chart is not reproducible |
 | `command` | array of string | no |  | container command; wins over the image default |
 | `domains` | array of string | no |  |  |
 | `env` | map of one of: string, object | no |  |  |
 | `health` | string | no |  | HTTP liveness/readiness path |
 | `image` | string | no |  | overrides the Project image (rule P3) |
-| `kind` | string enum `"service"`, `"worker"`, `"cron"`, `"agent"`, `"postgres"`, `"valkey"` | no |  | derived from port/schedule when omitted; required for postgres and valkey |
+| `kind` | string enum `"service"`, `"worker"`, `"cron"`, `"agent"`, `"postgres"`, `"valkey"`, `"helm"` | no |  | derived from port/schedule when omitted; required for postgres and valkey and helm |
 | `name` | string pattern `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$` | yes |  |  |
 | `port` | integer min 1, max 65535 | no |  |  |
 | `preset` | string enum `"shared"`, `"small"`, `"ha-small"`, `"ha-medium"`, `"branch"` | no | `"shared"` | data components only |
 | `replicas` | object | no |  |  |
 | `resources` | object | no |  |  |
 | `schedule` | string | no |  | five-field cron expression |
+| `source` | object | no |  | helm components only; exactly one of repository or oci |
 | `tools` | array of string | no |  | agent components only; refused until issue #75 |
+| `values` | object | no |  | helm components only; chart values rendered verbatim into the HelmRelease — plain configuration only and never secret material (put that in valuesFrom) |
+| `valuesFrom` | array of object | no |  | helm components only; Secrets and ConfigMaps merged into the chart values by helm-controller |
 
 ##### `spec.components[].replicas`
 
@@ -81,6 +86,20 @@ This reference is **generated** from the committed JSON Schema [`schema/project.
 |-------|------|----------|---------|-------------|
 | `cpu` | string | no |  | Kubernetes quantity |
 | `memory` | string | no |  | Kubernetes quantity |
+
+##### `spec.components[].source`
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `oci` | string | no |  | OCI registry URL holding the chart — the registry path without the chart name (oci://ghcr.io/acme/charts) |
+| `repository` | string format uri | no |  | classic Helm repository URL — the one serving index.yaml |
+
+##### `spec.components[].valuesFrom[]`
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `configMapRef` | string | no |  | name of a ConfigMap in the environment namespace |
+| `secretRef` | string | no |  | name of a Secret in the environment namespace |
 
 #### `spec.defaults`
 

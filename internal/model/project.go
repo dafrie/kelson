@@ -69,12 +69,16 @@ const (
 	// Data kinds delegate their topology to an operator (ADR-0005, ADR-0007).
 	ComponentPostgres ComponentKind = "postgres"
 	ComponentValkey   ComponentKind = "valkey"
+	// ComponentHelm delegates a third-party chart to helm-controller: kelson
+	// renders a HelmRelease and its source, and never templates the chart
+	// (ADR-0016 decision 4).
+	ComponentHelm ComponentKind = "helm"
 )
 
 // ComponentKinds is the enum, in the order error remediations list it.
 var ComponentKinds = []ComponentKind{
 	ComponentService, ComponentWorker, ComponentCron, ComponentAgent,
-	ComponentPostgres, ComponentValkey,
+	ComponentPostgres, ComponentValkey, ComponentHelm,
 }
 
 // IsData reports whether a kind renders a managed data service rather than a
@@ -93,11 +97,18 @@ func (k ComponentKind) IsWorkload() bool {
 	return false
 }
 
-// Valid reports whether a kind is one of the enum's members.
-func (k ComponentKind) Valid() bool { return k.IsWorkload() || k.IsData() }
+// IsChart reports whether a kind delegates a third-party Helm chart to
+// helm-controller. It is a third half of the list, not a data kind: nothing
+// binds to it, it has no preset, and what it installs is the chart author's
+// business rather than kelson's (ADR-0016).
+func (k ComponentKind) IsChart() bool { return k == ComponentHelm }
 
-// Component is one entry of spec.components: a deployable, or a managed data
-// service (ADR-0014).
+// Valid reports whether a kind is one of the enum's members.
+func (k ComponentKind) Valid() bool { return k.IsWorkload() || k.IsData() || k.IsChart() }
+
+// Component is one entry of spec.components: a deployable, a managed data
+// service (ADR-0014), or a third-party chart delegated to helm-controller
+// (ADR-0016).
 //
 // The kind is derived from the shape unless it is written: port → service,
 // schedule → cron, neither → worker. That derivation is ADR-0006's and is the
@@ -107,14 +118,18 @@ func (k ComponentKind) Valid() bool { return k.IsWorkload() || k.IsData() }
 //
 // Not every field applies to every kind. Rather than accept a field that does
 // nothing, validation rejects it where it is meaningless — `preset` on a
-// workload, `port` on a database, `tools` on anything but an agent — which is
-// the price of the single list and the rule of issue #141.
+// workload, `port` on a database, `tools` on anything but an agent, `chart` on
+// anything but a helm component — which is the price of the single list and the
+// rule of issue #141.
 type Component struct {
 	Name string `yaml:"name" json:"name" jsonschema:"required,pattern=^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"`
 
-	// Kind is optional for workloads and required for data services, which
-	// have no shape to derive from.
-	Kind ComponentKind `yaml:"kind,omitempty" json:"kind,omitempty" jsonschema:"enum=service,enum=worker,enum=cron,enum=agent,enum=postgres,enum=valkey,description=derived from port/schedule when omitted; required for postgres and valkey"`
+	// Kind is optional for workloads and required for data services and helm
+	// components, which have no shape to derive from.
+	// The description below carries no comma on purpose: the jsonschema tag
+	// parser splits on them, so a comma silently truncates what the generated
+	// schema — and therefore docs/reference/project.md — says about the field.
+	Kind ComponentKind `yaml:"kind,omitempty" json:"kind,omitempty" jsonschema:"enum=service,enum=worker,enum=cron,enum=agent,enum=postgres,enum=valkey,enum=helm,description=derived from port/schedule when omitted; required for postgres and valkey and helm"`
 
 	Image   string   `yaml:"image,omitempty" json:"image,omitempty" jsonschema:"description=overrides the Project image (rule P3)"`
 	Command []string `yaml:"command,omitempty" json:"command,omitempty" jsonschema:"description=container command; wins over the image default"`
@@ -139,6 +154,39 @@ type Component struct {
 	// Preset is the topology of a data component, and is meaningless on a
 	// workload (ADR-0007, docs/data-services.md).
 	Preset ServicePreset `yaml:"preset,omitempty" json:"preset,omitempty" jsonschema:"default=shared,enum=shared,enum=small,enum=ha-small,enum=ha-medium,enum=branch,description=data components only"`
+
+	// Chart is the chart a `kind: helm` component installs, by name — the name
+	// inside the repository, not a path and not a URL. Meaningless on every
+	// other kind (ADR-0016 decision 4).
+	Chart string `yaml:"chart,omitempty" json:"chart,omitempty" jsonschema:"description=helm components only; the chart name within its source"`
+
+	// ChartVersion is the exact chart version, and it is required. An unpinned
+	// chart makes the render non-reproducible in the one way kelson cannot
+	// detect: the same document would install different manifests on different
+	// days, and the diff — which only ever sees the HelmRelease — would show
+	// nothing at all.
+	ChartVersion string `yaml:"chartVersion,omitempty" json:"chartVersion,omitempty" jsonschema:"description=helm components only; the exact chart version — required because an unpinned chart is not reproducible"`
+
+	// Source is where the chart comes from: exactly one of a classic Helm
+	// repository or an OCI registry.
+	Source *ChartSource `yaml:"source,omitempty" json:"source,omitempty" jsonschema:"description=helm components only; exactly one of repository or oci"`
+
+	// Values are the chart's values, written verbatim into the HelmRelease's
+	// spec.values.
+	//
+	// They are plain configuration and nothing else. Unlike a `Secret` kelson
+	// renders, a HelmRelease is not redacted anywhere — its values appear in
+	// every diff, in the rendered output and in the delivery repository — so a
+	// credential written here is a credential published there. Secret material
+	// belongs in ValuesFrom, against a Secret somebody else manages (ADR-0009,
+	// docs/model.md). Nothing enforces that in v0 beyond saying so: kelson does
+	// not sniff the content of a value to guess what it is.
+	Values map[string]any `yaml:"values,omitempty" json:"values,omitempty" jsonschema:"description=helm components only; chart values rendered verbatim into the HelmRelease — plain configuration only and never secret material (put that in valuesFrom)"`
+
+	// ValuesFrom names Secrets and ConfigMaps helm-controller merges into the
+	// release's values before the inline ones. This is where a chart's
+	// credentials go.
+	ValuesFrom []ValuesFrom `yaml:"valuesFrom,omitempty" json:"valuesFrom,omitempty" jsonschema:"description=helm components only; Secrets and ConfigMaps merged into the chart values by helm-controller"`
 
 	// Tools is the tool subset an agent component may call — the per-agent
 	// capability policy ADR-0014 records as mandatory practice for this
@@ -169,6 +217,30 @@ func (c Component) DerivedKind() ComponentKind {
 	default:
 		return ComponentWorker
 	}
+}
+
+// ChartSource is where a helm component's chart is fetched from. Exactly one
+// field is set: the two are different Flux source kinds, not two spellings of
+// one — `repository` renders a HelmRepository, `oci` renders an OCIRepository.
+type ChartSource struct {
+	// Repository is a classic Helm repository URL (the one with an index.yaml),
+	// e.g. https://charts.bitnami.com/bitnami.
+	Repository string `yaml:"repository,omitempty" json:"repository,omitempty" jsonschema:"format=uri,description=classic Helm repository URL — the one serving index.yaml"`
+	// OCI is an OCI registry URL holding the chart, without the chart name:
+	// oci://ghcr.io/acme/charts. kelson appends the chart name to it, so the
+	// same value serves every chart a registry publishes.
+	OCI string `yaml:"oci,omitempty" json:"oci,omitempty" jsonschema:"description=OCI registry URL holding the chart — the registry path without the chart name (oci://ghcr.io/acme/charts)"`
+}
+
+// ValuesFrom is one Secret or ConfigMap helm-controller reads chart values
+// from. Exactly one of the two is set.
+//
+// It is a name, never a value: this is the only way a helm component's chart
+// gets a credential, because the spec carries references and the cluster
+// carries values (ADR-0009).
+type ValuesFrom struct {
+	SecretRef    string `yaml:"secretRef,omitempty" json:"secretRef,omitempty" jsonschema:"description=name of a Secret in the environment namespace"`
+	ConfigMapRef string `yaml:"configMapRef,omitempty" json:"configMapRef,omitempty" jsonschema:"description=name of a ConfigMap in the environment namespace"`
 }
 
 // Replicas prescribes scaling. Max zero/absent means a fixed replica count of

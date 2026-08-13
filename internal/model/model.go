@@ -17,11 +17,11 @@
 //   - Thin on purpose: model what genuinely recurs, hand the rest to
 //     overlays (always available, never required).
 //   - One list of Components, one closed set of kinds: service, worker, cron,
-//     agent, postgres, valkey (ADR-0014). Workload kinds are derived from the
-//     shape — port set → web service, schedule set → CronJob, neither →
-//     worker — and an explicit kind: is checked against the enum and against
-//     the shape rather than overriding it silently. Data kinds are always
-//     explicit.
+//     agent, postgres, valkey (ADR-0014) and helm (ADR-0016). Workload kinds
+//     are derived from the shape — port set → web service, schedule set →
+//     CronJob, neither → worker — and an explicit kind: is checked against the
+//     enum and against the shape rather than overriding it silently. Data kinds
+//     and helm are always explicit.
 //   - No field is silently inert. A field that belongs to the other half of
 //     the kind set — preset on a worker, port on a database, tools on
 //     anything but an agent — is a validation error (issue #141).
