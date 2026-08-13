@@ -5,6 +5,12 @@
   it observes through the same DeliveryConnector and health evaluator the Status RPC uses, so §1's
   "the process holds no state" is unchanged: the retained event window is a cache a restart is
   allowed to lose, and says so with a Resync.)
+  (Amended 2026-08-13: `BuildService` added as the seventh service — the build plane of
+  [#48](https://github.com/dafrie/kelson/issues/48)/[#54](https://github.com/dafrie/kelson/issues/54)
+  over the schema. It adds no new state: a build produces an image in a registry, not a record in the
+  server, and the build Job is the cluster's. It does add a seam, `BuildConnector`, which is the same
+  shape as `DeliveryConnector` and for the same reason — the executor needs client-go, which §4's
+  fence keeps out of this plane.)
 - **Date:** 2026-08-13
 
 ## Context
@@ -72,7 +78,7 @@ identities (M7) give deploys an attributable author regardless of entry point.
 
 ### 2. v0 API surface: the full working set, one schema, structured errors on the wire
 
-Six services under `kelson.v1alpha1` (details in `proto/kelson/v1alpha1/`):
+Seven services under `kelson.v1alpha1` (details in `proto/kelson/v1alpha1/`):
 
 | Service | RPCs | Notes |
 |---|---|---|
@@ -82,11 +88,20 @@ Six services under `kelson.v1alpha1` (details in `proto/kelson/v1alpha1/`):
 | `DeployService` | Deploy, Status, Rollback, History | Deploy/Rollback are server-streaming: each state-machine transition is an event; the final event carries the settled state |
 | `LogService` | Query, Follow | First consumer of `observation/logquery`; Query is bounded (the engine's `requireBound`), Follow is the deliberate unbounded stream |
 | `EventService` | Watch | Server-streaming watch over (project, environment) scopes (#76). Cursors resume within a bounded in-memory window; past it the server sends `Resync` (relist via Status) rather than pretending to durable history |
+| `BuildService` | Build | Server-streaming in-cluster build (#48, #54): `Started`, raw build output as `Log` chunks, `Finished` with the digest-pinned reference. The strategy stays the spec's (ADR-0010) so there is no override field; the destination is the server's configuration (`--registry`, `--push-secret`), overridable per request because where an image is pushed is not application description |
 
 **Every mutating RPC** (PutSpec, DeleteSpec, Deploy, Rollback) carries `dry_run`
 (`DRY_RUN_UNSPECIFIED | NONE | RENDER | SERVER`) and `idempotency_key`, per #69. Idempotency in v0 is
 scoped honestly: keys are recorded in the state ConfigMaps' annotations and a replayed key returns the
 recorded outcome; there is no distributed dedup beyond what one namespace's ConfigMaps provide.
+
+`BuildService.Build` carries neither, and the reason is worth stating rather than filing as an
+exception. A dry-run rung would have nothing to do: a build renders no manifests and has no
+server-side apply to preview, and "validate the spec without building" is `PutSpec` at
+`dry_run=RENDER`. An idempotency key would have nothing to deduplicate: the image is named from the
+resolved commit, so a replayed build pushes the same content to the same tag and resolves to the same
+digest, and the executor's Job name is itself a function of the request, so a concurrent duplicate
+adopts the running Job. Adding either field to look consistent would be adding a field that lies.
 
 **One wire error shape.** The three plane vocabularies (`model.Error`, `renderer.Error`,
 `delivery.Error`) map onto a single `kelson.v1alpha1.Error` message — the union of their fields
