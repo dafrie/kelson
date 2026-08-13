@@ -262,3 +262,149 @@ func isDNS1123(s string) bool {
 	}
 	return true
 }
+
+// --- push credentials (#51) -------------------------------------------------
+
+func findVolume(w *workload, name string) (volume, bool) {
+	for _, v := range w.Spec.Template.Spec.Volumes {
+		if v.Name == name {
+			return v, true
+		}
+	}
+	return volume{}, false
+}
+
+func findMount(c container, name string) (volumeMount, bool) {
+	for _, m := range c.VolumeMounts {
+		if m.Name == name {
+			return m, true
+		}
+	}
+	return volumeMount{}, false
+}
+
+func envValue(c container, name string) (string, bool) {
+	for _, e := range c.Env {
+		if e.Name == name {
+			return e.Value, true
+		}
+	}
+	return "", false
+}
+
+// TestWorkloadPushSecretIsProjectedForBuildctl is the push-credential
+// acceptance test (#51): a named dockerconfigjson Secret is projected as
+// config.json and DOCKER_CONFIG points buildctl at it. buildctl authenticates
+// a push through the docker config file, not through an imagePullSecret, so
+// this file mount is the mechanism rather than a convenience.
+func TestWorkloadPushSecretIsProjectedForBuildctl(t *testing.T) {
+	cfg := Config{Namespace: testNS, PushSecret: "ghcr-push"}
+	w := workloadFor(t, baseRequest(), cfg)
+
+	vol, ok := findVolume(w, pushSecretVolume)
+	if !ok {
+		t.Fatalf("expected a %q volume, got %+v", pushSecretVolume, w.Spec.Template.Spec.Volumes)
+	}
+	if vol.Secret == nil {
+		t.Fatal("the push credential must be projected from a Secret, not an emptyDir")
+	}
+	if vol.EmptyDir != nil {
+		t.Fatal("the push-secret volume must not also declare an emptyDir")
+	}
+	if vol.Secret.SecretName != "ghcr-push" {
+		t.Fatalf("secretName = %q, want %q", vol.Secret.SecretName, "ghcr-push")
+	}
+	if vol.Secret.DefaultMode == nil || *vol.Secret.DefaultMode != pushSecretMode {
+		t.Fatalf("defaultMode = %v, want %d (0400)", vol.Secret.DefaultMode, pushSecretMode)
+	}
+	if len(vol.Secret.Items) != 1 {
+		t.Fatalf("expected exactly the dockerconfigjson key to be projected, got %+v", vol.Secret.Items)
+	}
+	if got := vol.Secret.Items[0]; got.Key != dockerConfigJSONKey || got.Path != dockerConfigFile {
+		t.Fatalf("projected item = %+v, want %s -> %s", got, dockerConfigJSONKey, dockerConfigFile)
+	}
+
+	ctr := buildContainer(w)
+	mount, ok := findMount(ctr, pushSecretVolume)
+	if !ok {
+		t.Fatalf("build container must mount %q, got %+v", pushSecretVolume, ctr.VolumeMounts)
+	}
+	if mount.MountPath != dockerConfigDir {
+		t.Fatalf("mountPath = %q, want %q", mount.MountPath, dockerConfigDir)
+	}
+	if !mount.ReadOnly {
+		t.Fatal("the projected credential must be mounted read-only")
+	}
+	if got, ok := envValue(ctr, "DOCKER_CONFIG"); !ok || got != dockerConfigDir {
+		t.Fatalf("DOCKER_CONFIG = %q (present %v), want %q — buildctl resolves registry auth from it", got, ok, dockerConfigDir)
+	}
+}
+
+// TestWorkloadWithoutPushSecretMountsNothing: an unauthenticated push (a local
+// registry) is a legitimate configuration, and it must not fabricate a Secret
+// reference the cluster does not have.
+func TestWorkloadWithoutPushSecretMountsNothing(t *testing.T) {
+	w := workloadFor(t, baseRequest(), Config{Namespace: testNS})
+
+	if _, ok := findVolume(w, pushSecretVolume); ok {
+		t.Fatal("no push secret configured: the manifest must declare no credential volume")
+	}
+	for _, v := range w.Spec.Template.Spec.Volumes {
+		if v.Secret != nil {
+			t.Fatalf("unexpected Secret volume %q in a build with no push secret", v.Name)
+		}
+		if v.EmptyDir == nil {
+			t.Fatalf("volume %q must still be an emptyDir", v.Name)
+		}
+	}
+	ctr := buildContainer(w)
+	if _, ok := findMount(ctr, pushSecretVolume); ok {
+		t.Fatal("no push secret configured: the build container must mount none")
+	}
+	if got, ok := envValue(ctr, "DOCKER_CONFIG"); ok {
+		t.Fatalf("DOCKER_CONFIG must be unset without a push secret, got %q", got)
+	}
+}
+
+// The credential is a reference, never a value (ADR-0009): the rendered
+// manifest may name the Secret and nothing more. And the credential path must
+// not cost the build its rootless posture.
+func TestWorkloadPushSecretStaysAReferenceAndUnprivileged(t *testing.T) {
+	cfg := Config{Namespace: testNS, PushSecret: "ghcr-push"}
+	raw, err := cfg.Workload(baseRequest())
+	if err != nil {
+		t.Fatalf("Workload: %v", err)
+	}
+	text := string(raw)
+	for _, forbidden := range []string{"password", "username", "auths", "privileged: true", "CAP_SYS_ADMIN"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("rendered manifest must not contain %q\n%s", forbidden, text)
+		}
+	}
+
+	sc := buildContainer(workloadFor(t, baseRequest(), cfg)).SecurityContext
+	if sc == nil || sc.RunAsNonRoot == nil || !*sc.RunAsNonRoot {
+		t.Fatal("mounting a push credential must not change the rootless security context")
+	}
+	if sc.AllowPrivilegeEscalation == nil || *sc.AllowPrivilegeEscalation {
+		t.Fatal("mounting a push credential must not allow privilege escalation")
+	}
+}
+
+// The clone init container has no business reading a registry credential.
+func TestWorkloadPushSecretIsNotVisibleToTheCloneStep(t *testing.T) {
+	req := baseRequest()
+	req.SourceGit = "https://github.com/acme/shop.git"
+	w := workloadFor(t, req, Config{Namespace: testNS, PushSecret: "ghcr-push"})
+
+	if len(w.Spec.Template.Spec.InitContainers) != 1 {
+		t.Fatalf("expected one clone init container, got %d", len(w.Spec.Template.Spec.InitContainers))
+	}
+	clone := w.Spec.Template.Spec.InitContainers[0]
+	if _, ok := findMount(clone, pushSecretVolume); ok {
+		t.Fatal("the clone init container must not mount the push credential")
+	}
+	if _, ok := envValue(clone, "DOCKER_CONFIG"); ok {
+		t.Fatal("the clone init container must not receive DOCKER_CONFIG")
+	}
+}

@@ -15,6 +15,8 @@ import (
 	k8stesting "k8s.io/client-go/testing"
 	sigsyaml "sigs.k8s.io/yaml"
 
+	"github.com/dafrie/kelson/internal/build"
+	"github.com/dafrie/kelson/internal/build/buildkit"
 	"github.com/dafrie/kelson/internal/delivery/kube"
 )
 
@@ -240,5 +242,75 @@ func TestBuildExecutorCleanupFailureIsDistinct(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), overflowDgst) {
 		t.Errorf("cleanup failure should carry the digest so the push is not lost, got: %v", err)
+	}
+}
+
+// TestBuildExecutorSubmitsARenderedPushSecretJob closes the loop between the
+// pure renderer and this executor for the credential path (#51). The other
+// tests here hand-build a manifest; this one submits exactly what
+// buildkit.Config renders with a PushSecret, because that manifest gained a
+// Secret volume — a shape the round trip through sigs.k8s.io/yaml into a typed
+// Job had never carried before, and the only place the two halves can drift.
+func TestBuildExecutorSubmitsARenderedPushSecretJob(t *testing.T) {
+	req := build.Request{
+		Project:     "shop",
+		Application: "checkout",
+		Environment: "production",
+		Image:       testRepo,
+		Tag:         testTag,
+		Revision:    "abc12345",
+	}
+	manifest, err := buildkit.Config{Namespace: testNS, PushSecret: "ghcr-push"}.Workload(req)
+	if err != nil {
+		t.Fatalf("Workload: %v", err)
+	}
+
+	cli := fake.NewSimpleClientset()
+	name, err := kube.NewBuildExecutor(cli).Submit(context.Background(), manifest)
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+
+	job, err := cli.BatchV1().Jobs(testNS).Get(context.Background(), name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get submitted job: %v", err)
+	}
+	var vol *corev1.Volume
+	for i, v := range job.Spec.Template.Spec.Volumes {
+		if v.Secret != nil {
+			vol = &job.Spec.Template.Spec.Volumes[i]
+		}
+	}
+	if vol == nil {
+		t.Fatalf("the submitted Job lost its projected push credential: %+v", job.Spec.Template.Spec.Volumes)
+	}
+	if vol.Secret.SecretName != "ghcr-push" {
+		t.Errorf("secretName = %q, want %q", vol.Secret.SecretName, "ghcr-push")
+	}
+	if vol.Secret.DefaultMode == nil || *vol.Secret.DefaultMode != 0o400 {
+		t.Errorf("defaultMode = %v, want 0400 — the mode must survive the YAML round trip", vol.Secret.DefaultMode)
+	}
+	if len(vol.Secret.Items) != 1 || vol.Secret.Items[0].Key != corev1.DockerConfigJsonKey || vol.Secret.Items[0].Path != "config.json" {
+		t.Errorf("projected items = %+v, want %s -> config.json", vol.Secret.Items, corev1.DockerConfigJsonKey)
+	}
+
+	ctr := job.Spec.Template.Spec.Containers[0]
+	var mounted bool
+	for _, m := range ctr.VolumeMounts {
+		if m.Name == vol.Name {
+			mounted = m.ReadOnly
+		}
+	}
+	if !mounted {
+		t.Errorf("the build container must mount the credential read-only, got %+v", ctr.VolumeMounts)
+	}
+	var dockerConfig string
+	for _, e := range ctr.Env {
+		if e.Name == "DOCKER_CONFIG" {
+			dockerConfig = e.Value
+		}
+	}
+	if dockerConfig == "" {
+		t.Errorf("DOCKER_CONFIG must survive to the submitted Job, got env %+v", ctr.Env)
 	}
 }

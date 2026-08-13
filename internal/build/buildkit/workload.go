@@ -26,6 +26,28 @@ const (
 	defaultRunAsGroup = 1000
 )
 
+// Push-credential wiring. buildctl authenticates a registry push through the
+// Docker CLI's config file, resolved from $DOCKER_CONFIG (falling back to
+// ~/.docker) — it is a docker auth provider, not a Kubernetes one, so an
+// imagePullSecret on the pod would do nothing for a *push*. So the
+// dockerconfigjson Secret is projected as a file the build container reads:
+// the Secret's .dockerconfigjson key becomes config.json in dockerConfigDir,
+// and DOCKER_CONFIG points buildctl at that directory.
+const (
+	// dockerConfigDir sits under the rootless image's home (uid 1000), which
+	// is the same home buildkit's state directory uses.
+	dockerConfigDir = "/home/user/.docker"
+	// dockerConfigJSONKey is the fixed key of a kubernetes.io/dockerconfigjson
+	// Secret, and dockerConfigFile is what the docker config loader looks for.
+	dockerConfigJSONKey = ".dockerconfigjson"
+	dockerConfigFile    = "config.json"
+	// pushSecretVolume names the projected credential volume.
+	pushSecretVolume = "push-secret"
+	// pushSecretMode is 0400: the credential is readable by the build user and
+	// nobody else. Kubernetes takes the mode as a decimal int32.
+	pushSecretMode int32 = 0o400
+)
+
 // Names helpers inherited from the delivery plane, mirroring renderer
 // provenance (docs/architecture.md).
 const (
@@ -77,7 +99,7 @@ func (c Config) Workload(req build.Request) ([]byte, error) {
 		RestartPolicy:      "Never",
 		InitContainers:     sourceInitContainers(req, cfg),
 		Containers:         []container{ctr},
-		Volumes:            baseVolumes(),
+		Volumes:            volumes(cfg),
 	}
 
 	job := workload{
@@ -166,13 +188,22 @@ func podContainer(req build.Request, cfg Config) container {
 		{Name: "buildkit-state", MountPath: "/home/user/.local/share/buildkit"},
 		{Name: "tmp", MountPath: "/tmp"},
 	}
+	env := []envVar{{Name: "BUILDKIT_ROOTLESS", Value: "true"}}
+	if cfg.PushSecret != "" {
+		volumeMounts = append(volumeMounts, volumeMount{
+			Name:      pushSecretVolume,
+			MountPath: dockerConfigDir,
+			ReadOnly:  true,
+		})
+		env = append(env, envVar{Name: "DOCKER_CONFIG", Value: dockerConfigDir})
+	}
 
 	ctr := container{
 		Name:         "buildkit",
 		Image:        cfg.BuildkitImage,
 		Command:      []string{"sh", "-c", buildCommand(req)},
 		VolumeMounts: volumeMounts,
-		Env:          []envVar{{Name: "BUILDKIT_ROOTLESS", Value: "true"}},
+		Env:          env,
 		SecurityContext: &securityContext{
 			RunAsNonRoot:             boolPtr(true),
 			RunAsUser:                int64Ptr(defaultRunAsUser),
@@ -291,14 +322,29 @@ type envVar struct {
 type volumeMount struct {
 	Name      string `yaml:"name"`
 	MountPath string `yaml:"mountPath"`
+	ReadOnly  bool   `yaml:"readOnly,omitempty"`
 }
 
 type volume struct {
 	Name     string          `yaml:"name"`
-	EmptyDir *emptyDirVolume `yaml:"emptyDir"`
+	EmptyDir *emptyDirVolume `yaml:"emptyDir,omitempty"`
+	Secret   *secretVolume   `yaml:"secret,omitempty"`
 }
 
 type emptyDirVolume struct{}
+
+// secretVolume projects a Secret as files. Only the name of the Secret enters
+// the manifest — the value stays in the cluster (ADR-0009).
+type secretVolume struct {
+	SecretName  string      `yaml:"secretName"`
+	DefaultMode *int32      `yaml:"defaultMode,omitempty"`
+	Items       []keyToPath `yaml:"items,omitempty"`
+}
+
+type keyToPath struct {
+	Key  string `yaml:"key"`
+	Path string `yaml:"path"`
+}
 
 type securityContext struct {
 	RunAsNonRoot             *bool         `yaml:"runAsNonRoot"`
@@ -324,15 +370,31 @@ type resourceList struct {
 	Memory string `yaml:"memory,omitempty"`
 }
 
-// baseVolumes the build Job always needs: the source workspace (populated by
-// the Cluster on Submit), and writable buildkit state + tmp that the rootless
-// image requires without a privileged node.
-func baseVolumes() []volume {
-	return []volume{
+// volumes are what the build Job needs: the source workspace (populated by the
+// clone init container), writable buildkit state + tmp that the rootless image
+// requires without a privileged node, and — when the caller named one — the
+// projected push credential.
+func volumes(cfg Config) []volume {
+	vols := []volume{
 		{Name: "workspace", EmptyDir: &emptyDirVolume{}},
 		{Name: "buildkit-state", EmptyDir: &emptyDirVolume{}},
 		{Name: "tmp", EmptyDir: &emptyDirVolume{}},
 	}
+	if cfg.PushSecret == "" {
+		return vols
+	}
+	mode := pushSecretMode
+	return append(vols, volume{
+		Name: pushSecretVolume,
+		Secret: &secretVolume{
+			SecretName:  cfg.PushSecret,
+			DefaultMode: &mode,
+			// Only the dockerconfigjson key is projected, renamed to the file
+			// name the docker config loader expects. Projecting the whole
+			// Secret would put whatever else it carries next to it.
+			Items: []keyToPath{{Key: dockerConfigJSONKey, Path: dockerConfigFile}},
+		},
+	})
 }
 
 func resourceReqs(r ResourceRequirements) resources {

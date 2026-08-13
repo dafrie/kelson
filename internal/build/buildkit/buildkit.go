@@ -70,6 +70,17 @@ type Config struct {
 	GitImage string
 	// ServiceAccount the Job runs as, when the caller wants a non-default SA.
 	ServiceAccount string
+	// PushSecret is the name of a kubernetes.io/dockerconfigjson Secret in
+	// Namespace holding the credential for the destination registry. It is a
+	// reference, never a value (ADR-0009): kelson does not create it, does not
+	// read it, and never puts a credential in a manifest it renders — the
+	// kubelet projects it into the build pod and buildctl picks it up from
+	// $DOCKER_CONFIG.
+	//
+	// Empty means an unauthenticated push, which is correct for a local
+	// registry (kind, a cluster-internal registry) and fails at push time for
+	// anything that requires auth.
+	PushSecret string
 	// Resources applied to the build container. May be zero.
 	Resources ResourceRequirements
 	// Timeout bounds the whole build; "" means no deadline. Non-empty values
