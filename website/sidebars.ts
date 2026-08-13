@@ -34,6 +34,7 @@ const sidebars: SidebarsConfig = {
       collapsed: false,
       items: [
         {type: 'doc', id: 'model', label: 'Model'},
+        {type: 'doc', id: 'build', label: 'Build'},
         {type: 'doc', id: 'delivery', label: 'Delivery'},
         {type: 'doc', id: 'statemachine', label: 'State machine'},
         {type: 'doc', id: 'release-policy', label: 'Release policy'},
