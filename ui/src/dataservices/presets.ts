@@ -57,9 +57,60 @@ export const DEDICATED_PRESETS: Record<string, PresetSizing> = {
   "ha-medium": { instances: 3, cpu: "2", memory: "4Gi", storage: "20Gi", syncReplicas: 1 },
 };
 
+/**
+ * One cache topology, as internal/renderer/dataservice.go writes it. Same
+ * preset words, different engine: a ValkeyCluster has shards and replicas per
+ * shard instead of instances, a maxmemory deliberately below the container
+ * limit (eviction must start before the OOM killer does), and no storage —
+ * kelson renders caches with persistence off (ADR-0015).
+ */
+export interface ValkeySizing {
+  /** `spec.shards`: primaries the keyspace is split across. */
+  shards: number;
+  /** `spec.replicas`: replicas per shard, not in total. */
+  replicasPerShard: number;
+  /** `spec.resources.requests.cpu`. No CPU limit, same as postgres. */
+  cpu: string;
+  /** `spec.resources.requests.memory`, and the limit, which equals it. */
+  memory: string;
+  /** The valkey `maxmemory` directive — 75% of the container limit. */
+  maxMemory: string;
+}
+
+/** MIRROR of `valkeyPresets` in internal/renderer/dataservice.go. */
+export const VALKEY_PRESETS: Record<string, ValkeySizing> = {
+  small: { shards: 1, replicasPerShard: 0, cpu: "250m", memory: "512Mi", maxMemory: "384mb" },
+  "ha-small": { shards: 3, replicasPerShard: 1, cpu: "250m", memory: "512Mi", maxMemory: "384mb" },
+  "ha-medium": { shards: 3, replicasPerShard: 1, cpu: "1", memory: "2Gi", maxMemory: "1536mb" },
+};
+
 /** The sizing a preset renders, or undefined when it renders nothing. */
 export function sizingFor(preset: string): PresetSizing | undefined {
   return DEDICATED_PRESETS[preset];
+}
+
+/**
+ * The factual lines for a data component of either kind, or undefined when the
+ * preset renders nothing for that kind. The two engines share preset words but
+ * not shapes, so the lines differ by kind and both quote their own Go table.
+ */
+export function sizingLinesFor(kind: DataKind, preset: string): string[] | undefined {
+  if (kind === "valkey") {
+    const s = VALKEY_PRESETS[preset];
+    if (s === undefined) return undefined;
+    const pods = s.shards * (1 + s.replicasPerShard);
+    return [
+      s.shards === 1
+        ? "1 shard, no replicas — works with any Redis-compatible client"
+        : `${s.shards} shards × ${s.replicasPerShard} ${s.replicasPerShard === 1 ? "replica" : "replicas"} each (${pods} pods) — needs a cluster-aware client`,
+      `${s.cpu} CPU requested per pod, no limit`,
+      `${s.memory} memory, request and limit`,
+      `maxmemory ${s.maxMemory} with allkeys-lru eviction — evicts before the OOM killer would`,
+      "no persistence — a lost cache refills, and using it as a durable store is not supported",
+    ];
+  }
+  const s = DEDICATED_PRESETS[preset];
+  return s === undefined ? undefined : sizingLines(s);
 }
 
 /**
@@ -106,13 +157,14 @@ export function issueUrl(issue: number): string {
  * text a reader should act on); this decides whether to ask for it at all.
  */
 export function deferralFor(kind: DataKind, preset: string): Deferral | undefined {
-  if (kind === "valkey") {
+  if (kind === "valkey" && preset === "branch") {
     return {
-      label: "kind: valkey is deferred",
+      label: "preset: branch renders nothing for a cache",
       summary:
-        "kelson renders no Valkey yet: only kind: postgres reaches a cluster today.",
-      issue: 98,
-      url: issueUrl(98),
+        "A branch copies durable state, and a kelson cache has none — it renders with " +
+        "persistence off, and an empty cache is what starting one already gives you.",
+      issue: 99,
+      url: issueUrl(99),
     };
   }
   if (preset === "shared") {

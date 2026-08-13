@@ -15,8 +15,7 @@ import {
 import {
   COMING_SOON,
   deferralFor,
-  sizingFor,
-  sizingLines,
+  sizingLinesFor,
   type Deferral,
 } from "./presets";
 import "./dataservices.css";
@@ -197,7 +196,9 @@ function DataServiceRow({
   answer: ServerAnswer;
 }) {
   const deferral = deferralFor(service.kind, service.preset);
-  const sizing = sizingFor(service.preset);
+  const lines = sizingLinesFor(service.kind, service.preset);
+  const clusterKind =
+    service.kind === "postgres" ? "CloudNativePG Cluster" : "ValkeyCluster";
   const cluster = clusterResourceName(project, environment, service.name);
   const verdict =
     health.state === "read" ? clusterVerdictFor(health.verdicts, cluster) : undefined;
@@ -229,15 +230,15 @@ function DataServiceRow({
 
       {deferral !== undefined ? (
         <Deferred deferral={deferral} answer={answer} />
-      ) : sizing !== undefined ? (
+      ) : lines !== undefined ? (
         <>
           <ul className="k-data__facts">
-            {sizingLines(sizing).map((line) => (
+            {lines.map((line) => (
               <li key={line}>{line}</li>
             ))}
           </ul>
           <div className="k-mono k-data__cluster">
-            CloudNativePG Cluster · {cluster}
+            {clusterKind} · {cluster}
           </div>
           <Health verdict={verdict} health={health} />
         </>
@@ -316,7 +317,7 @@ function Health({
     return (
       <p className="k-data__note">
         Live health: no verdict — kelson's status readback covers Deployments,
-        so this Cluster's own health comes from CloudNativePG rather than from
+        so this service's own health comes from its operator rather than from
         here.
       </p>
     );

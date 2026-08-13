@@ -125,13 +125,17 @@ export function clusterVerdictFor<T extends { resource: string }>(
     const parts = v.resource.split("/");
     return (
       parts.length >= 2 &&
-      parts[0] === "Cluster" &&
+      DATA_RESOURCE_KINDS.has(parts[0] ?? "") &&
       parts[parts.length - 1] === clusterName
     );
   });
 }
 
+/** The resource kinds kelson renders for data components: CloudNativePG's
+ * Cluster and the Valkey operator's ValkeyCluster (ADR-0015). */
+const DATA_RESOURCE_KINDS = new Set(["Cluster", "ValkeyCluster"]);
+
 /** True for a verdict about a data service's own resource rather than a workload. */
 export function isDataServiceVerdict(resource: string): boolean {
-  return resource.split("/")[0] === "Cluster";
+  return DATA_RESOURCE_KINDS.has(resource.split("/")[0] ?? "");
 }

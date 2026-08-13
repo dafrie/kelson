@@ -33,6 +33,15 @@ const SHARED_PROJECT = `spec:
       preset: shared
 `;
 
+const VALKEY_PROJECT = `spec:
+  image: ghcr.io/acme/checkout:1
+
+  components:
+    - name: cache
+      kind: valkey
+      preset: ha-small
+`;
+
 const PROFILE = `storageClasses:
     - name: local-path
       provisioner: rancher.io/local-path
@@ -106,6 +115,44 @@ describe("DataServices", () => {
     ).toBeTruthy();
     // The workload in the same list is not a data service.
     expect(screen.queryByText("web")).toBeNull();
+  });
+
+  it("sizes a valkey cache from its own table, not the postgres one", async () => {
+    renderSection(VALKEY_PROJECT, [
+      {
+        resource: "ValkeyCluster/checkout-prod/checkout-production-cache",
+        code: "healthy",
+        healthy: true,
+        degraded: false,
+        message: "3 shards ready",
+        remediation: "",
+      },
+    ]);
+
+    expect(await screen.findByText("Data services (1)")).toBeTruthy();
+    expect(screen.getByText("preset: ha-small")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "3 shards × 1 replica each (6 pods) — needs a cluster-aware client",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText("250m CPU requested per pod, no limit")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "maxmemory 384mb with allkeys-lru eviction — evicts before the OOM killer would",
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        "no persistence — a lost cache refills, and using it as a durable store is not supported",
+      ),
+    ).toBeTruthy();
+    // The cache is sized, named and judged as a ValkeyCluster, not deferred.
+    expect(
+      screen.getByText("ValkeyCluster · checkout-production-cache"),
+    ).toBeTruthy();
+    expect(screen.getByText("3 shards ready")).toBeTruthy();
+    expect(screen.queryByText("Deferred")).toBeNull();
   });
 
   it("shows the Cluster's verdict when the status data carries one", async () => {
