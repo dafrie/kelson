@@ -89,6 +89,8 @@ func Check(p clusterprofile.ClusterProfile) Report {
 			func() string { return p.Valkey.Version }},
 		{"flux", func() bool { return p.Flux != nil },
 			func() string { return p.Flux.Version }},
+		{"helm-controller", func() bool { return p.HelmController != nil },
+			func() string { return p.HelmController.Version }},
 		{"argo-cd", func() bool { return p.ArgoCD != nil },
 			func() string { return p.ArgoCD.Version }},
 		{"metrics-server", func() bool { return p.MetricsServer != nil },

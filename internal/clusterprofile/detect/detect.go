@@ -129,6 +129,11 @@ var componentGroups = []struct {
 	{"postgresql.cnpg.io", "cnpg"},
 	{valkeyGroup, "valkey"},
 	{"source.toolkit.fluxcd.io", "flux"},
+	// helm-controller owns its own group, and it is a separate finding from
+	// Flux on purpose: a FluxInstance may install a components subset, so a
+	// cluster can serve source.toolkit.fluxcd.io and have nothing that
+	// reconciles a HelmRelease (ADR-0016, issue #60).
+	{helmGroup, "helmController"},
 	// flux-operator owns this group, and it is the same group the delivery
 	// plane reads FluxReport from (internal/delivery/flux/dynamic.go) — the two
 	// must name the same coordinates or the profile would promise a CR the
@@ -180,6 +185,9 @@ func (p *prober) probe(ctx context.Context) (clusterprofile.ClusterProfile, erro
 	if prof.Valkey != nil {
 		p.probeValkeyOperator(ctx, prof.Valkey, preferredVersion(serverGroups, valkeyGroup, "v1alpha1"))
 	}
+	if prof.HelmController != nil {
+		p.probeHelmController(ctx, prof.HelmController, preferredVersion(serverGroups, helmGroup, "v2"))
+	}
 	if prof.CertManager != nil {
 		p.probeClusterIssuers(ctx, &prof.CertManager.ClusterIssuers)
 	}
@@ -219,6 +227,8 @@ func (p *prober) applyGroupPresence(prof clusterprofile.ClusterProfile, group, f
 		prof.Valkey = &clusterprofile.ValkeyOperator{}
 	case "flux":
 		prof.Flux = &clusterprofile.Component{}
+	case "helmController":
+		prof.HelmController = &clusterprofile.HelmController{}
 	case "fluxOperator":
 		prof.FluxOperator = &clusterprofile.Component{}
 	case "argocd":
@@ -524,6 +534,34 @@ var valkeyOperator = operatorDeployment{
 func (p *prober) probeValkeyOperator(ctx context.Context, v *clusterprofile.ValkeyOperator, groupVersion string) {
 	v.Namespace, v.Version = p.probeOperatorDeployment(ctx, valkeyOperator)
 	v.CRDs = p.probeGroupResources(valkeyGroup, groupVersion, "valkey.crds")
+}
+
+// helm-controller detection coordinates (ADR-0016).
+//
+// kelson writes a HelmRelease and delegates the chart to helm-controller, which
+// makes it a prerequisite exactly the way CNPG is for a database — so it is
+// detected the same way, and for the same reason: presence alone cannot answer
+// whether a chart component is renderable against this cluster.
+const helmGroup = "helm.toolkit.fluxcd.io"
+
+// helmControllerDeployment locates the controller. Flux labels every one of its
+// controllers app.kubernetes.io/component=<name> whichever way it was installed
+// — `flux install`, the Flux Helm chart, or a flux-operator FluxInstance — so
+// the component label is the one selector all three agree on. The
+// app.kubernetes.io/name label does not work here: the Flux manifests set it to
+// `flux` for the whole suite, not to the individual controller.
+var helmControllerDeployment = operatorDeployment{
+	selector:   "app.kubernetes.io/component=helm-controller",
+	imageMatch: "helm-controller",
+	gapField:   "helmController.version",
+}
+
+// probeHelmController fills in the controller's version, namespace and served
+// resources, with the rule every adopted operator gets: a read that fails
+// records its own Gap and never demotes the controller to absent.
+func (p *prober) probeHelmController(ctx context.Context, h *clusterprofile.HelmController, groupVersion string) {
+	h.Namespace, h.Version = p.probeOperatorDeployment(ctx, helmControllerDeployment)
+	h.CRDs = p.probeGroupResources(helmGroup, groupVersion, "helmController.crds")
 }
 
 // probeGroupResources records which resources the API server actually serves in
