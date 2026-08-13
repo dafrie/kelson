@@ -8,7 +8,7 @@ metadata:
     kelson.dev/environment: production
     kelson.dev/project: checkout
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:63d694e731f07cbc7a7a9b49755cc24854ff04cab16e6662e80f18ca0b9709a8
     kelson.dev/namespace-ownership: declared
 ---
@@ -22,7 +22,7 @@ metadata:
     kelson.dev/environment: production
     kelson.dev/project: checkout
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:9bd32dfae03a87e3b38635c5d3aaaf817504ce08302a1ec6783a983e9aace96e
 spec:
   instances: 3
@@ -51,7 +51,7 @@ metadata:
     kelson.dev/environment: production
     kelson.dev/project: checkout
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:1eacad1d516557379655fb5b339c1707051ccd470132b29ed523aa6dd86c3f2d
 spec:
   instances: 3
@@ -70,6 +70,20 @@ spec:
       database: app
       owner: app
 ---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: worker
+  namespace: checkout-prod
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: worker
+    kelson.dev/environment: production
+    kelson.dev/project: checkout
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:8b227f7f10885245824114018f693b851c43c707b8c1cb135c7e530312ff38e2
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -81,7 +95,7 @@ metadata:
     kelson.dev/environment: production
     kelson.dev/project: checkout
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:8b227f7f10885245824114018f693b851c43c707b8c1cb135c7e530312ff38e2
 spec:
   replicas: 1
@@ -97,6 +111,7 @@ spec:
         kelson.dev/environment: production
         kelson.dev/project: checkout
     spec:
+      serviceAccountName: worker
       containers:
         - name: worker
           image: ghcr.io/acme/checkout:1.4.2

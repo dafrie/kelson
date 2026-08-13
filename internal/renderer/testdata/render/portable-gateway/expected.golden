@@ -8,7 +8,7 @@ metadata:
     kelson.dev/environment: production
     kelson.dev/project: portable
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:f5c1656b8cc44446df1e1b8d545152637c7d0bf799d0d991ee1e4f06df30735e
     kelson.dev/namespace-ownership: declared
 ---
@@ -23,7 +23,7 @@ metadata:
     kelson.dev/environment: production
     kelson.dev/project: portable
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:0545c0792f046e0c9a009f6a289a89e7e03a8c74c20b6030ac25cd18167fd78a
 ---
 apiVersion: v1
@@ -37,7 +37,7 @@ metadata:
     kelson.dev/environment: production
     kelson.dev/project: portable
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:0545c0792f046e0c9a009f6a289a89e7e03a8c74c20b6030ac25cd18167fd78a
 spec:
   selector:
@@ -59,7 +59,7 @@ metadata:
     kelson.dev/environment: production
     kelson.dev/project: portable
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:0545c0792f046e0c9a009f6a289a89e7e03a8c74c20b6030ac25cd18167fd78a
 spec:
   replicas: 1
@@ -105,7 +105,7 @@ metadata:
     kelson.dev/environment: production
     kelson.dev/project: portable
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:0545c0792f046e0c9a009f6a289a89e7e03a8c74c20b6030ac25cd18167fd78a
 spec:
   parentRefs:

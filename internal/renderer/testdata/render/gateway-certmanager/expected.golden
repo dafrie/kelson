@@ -8,7 +8,7 @@ metadata:
     kelson.dev/environment: staging
     kelson.dev/project: hello
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:84f6393d01372945a0710db65b98ccbff1e45f6ed44e7ee65e56b75f91b5ecab
     kelson.dev/namespace-ownership: declared
 ---
@@ -23,7 +23,7 @@ metadata:
     kelson.dev/environment: staging
     kelson.dev/project: hello
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:bcf9d8958f799aed0f79117f810f3ffce5e7b6a024effee49da0b2926e29a8be
 ---
 apiVersion: v1
@@ -37,7 +37,7 @@ metadata:
     kelson.dev/environment: staging
     kelson.dev/project: hello
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:bcf9d8958f799aed0f79117f810f3ffce5e7b6a024effee49da0b2926e29a8be
 spec:
   selector:
@@ -59,7 +59,7 @@ metadata:
     kelson.dev/environment: staging
     kelson.dev/project: hello
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:bcf9d8958f799aed0f79117f810f3ffce5e7b6a024effee49da0b2926e29a8be
 spec:
   replicas: 1
@@ -97,7 +97,7 @@ metadata:
     kelson.dev/environment: staging
     kelson.dev/project: hello
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:bcf9d8958f799aed0f79117f810f3ffce5e7b6a024effee49da0b2926e29a8be
 spec:
   parentRefs:
@@ -124,7 +124,7 @@ metadata:
     kelson.dev/environment: staging
     kelson.dev/project: hello
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:bcf9d8958f799aed0f79117f810f3ffce5e7b6a024effee49da0b2926e29a8be
 spec:
   secretName: web-tls

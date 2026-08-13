@@ -1,0 +1,142 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: helpdesk-prod
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/environment: production
+    kelson.dev/project: helpdesk
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:ded171270cb4e2fcbcc5d905e30e6f08b433bdf041706b14af2488f974d9ce79
+    kelson.dev/namespace-ownership: declared
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: api
+  namespace: helpdesk-prod
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: api
+    kelson.dev/environment: production
+    kelson.dev/project: helpdesk
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:24ce5d68b43a3a3459f10685631dcb5f367ccfd3f9aecb958a41a1c311cfaedd
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: helpdesk-prod
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: api
+    kelson.dev/environment: production
+    kelson.dev/project: helpdesk
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:24ce5d68b43a3a3459f10685631dcb5f367ccfd3f9aecb958a41a1c311cfaedd
+spec:
+  selector:
+    kelson.dev/project: helpdesk
+    kelson.dev/application: api
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: helpdesk-prod
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: api
+    kelson.dev/environment: production
+    kelson.dev/project: helpdesk
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:24ce5d68b43a3a3459f10685631dcb5f367ccfd3f9aecb958a41a1c311cfaedd
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      kelson.dev/project: helpdesk
+      kelson.dev/application: api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/managed-by: kelson
+        kelson.dev/application: api
+        kelson.dev/environment: production
+        kelson.dev/project: helpdesk
+    spec:
+      serviceAccountName: api
+      containers:
+        - name: api
+          image: ghcr.io/acme/helpdesk:0.9.1
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: LOG_LEVEL
+              value: info
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: triage
+  namespace: helpdesk-prod
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: triage
+    kelson.dev/environment: production
+    kelson.dev/project: helpdesk
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:8d6ff1836aabaad65e77cd317d20c48676cad6c9dcd13bb73787fb637798c48e
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: triage
+  namespace: helpdesk-prod
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: triage
+    kelson.dev/environment: production
+    kelson.dev/project: helpdesk
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:8d6ff1836aabaad65e77cd317d20c48676cad6c9dcd13bb73787fb637798c48e
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      kelson.dev/project: helpdesk
+      kelson.dev/application: triage
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/managed-by: kelson
+        kelson.dev/application: triage
+        kelson.dev/environment: production
+        kelson.dev/project: helpdesk
+    spec:
+      serviceAccountName: triage
+      containers:
+        - name: triage
+          image: ghcr.io/acme/helpdesk:0.9.1
+          command:
+            - helpdesk
+            - agent
+            - triage
+          env:
+            - name: AGENT_ROLE
+              value: triage
+            - name: LOG_LEVEL
+              value: info

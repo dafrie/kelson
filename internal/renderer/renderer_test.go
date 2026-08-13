@@ -139,7 +139,9 @@ func TestRenderResourceSet(t *testing.T) {
 		"HTTPRoute/web",
 		"Certificate/web-tls",
 		"ServiceMonitor/web",
+		"ServiceAccount/worker",
 		"Deployment/worker",
+		"ServiceAccount/nightly-report",
 		"CronJob/nightly-report",
 	}
 	got := kinds(ms)

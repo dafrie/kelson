@@ -1,5 +1,6 @@
 rendered diff hello/development
 
++ ServiceAccount/worker additive
 + Deployment/worker additive
 
-summary: 1 added, 0 modified, 0 removed · max risk: additive
+summary: 2 added, 0 modified, 0 removed · max risk: additive

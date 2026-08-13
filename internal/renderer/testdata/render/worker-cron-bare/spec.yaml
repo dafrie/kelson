@@ -1,6 +1,11 @@
 # Fixture: a bare cluster — no gateway API, no ingress class, no
 # cert-manager, no prometheus. Only workloads render: a queue worker and two
-# cron applications (derived from examples/worker-cron).
+# cron components (derived from examples/worker-cron).
+#
+# It is also where per-component identity is pinned for the kinds that used to
+# have none (ADR-0014 decision D): a worker and a cron each render their own
+# ServiceAccount and name it in the pod template, rather than inheriting the
+# namespace's `default`.
 apiVersion: kelson.dev/v1alpha1
 kind: Project
 metadata:

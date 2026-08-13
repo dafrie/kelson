@@ -8,9 +8,23 @@ metadata:
     kelson.dev/environment: production
     kelson.dev/project: mailroom
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:25678253b0a562e792d329901cef96051b84c9059ea38e2702553aabf972083b
     kelson.dev/namespace-ownership: declared
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: worker
+  namespace: mailroom
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: worker
+    kelson.dev/environment: production
+    kelson.dev/project: mailroom
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:2ac1ef9ec5f8f824937dd721c821189929eb8a11e0d2e935e7de9ea10e481434
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -23,7 +37,7 @@ metadata:
     kelson.dev/environment: production
     kelson.dev/project: mailroom
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:2ac1ef9ec5f8f824937dd721c821189929eb8a11e0d2e935e7de9ea10e481434
 spec:
   replicas: 2
@@ -39,6 +53,7 @@ spec:
         kelson.dev/environment: production
         kelson.dev/project: mailroom
     spec:
+      serviceAccountName: worker
       containers:
         - name: worker
           image: registry.acme.run/mailroom:2.0.7
@@ -52,6 +67,20 @@ spec:
             limits:
               memory: 512Mi
 ---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: digest
+  namespace: mailroom
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: digest
+    kelson.dev/environment: production
+    kelson.dev/project: mailroom
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:1b2c34850b336d8ac7e1545c0773af49865c65cd0c45149b07e71e09bc296ad8
+---
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -63,7 +92,7 @@ metadata:
     kelson.dev/environment: production
     kelson.dev/project: mailroom
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:1b2c34850b336d8ac7e1545c0773af49865c65cd0c45149b07e71e09bc296ad8
 spec:
   schedule: 30 6 * * 1-5
@@ -77,6 +106,7 @@ spec:
             kelson.dev/environment: production
             kelson.dev/project: mailroom
         spec:
+          serviceAccountName: digest
           restartPolicy: Never
           containers:
             - name: digest
@@ -84,6 +114,20 @@ spec:
               command:
                 - mailroom
                 - send-digests
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: retention-sweep
+  namespace: mailroom
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: retention-sweep
+    kelson.dev/environment: production
+    kelson.dev/project: mailroom
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:ec82651cd42b2feff0ad58ba3d03696141354d9bbc640757c324688efef14990
 ---
 apiVersion: batch/v1
 kind: CronJob
@@ -96,7 +140,7 @@ metadata:
     kelson.dev/environment: production
     kelson.dev/project: mailroom
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:ec82651cd42b2feff0ad58ba3d03696141354d9bbc640757c324688efef14990
 spec:
   schedule: 15 2 * * *
@@ -110,6 +154,7 @@ spec:
             kelson.dev/environment: production
             kelson.dev/project: mailroom
         spec:
+          serviceAccountName: retention-sweep
           restartPolicy: Never
           containers:
             - name: retention-sweep

@@ -8,7 +8,7 @@ metadata:
     kelson.dev/environment: production
     kelson.dev/project: shopfront
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:459efca4f7b11be6fe9ba102540cfa95a203ef8c272aea9861bd338aa8e8ba95
     kelson.dev/namespace-ownership: declared
 ---
@@ -23,7 +23,7 @@ metadata:
     kelson.dev/environment: production
     kelson.dev/project: shopfront
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:e0b7c9b9a4b79538fd3e67f01cf52f2f5fe71d32478cf73e0c475d983a70e556
 ---
 apiVersion: v1
@@ -37,7 +37,7 @@ metadata:
     kelson.dev/environment: production
     kelson.dev/project: shopfront
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:e0b7c9b9a4b79538fd3e67f01cf52f2f5fe71d32478cf73e0c475d983a70e556
 spec:
   selector:
@@ -59,7 +59,7 @@ metadata:
     kelson.dev/environment: production
     kelson.dev/project: shopfront
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:e0b7c9b9a4b79538fd3e67f01cf52f2f5fe71d32478cf73e0c475d983a70e556
 spec:
   replicas: 3
@@ -109,7 +109,7 @@ metadata:
     kelson.dev/environment: production
     kelson.dev/project: shopfront
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:e0b7c9b9a4b79538fd3e67f01cf52f2f5fe71d32478cf73e0c475d983a70e556
 spec:
   parentRefs:
@@ -125,6 +125,20 @@ spec:
         - name: web
           port: 3000
 ---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: images
+  namespace: shopfront
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: images
+    kelson.dev/environment: production
+    kelson.dev/project: shopfront
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:2a327dfc660d19af221be680f7c3b35bd7962b1d459c10c52362d07bb96019c6
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -136,7 +150,7 @@ metadata:
     kelson.dev/environment: production
     kelson.dev/project: shopfront
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:2a327dfc660d19af221be680f7c3b35bd7962b1d459c10c52362d07bb96019c6
 spec:
   replicas: 1
@@ -152,6 +166,7 @@ spec:
         kelson.dev/environment: production
         kelson.dev/project: shopfront
     spec:
+      serviceAccountName: images
       containers:
         - name: images
           image: registry.acme.run/shopfront:3.1.0

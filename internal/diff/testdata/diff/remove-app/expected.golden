@@ -1,5 +1,6 @@
 rendered diff hello/development
 
+- ServiceAccount/worker disruptive
 - Deployment/worker disruptive
 
-summary: 0 added, 0 modified, 1 removed · disruptive: [worker] · max risk: disruptive
+summary: 0 added, 0 modified, 2 removed · disruptive: [worker, worker] · max risk: disruptive

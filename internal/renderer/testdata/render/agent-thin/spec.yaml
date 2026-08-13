@@ -1,0 +1,37 @@
+# Fixture: `kind: agent` lands thin (ADR-0014 decision C).
+#
+# What an agent renders today is a worker-shaped Deployment and its own
+# ServiceAccount, and this golden is the honest record of that: there is no
+# agent runtime, no tool policy, no gateway. `tools:` is refused at validation
+# until #75, so it cannot reach the renderer at all.
+#
+# The identity is the part that is real. Decision D makes it uniform across
+# kinds, which is what means #74/#75 will have an attachment point on every
+# component rather than a migration that re-keys running pods.
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: helpdesk
+spec:
+  image: ghcr.io/acme/helpdesk:0.9.1
+
+  env:
+    LOG_LEVEL: info
+
+  components:
+    - name: api
+      port: 8080
+
+    - name: triage
+      kind: agent
+      command: ["helpdesk", "agent", "triage"]
+      env:
+        AGENT_ROLE: triage
+---
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: production
+spec:
+  project: helpdesk
+  namespace: helpdesk-prod
