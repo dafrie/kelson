@@ -1,6 +1,6 @@
 # ADR-0003: Adopt existing clusters, bootstrap empty ones
 
-- **Status:** Accepted (revised 2026-08-11, supersedes the original "bootstrap is a later addition" framing)
+- **Status:** Accepted (revised 2026-08-11, supersedes the original "bootstrap is a later addition" framing; amended 2026-08-12 by the architecture review: routing is Gateway API only, so the "`Ingress` where it doesn't" clause in the Decision below is withdrawn — a cluster without Gateway API is a reported capability gap with an offer to install an implementation, never a silent fallback. Tracked in [#140](https://github.com/dafrie/kelson/issues/140); ingress-class *detection* stays as advisory data for the migration nudge, [#112](https://github.com/dafrie/kelson/issues/112).)
 - **Date:** 2026-08-11
 
 ## Context

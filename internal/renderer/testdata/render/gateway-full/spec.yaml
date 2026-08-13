@@ -1,7 +1,8 @@
 # Fixture: full-featured spec against a cluster that has everything —
-# Gateway API (preferred over the detected ingress class), cert-manager and
-# Prometheus. Exercises all three workload kinds, bindings, env precedence
-# (P1), per-environment replicas/resources overrides (P2) and autoscaling.
+# Gateway API (the detected ingress class is advisory and never rendered
+# against, #140), cert-manager and Prometheus. Exercises all three workload
+# kinds, bindings, env precedence (P1), per-environment replicas/resources
+# overrides (P2) and autoscaling.
 apiVersion: kelson.dev/v1alpha1
 kind: Project
 metadata:

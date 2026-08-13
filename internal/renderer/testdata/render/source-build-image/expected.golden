@@ -24,7 +24,7 @@ metadata:
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:1e93d6a65ebd2b9d378adf540c565f2b53cebc1af54983c534400ff25db0805c
+    kelson.dev/spec-hash: sha256:aa261581aa25ed6866ddeda39ed64be4da7bfff997ad1ec2ad356cc603e7f85d
 ---
 apiVersion: v1
 kind: Service
@@ -38,7 +38,7 @@ metadata:
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:1e93d6a65ebd2b9d378adf540c565f2b53cebc1af54983c534400ff25db0805c
+    kelson.dev/spec-hash: sha256:aa261581aa25ed6866ddeda39ed64be4da7bfff997ad1ec2ad356cc603e7f85d
 spec:
   selector:
     kelson.dev/project: checkout
@@ -60,7 +60,7 @@ metadata:
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:1e93d6a65ebd2b9d378adf540c565f2b53cebc1af54983c534400ff25db0805c
+    kelson.dev/spec-hash: sha256:aa261581aa25ed6866ddeda39ed64be4da7bfff997ad1ec2ad356cc603e7f85d
 spec:
   replicas: 1
   selector:
@@ -106,7 +106,7 @@ metadata:
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:05aa4e72397ca7c66dfdf5799eb9270ab1c9163fc9857e6d178af8beb8f78f61
+    kelson.dev/spec-hash: sha256:f6ccc944f373ddb5090151de07127ddaf4a10b32f377053e67ec9edec361c5ec
 spec:
   replicas: 1
   selector:

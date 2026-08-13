@@ -1,7 +1,10 @@
-# Fixture: ingress cluster without cert-manager. TLS is still requested, so
-# the Ingress carries a tls: section referencing the secret, but no
-# Certificate is emitted (no cert-manager to reconcile it). Fixed replica
-# counts exercise Deployment `replicas:` with no HPA.
+# Fixture: Gateway API cluster without cert-manager. TLS is still requested,
+# but no Certificate is emitted — nothing would reconcile it, and the HTTPRoute
+# carries no TLS of its own (termination belongs to the Gateway listener).
+# Fixed replica counts exercise Deployment `replicas:` with no HPA, and the
+# environment's explicit gatewayClass is not the profile's first class, so the
+# spec's choice must win over detection order. Converted from the former
+# ingress-no-certmanager fixture (#140).
 apiVersion: kelson.dev/v1alpha1
 kind: Project
 metadata:
@@ -35,5 +38,5 @@ spec:
   namespace: shopfront
   routing:
     domainSuffix: shop.acme.io
-    ingressClass: public
+    gatewayClass: public
     tls: true

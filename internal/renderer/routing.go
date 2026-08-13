@@ -1,6 +1,8 @@
 package renderer
 
 import (
+	"strings"
+
 	"gopkg.in/yaml.v3"
 
 	"github.com/dafrie/kelson/internal/clusterprofile"
@@ -8,32 +10,63 @@ import (
 )
 
 // routingResources renders traffic management for a service from the
-// ClusterProfile: HTTPRoute where Gateway API exists, Ingress where only
-// ingress classes exist, nothing where the cluster routes nothing. TLS is
-// delegated to cert-manager when the profile reports it (docs/architecture.md:
-// adopt, don't install — never emit a competing ACME client).
-func routingResources(resolved *model.Resolved, app *model.ResolvedApplication, profile clusterprofile.ClusterProfile, prov provenance) []Manifest {
+// ClusterProfile: an HTTPRoute, and a Certificate when the profile reports
+// cert-manager (docs/architecture.md: adopt, don't install — never emit a
+// competing ACME client).
+//
+// Gateway API is the only routing substrate kelson renders (#140). A cluster
+// without it is a capability gap reported to the caller, not an Ingress: the
+// 2026-08-12 architecture review found that an unreleased platform has no
+// legacy installed base to serve, and SIG Network retired ingress-nginx in
+// March 2026. Profile.IngressClasses stays detected but is never consumed
+// here — it is advisory data for the migration nudge (#112).
+func routingResources(resolved *model.Resolved, app *model.ResolvedApplication, profile clusterprofile.ClusterProfile, prov provenance) ([]Manifest, error) {
 	if app.Kind != model.WorkloadService || len(app.Domains) == 0 {
-		return nil
+		// No domains means nothing to route: a cluster with no Gateway API is
+		// only a problem for a spec that actually asks to be reachable.
+		return nil, nil
 	}
-	routing := resolved.Environment.Routing
+	if profile.GatewayAPI == nil {
+		return nil, Errors{gatewayMissingError(app, prov, profile)}
+	}
 
-	var out []Manifest
-	switch {
-	case profile.GatewayAPI != nil:
-		out = append(out, httpRoute(app, routing, profile, prov))
-	case len(profile.IngressClasses) > 0:
-		out = append(out, ingress(app, routing, profile, prov))
-	default:
-		// No routing substrate on this cluster: domains are declared but
-		// nothing to attach them to. Emitting a route here would produce a
-		// resource nothing reconciles.
-		return nil
-	}
+	routing := resolved.Environment.Routing
+	out := []Manifest{httpRoute(app, routing, profile, prov)}
 	if routing.TLS && profile.CertManager != nil && len(profile.CertManager.ClusterIssuers) > 0 {
 		out = append(out, certificate(app, profile, prov))
 	}
-	return out
+	return out, nil
+}
+
+// gatewayMissingError is the loud capability gap #140 demands in place of the
+// old silent Ingress fallback. It names the application whose domains cannot
+// be served and points at installing a Gateway implementation; Envoy Gateway
+// is kelson's default candidate (#60).
+func gatewayMissingError(app *model.ResolvedApplication, prov provenance, profile clusterprofile.ClusterProfile) Error {
+	msg := "declares domains (" + strings.Join(app.Domains, ", ") +
+		") but the cluster profile reports no Gateway API; kelson renders Gateway API only and will not fall back to Ingress"
+	remediation := "install a Gateway API implementation (Envoy Gateway is the default candidate) and re-detect the cluster profile, or remove the domains from this application"
+	if len(profile.IngressClasses) > 0 {
+		// Detected ingress classes are the most likely reason a user expected
+		// this to work, so say plainly that they are not a substitute (#112).
+		remediation += ". The detected ingress class(es) (" + ingressClassNames(profile) +
+			") are advisory only and are never rendered against"
+	}
+	return Error{
+		Code:        ErrGatewayAPIMissing,
+		Application: app.Name,
+		Target:      "HTTPRoute/" + prov.name(),
+		Message:     msg,
+		Remediation: remediation,
+	}
+}
+
+func ingressClassNames(profile clusterprofile.ClusterProfile) string {
+	names := make([]string, len(profile.IngressClasses))
+	for i, c := range profile.IngressClasses {
+		names[i] = c.Name
+	}
+	return strings.Join(names, ", ")
 }
 
 // gatewayParentName picks the Gateway the route attaches to: the
@@ -47,13 +80,6 @@ func gatewayParentName(routing model.ResolvedRouting, profile clusterprofile.Clu
 		return profile.GatewayAPI.Classes[0]
 	}
 	return ""
-}
-
-func ingressClassName(routing model.ResolvedRouting, profile clusterprofile.ClusterProfile) string {
-	if routing.IngressClass != "" {
-		return routing.IngressClass
-	}
-	return profile.DefaultIngressClass()
 }
 
 func hostnamesNode(domains []string) *yaml.Node {
@@ -82,38 +108,6 @@ func httpRoute(app *model.ResolvedApplication, routing model.ResolvedRouting, pr
 		)),
 	)
 	return baseManifest("gateway.networking.k8s.io/v1", "HTTPRoute", prov, mapNode(specKV...))
-}
-
-func ingress(app *model.ResolvedApplication, routing model.ResolvedRouting, profile clusterprofile.ClusterProfile, prov provenance) Manifest {
-	rules := make([]*yaml.Node, len(app.Domains))
-	for i, d := range app.Domains {
-		rules[i] = mapNode(
-			"host", d,
-			"http", mapNode(
-				"paths", seqNode(mapNode(
-					"path", "/",
-					"pathType", "Prefix",
-					"backend", mapNode(
-						"service", mapNode(
-							"name", app.Name,
-							"port", mapNode("number", app.Port),
-						),
-					),
-				)),
-			),
-		)
-	}
-	specKV := []any{
-		"ingressClassName", ingressClassName(routing, profile),
-		"rules", seqNode(rules...),
-	}
-	if routing.TLS {
-		specKV = append(specKV, "tls", seqNode(mapNode(
-			"hosts", hostnamesNode(app.Domains),
-			"secretName", tlsSecretName(app),
-		)))
-	}
-	return baseManifest("networking.k8s.io/v1", "Ingress", prov, mapNode(specKV...))
 }
 
 func tlsSecretName(app *model.ResolvedApplication) string {

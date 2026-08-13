@@ -43,9 +43,6 @@
             "domainSuffix": {
               "type": "string"
             },
-            "ingressClass": {
-              "type": "string"
-            },
             "gatewayClass": {
               "type": "string"
             },

@@ -24,7 +24,7 @@ metadata:
     kelson.dev/project: mailroom
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:a655205b6f8b150f46877b1d52cf9c8e3bff53f90487ae31fb3d29f4c03ac22c
+    kelson.dev/spec-hash: sha256:bb1f143e5f6419fc223f9b4789e1936cae5e856f9c06907812bb493f2ad11e30
 spec:
   replicas: 2
   selector:
@@ -75,7 +75,7 @@ metadata:
     kelson.dev/project: mailroom
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:5841ef3319e5ce31081d850b853ffac7f32a34fe7f8611c116dff820834854b2
+    kelson.dev/spec-hash: sha256:6dfd149af26050966f623c495277e3c283e1d0590dc5e5e2130f84f693006f33
 spec:
   schedule: 30 6 * * 1-5
   jobTemplate:
@@ -119,7 +119,7 @@ metadata:
     kelson.dev/project: mailroom
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:2eb8b0556d2ad752a4e8bdf44571e04691a398ffa86e420ea3b7bb4cec4069eb
+    kelson.dev/spec-hash: sha256:fd5da848656a5c861ea77b1d56cc038a82a7bad6438c1920633e829d8d97d6e1
 spec:
   schedule: 15 2 * * *
   jobTemplate:

@@ -13,10 +13,10 @@
 // [ClusterProfile.Incomplete] is for.
 //
 // The distinction is load-bearing rather than pedantic. If a probe lacks RBAC
-// to list ClusterIssuers and reports CertManager as nil, the renderer emits an
-// Ingress with no TLS and the manifest looks intentional. Recording the gap
-// instead lets the caller refuse to render, or render and say what it could
-// not see. It is the same rule the preview engine follows for policy
+// to list ClusterIssuers and reports CertManager as nil, the renderer emits a
+// route with no Certificate and the manifest looks intentional. Recording the
+// gap instead lets the caller refuse to render, or render and say what it
+// could not see. It is the same rule the preview engine follows for policy
 // (internal/diff.Unvalidated): "we checked and it is absent" and "we could not
 // check" must never collapse into one answer.
 package clusterprofile
@@ -26,8 +26,9 @@ package clusterprofile
 //
 // This is the whole reason kelson can be adopted by a team already running
 // Kubernetes properly: the profile turns the combinatorial space of cluster
-// shapes into cheap fixtures, so "renders correctly on a Gateway API cluster
-// and on an Ingress cluster" is a golden test rather than two real clusters.
+// shapes into cheap fixtures, so "renders correctly with cert-manager and
+// without it, on Envoy Gateway and on Istio" is a golden test rather than
+// four real clusters.
 type ClusterProfile struct {
 	// Kubernetes is the cluster's own version and shape. Absent when the
 	// profile was written by hand and the author did not care.
@@ -102,14 +103,19 @@ type GatewayAPI struct {
 }
 
 // IngressClass is one ingress controller's class.
+//
+// Detected but never rendered against: kelson renders Gateway API only since
+// #140. It stays here as advisory data for the migration nudge (#112) — a
+// cluster running a retired ingress controller is exactly who needs to be told
+// what kelson will and will not do for them.
 type IngressClass struct {
 	Name string `yaml:"name" json:"name"`
 	// Controller is the controller name from the IngressClass spec, e.g.
 	// k8s.io/ingress-nginx. Reported so a human can tell two classes apart.
 	Controller string `yaml:"controller,omitempty" json:"controller,omitempty"`
-	// Default marks the class annotated as the cluster default. The renderer
-	// prefers it over list order, because list order is an accident of
-	// detection and the default is a decision the cluster's owner made.
+	// Default marks the class annotated as the cluster default: a decision the
+	// cluster's owner made, which the nudge should name rather than guessing
+	// from an accident of detection order.
 	Default bool `yaml:"default,omitempty" json:"default,omitempty"`
 }
 
@@ -174,8 +180,10 @@ type Gap struct {
 // worth attributing to policy at all (issue #45).
 func (p ClusterProfile) HasPolicyEngine() bool { return len(p.PolicyEngines) > 0 }
 
-// DefaultIngressClass returns the class the renderer should use: the one the
-// cluster marks default, else the first detected. Empty when there are none.
+// DefaultIngressClass returns the class the cluster marks default, else the
+// first detected. Empty when there are none. Advisory only — nothing in the
+// renderer consumes it since #140; it exists for the migration nudge (#112)
+// and for humans reading a captured profile.
 func (p ClusterProfile) DefaultIngressClass() string {
 	for _, c := range p.IngressClasses {
 		if c.Default {

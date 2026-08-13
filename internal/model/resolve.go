@@ -35,7 +35,6 @@ type ResolvedEnvironment struct {
 
 type ResolvedRouting struct {
 	DomainSuffix string
-	IngressClass string
 	GatewayClass string
 	TLS          bool // defaulted to true
 }
@@ -81,7 +80,6 @@ func Resolve(p *Project, e *Environment) (*Resolved, Errors) {
 
 	if routing := e.Spec.Routing; routing != nil {
 		r.Environment.Routing.DomainSuffix = routing.DomainSuffix
-		r.Environment.Routing.IngressClass = routing.IngressClass
 		r.Environment.Routing.GatewayClass = routing.GatewayClass
 		r.Environment.Routing.TLS = true
 		if routing.TLS != nil {

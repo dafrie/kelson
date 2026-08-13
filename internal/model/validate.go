@@ -532,11 +532,6 @@ func validateEnvironmentShape(e *Environment, v *validator) {
 		if r.DomainSuffix != "" {
 			v.domain("$.spec.routing.domainSuffix", r.DomainSuffix)
 		}
-		if r.IngressClass != "" && r.GatewayClass != "" {
-			v.err(ErrMutuallyExclusive, "$.spec.routing",
-				"ingressClass and gatewayClass are mutually exclusive",
-				"set the one matching your cluster; the ClusterProfile lists available classes")
-		}
 	}
 
 	v.delivery("$.spec.delivery", s.Delivery)

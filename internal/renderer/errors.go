@@ -22,6 +22,11 @@ const (
 	// image — the spec builds it from source and no build result was supplied,
 	// so its image is still model.ImageUnresolved (issue #136).
 	ErrImageUnresolved = "image/unresolved"
+	// ErrGatewayAPIMissing: the spec asks for routing but the ClusterProfile
+	// reports no Gateway API. kelson renders Gateway API only (#140), so this
+	// is a capability gap the caller must see rather than an Ingress rendered
+	// behind their back.
+	ErrGatewayAPIMissing = "render/gateway-api-missing"
 	// ErrInternal: an invariant failed inside the renderer itself.
 	ErrInternal = "render/internal"
 )

@@ -12,7 +12,7 @@ kelson adopts components a cluster already has rather than installing its own (A
 |-----------|-------------------|-------------------|-------|
 | `kubernetes` | `1.27` | refuse with a reason | kelson renders stock Kubernetes objects that have been stable for years; below this floor the reasonable move is to refuse, because there is no older API to render. |
 | `gateway-api` | `1.0.0` | refuse with a reason | the Gateway API CRDs kelson targets changed shape across experimental v0.x; rendering against a v0 cluster would need a second manifest family, so refuse for now. |
-| `cert-manager` | `1.14.0` | refuse with a reason | cert-manager's ClusterIssuer and Certificate CRDs used by the Ingress TLS path stabilised with v1.14; older installs are refused with a message naming the required version. |
+| `cert-manager` | `1.14.0` | refuse with a reason | cert-manager's ClusterIssuer and Certificate CRDs used by the TLS path stabilised with v1.14; older installs are refused with a message naming the required version. |
 | `cnpg` | `1.23.0` | refuse with a reason | the CNPG Cluster API version kelson writes for database services is not emitted for older operators; the degradation is a refusal pending an older-API render path. |
 | `flux` | `2.0.0` | refuse with a reason | flux v2's GitRepository/Kustomization API is what kelson commits against in GitOps mode. |
 | `argo-cd` | `2.9.0` | refuse with a reason | the Application CRD kelson targets for the Argo CD delivery path. |

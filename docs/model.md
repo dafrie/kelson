@@ -201,7 +201,7 @@ spec:
   namespace: checkout-prod           # target namespace
   routing:
     domainSuffix: acme.run
-    gatewayClass: envoy              # Gateway API only; `ingressClass` is removed by #140
+    gatewayClass: envoy              # Gateway API only (#140); a spec with `ingressClass` is rejected
     tls: true                        # default true
   delivery:
     mode: flux                       # direct | flux (argocd removed — ADR-0012)

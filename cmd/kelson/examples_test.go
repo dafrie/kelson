@@ -41,7 +41,11 @@ func TestExamplesRender(t *testing.T) {
 		for _, env := range environmentsIn(t, files) {
 			rendered++
 			t.Run(e.Name()+"/"+env, func(t *testing.T) {
-				args := append(renderArgs(files), "--env", env)
+				// Examples declare domains, and routing them needs a cluster
+				// with Gateway API since #140. The zero profile would fail
+				// every one of them for a reason this test is not about.
+				args := append(renderArgs(files), "--env", env,
+					"--profile", profileFile(t, gatewayProfileYAML))
 				stdout, _, err := runKelson(t, append([]string{"render"}, args...)...)
 				if err == nil {
 					assertNoPlaceholder(t, stdout)

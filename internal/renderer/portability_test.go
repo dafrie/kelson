@@ -1,17 +1,21 @@
 package renderer_test
 
 // TestPortabilityClaim is the mechanical form of issue #56's acceptance
-// criterion: the SAME Application spec renders identically on a Gateway API
-// cluster and on an Ingress cluster, the only difference being the routing
-// resource.
+// criterion: the SAME Application spec renders identically on two clusters,
+// the only difference being what the cluster itself provides.
+//
+// Since #140 kelson renders Gateway API only, so the portability the claim is
+// about is across Gateway *implementations* — Envoy Gateway here, Istio there
+// — rather than across routing substrates. The pair is what makes the claim
+// falsifiable; an ingress cluster is no longer a supported second half of it.
 //
 // The golden harness alone cannot prove this: it discovers each fixture
 // independently, so "two specs render" would pass the harness while the
-// actual claim — one spec, portable across routing substrates — stays
-// unproven. This test links the portable-gateway and portable-ingress
-// fixtures explicitly and asserts the two properties that constitute the
-// claim: the inputs are byte-identical, and the outputs differ only where the
-// routing substrate lives.
+// actual claim — one spec, portable across cluster shapes — stays unproven.
+// This test links the portable-gateway and portable-gateway-istio fixtures
+// explicitly and asserts the two properties that constitute the claim: the
+// inputs are byte-identical, and the outputs differ only where the cluster
+// does.
 
 import (
 	"bytes"
@@ -24,36 +28,37 @@ import (
 )
 
 const (
-	portableGateway = "testdata/render/portable-gateway"
-	portableIngress = "testdata/render/portable-ingress"
+	portableEnvoy = "testdata/render/portable-gateway"
+	portableIstio = "testdata/render/portable-gateway-istio"
 )
 
 // TestPortabilityClaim links the fixture pair: identical spec.yaml in, output
-// differing in exactly one document, and that document is the routing
-// substrate (HTTPRoute vs Ingress). It verifies the paired fixtures name the
-// pairing, so a future renames-or-deletes of one side fails loudly instead of
-// silently dropping half the claim.
+// differing in exactly one document, and that document is the HTTPRoute — the
+// only place the cluster's Gateway implementation may show through. It
+// verifies the paired fixtures name the pairing, so a future
+// renames-or-deletes of one side fails loudly instead of silently dropping
+// half the claim.
 func TestPortabilityClaim(t *testing.T) {
-	gwSpec := readFile(t, filepath.Join(portableGateway, "spec.yaml"))
-	igSpec := readFile(t, filepath.Join(portableIngress, "spec.yaml"))
-	if !bytes.Equal(gwSpec, igSpec) {
-		t.Fatalf("portable-gateway and portable-ingress must share a byte-identical spec.yaml:\n%s",
-			unifiedDiff(gwSpec, igSpec))
+	envoySpec := readFile(t, filepath.Join(portableEnvoy, "spec.yaml"))
+	istioSpec := readFile(t, filepath.Join(portableIstio, "spec.yaml"))
+	if !bytes.Equal(envoySpec, istioSpec) {
+		t.Fatalf("portable-gateway and portable-gateway-istio must share a byte-identical spec.yaml:\n%s",
+			unifiedDiff(envoySpec, istioSpec))
 	}
 
-	gwOut := renderFixture(t, portableGateway)
-	igOut := renderFixture(t, portableIngress)
+	envoyOut := renderFixture(t, portableEnvoy)
+	istioOut := renderFixture(t, portableIstio)
 
-	gwDocs := splitDocs(gwOut)
-	igDocs := splitDocs(igOut)
+	envoyDocs := splitDocs(envoyOut)
+	istioDocs := splitDocs(istioOut)
 
-	if len(gwDocs) != len(igDocs) {
-		t.Fatalf("document count differs: gateway %d, ingress %d", len(gwDocs), len(igDocs))
+	if len(envoyDocs) != len(istioDocs) {
+		t.Fatalf("document count differs: envoy %d, istio %d", len(envoyDocs), len(istioDocs))
 	}
 
 	differs := -1
-	for i := range gwDocs {
-		if bytes.Equal([]byte(gwDocs[i]), []byte(igDocs[i])) {
+	for i := range envoyDocs {
+		if bytes.Equal([]byte(envoyDocs[i]), []byte(istioDocs[i])) {
 			continue
 		}
 		if differs != -1 {
@@ -64,21 +69,25 @@ func TestPortabilityClaim(t *testing.T) {
 	}
 
 	if differs == -1 {
-		t.Fatalf("gateway and ingress outputs are identical; expected the routing resource to differ")
+		t.Fatalf("the two outputs are identical; expected the HTTPRoute's parent Gateway to differ")
 	}
 
-	gwKindAt, igKindAt := kindOf(gwDocs[differs]), kindOf(igDocs[differs])
-	if gwKindAt != "HTTPRoute" || igKindAt != "Ingress" {
-		t.Fatalf("the single differing document must be HTTPRoute on gateway / Ingress on ingress, got %q / %q",
-			gwKindAt, igKindAt)
+	envoyKindAt, istioKindAt := kindOf(envoyDocs[differs]), kindOf(istioDocs[differs])
+	if envoyKindAt != "HTTPRoute" || istioKindAt != "HTTPRoute" {
+		t.Fatalf("the single differing document must be the HTTPRoute on both sides, got %q / %q",
+			envoyKindAt, istioKindAt)
+	}
+	if !strings.Contains(envoyDocs[differs], "name: envoy") || !strings.Contains(istioDocs[differs], "name: istio") {
+		t.Fatalf("the HTTPRoutes must attach to the Gateway each profile detected:\n%s\n%s",
+			envoyDocs[differs], istioDocs[differs])
 	}
 
 	// Make the claim legible in a failure: show that the shared documents are
 	// exactly the workload resource set, and that the routing resource is the
 	// sole deviation.
-	assertDoc(t, "ServiceAccount", gwDocs, igDocs, differs)
-	assertDoc(t, "Service", gwDocs, igDocs, differs)
-	assertDoc(t, "Deployment", gwDocs, igDocs, differs)
+	assertDoc(t, "ServiceAccount", envoyDocs, istioDocs, differs)
+	assertDoc(t, "Service", envoyDocs, istioDocs, differs)
+	assertDoc(t, "Deployment", envoyDocs, istioDocs, differs)
 }
 
 // renderFixture resolves and renders one fixture directory, caching nothing.
@@ -135,24 +144,24 @@ func readFile(t *testing.T, path string) []byte {
 // assertDoc checks that a kind named in a fixture's document list appears
 // exactly once and is byte-identical across the pair, and that it is not the
 // differing index.
-func assertDoc(t *testing.T, kind string, gwDocs, igDocs []string, differs int) {
+func assertDoc(t *testing.T, kind string, envoyDocs, istioDocs []string, differs int) {
 	t.Helper()
-	gwi, ige := -1, -1
-	for i := range gwDocs {
-		if strings.Contains(gwDocs[i], "kind: "+kind) {
-			gwi = i
+	envoyIdx, istioIdx := -1, -1
+	for i := range envoyDocs {
+		if strings.Contains(envoyDocs[i], "kind: "+kind) {
+			envoyIdx = i
 		}
-		if strings.Contains(igDocs[i], "kind: "+kind) {
-			ige = i
+		if strings.Contains(istioDocs[i], "kind: "+kind) {
+			istioIdx = i
 		}
 	}
-	if gwi == -1 || ige == -1 {
-		t.Fatalf("%s missing from one output (gateway=%d, ingress=%d)", kind, gwi, ige)
+	if envoyIdx == -1 || istioIdx == -1 {
+		t.Fatalf("%s missing from one output (envoy=%d, istio=%d)", kind, envoyIdx, istioIdx)
 	}
-	if gwi == differs || ige == differs {
+	if envoyIdx == differs || istioIdx == differs {
 		t.Fatalf("%s must not be the differing routing document", kind)
 	}
-	if gwDocs[gwi] != igDocs[ige] {
+	if envoyDocs[envoyIdx] != istioDocs[istioIdx] {
 		t.Fatalf("%s differs across the pair; the shared workload resources must be byte-identical", kind)
 	}
 }

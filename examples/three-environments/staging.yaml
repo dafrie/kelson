@@ -10,7 +10,7 @@ spec:
 
   routing:
     domainSuffix: staging.billing.acme.run
-    ingressClass: nginx
+    gatewayClass: envoy
 
   delivery:
     mode: flux

@@ -24,7 +24,7 @@ metadata:
     kelson.dev/project: shopfront
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:0e8e4a0e329e6a7c8e10870b619bbfa60ed25d459aa3e091acc130ee83f41558
+    kelson.dev/spec-hash: sha256:7e5e1c340260127fdc0314a288472054711b6f22d78b758d379c089d4a7d4c2e
 ---
 apiVersion: v1
 kind: Service
@@ -38,7 +38,7 @@ metadata:
     kelson.dev/project: shopfront
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:0e8e4a0e329e6a7c8e10870b619bbfa60ed25d459aa3e091acc130ee83f41558
+    kelson.dev/spec-hash: sha256:7e5e1c340260127fdc0314a288472054711b6f22d78b758d379c089d4a7d4c2e
 spec:
   selector:
     kelson.dev/project: shopfront
@@ -60,7 +60,7 @@ metadata:
     kelson.dev/project: shopfront
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:0e8e4a0e329e6a7c8e10870b619bbfa60ed25d459aa3e091acc130ee83f41558
+    kelson.dev/spec-hash: sha256:7e5e1c340260127fdc0314a288472054711b6f22d78b758d379c089d4a7d4c2e
 spec:
   replicas: 3
   selector:
@@ -104,8 +104,8 @@ spec:
               path: /up
               port: 3000
 ---
-apiVersion: networking.k8s.io/v1
-kind: Ingress
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
 metadata:
   name: web
   namespace: shopfront
@@ -116,24 +116,20 @@ metadata:
     kelson.dev/project: shopfront
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:0e8e4a0e329e6a7c8e10870b619bbfa60ed25d459aa3e091acc130ee83f41558
+    kelson.dev/spec-hash: sha256:7e5e1c340260127fdc0314a288472054711b6f22d78b758d379c089d4a7d4c2e
 spec:
-  ingressClassName: public
+  parentRefs:
+    - name: public
+  hostnames:
+    - web.shop.acme.io
   rules:
-    - host: web.shop.acme.io
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: web
-                port:
-                  number: 3000
-  tls:
-    - hosts:
-        - web.shop.acme.io
-      secretName: web-tls
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: web
+          port: 3000
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -147,7 +143,7 @@ metadata:
     kelson.dev/project: shopfront
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:9a625bad2d5d100641470738fe14fad39bf8ada930c7b0416285d43db10e5a19
+    kelson.dev/spec-hash: sha256:4684e77535f58b27f546aa007f27a373da450c9846de6a1f157996dda3fd198f
 spec:
   replicas: 1
   selector:

@@ -125,8 +125,10 @@ func resolveAndRender(in specInput) (*model.Project, *model.Environment, []rende
 }
 
 // resolveProfile loads the ClusterProfile input. An empty flag renders
-// against a zero profile (nothing detected: no gateway API, no ingress, no
-// cert-manager, no prometheus) — valid and deterministic.
+// against a zero profile (nothing detected: no Gateway API, no cert-manager,
+// no prometheus) — valid and deterministic, but since #140 a spec whose
+// services declare domains fails against it, because there is no routing
+// substrate to attach them to and no Ingress fallback to hide behind.
 func resolveProfile(flag, kubeconfig string) (clusterprofile.ClusterProfile, error) {
 	switch flag {
 	case "":

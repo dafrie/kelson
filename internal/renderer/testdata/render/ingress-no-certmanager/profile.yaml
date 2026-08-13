@@ -1,3 +1,0 @@
-ingressClasses:
-  - { name: public }
-  - { name: nginx }

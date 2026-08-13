@@ -39,14 +39,17 @@ type EnvironmentSpec struct {
 	Overlays []Overlay `yaml:"overlays,omitempty" json:"overlays,omitempty"`
 }
 
-// Routing carries domain and ingress defaults for an Environment.
+// Routing carries domain and gateway defaults for an Environment.
 type Routing struct {
 	// DomainSuffix provides the default hostname <application>.<suffix> for
 	// applications with a port and no explicit domains.
 	DomainSuffix string `yaml:"domainSuffix,omitempty" json:"domainSuffix,omitempty"`
 
-	// Exactly one of these may be set (schema/mutually-exclusive).
-	IngressClass string `yaml:"ingressClass,omitempty" json:"ingressClass,omitempty"`
+	// GatewayClass names the Gateway the rendered HTTPRoute attaches to;
+	// empty means the class the ClusterProfile detected. There is no
+	// ingressClass counterpart: kelson renders Gateway API only (#140), and a
+	// spec that still carries `ingressClass:` is rejected as an unknown field
+	// rather than silently ignored.
 	GatewayClass string `yaml:"gatewayClass,omitempty" json:"gatewayClass,omitempty"`
 
 	// TLS defaults to true; cert issuance delegates to cert-manager when the

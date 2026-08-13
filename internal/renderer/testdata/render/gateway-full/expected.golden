@@ -24,7 +24,7 @@ metadata:
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:70e1bf149031ac3edf819910278295ce60dbc64fbc070f7cf74dd5ce2106c98f
+    kelson.dev/spec-hash: sha256:d00fd5e09ce327b0207f0d08d6545f6e92c6f9ef62276a17c46d67ebae5af9d3
 ---
 apiVersion: v1
 kind: Service
@@ -38,7 +38,7 @@ metadata:
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:70e1bf149031ac3edf819910278295ce60dbc64fbc070f7cf74dd5ce2106c98f
+    kelson.dev/spec-hash: sha256:d00fd5e09ce327b0207f0d08d6545f6e92c6f9ef62276a17c46d67ebae5af9d3
 spec:
   selector:
     kelson.dev/project: checkout
@@ -60,7 +60,7 @@ metadata:
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:70e1bf149031ac3edf819910278295ce60dbc64fbc070f7cf74dd5ce2106c98f
+    kelson.dev/spec-hash: sha256:d00fd5e09ce327b0207f0d08d6545f6e92c6f9ef62276a17c46d67ebae5af9d3
 spec:
   selector:
     matchLabels:
@@ -116,7 +116,7 @@ metadata:
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:70e1bf149031ac3edf819910278295ce60dbc64fbc070f7cf74dd5ce2106c98f
+    kelson.dev/spec-hash: sha256:d00fd5e09ce327b0207f0d08d6545f6e92c6f9ef62276a17c46d67ebae5af9d3
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
@@ -144,7 +144,7 @@ metadata:
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:70e1bf149031ac3edf819910278295ce60dbc64fbc070f7cf74dd5ce2106c98f
+    kelson.dev/spec-hash: sha256:d00fd5e09ce327b0207f0d08d6545f6e92c6f9ef62276a17c46d67ebae5af9d3
 spec:
   parentRefs:
     - name: envoy
@@ -171,7 +171,7 @@ metadata:
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:70e1bf149031ac3edf819910278295ce60dbc64fbc070f7cf74dd5ce2106c98f
+    kelson.dev/spec-hash: sha256:d00fd5e09ce327b0207f0d08d6545f6e92c6f9ef62276a17c46d67ebae5af9d3
 spec:
   secretName: web-tls
   issuerRef:
@@ -192,7 +192,7 @@ metadata:
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:70e1bf149031ac3edf819910278295ce60dbc64fbc070f7cf74dd5ce2106c98f
+    kelson.dev/spec-hash: sha256:d00fd5e09ce327b0207f0d08d6545f6e92c6f9ef62276a17c46d67ebae5af9d3
 spec:
   selector:
     matchLabels:
@@ -214,7 +214,7 @@ metadata:
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:e523cfac247735e2cb952734ab0845705aaf06a4539f2c12d257f9c71dbc1dad
+    kelson.dev/spec-hash: sha256:e955523524c183ceaaf2e2273f8b58235c21ff381a7c27046eb1f948d32f14ba
 spec:
   replicas: 2
   selector:
@@ -257,7 +257,7 @@ metadata:
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:3af71e76045860e778dd4ecdee72af5980d6c6cd7d8b43d1bf1a72e606021bc7
+    kelson.dev/spec-hash: sha256:e5bc09ae32d4d13c79cae9dc2cf9bfbbe65eb37b021ca28b46352ff9452261a6
 spec:
   schedule: 0 3 * * *
   jobTemplate:

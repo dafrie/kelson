@@ -1,0 +1,7 @@
+# Half of the portability pair (issue #56, converted for #140): a Gateway API
+# cluster running a different implementation from its portable-gateway
+# sibling. Rendering the portable spec.yaml through this profile must produce
+# the same resources, differing only in the Gateway the HTTPRoute attaches to.
+gatewayAPI:
+  version: v1.6.0
+  classes: [istio]

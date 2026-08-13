@@ -105,7 +105,6 @@ This reference is **generated** from the committed JSON Schema [`schema/environm
 |-------|------|----------|---------|-------------|
 | `domainSuffix` | string | no |  |  |
 | `gatewayClass` | string | no |  |  |
-| `ingressClass` | string | no |  |  |
 | `tls` | boolean | no |  |  |
 
 #### `spec.secrets`

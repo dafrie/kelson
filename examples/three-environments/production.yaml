@@ -11,7 +11,7 @@ spec:
 
   routing:
     domainSuffix: billing.acme.com
-    ingressClass: nginx
+    gatewayClass: envoy
     tls: true
 
   delivery:

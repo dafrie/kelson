@@ -1,9 +1,10 @@
 # Fixture: the portability claim, proven (issue #56). This spec.yaml is
-# byte-identical to portable-ingress/spec.yaml; only the cluster profile in
-# each directory differs. The rendered pair must agree on everything kelson
+# byte-identical to portable-gateway-istio/spec.yaml; only the cluster profile
+# in each directory differs. The rendered pair must agree on everything kelson
 # emits — the Deployment, Service, labels and provenance annotations — and
-# differ only in the routing resource: HTTPRoute where the cluster has
-# Gateway API, Ingress where it only has an ingress class.
+# differ only in which Gateway the HTTPRoute attaches to. Since #140 routing is
+# Gateway API only, so portability is across Gateway implementations, not
+# across routing substrates.
 apiVersion: kelson.dev/v1alpha1
 kind: Project
 metadata:

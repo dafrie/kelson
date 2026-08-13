@@ -5,7 +5,8 @@ metadata:
 
 spec:
   project: hello-e2e
-  # No routing: a stock kind cluster has no ingress controller or Gateway
-  # API installed, and the renderer emits no route when neither is detected
+  # No routing: a stock kind cluster has no Gateway API installed, and kelson
+  # renders Gateway API only (#140) — declaring domains here would be a
+  # render-time capability gap rather than an Ingress
   # (internal/renderer/routing.go). The harness talks to the workload via
   # kubectl instead of a hostname.

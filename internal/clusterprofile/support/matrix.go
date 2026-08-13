@@ -74,7 +74,7 @@ var Components = []Component{
 		Minimum:  "1.14.0",
 		Degrade:  DegradeRefuse,
 		GapField: "certManager",
-		Note: "cert-manager's ClusterIssuer and Certificate CRDs used by the Ingress TLS path " +
+		Note: "cert-manager's ClusterIssuer and Certificate CRDs used by the TLS path " +
 			"stabilised with v1.14; older installs are refused with a message naming the required version.",
 	},
 	{

@@ -282,6 +282,40 @@ spec:
 	}
 }
 
+// TestIngressClassFieldRejected is the same rule for #140: kelson renders
+// Gateway API only, so `ingressClass` is gone from the model and a spec that
+// still carries it fails as an unknown field. Silently ignoring it would route
+// nothing while looking configured.
+func TestIngressClassFieldRejected(t *testing.T) {
+	_, errs := DecodeDocuments([]byte(`apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata: {name: production}
+spec:
+  project: shop
+  routing:
+    domainSuffix: acme.com
+    ingressClass: nginx
+`))
+	var uf *Error
+	for i := range errs {
+		if errs[i].Code == ErrUnknownField && strings.Contains(errs[i].Field, "ingressClass") {
+			uf = &errs[i]
+		}
+	}
+	if uf == nil {
+		t.Fatalf("ingressClass must be rejected as an unknown field, got:\n%v", errs)
+	}
+	if uf.Field != "$.spec.routing.ingressClass" {
+		t.Errorf("field = %q, want $.spec.routing.ingressClass", uf.Field)
+	}
+	if uf.Line != 8 {
+		t.Errorf("line = %d, want 8 (the ingressClass: key)", uf.Line)
+	}
+	if !strings.Contains(uf.Remediation, "gatewayClass") {
+		t.Errorf("remediation should point at gatewayClass, got %q", uf.Remediation)
+	}
+}
+
 func TestEnvironmentCrossReferences(t *testing.T) {
 	docs, errs := DecodeDocuments([]byte(`
 apiVersion: kelson.dev/v1alpha1
