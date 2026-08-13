@@ -20,24 +20,21 @@
 //
 // # Capable, not capable, and unknown are three different things
 //
-// This is the third place the codebase must keep absent, present and
-// unverifiable apart (internal/diff.Unvalidated for policy,
-// ClusterProfile.Incomplete for detection, and internal/clusterprofile/support
-// for version skew). A storage class with an empty VolumeSnapshotClass is
-// "we checked and it cannot snapshot"; a profile whose storageClasses sat
-// behind a detection Gap is "we could not check" — collapsing those into one
-// answer is how a boring capability check becomes a branch that silently
-// degrades later:
+// A storage class with an empty VolumeSnapshotClass is "we checked and it
+// cannot snapshot"; a profile whose storageClasses sat behind a detection Gap
+// is "we could not check" — collapsing those into one answer is how a boring
+// capability check becomes a branch that silently degrades later. The verdict
+// is therefore a [clusterprofile.Outcome], the codebase's one vocabulary for
+// that (issue #144, and see its package doc for the discipline); here the
+// question is "can this cluster's storage snapshot?", so:
 //
-//   - Capable — a storage class could be judged and has a snapshot class.
-//   - NotCapable — classes could be read and none of the relevant class can
+//   - OutcomeYes — a storage class could be judged and has a snapshot class.
+//   - OutcomeNo — classes could be read and the relevant class cannot
 //     snapshot: the restore-based fallback is the only path.
-//   - Unknown — storageClasses hid behind a detection Gap: not confirmable, so
-//     neither reported as fine nor as a failure, left for the caller to decide.
-//
-// Like internal/clusterprofile/support, gap handling is shared with the
-// detection gap idiom: a Gap whose field covers "storageClasses" means the
-// probe was not permitted to look, so no verdict can be reached.
+//   - OutcomeUnknown — storageClasses hid behind a detection Gap: not
+//     confirmable, so neither reported as fine nor as a failure, left for the
+//     caller to decide. [clusterprofile.ClusterProfile.GapFor] supplies the
+//     reason, so the nudge names the permission that would settle it.
 //
 // This package is pure and imports nothing beyond the clusterprofile type: no
 // client-go, no network, no clock, so internal/renderer and preview can import
@@ -51,32 +48,6 @@ import "github.com/dafrie/kelson/internal/clusterprofile"
 // detection: VolumeSnapshotClass is empty for an unreadable class, exactly what
 // marks the Unknown outcome, so the Gap must be consulted before reading it.
 const gapField = "storageClasses"
-
-// Outcome is the three-way answer to "can this cluster's storage snapshot?".
-type Outcome int
-
-const (
-	// Capable means the relevant class was read and has a snapshot class.
-	Capable Outcome = iota
-	// NotCapable means classes were read and the relevant class cannot
-	// snapshot: restore-based branching is the only path.
-	NotCapable
-	// Unknown means storageClasses was hidden behind a detection gap: neither
-	// fine nor a failure, left for the caller to decide.
-	Unknown
-)
-
-// String renders an Outcome for error messages and docs.
-func (o Outcome) String() string {
-	switch o {
-	case Capable:
-		return "capable"
-	case NotCapable:
-		return "not capable"
-	default:
-		return "unknown"
-	}
-}
 
 // SnapshotClasses returns the storage classes that can snapshot — those with a
 // matching VolumeSnapshotClass. This answers "which classes support branching"
@@ -109,21 +80,21 @@ func DefaultClass(p clusterprofile.ClusterProfile) *clusterprofile.StorageClass 
 }
 
 // CanSnapshot is the three-way answer to "can any class on this cluster
-// snapshot?". Unknown when detection could not look at storageClasses.
-func CanSnapshot(p clusterprofile.ClusterProfile) Outcome {
-	if gapCovers(p.Incomplete) {
-		return Unknown
+// snapshot?". OutcomeUnknown when detection could not look at storageClasses.
+func CanSnapshot(p clusterprofile.ClusterProfile) clusterprofile.Outcome {
+	if _, hidden := p.GapFor(gapField); hidden {
+		return clusterprofile.OutcomeUnknown
 	}
 	if len(SnapshotClasses(p)) > 0 {
-		return Capable
+		return clusterprofile.OutcomeYes
 	}
-	return NotCapable
+	return clusterprofile.OutcomeNo
 }
 
 // Verdict is the branching judgement for one storage class: the three-way
 // outcome, the class it was judged on, and a message a human can act on.
 type Verdict struct {
-	Outcome Outcome
+	Outcome clusterprofile.Outcome
 	// Class is the class the verdict is about: the default, else the first
 	// detected. Its Provisioner is what the fix message must name.
 	Class *clusterprofile.StorageClass
@@ -138,24 +109,24 @@ type Verdict struct {
 // renders the nudge that says plainly what will happen when it is not. Called
 // at the point of use, never silently.
 func Branching(p clusterprofile.ClusterProfile) Verdict {
-	if gapCovers(p.Incomplete) {
+	if gap, hidden := p.GapFor(gapField); hidden {
 		return Verdict{
-			Outcome: Unknown,
+			Outcome: clusterprofile.OutcomeUnknown,
 			Message: "cannot judge storage-class snapshot capability (hidden by a detection gap: " +
-				gapReason(p.Incomplete) + "); confirm the snapshot driver before relying on branch speed",
+				gap.Reason + "); confirm the snapshot driver before relying on branch speed",
 		}
 	}
 
 	cls := DefaultClass(p)
 	if cls == nil {
 		return Verdict{
-			Outcome: NotCapable,
+			Outcome: clusterprofile.OutcomeNo,
 			Message: "no storage class was detected, so database branching will restore from backups instead of using snapshots",
 		}
 	}
 	if cls.VolumeSnapshotClass != "" {
 		return Verdict{
-			Outcome:       Capable,
+			Outcome:       clusterprofile.OutcomeYes,
 			Class:         cls,
 			SnapshotClass: cls.VolumeSnapshotClass,
 			Message: "storage class " + quoted(cls.Name) + " can snapshot via " + quoted(cls.VolumeSnapshotClass) +
@@ -163,7 +134,7 @@ func Branching(p clusterprofile.ClusterProfile) Verdict {
 		}
 	}
 	return Verdict{
-		Outcome: NotCapable,
+		Outcome: clusterprofile.OutcomeNo,
 		Class:   cls,
 		Message: nudge(cls),
 	}
@@ -182,26 +153,3 @@ func nudge(cls *clusterprofile.StorageClass) string {
 
 // quoted wraps a name in double quotes for a message.
 func quoted(s string) string { return `"` + s + `"` }
-
-// gapCovers reports whether a detection gap hides storage-class capability.
-// Prefix matching keeps the check robust to a gap reported at any depth
-// ("storageClasses", "storageClasses.0").
-func gapCovers(gaps []clusterprofile.Gap) bool {
-	for _, g := range gaps {
-		if g.Field == gapField || len(g.Field) > len(gapField) && g.Field[:len(gapField)] == gapField && g.Field[len(gapField)] == '.' {
-			return true
-		}
-	}
-	return false
-}
-
-// gapReason returns the first gap reason that covers storageClasses, so the
-// Unknown message names the permission that would let detection look.
-func gapReason(gaps []clusterprofile.Gap) string {
-	for _, g := range gaps {
-		if g.Field == gapField || len(g.Field) > len(gapField) && g.Field[:len(gapField)] == gapField && g.Field[len(gapField)] == '.' {
-			return g.Reason
-		}
-	}
-	return ""
-}

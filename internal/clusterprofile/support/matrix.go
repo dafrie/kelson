@@ -1,7 +1,5 @@
 package support
 
-import "github.com/dafrie/kelson/internal/clusterprofile"
-
 // The declared support matrix (issue #57).
 //
 // This is the single source of truth for the oldest version kelson will
@@ -146,16 +144,4 @@ func Lookup(name string) (Component, bool) {
 		}
 	}
 	return Component{}, false
-}
-
-// gapCovers reports whether a profile detection gap hides the component whose
-// field root is root. Prefix matching keeps the check robust to gaps reported
-// at any depth ("certManager", "certManager.clusterIssuers").
-func gapCovers(gaps []clusterprofile.Gap, root string) bool {
-	for _, g := range gaps {
-		if g.Field == root || len(g.Field) > len(root) && g.Field[:len(root)] == root && g.Field[len(root)] == '.' {
-			return true
-		}
-	}
-	return false
 }

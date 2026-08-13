@@ -143,7 +143,8 @@ answer again.
 records the gap instead of reporting none, because a manifest rendered from "we didn't look" and one
 rendered from "it isn't there" are indistinguishable afterwards — and only one of them is correct. It is
 the same rule preview follows for policy: *checked and failing* and *could not check* never collapse into
-one answer.
+one answer. Every such judgement in the codebase answers in one vocabulary — `clusterprofile.Outcome`,
+whose package doc states the discipline once — and each `unknown` points at the `Gap` that explains it.
 
 The renderer takes this as an input. Same spec, different cluster, correct output: a `Certificate`
 where cert-manager is present rather than kelson running its own ACME client; a `ServiceMonitor` only

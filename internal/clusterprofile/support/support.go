@@ -16,18 +16,19 @@
 //
 // The whole point of a version is that "we checked and it is good", "we
 // checked and it is too old", and "we could not tell" are distinct answers.
-// This mirrors the rule the codebase already follows in two other places:
-// internal/diff.Unvalidated for policy and ClusterProfile.Incomplete for
-// detection. Collapsing unknown into either of the other two is how a boring
-// support check quietly becomes the confusing runtime failure it exists to
-// prevent:
+// The verdict is a [clusterprofile.Outcome], the codebase's one vocabulary for
+// that (issue #144, and see its package doc for the discipline); here the
+// question is "is this component's version supported?", so:
 //
-//   - Supported — version known and at or above the minimum.
-//   - Unsupported — version known and below the minimum: a refusal or a
+//   - OutcomeYes — version known and at or above the minimum.
+//   - OutcomeNo — version known and below the minimum: a refusal or a
 //     documented degradation.
-//   - Unknown — version absent, unparseable, or hidden behind a detection
-//     Gap. Not silently fine, not a failure: a distinct result a caller can
-//     decide how to treat.
+//   - OutcomeUnknown — version absent, unparseable, or hidden behind a
+//     detection Gap. Not silently fine, not a failure: a distinct result a
+//     caller can decide how to treat.
+//
+// Collapsing unknown into either of the other two is how a boring support
+// check quietly becomes the confusing runtime failure it exists to prevent.
 //
 // A component that is simply not present in the ClusterProfile is not a version
 // problem and is not reported — whether an absent cert-manager is allowed is the
@@ -35,31 +36,6 @@
 package support
 
 import "github.com/dafrie/kelson/internal/clusterprofile"
-
-// Outcome is the three-way answer to "is this component's version supported?".
-type Outcome int
-
-const (
-	// Supported means the version is known and at or above the minimum.
-	Supported Outcome = iota
-	// Unsupported means the version is known and below the minimum.
-	Unsupported
-	// Unknown means the version is absent, unparseable, or hidden behind a
-	// detection gap: neither fine nor failing, left for the caller to decide.
-	Unknown
-)
-
-// String renders an Outcome for error messages and docs.
-func (o Outcome) String() string {
-	switch o {
-	case Supported:
-		return "supported"
-	case Unsupported:
-		return "unsupported"
-	default:
-		return "unknown"
-	}
-}
 
 // Result is the skew verdict for one component in a ClusterProfile.
 type Result struct {
@@ -71,8 +47,9 @@ type Result struct {
 	Required string
 	// Degrade is the matrix's decision for a too-old version.
 	Degrade Degrade
-	// Outcome is the verdict.
-	Outcome Outcome
+	// Outcome is the verdict: OutcomeYes for supported, OutcomeNo for too old,
+	// OutcomeUnknown for a version we could not judge.
+	Outcome clusterprofile.Outcome
 	// Message is a human-readable verdict naming the component, the version
 	// found, and the version required — for Unsupported it is the message the
 	// issue's acceptance criterion demands at preview time.
@@ -146,18 +123,17 @@ func checkField(p clusterprofile.ClusterProfile, name, found string) Result {
 
 	r := Result{Component: comp.Name, Found: found, Required: comp.Minimum, Degrade: comp.Degrade}
 
-	gap := gapCovers(p.Incomplete, comp.GapField)
-
 	// A detection gap hides the component: we cannot distinguish absent from
-	// too-old, so it is Unknown rather than a guess.
-	if gap {
-		r.Outcome = Unknown
-		r.Message = unknownMessage(comp.Name, "hidden by a detection gap: "+gapReason(p.Incomplete, comp.GapField))
+	// too-old, so it is Unknown rather than a guess, and the gap's reason is
+	// what makes that message actionable.
+	if gap, hidden := p.GapFor(comp.GapField); hidden {
+		r.Outcome = clusterprofile.OutcomeUnknown
+		r.Message = unknownMessage(comp.Name, "hidden by a detection gap: "+gap.Reason)
 		return r
 	}
 
 	if found == "" {
-		r.Outcome = Unknown
+		r.Outcome = clusterprofile.OutcomeUnknown
 		r.Message = unknownMessage(comp.Name, "no version was reported")
 		return r
 	}
@@ -166,26 +142,26 @@ func checkField(p clusterprofile.ClusterProfile, name, found string) Result {
 	if !ok {
 		// A corrupt matrix row must not silently pass or fail every profile;
 		// surface it as Unknown so the model's data bug is visible.
-		r.Outcome = Unknown
+		r.Outcome = clusterprofile.OutcomeUnknown
 		r.Message = unknownMessage(comp.Name, "the support matrix declares an unparseable minimum "+comp.Minimum)
 		return r
 	}
 	has, ok := parseVersion(found)
 	if !ok {
-		r.Outcome = Unknown
+		r.Outcome = clusterprofile.OutcomeUnknown
 		r.Message = unknownMessage(comp.Name, "unparseable version "+found)
 		return r
 	}
 
 	switch {
 	case has.compare(req) >= 0:
-		r.Outcome = Supported
+		r.Outcome = clusterprofile.OutcomeYes
 		r.Message = "supported"
 	case comp.Degrade == DegradeRenderOlder:
-		r.Outcome = Unsupported
+		r.Outcome = clusterprofile.OutcomeNo
 		r.Message = decidedMessage(comp.Name, found, comp.Minimum, "render the older API")
 	default:
-		r.Outcome = Unsupported
+		r.Outcome = clusterprofile.OutcomeNo
 		r.Message = decidedMessage(comp.Name, found, comp.Minimum, "refuse with a reason")
 	}
 	return r
@@ -205,26 +181,16 @@ func decidedMessage(component, found, required, degrade string) string {
 		" needed to serve the API kelson renders against; decision: " + degrade
 }
 
-// gapReason returns the first gap Reason matching root, for the Unknown message.
-func gapReason(gaps []clusterprofile.Gap, root string) string {
-	for _, g := range gaps {
-		if g.Field == root || len(g.Field) > len(root) && g.Field[:len(root)] == root && g.Field[len(root)] == '.' {
-			return g.Reason
-		}
-	}
-	return ""
-}
-
 // Supported returns the results that passed.
-func (r Report) Supported() []Result { return r.filter(Supported) }
+func (r Report) Supported() []Result { return r.filter(clusterprofile.OutcomeYes) }
 
 // Unsupported returns the results that are too old.
-func (r Report) Unsupported() []Result { return r.filter(Unsupported) }
+func (r Report) Unsupported() []Result { return r.filter(clusterprofile.OutcomeNo) }
 
 // Unknown returns the results we could not judge.
-func (r Report) Unknown() []Result { return r.filter(Unknown) }
+func (r Report) Unknown() []Result { return r.filter(clusterprofile.OutcomeUnknown) }
 
-func (r Report) filter(o Outcome) []Result {
+func (r Report) filter(o clusterprofile.Outcome) []Result {
 	var out []Result
 	for _, res := range r.Results {
 		if res.Outcome == o {

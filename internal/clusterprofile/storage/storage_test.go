@@ -22,7 +22,7 @@ func localPathProfile() clusterprofile.ClusterProfile {
 // legible to someone who has not read the ADR.
 func TestLocalPathIsNotCapableAndNudges(t *testing.T) {
 	v := Branching(localPathProfile())
-	if v.Outcome != NotCapable {
+	if v.Outcome != clusterprofile.OutcomeNo {
 		t.Fatalf("local-path branching outcome = %s, want not capable", v.Outcome)
 	}
 	if v.Class == nil || v.Class.Name != "local-path" {
@@ -42,22 +42,22 @@ func TestLocalPathIsNotCapableAndNudges(t *testing.T) {
 }
 
 // TestOutcomesAreThree guards the central contract: a class with a snapshot
-// class is Capable, one without is NotCapable, and a gap-hidden profile is a
-// third thing, Unknown — never silently fine and never a failure.
+// class answers yes, one without answers no, and a gap-hidden profile is a
+// third thing, unknown — never silently fine and never a failure.
 func TestOutcomesAreThree(t *testing.T) {
 	cases := []struct {
 		name string
 		p    clusterprofile.ClusterProfile
-		want Outcome
+		want clusterprofile.Outcome
 	}{
 		{"capable", clusterprofile.ClusterProfile{StorageClasses: []clusterprofile.StorageClass{
 			{Name: "standard-rwo", Provisioner: "pd.csi.storage.gke.io", Default: true, VolumeSnapshotClass: "gke-snap"},
-		}}, Capable},
-		{"not-capable", localPathProfile(), NotCapable},
-		{"no-classes", clusterprofile.ClusterProfile{}, NotCapable},
+		}}, clusterprofile.OutcomeYes},
+		{"not-capable", localPathProfile(), clusterprofile.OutcomeNo},
+		{"no-classes", clusterprofile.ClusterProfile{}, clusterprofile.OutcomeNo},
 		{"gap-unknown", clusterprofile.ClusterProfile{
 			Incomplete: []clusterprofile.Gap{{Field: "storageClasses", Reason: "forbidden: needs get,list on storageclasses.storage.k8s.io"}},
-		}, Unknown},
+		}, clusterprofile.OutcomeUnknown},
 	}
 	for _, c := range cases {
 		if got := Branching(c.p).Outcome; got != c.want {
@@ -82,7 +82,7 @@ func TestGapIsUnknown(t *testing.T) {
 		},
 	}
 	v := Branching(p)
-	if v.Outcome != Unknown {
+	if v.Outcome != clusterprofile.OutcomeUnknown {
 		t.Fatalf("gap-hidden branching outcome = %s, want unknown", v.Outcome)
 	}
 	if !strings.Contains(v.Message, "cannot judge") {
@@ -98,7 +98,7 @@ func TestCapableNamesSnapshotClass(t *testing.T) {
 		{Name: "standard-rwo", Provisioner: "pd.csi.storage.gke.io", Default: true, VolumeSnapshotClass: "gke-snap"},
 	}}
 	v := Branching(p)
-	if v.Outcome != Capable || v.SnapshotClass != "gke-snap" {
+	if v.Outcome != clusterprofile.OutcomeYes || v.SnapshotClass != "gke-snap" {
 		t.Fatalf("verdict = %+v, want capable on gke-snap", v)
 	}
 	if !strings.Contains(v.Message, "gke-snap") {
