@@ -177,9 +177,11 @@ func watchDeployment(ctx context.Context, adapter delivery.Adapter, set delivery
 		return state, nil
 	case ctx.Err() != nil:
 		// The budget expired. That is an answer ("not healthy in time"), not a
-		// machinery failure, and the caller reports it with the last phase the
-		// engine reached — which is the diagnosis.
-		return state, nil
+		// machinery failure — the same answer the engine's own progress timer
+		// gives, and the two expire together when nothing progresses, so which
+		// fires first is scheduler jitter. Ask the engine for the stuck verdict
+		// either way: it names the phase-specific cause the caller reports.
+		return engine.MarkStuck(), nil
 	default:
 		return state, err
 	}

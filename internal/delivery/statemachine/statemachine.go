@@ -519,7 +519,7 @@ func (e *Engine) Run(ctx context.Context) (State, error) {
 			}
 
 		case <-timer.C:
-			return e.markStuck(), nil
+			return e.MarkStuck(), nil
 		}
 	}
 }
@@ -601,11 +601,17 @@ func (e *Engine) causeFor(st delivery.Status) Cause {
 	return Cause{Component: e.component, Reason: st.Detail["reason"], Message: msg}
 }
 
-// markStuck records the timeout verdict. The phase the machine is wedged in
+// MarkStuck records the timeout verdict. The phase the machine is wedged in
 // determines the cause, which is the whole point of keeping the three answers
 // apart: stuck-in-Committed is a wiring problem, stuck-in-Degraded is a
 // workload problem, and they get different sentences.
-func (e *Engine) markStuck() State {
+//
+// Run calls it when the progress timer expires. Callers with a wall-clock
+// budget of their own (kelson deploy's --timeout cancels the ctx) call it
+// after Run returns on that deadline: both budgets expire together when
+// nothing progresses, and the verdict must not depend on which timer the
+// scheduler serviced first.
+func (e *Engine) MarkStuck() State {
 	e.mu.Lock()
 	s := e.state
 	s.Stuck = true
