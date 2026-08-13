@@ -11,8 +11,9 @@
 // internal/observation. So every cluster-facing capability enters through a
 // narrow interface declared here: [SpecStore] for the spec store,
 // [ProfileCapture] for live detection, [DeliveryConnector] for the delivery
-// plane, [PreviewConnector] for the server-side dry-run engine and [LogEngine]
-// for log queries. cmd/kelson-server supplies the production implementations;
+// plane, [PreviewConnector] for the server-side dry-run engine, [LogEngine]
+// for log queries and [BuildConnector] for the build plane.
+// cmd/kelson-server supplies the production implementations;
 // the tests in this package supply in-memory ones. It is the same seam shape
 // `kelson deploy` uses for its deliveryConnector (cmd/kelson/deploy.go).
 //
@@ -44,6 +45,7 @@ import (
 	"connectrpc.com/connect"
 
 	"github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1/kelsonv1alpha1connect"
+	"github.com/dafrie/kelson/internal/build"
 	"github.com/dafrie/kelson/internal/clusterprofile"
 	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/delivery/rollback"
@@ -177,6 +179,60 @@ func (e LogQueryEngine) Follow(ctx context.Context, q observation.Query) (<-chan
 	return lines, stream, nil
 }
 
+// BuildTarget is what a Build RPC resolved from its request and spec: which
+// project, in which namespace, pushing with which credential. It is the build
+// plane's counterpart to [Target] and mirrors cmd/kelson's buildTarget minus
+// the CLI-only kubeconfig.
+type BuildTarget struct {
+	Project     string
+	Environment string
+	// Namespace is where the build Job runs. It defaults to the environment's
+	// resolved namespace, exactly like the CLI's --namespace.
+	Namespace string
+	// PushSecret names an existing dockerconfigjson Secret in Namespace. It is
+	// a reference, never a value (ADR-0009), and empty means an unauthenticated
+	// push.
+	PushSecret string
+}
+
+// RevisionResolver answers "what commit does this ref name?" against a remote
+// repository. It is an interface for the same reason the CLI's is: the answer
+// needs the git libraries, which this plane's depguard rule forbids
+// (.golangci.yml). internal/delivery/git's RemoteResolver implements it.
+type RevisionResolver interface {
+	Resolve(ctx context.Context, repo, ref string) (string, error)
+}
+
+// BuildPlane is the assembled build plane for one request: a driver that can
+// run a build, and a resolver that can turn a branch name into the commit the
+// build records.
+type BuildPlane struct {
+	Builder   build.Builder
+	Revisions RevisionResolver
+}
+
+// BuildConnector builds the build plane for one request, mirroring
+// [DeliveryConnector] and cmd/kelson's buildConnector. It needs the target
+// because the build Job's namespace and push credential are per-request
+// resolutions, not process-wide configuration.
+type BuildConnector func(ctx context.Context, t BuildTarget) (*BuildPlane, error)
+
+// BuildDefaults is the server's own build configuration: where images go, who
+// may push them, and where the Job runs.
+//
+// It is configuration and not spec on purpose (ADR-0010, docs/build.md): the
+// same Project must build against a team's ghcr.io and against a kind cluster's
+// localhost:5000, so the destination belongs to the operator running the
+// server. A request may override the registry and the push secret because a
+// caller may legitimately push elsewhere; these are what it falls back to.
+type BuildDefaults struct {
+	Registry   string
+	PushSecret string
+	// Namespace overrides the environment's resolved namespace for build Jobs.
+	// Empty keeps the environment's, which is the CLI's default too.
+	Namespace string
+}
+
 // Options configures a [Server]. Every seam is optional: a nil one makes the
 // RPCs that need it answer CodeUnimplemented with a message naming what is
 // missing, which is how a partially-wired server (a test, or a build with no
@@ -187,6 +243,10 @@ type Options struct {
 	Delivery DeliveryConnector
 	Preview  PreviewConnector
 	Logs     LogEngine
+	Build    BuildConnector
+
+	// BuildDefaults is the destination configuration builds fall back to.
+	BuildDefaults BuildDefaults
 
 	// DeployTimeout is the fallback budget for a Deploy whose request carries
 	// no timeout. Zero selects [DefaultDeployTimeout].
@@ -199,13 +259,16 @@ type Options struct {
 	WatchInterval time.Duration
 }
 
-// Server implements all six kelson.v1alpha1 services.
+// Server implements all seven kelson.v1alpha1 services.
 type Server struct {
 	specs    SpecStore
 	profile  ProfileCapture
 	delivery DeliveryConnector
 	preview  PreviewConnector
 	logs     LogEngine
+	build    BuildConnector
+
+	buildDefaults BuildDefaults
 
 	deployTimeout time.Duration
 	pollInterval  time.Duration
@@ -223,6 +286,7 @@ var (
 	_ kelsonv1alpha1connect.DeployServiceHandler  = (*Server)(nil)
 	_ kelsonv1alpha1connect.LogServiceHandler     = (*Server)(nil)
 	_ kelsonv1alpha1connect.EventServiceHandler   = (*Server)(nil)
+	_ kelsonv1alpha1connect.BuildServiceHandler   = (*Server)(nil)
 )
 
 // New returns a Server over the given seams.
@@ -233,6 +297,8 @@ func New(opts Options) *Server {
 		delivery:      opts.Delivery,
 		preview:       opts.Preview,
 		logs:          opts.Logs,
+		build:         opts.Build,
+		buildDefaults: opts.BuildDefaults,
 		deployTimeout: opts.DeployTimeout,
 		pollInterval:  opts.PollInterval,
 	}
@@ -257,6 +323,7 @@ func (s *Server) Register(mux *http.ServeMux, opts ...connect.HandlerOption) {
 		func() (string, http.Handler) { return kelsonv1alpha1connect.NewDeployServiceHandler(s, opts...) },
 		func() (string, http.Handler) { return kelsonv1alpha1connect.NewLogServiceHandler(s, opts...) },
 		func() (string, http.Handler) { return kelsonv1alpha1connect.NewEventServiceHandler(s, opts...) },
+		func() (string, http.Handler) { return kelsonv1alpha1connect.NewBuildServiceHandler(s, opts...) },
 	}
 	for _, build := range handlers {
 		mux.Handle(build())

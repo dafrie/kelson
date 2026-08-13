@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/dafrie/kelson/internal/api"
+	"github.com/dafrie/kelson/internal/build/buildkit"
 	"github.com/dafrie/kelson/internal/clusterprofile"
 	"github.com/dafrie/kelson/internal/clusterprofile/detect"
 	"github.com/dafrie/kelson/internal/delivery"
@@ -67,7 +68,20 @@ type config struct {
 	kubeconfig   string
 	namespace    string
 	keep         int
+
+	// The build plane's destination configuration. It is flags and not spec for
+	// ADR-0010's reason (docs/build.md): where an image is pushed is
+	// infrastructure, and the same Project must build against a team's ghcr.io
+	// and against a kind cluster's localhost:5000.
+	registry       string
+	pushSecret     string
+	buildNamespace string
 }
+
+// registryEnv supplies --registry, so an operator sets the destination once in
+// the deployment rather than in every request. It is the same variable
+// `kelson build` reads.
+const registryEnv = "KELSON_REGISTRY"
 
 // defaultNamespace is where the state ConfigMaps live. It matches the ADR's
 // default and the RBAC the deploy manifests grant.
@@ -148,6 +162,9 @@ func parseFlags(args []string, stderr io.Writer) (config, error) {
 	fs.StringVar(&cfg.kubeconfig, "kubeconfig", "", "path to a kubeconfig (default: $KUBECONFIG, in-cluster credentials, then ~/.kube/config)")
 	fs.StringVar(&cfg.namespace, "namespace", defaultNamespace, "namespace holding kelson-server's state ConfigMaps")
 	fs.IntVar(&cfg.keep, "keep", direct.DefaultKeep, "number of deployment revisions to retain per environment")
+	fs.StringVar(&cfg.registry, "registry", os.Getenv(registryEnv), "destination registry and namespace for builds, e.g. ghcr.io/acme (default: $"+registryEnv+"); a Build request may override it")
+	fs.StringVar(&cfg.pushSecret, "push-secret", "", "name of an existing kubernetes.io/dockerconfigjson Secret in the build namespace that authenticates the push")
+	fs.StringVar(&cfg.buildNamespace, "build-namespace", "", "namespace build Jobs run in (default: the environment's own namespace, as in the CLI)")
 	if err := fs.Parse(args); err != nil {
 		return config{}, err
 	}
@@ -259,6 +276,12 @@ func connectServer(cfg config) (*api.Server, error) {
 		Delivery: deliveryConnector(cfg, history),
 		Preview:  previewConnector(cfg),
 		Logs:     api.LogQueryEngine{Engine: logs},
+		Build:    buildConnector(cfg),
+		BuildDefaults: api.BuildDefaults{
+			Registry:   cfg.registry,
+			PushSecret: cfg.pushSecret,
+			Namespace:  cfg.buildNamespace,
+		},
 	}), nil
 }
 
@@ -312,6 +335,43 @@ func deliveryConnector(cfg config, history *serverstate.HistoryStore) api.Delive
 			Registry: reg,
 			Health:   probe,
 			Recorded: &rollback.DirectSource{Store: store, Project: t.Project, Environment: t.Environment},
+		}, nil
+	}
+}
+
+// buildConnector is the server's connectBuild: one cluster connection per
+// build, the BuildKit driver over the Kubernetes build executor, and a remote
+// ref resolver sharing the delivery credential. It is cmd/kelson/build.go's
+// connectBuild with the CLI's kubeconfig flag replaced by the server's
+// (issues #48, #54).
+//
+// The Job's deadline and the RPC's budget are the same constant deliberately.
+// If the Job outlived the watch, a cancelled stream would leave a build running
+// with nothing left that could ever report its outcome; if the watch outlived
+// the Job, the server would wait past the moment the answer became impossible.
+func buildConnector(cfg config) api.BuildConnector {
+	return func(_ context.Context, t api.BuildTarget) (*api.BuildPlane, error) {
+		cluster, err := kube.Connect(cfg.kubeconfig)
+		if err != nil {
+			return nil, err
+		}
+		driver, err := buildkit.New(buildkit.Options{
+			Cluster: kube.NewBuildExecutor(cluster.Typed),
+			Config: buildkit.Config{
+				Namespace:  t.Namespace,
+				PushSecret: t.PushSecret,
+				Timeout:    buildkit.Duration(api.DefaultBuildTimeout),
+			},
+		})
+		if err != nil {
+			return nil, err
+		}
+		return &api.BuildPlane{
+			Builder: driver,
+			// The source repository and the deployment repository are commonly
+			// the same forge, so the build reuses the delivery credential
+			// rather than inventing a second one — the CLI's choice, unchanged.
+			Revisions: git.RemoteResolver{Auth: gitAuth()},
 		}, nil
 	}
 }

@@ -1,7 +1,8 @@
 # Build plane — how kelson turns source into an image
 
-Reference for `kelson build` (M4). Implements issues [#48] and [#51]; the
-strategy decision is [ADR-0010](adr/0010-build-strategy.md).
+Reference for `kelson build` (M4) and for `BuildService`, the same plane over
+the API ([#54]). Implements issues [#48] and [#51]; the strategy decision is
+[ADR-0010](adr/0010-build-strategy.md).
 
 A kelson Project can name a git repository instead of an image. `kelson build`
 is what turns that repository into a digest-pinned image reference, which
@@ -207,17 +208,61 @@ A build needs no `--profile` and does no rendering: it reads `spec.source`,
 `spec.build` and the Environment's identity, and nothing a ClusterProfile
 decides.
 
+## The same build over the API
+
+`kelson-server` serves the identical pipeline as `BuildService.Build`
+([ADR-0013](adr/0013-server-state-and-api-v0.md), issue [#54]), because a
+browser has no kubeconfig and the UI's create-from-a-git-repository path
+([#63]) has to reach the build plane somehow.
+
+The stream is three events: `Started` once the strategy and the ref are
+resolved to settled facts (strategy, image repository, tag, revision), `Log`
+chunks carrying the build's raw output while the Job runs, and `Finished` with
+the digest-pinned reference. A failed build is a ConnectRPC error with the same
+`build/*` codes the CLI prints — it produced no image, so there is no result
+message that could honestly describe one.
+
+The destination is the server's configuration rather than each caller's:
+
+| Flag | Meaning |
+|---|---|
+| `--registry` | default destination prefix; `KELSON_REGISTRY` supplies it |
+| `--push-secret` | default push credential, by name |
+| `--build-namespace` | where build Jobs run; empty keeps the environment's own namespace, as in the CLI |
+
+A request may override the registry and the push secret, because where an image
+is pushed is not application description. It may **not** override the strategy:
+that is the spec's, and a per-request override would put build configuration in
+the caller's hands, which is what ADR-0010 forbids. There is no
+`idempotency_key` either — a build is named from the resolved commit, so
+re-running one is already a replay.
+
+Two limits are the server's own and are documented on the RPC rather than
+discovered at runtime:
+
+- **`auto` cannot be detected server-side at all.** Detection reads a source
+  tree, the server has none, and there is no server-side equivalent of `-C`. A
+  spec that leaves the strategy to `auto` fails with
+  `build/detection-needs-source` and says to set `spec.build.strategy`. This is
+  why the UI's create form offers `dockerfile` and not `auto` ([#50] is the fix).
+- **Cancelling the stream does not cancel the build.** It stops the server
+  watching. The executor returns as soon as its context is done, before the
+  branch that deletes the Job, so the Job keeps running, finishes or hits its
+  `activeDeadlineSeconds`, and is left in the build namespace for an operator to
+  find. "I cancelled the build" and "the build stopped" are different facts.
+
 ## Structure
 
 | Package | Role |
 |---|---|
-| `internal/build` | the `Request` / `Result` / `Builder` contract |
+| `internal/build` | the `Request` / `Result` / `Builder` contract, plus the pure build plan (strategy resolution, destination tag, ref classification) both callers share |
 | `internal/build/buildkit` | the Dockerfile driver; `Config.Workload` is a **pure** `(Request, Config) → Job YAML` |
 | `internal/build/detect` | strategy detection over an `fs.FS`, with a typed reason and the evidence path |
 | `internal/build/registry` | reference parsing, digest pinning, tag and destination derivation, credential references |
 | `internal/delivery/kube` | `BuildExecutor`: submits the Job, streams pod logs, classifies the outcome, parses the digest |
 | `internal/delivery/git` | `RemoteResolver`: `ls-remote` ref resolution |
 | `cmd/kelson` | `kelson build`: flags, spec, and the `buildConnector` seam |
+| `internal/api` | `BuildService.Build`: the same plan over the wire, behind the `BuildConnector` seam |
 
 The split is the depguard allow-lists (`.golangci.yml`), not taste.
 `internal/build` may not import client-go, so the cluster-facing half of the
@@ -243,4 +288,6 @@ the command runs with no cluster and no network.
 [#50]: https://github.com/dafrie/kelson/issues/50
 [#51]: https://github.com/dafrie/kelson/issues/51
 [#52]: https://github.com/dafrie/kelson/issues/52
+[#54]: https://github.com/dafrie/kelson/issues/54
+[#63]: https://github.com/dafrie/kelson/issues/63
 [#86]: https://github.com/dafrie/kelson/issues/86
