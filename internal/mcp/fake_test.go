@@ -46,6 +46,7 @@ type fakeServer struct {
 	queryLogs func(*kelsonv1alpha1.QueryLogsRequest) (*kelsonv1alpha1.QueryLogsResponse, error)
 	deploy    func(*kelsonv1alpha1.DeployRequest, *connect.ServerStream[kelsonv1alpha1.DeployResponse]) error
 	rollback  func(*kelsonv1alpha1.RollbackRequest, *connect.ServerStream[kelsonv1alpha1.RollbackResponse]) error
+	promote   func(*kelsonv1alpha1.PromoteRequest) (*kelsonv1alpha1.PromoteResponse, error)
 	watch     func(*kelsonv1alpha1.WatchRequest, *connect.ServerStream[kelsonv1alpha1.WatchResponse]) error
 }
 
@@ -101,6 +102,14 @@ func (f *fakeServer) History(_ context.Context, req *connect.Request[kelsonv1alp
 		return nil, notWired("History")
 	}
 	msg, err := f.history(req.Msg)
+	return respond(msg, err)
+}
+
+func (f *fakeServer) Promote(_ context.Context, req *connect.Request[kelsonv1alpha1.PromoteRequest]) (*connect.Response[kelsonv1alpha1.PromoteResponse], error) {
+	if f.promote == nil {
+		return nil, notWired("Promote")
+	}
+	msg, err := f.promote(req.Msg)
 	return respond(msg, err)
 }
 
