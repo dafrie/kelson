@@ -22,15 +22,21 @@ import {
 } from "../spec/documents";
 
 /**
- * Creating an application: three fields, then a preview, then a store.
+ * Creating a component: three fields, then a preview, then a store.
  *
  * The bar this screen is held to (#63) is that a developer who has never seen
  * kelson deploys something without reading anything. So what is *present* is a
  * name, an image and a port — and the port is optional, because an empty port
- * is a worker (docs/model.md derives the workload kind from the shape rather
- * than asking for a type). Everything else the model can express is *reachable*
+ * is a worker (docs/model.md derives the component's kind from the shape rather
+ * than asking for one). Everything else the model can express is *reachable*
  * behind one disclosure and nothing more. The named failure mode is Coolify's:
  * a first screen that asks forty questions to deploy one container.
+ *
+ * ADR-0014's kind set is wider than the three this form derives — an `agent`,
+ * a `postgres`, a `valkey` are components too — and none of them is offered
+ * here on purpose. A kind picker on the first screen is the forty questions
+ * arriving one step later; those components are written on the YAML tab, and
+ * the edit form's byte guard sends any document containing one there.
  *
  * Two things are deliberately not offered at all: secret backends, deployment
  * policy and multi-cluster targeting, because #141 has kelson reject those

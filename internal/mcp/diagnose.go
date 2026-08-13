@@ -13,13 +13,13 @@ import (
 
 const diagnoseApplicationDescription = `Answer "what is wrong with this environment, and why" in one call.
 
-Composes, for one (project, environment): the delivery phase, revision, namespace and cause; every workload's health verdict with the server's own remediation; a bounded window of the failing workload's logs (the lines before it terminated, when it is failing); the last 5 deployment revisions; and a compact summary of what the spec declares (applications, images, ports).
+Composes, for one (project, environment): the delivery phase, revision, namespace and cause; every workload's health verdict with the server's own remediation; a bounded window of the failing workload's logs (the lines before it terminated, when it is failing); the last 5 deployment revisions; and a compact summary of what the spec declares (components, images, kinds).
 
 READ-ONLY. Changes nothing.
 
 Preconditions: the project must be stored on the server (put_spec) and must declare the named environment.
 
-Prefer this over logs_window when you do not yet know what is wrong: logs_window needs you to already know which application to read. Prefer it over calling status, history and logs separately — this is the same information for one round trip instead of six.
+Prefer this over logs_window when you do not yet know what is wrong: logs_window needs you to already know which workload to read. Prefer it over calling status, history and logs separately — this is the same information for one round trip instead of six.
 
 Costs several server calls and returns at most 80 log lines, the last 5 revisions and 12 workload verdicts, each truncated explicitly. It never returns full manifests or the spec YAML.`
 
@@ -217,9 +217,9 @@ func (c *clients) reportHistory(ctx context.Context, r *report, in diagnoseAppli
 //
 // It is a summary and never the YAML: the documents are the user's and can be
 // arbitrarily long, and an agent diagnosing a failure needs to know which
-// applications exist, what images they run and which ports they serve — not the
-// authored file. Images and ports are Project-level facts (model rule P3;
-// an Environment override cannot change either), so the Project document is the
+// components exist, what images they run and what each one is — not the
+// authored file. Images and kinds are Project-level facts (model rule P3; an
+// Environment override cannot change either), so the Project document is the
 // honest source for this.
 func (c *clients) reportSpec(ctx context.Context, r *report, in diagnoseApplicationInput) {
 	r.section("SPEC")

@@ -305,8 +305,8 @@ spec:
 	}
 }
 
-// canonicalize collapses a concrete error path ($.spec.applications[2].env.DB)
-// into the canonical form the tables use ($.spec.applications[].env.*).
+// canonicalize collapses a concrete error path ($.spec.components[2].env.DB)
+// into the canonical form the tables use ($.spec.components[].env.*).
 func canonicalize(path string) string {
 	var out strings.Builder
 	for i := 0; i < len(path); i++ {

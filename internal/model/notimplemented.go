@@ -34,7 +34,7 @@ import (
 // the work that would make it real is tracked.
 type notImplemented struct {
 	// Kind is KindProject or KindEnvironment: the two documents share field
-	// names (`$.spec.services` exists on both) but not their gate status.
+	// names (`$.spec.components` exists on both) but not their gate status.
 	Kind string
 
 	// Path is the canonical spec path, with `[]` for a sequence entry and `*`
@@ -138,7 +138,7 @@ func (v *validator) gate(canonical, field string) {
 			trimRoot(g.Path), g.TrackedBy))
 }
 
-// trimRoot turns "$.spec.services" into "spec.services" for prose.
+// trimRoot turns "$.spec.components" into "spec.components" for prose.
 func trimRoot(path string) string {
 	return strings.TrimPrefix(path, "$.")
 }

@@ -32,7 +32,7 @@ metadata:
 spec:
   image: ghcr.io/acme/hello:1.4.2
 
-  applications:
+  components:
     - name: web
       port: 8080
 `;
@@ -62,7 +62,7 @@ describe("buildDocuments", () => {
     expect(built.environmentName).toBe("development");
   });
 
-  it("makes an application with no port a worker", () => {
+  it("makes a component with no port a worker", () => {
     const built = buildDocuments(form({ project: "mailroom", image: "acme/mailroom:2" }));
 
     expect(built.project).toBe(`apiVersion: kelson.dev/v1alpha1
@@ -73,7 +73,7 @@ metadata:
 spec:
   image: acme/mailroom:2
 
-  applications:
+  components:
     - name: worker
 `);
   });
@@ -157,7 +157,7 @@ spec:
     expect(built.environment).toBe(MINIMAL_ENVIRONMENT);
   });
 
-  it("renames the application when a staging environment is chosen", () => {
+  it("renames the component when a staging environment is chosen", () => {
     const built = buildDocuments(form({ ...THREE_FIELDS, environment: "staging" }));
 
     expect(built.environmentName).toBe("staging");
@@ -181,7 +181,7 @@ metadata:
 spec:
   image: acme/mailroom:2
 
-  applications:
+  components:
     - name: cron
       schedule: "0 3 * * *"
 `);
@@ -325,22 +325,22 @@ describe("fieldForError", () => {
   it("maps a path onto the input that wrote it", () => {
     expect(fieldForError(wire("Project/hello", "$.metadata.name"))).toBe("project");
     expect(fieldForError(wire("Project/hello", "$.spec.image"))).toBe("image");
-    expect(fieldForError(wire("Project/hello", "$.spec.applications[0].port"))).toBe("port");
-    expect(fieldForError(wire("Project/hello", "$.spec.applications[0].health"))).toBe("health");
-    expect(fieldForError(wire("Project/hello", "$.spec.applications[0].schedule"))).toBe(
+    expect(fieldForError(wire("Project/hello", "$.spec.components[0].port"))).toBe("port");
+    expect(fieldForError(wire("Project/hello", "$.spec.components[0].health"))).toBe("health");
+    expect(fieldForError(wire("Project/hello", "$.spec.components[0].schedule"))).toBe(
       "schedule",
     );
-    expect(fieldForError(wire("Project/hello", "$.spec.applications[0].domains[1]"))).toBe(
+    expect(fieldForError(wire("Project/hello", "$.spec.components[0].domains[1]"))).toBe(
       "domains",
     );
-    expect(fieldForError(wire("Project/hello", "$.spec.applications[0].replicas.min"))).toBe(
+    expect(fieldForError(wire("Project/hello", "$.spec.components[0].replicas.min"))).toBe(
       "replicas",
     );
     expect(fieldForError(wire("Project/hello", "$.spec.env.DB_PASSWORD", "secret/literal"))).toBe(
       "env:DB_PASSWORD",
     );
     expect(
-      fieldForError(wire("Project/hello", "$.spec.applications[0]", "semantic/no-image-source")),
+      fieldForError(wire("Project/hello", "$.spec.components[0]", "semantic/no-image-source")),
     ).toBe("image");
   });
 
@@ -355,9 +355,9 @@ describe("fieldForError", () => {
 
   it("returns undefined for a path no input owns", () => {
     // These reach the general panel whole, with their code and remediation.
-    expect(fieldForError(wire("Project/hello", "$.spec.applications[0].name"))).toBeUndefined();
+    expect(fieldForError(wire("Project/hello", "$.spec.components[0].name"))).toBeUndefined();
     expect(fieldForError(wire("Environment/development", "$.spec.project"))).toBeUndefined();
     expect(fieldForError(wire("Project/hello", "$.apiVersion"))).toBeUndefined();
-    expect(fieldForError(wire("Project/hello", "$.spec.applications[0]"))).toBeUndefined();
+    expect(fieldForError(wire("Project/hello", "$.spec.components[0]"))).toBeUndefined();
   });
 });

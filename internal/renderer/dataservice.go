@@ -340,7 +340,7 @@ func bindingRef(app string, field string, b *model.ServiceBinding, services map[
 			Application: app,
 			Message: "environment variable " + quoted(field) + " binds to service " + quoted(b.Service) +
 				", which the resolved spec does not declare",
-			Remediation: "declare the service under spec.services on the Project, or bind to one of: " +
+			Remediation: "declare it under spec.components on the Project with kind: postgres, or bind to one of: " +
 				strings.Join(serviceNames(services), ", "),
 		}
 	}

@@ -46,9 +46,9 @@ export function LogsPage() {
     [clients, project, env],
   );
 
-  const applications = useMemo(() => {
+  const components = useMemo(() => {
     const doc = spec.data?.spec?.documents?.project;
-    return doc ? applicationNames(new TextDecoder().decode(doc)) : [];
+    return doc ? componentNames(new TextDecoder().decode(doc)) : [];
   }, [spec.data]);
 
   const fallbackNamespace = `${project}-${env}`;
@@ -70,9 +70,9 @@ export function LogsPage() {
   // The picker fills itself in once, from the parsed spec. It stays a free-text
   // input either way: a parse that found nothing must not lock the screen.
   useEffect(() => {
-    const first = applications[0];
+    const first = components[0];
     if (application === "" && first !== undefined) setApplication(first);
-  }, [applications, application]);
+  }, [components, application]);
 
   return (
     <>
@@ -107,18 +107,18 @@ export function LogsPage() {
             className="k-input k-mono"
             value={application}
             onChange={(e) => setApplication(e.target.value)}
-            list="k-applications"
+            list="k-components"
             placeholder="web"
           />
-          <datalist id="k-applications">
-            {applications.map((name) => (
+          <datalist id="k-components">
+            {components.map((name) => (
               <option key={name} value={name} />
             ))}
           </datalist>
           <span className="k-field__note k-mono">
-            {applications.length > 0
-              ? `from the stored Project document: ${applications.join(", ")}`
-              : "no applications parsed from the stored spec — type the name"}
+            {components.length > 0
+              ? `from the stored Project document: ${components.join(", ")}`
+              : "no components parsed from the stored spec — type the name"}
           </span>
         </label>
       </div>
@@ -156,21 +156,26 @@ export function LogsPage() {
 }
 
 /**
- * Application names out of the stored Project document.
+ * Workload names out of the stored Project document.
  *
- * A YAML-lite scan, deliberately: `applications:` is a list of mappings whose
+ * A YAML-lite scan, deliberately: `components:` is a list of mappings whose
  * first key is `name` (docs/model.md), so the names are found by indentation
  * without a parser. It is a convenience for the picker and nothing more — the
  * field stays free text, so a spec this misses costs a reader one word of
  * typing rather than a broken screen.
+ *
+ * A data component has no pods and no logs, so an entry carrying `kind:
+ * postgres` or `kind: valkey` is dropped: offering it in a log picker would
+ * promise a stream that cannot exist (ADR-0014).
  */
-export function applicationNames(yaml: string): string[] {
+export function componentNames(yaml: string): string[] {
   const names: string[] = [];
   const lines = yaml.split("\n");
   let indent = -1;
+  let last: string | undefined;
   for (const line of lines) {
     if (/^\s*#/.test(line)) continue;
-    const opens = /^(\s*)applications:\s*$/.exec(line);
+    const opens = /^(\s*)components:\s*$/.exec(line);
     if (opens?.[1] !== undefined) {
       indent = opens[1].length;
       continue;
@@ -179,12 +184,24 @@ export function applicationNames(yaml: string): string[] {
     const item = /^(\s*)-\s+name:\s*("?)([A-Za-z0-9][A-Za-z0-9-]*)\2\s*$/.exec(line);
     if (item?.[1] !== undefined && item[1].length > indent && item[3]) {
       names.push(item[3]);
+      last = item[3];
       continue;
     }
-    // Dedenting to or past `applications:` ends the block; blank lines and
+    // A data component is not a log source; drop the entry the `kind:` belongs
+    // to rather than listing a name with no pods behind it.
+    const dataKind = /^\s*kind:\s*("?)(postgres|valkey)\1\s*$/.exec(line);
+    if (dataKind !== null && last !== undefined) {
+      names.pop();
+      last = undefined;
+      continue;
+    }
+    // Dedenting to or past `components:` ends the block; blank lines and
     // deeper keys inside an item do not.
     const leading = /^(\s*)\S/.exec(line);
-    if (leading?.[1] !== undefined && leading[1].length <= indent) indent = -1;
+    if (leading?.[1] !== undefined && leading[1].length <= indent) {
+      indent = -1;
+      last = undefined;
+    }
   }
   return [...new Set(names)];
 }

@@ -1,7 +1,7 @@
 import type { Error as WireError } from "../gen/kelson/v1alpha1/common_pb";
 
 /**
- * Building the two spec documents a new application is made of.
+ * Building the two spec documents a new component is made of.
  *
  * The stored spec is the user's artifact (ADR-0013 §1: the server keeps the
  * authored bytes, comments and key order included), so what this module writes
@@ -64,11 +64,18 @@ export const EMPTY_FORM: NewAppForm = {
 /** The environment an unfilled environment field means. */
 export const DEFAULT_ENVIRONMENT = "development";
 
-/** The workload an Application renders to (docs/model.md, model.Workload). */
+/**
+ * The workload kinds this form can write (docs/model.md, ADR-0014).
+ *
+ * The model's kind enum is wider — `agent`, `postgres` and `valkey` are
+ * components too — but those are not shapes a three-field create form derives,
+ * and offering a kind picker here would be the forty-question first screen this
+ * page exists to avoid. They are written on the YAML tab.
+ */
 export type WorkloadKind = "service" | "worker" | "cron";
 
 /**
- * Mirrors model.Application.Workload in internal/model/project.go: schedule
+ * Mirrors model.Component.DerivedKind in internal/model/project.go: schedule
  * first, then port, else worker. Kept identical so the preview names the
  * workload the server would derive, rather than a second opinion about it.
  *
@@ -84,15 +91,15 @@ export function workloadKind(form: NewAppForm): WorkloadKind {
 }
 
 /**
- * The application's name inside the Project.
+ * The component's name inside the Project.
  *
- * The examples name applications after their role — `web` for the one that
+ * The examples name components after their role — `web` for the one that
  * serves traffic, `worker` for the one that does not (examples/hello-single,
- * examples/worker-cron) — so a one-application project gets the role name for
- * the workload its shape derives. The project name is already on the document
+ * examples/worker-cron) — so a one-component project gets the role name for
+ * the kind its shape derives. The project name is already on the document
  * one level up; repeating it here would read as `hello.hello`.
  */
-export function applicationName(kind: WorkloadKind): string {
+export function componentName(kind: WorkloadKind): string {
   return kind === "service" ? "web" : kind === "cron" ? "cron" : "worker";
 }
 
@@ -156,8 +163,8 @@ export function buildDocuments(form: NewAppForm): SpecText {
 
 /**
  * The Project document, in examples/hello-single's shape: a blank line between
- * each top-level section of `spec`, and nothing under `applications` that the
- * application's derived kind does not use.
+ * each top-level section of `spec`, and nothing under `components` that the
+ * component's derived kind does not use.
  */
 function projectDocument(f: Normal): string {
   const lines = [
@@ -171,7 +178,7 @@ function projectDocument(f: Normal): string {
   ];
 
   // Project-level env is the shared-configuration idiom (rule P1): it already
-  // reads correctly when a second application joins this one.
+  // reads correctly when a second component joins this one.
   if (f.env.length > 0) {
     lines.push("", "  env:");
     for (const { key, value } of f.env) {
@@ -179,7 +186,7 @@ function projectDocument(f: Normal): string {
     }
   }
 
-  lines.push("", "  applications:", `    - name: ${applicationName(f.kind)}`);
+  lines.push("", "  components:", `    - name: ${componentName(f.kind)}`);
   if (f.kind === "service") {
     lines.push(`      port: ${f.port}`);
     if (f.health !== "") lines.push(`      health: ${yamlScalar(f.health)}`);
@@ -346,7 +353,7 @@ export function formProblems(form: NewAppForm): FieldProblem[] {
     out.push({
       field: "schedule",
       message:
-        "port and schedule are mutually exclusive: a port makes this a web service, a schedule makes it a CronJob. Clear one — a job that also serves traffic is two applications (docs/model.md).",
+        "port and schedule are mutually exclusive: a port makes this a web service, a schedule makes it a CronJob. Clear one — a job that also serves traffic is two components (docs/model.md).",
     });
   }
 
@@ -355,8 +362,8 @@ export function formProblems(form: NewAppForm): FieldProblem[] {
 
 /* ------------------------------------------------------- server error paths */
 
-/** An application subfield a structured error can be about. */
-export type AppField =
+/** A component subfield a structured error can be about. */
+export type ComponentField =
   | "whole"
   | "image"
   | "port"
@@ -371,13 +378,13 @@ export type AppField =
  *
  * This is the inverse of what the builders write, which is why it lives beside
  * them: the builder decides that a port ends up at
- * `$.spec.applications[0].port` and env at `$.spec.env.NAME`, so it is the
+ * `$.spec.components[0].port` and env at `$.spec.env.NAME`, so it is the
  * builder side that knows how to get back. `resource` disambiguates the two
  * documents, which share paths — `$.metadata.name` is the project's name on one
  * and the environment's on the other.
  *
  * It stops at the document's own vocabulary and says nothing about forms: the
- * create form (#63) has one application and no per-application env, the edit
+ * create form (#63) has one component and no per-component env, the edit
  * form (#65) has both, and each projects this onto its own inputs. A path
  * neither recognises still reaches the reader whole in the general panel, with
  * its code, its remediation and its line number intact.
@@ -385,8 +392,8 @@ export type AppField =
 export type ErrorTarget =
   | { doc: "project"; on: "name" | "image" }
   | { doc: "project"; on: "env"; name: string }
-  | { doc: "project"; on: "app"; index: number; field: AppField }
-  | { doc: "project"; on: "app-env"; index: number; name: string }
+  | { doc: "project"; on: "component"; index: number; field: ComponentField }
+  | { doc: "project"; on: "component-env"; index: number; name: string }
   | { doc: "environment"; on: "name" | "namespace"; environment: string };
 
 export function errorTarget(error: WireError): ErrorTarget | undefined {
@@ -412,26 +419,26 @@ export function errorTarget(error: WireError): ErrorTarget | undefined {
     return { doc: "project", on: "env", name: env[1] };
   }
 
-  const app = /^\$\.spec\.applications\[(\d+)\](?:\.(.+))?$/.exec(path);
-  if (app?.[1] === undefined) return undefined;
-  const index = Number(app[1]);
-  const rest = app[2];
-  // An application-level error with no subfield is about the application as a
+  const component = /^\$\.spec\.components\[(\d+)\](?:\.(.+))?$/.exec(path);
+  if (component?.[1] === undefined) return undefined;
+  const index = Number(component[1]);
+  const rest = component[2];
+  // A component-level error with no subfield is about the component as a
   // whole — `semantic/no-image-source` is the one this project's forms answer.
-  if (rest === undefined) return { doc: "project", on: "app", index, field: "whole" };
+  if (rest === undefined) return { doc: "project", on: "component", index, field: "whole" };
 
-  const appEnv = /^env\.([^.]+)/.exec(rest);
-  if (appEnv?.[1] !== undefined) {
-    return { doc: "project", on: "app-env", index, name: appEnv[1] };
+  const componentEnv = /^env\.([^.]+)/.exec(rest);
+  if (componentEnv?.[1] !== undefined) {
+    return { doc: "project", on: "component-env", index, name: componentEnv[1] };
   }
 
-  const field = appField(rest);
+  const field = componentField(rest);
   return field === undefined
     ? undefined
-    : { doc: "project", on: "app", index, field };
+    : { doc: "project", on: "component", index, field };
 }
 
-function appField(rest: string): AppField | undefined {
+function componentField(rest: string): ComponentField | undefined {
   if (rest === "image") return "image";
   if (rest === "port") return "port";
   if (rest === "health") return "health";
@@ -444,7 +451,7 @@ function appField(rest: string): AppField | undefined {
 /**
  * Which create-form field a structured error belongs to.
  *
- * The create form writes one application and no per-application env, so those
+ * The create form writes one component and no per-component env, so those
  * targets have no input to point at here and go to the general panel.
  */
 export function fieldForError(error: WireError): FieldKey | undefined {
@@ -460,15 +467,15 @@ export function fieldForError(error: WireError): FieldKey | undefined {
       return "image";
     case "env":
       return `env:${target.name}`;
-    case "app-env":
+    case "component-env":
       return undefined;
-    case "app": {
+    case "component": {
       if (target.index !== 0) return undefined;
       if (target.field === "whole") {
         return error.code === "semantic/no-image-source" ? "image" : undefined;
       }
-      // The create form shares the project image across the one application it
-      // writes, so a per-application image override has no input of its own.
+      // The create form shares the project image across the one component it
+      // writes, so a per-component image override has no input of its own.
       return target.field === "image" ? undefined : target.field;
     }
   }

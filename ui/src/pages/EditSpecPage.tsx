@@ -17,13 +17,13 @@ import { EmptyState, LoadingState } from "../components/States";
 import { DiffView } from "../diff/DiffView";
 import { decodeDiff, type Diff } from "../diff/parse";
 import {
-  appWorkload,
+  componentWorkload,
   isRebuildable,
   mapEditErrors,
   readSpec,
   sameText,
   writeSpec,
-  type AppEdit,
+  type ComponentEdit,
   type EditFieldKey,
   type EnvironmentEdit,
   type SpecEdit,
@@ -463,13 +463,13 @@ function SpecForm({
   const setProject = (patch: Partial<SpecEdit["project"]>) =>
     onChange({ ...edit, project: { ...edit.project, ...patch } });
 
-  const setApp = (index: number, patch: Partial<AppEdit>) =>
+  const setComponent = (index: number, patch: Partial<ComponentEdit>) =>
     onChange({
       ...edit,
       project: {
         ...edit.project,
-        applications: edit.project.applications.map((a, i) =>
-          i === index ? { ...a, ...patch } : a,
+        components: edit.project.components.map((c, i) =>
+          i === index ? { ...c, ...patch } : c,
         ),
       },
     });
@@ -495,7 +495,7 @@ function SpecForm({
               readOnly={readOnly}
               placeholder="ghcr.io/acme/hello:1.4.2"
               errors={errorsFor("project.image")}
-              note="shared by every application; an application's own image wins (rule P3)"
+              note="shared by every component; a component's own image wins (rule P3)"
             />
           </div>
           <EnvRows
@@ -504,18 +504,18 @@ function SpecForm({
             readOnly={readOnly}
             onChange={(env) => setProject({ env })}
             errorsFor={(name) => errorsFor(`project.env.${name}`)}
-            note="shared by every application (rule P1); plain values only — the spec carries references, never credentials (ADR-0009)"
+            note="shared by every component (rule P1); plain values only — the spec carries references, never credentials (ADR-0009)"
           />
         </div>
       </section>
 
-      {edit.project.applications.map((app, i) => (
-        <ApplicationForm
-          key={`${i}:${app.name}`}
-          app={app}
+      {edit.project.components.map((component, i) => (
+        <ComponentForm
+          key={`${i}:${component.name}`}
+          component={component}
           index={i}
           readOnly={readOnly}
-          onChange={(patch) => setApp(i, patch)}
+          onChange={(patch) => setComponent(i, patch)}
           errorsFor={errorsFor}
         />
       ))}
@@ -544,24 +544,24 @@ function SpecForm({
   );
 }
 
-function ApplicationForm({
-  app,
+function ComponentForm({
+  component: app,
   index,
   readOnly,
   onChange,
   errorsFor,
 }: {
-  app: AppEdit;
+  component: ComponentEdit;
   index: number;
   readOnly: boolean;
-  onChange: (patch: Partial<AppEdit>) => void;
+  onChange: (patch: Partial<ComponentEdit>) => void;
   errorsFor: (field: EditFieldKey) => WireError[];
 }) {
-  const kind = appWorkload(app);
+  const kind = componentWorkload(app);
   return (
     <section className="k-section">
       <div className="k-eyebrow">
-        Application · <span className="k-mono">{app.name}</span>
+        Component · <span className="k-mono">{app.name}</span>
         <span className="k-chip k-mono k-edit__kind">{kind}</span>
       </div>
       <div className="k-section__body k-edit__group">
@@ -572,7 +572,7 @@ function ApplicationForm({
             onChange={(v) => onChange({ image: v })}
             readOnly={readOnly}
             placeholder="inherits the project image"
-            errors={errorsFor(`app.${index}.image`)}
+            errors={errorsFor(`component.${index}.image`)}
             note="blank means the project's image (rule P3)"
           />
           {kind === "cron" ? (
@@ -582,7 +582,7 @@ function ApplicationForm({
               onChange={(v) => onChange({ schedule: v })}
               readOnly={readOnly}
               placeholder="0 3 * * *"
-              errors={errorsFor(`app.${index}.schedule`)}
+              errors={errorsFor(`component.${index}.schedule`)}
               note="a five-field cron expression; clearing it makes this a worker"
             />
           ) : (
@@ -593,7 +593,7 @@ function ApplicationForm({
               onChange={(v) => onChange({ port: v })}
               readOnly={readOnly}
               placeholder="8080"
-              errors={errorsFor(`app.${index}.port`)}
+              errors={errorsFor(`component.${index}.port`)}
               note={
                 kind === "service"
                   ? "a port makes this a web service: Deployment + Service + routing"
@@ -611,7 +611,7 @@ function ApplicationForm({
               onChange={(v) => onChange({ health: v })}
               readOnly={readOnly}
               placeholder="/healthz"
-              errors={errorsFor(`app.${index}.health`)}
+              errors={errorsFor(`component.${index}.health`)}
               note="an HTTP path used for both probes"
             />
           ) : null}
@@ -622,7 +622,7 @@ function ApplicationForm({
             onChange={(v) => onChange({ replicasMin: v })}
             readOnly={readOnly}
             placeholder="1"
-            errors={errorsFor(`app.${index}.replicas`)}
+            errors={errorsFor(`component.${index}.replicas`)}
             note="blank leaves the model's default"
           />
           <EditField
@@ -644,7 +644,7 @@ function ApplicationForm({
             values={app.domains}
             readOnly={readOnly}
             placeholder="hello.dev.acme.run"
-            errors={errorsFor(`app.${index}.domains`)}
+            errors={errorsFor(`component.${index}.domains`)}
             onChange={(domains) => onChange({ domains })}
             note="explicit FQDNs, which win over the Environment's derived hostname"
           />
@@ -655,8 +655,8 @@ function ApplicationForm({
           env={app.env}
           readOnly={readOnly}
           onChange={(env) => onChange({ env })}
-          errorsFor={(name) => errorsFor(`app.${index}.env.${name}`)}
-          note="this application only; it overrides a project-level key of the same name (rule P1)"
+          errorsFor={(name) => errorsFor(`component.${index}.env.${name}`)}
+          note="this component only; it overrides a project-level key of the same name (rule P1)"
         />
       </div>
     </section>

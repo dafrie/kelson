@@ -14,7 +14,9 @@ const putSpecDescription = `Validate a kelson spec, and store it when you mean t
 
 MUTATES THE SERVER'S SPEC STORE when dry_run=false. The default is dry_run=true, which validates and renders every environment and stores nothing.
 
-The spec is two document kinds: one Project document (applications, images, shared environment variables) and one Environment document per environment (namespace, routing, delivery mode). Pass them verbatim as YAML — the server stores the documents you wrote, byte for byte.
+The spec is two document kinds: one Project document (components, images, shared environment variables) and one Environment document per environment (namespace, routing, delivery mode). Pass them verbatim as YAML — the server stores the documents you wrote, byte for byte.
+
+A Project declares its deployables and its managed databases in one spec.components list. The kind is derived from the shape — port makes a service, schedule makes a cron job, neither makes a worker — or written explicitly as one of service, worker, cron, agent, postgres, valkey; postgres and valkey must be written, because there is nothing to derive them from. A field belonging to another kind (preset on a worker, port on a database, tools on anything but an agent) is a validation error, not a field that is ignored.
 
 Validation errors come back with their machine-readable code (for example schema/unknown-field, image/unresolved, secret/literal), the field path, the line in your document, and the fix stated as an action. Branch on the code, not on the message text.
 
@@ -51,7 +53,7 @@ func putSpecTool(c *clients) tool {
 // over budget — arrives as an error, carrying the same taxonomy in its details.
 func (c *clients) putSpec(ctx context.Context, in putSpecInput) (*mcpsdk.CallToolResult, any, error) {
 	if in.ProjectDocument == "" {
-		return nil, nil, fmt.Errorf("put_spec needs project_document: the Project YAML document that names the project and its applications")
+		return nil, nil, fmt.Errorf("put_spec needs project_document: the Project YAML document that names the project and its components")
 	}
 	dryRun := kelsonv1alpha1.DryRun_DRY_RUN_RENDER
 	stores := in.DryRun != nil && !*in.DryRun

@@ -55,7 +55,7 @@ The Protobuf schema is a consistency check here, never the design.
 | What | Cap |
 |---|---|
 | Projects / environments per project in a listing | 25 / 10 |
-| Workload verdicts, applications, findings | 12 / 20 / 15 |
+| Workload verdicts, components, findings | 12 / 20 / 15 |
 | Log lines — `diagnose_application` / `logs_window` | 80 / 200 |
 | History entries | 5 |
 | Deploy transitions, watch events | 20 |
