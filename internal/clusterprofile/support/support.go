@@ -85,6 +85,8 @@ func Check(p clusterprofile.ClusterProfile) Report {
 			func() string { return p.CertManager.Version }},
 		{"cnpg", func() bool { return p.CloudNativePG != nil },
 			func() string { return p.CloudNativePG.Version }},
+		{"valkey-operator", func() bool { return p.Valkey != nil },
+			func() string { return p.Valkey.Version }},
 		{"flux", func() bool { return p.Flux != nil },
 			func() string { return p.Flux.Version }},
 		{"argo-cd", func() bool { return p.ArgoCD != nil },

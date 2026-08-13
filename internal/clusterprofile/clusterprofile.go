@@ -89,6 +89,13 @@ type ClusterProfile struct {
 	// (issue #90).
 	CloudNativePG *CloudNativePG `yaml:"cnpg,omitempty" json:"cnpg,omitempty"`
 
+	// Valkey is the Valkey project's own operator: the prerequisite for every
+	// managed `kind: valkey` component (ADR-0005, ADR-0015). It records the same
+	// facts as CloudNativePG for the same reason — the version and the CRDs the
+	// API server actually serves — and leaves the verdict to
+	// internal/clusterprofile/valkey (issue #98).
+	Valkey *ValkeyOperator `yaml:"valkey,omitempty" json:"valkey,omitempty"`
+
 	Flux *Component `yaml:"flux,omitempty" json:"flux,omitempty"`
 
 	// FluxOperator is flux-operator, which is a separate finding from Flux:
@@ -175,6 +182,53 @@ type CloudNativePG struct {
 // the detection Gap first, which is what the postgres judgement does.
 func (c CloudNativePG) ServesCRD(plural string) bool {
 	for _, name := range c.CRDs {
+		if name == plural {
+			return true
+		}
+	}
+	return false
+}
+
+// ValkeyOperator is the detected valkey-io/valkey-operator (issue #98,
+// ADR-0015).
+//
+// It is shaped exactly like [CloudNativePG] and for the same reason: presence
+// alone does not answer what a cache component asks. kelson writes a
+// `ValkeyCluster` and relies on the operator materialising it through
+// `ValkeyNode` resources, so a partially-applied CRD set accepts the manifest
+// and then produces no pods. The profile therefore records the raw facts —
+// version, namespace, the served resources — and leaves the per-capability
+// verdict to internal/clusterprofile/valkey.
+//
+// Like CNPG, only one Valkey operator can usefully run per cluster: its CRDs
+// are cluster-scoped and a second install fights the first. A profile that
+// reports the operator present is an instruction to adopt it, never to install
+// alongside it (ADR-0005).
+type ValkeyOperator struct {
+	// Version is the operator version, e.g. 0.5.0, read from the operator
+	// Deployment. Empty means "installed, version unknown" — a real state that
+	// must not be read as too old.
+	Version string `yaml:"version,omitempty" json:"version,omitempty"`
+	// Namespace is where the operator Deployment runs
+	// (valkey-operator-system by default), so a human told to upgrade it knows
+	// where to look.
+	Namespace string `yaml:"namespace,omitempty" json:"namespace,omitempty"`
+	// CRDs are the resources the API server actually serves in the valkey.io
+	// group, as plural resource names: valkeyclusters, valkeynodes.
+	//
+	// Empty means the served set could not be read; a Gap on "valkey.crds"
+	// records why. Use [ValkeyOperator.ServesCRD] rather than testing the
+	// slice, so "not served" and "not read" stay distinguishable at the call
+	// site.
+	CRDs []string `yaml:"crds,omitempty" json:"crds,omitempty"`
+}
+
+// ServesCRD reports whether the API server serves this plural resource in the
+// valkey.io group, e.g. "valkeynodes". False when the set was never read —
+// callers that need to tell that from a real absence must check len(CRDs) or
+// the detection Gap first, which is what the valkey judgement does.
+func (v ValkeyOperator) ServesCRD(plural string) bool {
+	for _, name := range v.CRDs {
 		if name == plural {
 			return true
 		}

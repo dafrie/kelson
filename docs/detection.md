@@ -25,8 +25,19 @@ names the missing permission so a human can grant it and re-run.
 
 Presence is established once, with a single read of `/apis`: an API group being registered means the
 component that owns it is installed. That one call tells us about Gateway API, cert-manager,
-external-secrets, CloudNativePG, Flux, flux-operator, ArgoCD, metrics-server, the policy engines and
-Prometheus without issuing a list per group.
+external-secrets, CloudNativePG, the Valkey operator, Flux, flux-operator, ArgoCD, metrics-server, the
+policy engines and Prometheus without issuing a list per group.
+
+The two data operators are the only findings that carry a version *and* a served-resource list, and
+for the same reason: kelson writes a CR against each of them, so "present" alone cannot answer whether
+a component is renderable. Both versions are read from the operator Deployment's image tag (falling
+back to the chart's `app.kubernetes.io/version` label when the image is digest-pinned), and both
+served sets come from discovery — `clusters`/`databases` in `postgresql.cnpg.io`,
+`valkeyclusters`/`valkeynodes` in `valkey.io`. Neither read may demote its operator to absent when it
+fails: absent is the one answer that would tell a caller to install a *second* operator into a cluster
+that can only have one ([ADR-0005](adr/0005-delegate-to-operators.md)). They fail into a gap instead
+(`cnpg.version`, `valkey.crds`, …), and `internal/clusterprofile/postgres` and
+`internal/clusterprofile/valkey` turn the facts into per-capability verdicts.
 
 Flux and flux-operator are two findings, not one: most Flux installs have no operator, and the
 delivery plane prefers the operator's `FluxReport` for "is Flux itself healthy" where it exists

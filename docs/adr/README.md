@@ -19,6 +19,7 @@ wrong, open an issue — it is far cheaper to reverse a decision now than after 
 | [0012](0012-flux-only-gitops.md) | Flux is the only GitOps delivery mode; Argo CD deferred | Accepted |
 | [0013](0013-server-state-and-api-v0.md) | Server state lives in the cluster; API v0 shape | Proposed |
 | [0014](0014-components.md) | One `components` list, per-component identity (amends 0006) | Proposed |
+| [0015](0015-valkey-operator.md) | `kind: valkey` delegates to valkey-io/valkey-operator | Accepted |
 
 *Process note (2026-08-12):* ADR-0003 and ADR-0005 were revised in place before the immutability rule
 below hardened; their in-place revisions stand as recorded. From ADR-0012 on, changes supersede.
