@@ -9,6 +9,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/dafrie/kelson/internal/build"
+	"github.com/dafrie/kelson/internal/model"
 )
 
 // DefaultBuildkitImage is the rootless buildkit image the generated Job runs.
@@ -125,7 +126,8 @@ func (c Config) Workload(req build.Request) ([]byte, error) {
 }
 
 // validate enforces the invariants a build Job needs before it is rendered:
-// an image to push to, a namespace to run in, and a well-formed timeout.
+// an image to push to, a namespace to run in, a well-formed timeout, mountable
+// secrets, and no credential smuggled in as a build argument.
 func validate(req build.Request, c Config) error {
 	if req.Image == "" {
 		return fmt.Errorf("buildkit: Workload needs a destination image (Request.Image)")
@@ -136,7 +138,35 @@ func validate(req build.Request, c Config) error {
 	if c.Timeout < 0 {
 		return fmt.Errorf("buildkit: negative build timeout %s", time.Duration(c.Timeout))
 	}
-	return nil
+	if err := validateSecrets(c.Secrets); err != nil {
+		return err
+	}
+	return validateArgs(req.Args)
+}
+
+// validateArgs refuses a build argument whose name says it carries a
+// credential (ADR-0009, issue #117).
+//
+// This is a refusal and not a redaction on purpose. A build arg is baked into
+// image history and into the Job's own command line, so there is no output
+// surface to clean up afterwards — by the time anything could be redacted the
+// value is already in the pushed image, readable by anyone who can pull it.
+// The name check is the same heuristic model.SecretShapedName applies to spec
+// literals, deliberately shared so the two cannot drift.
+func validateArgs(args map[string]string) error {
+	names := make([]string, 0, len(args))
+	for name := range args {
+		if model.SecretShapedName(name) {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	sort.Strings(names)
+	return fmt.Errorf("buildkit: build argument %s looks like a credential; build args are recorded in image history and in the Job's command line, "+
+		"so they can never carry a secret (ADR-0009). Mount it instead: Config.Secrets names an existing Kubernetes Secret and the Dockerfile reads it "+
+		"with RUN --mount=type=secret,id=<id>", strings.Join(names, ", "))
 }
 
 // jobName derives a stable, DNS-1123-safe name for the Job from the request so
@@ -197,11 +227,12 @@ func podContainer(req build.Request, cfg Config) container {
 		})
 		env = append(env, envVar{Name: "DOCKER_CONFIG", Value: dockerConfigDir})
 	}
+	volumeMounts = append(volumeMounts, secretVolumeMounts(cfg.Secrets)...)
 
 	ctr := container{
 		Name:         "buildkit",
 		Image:        cfg.BuildkitImage,
-		Command:      []string{"sh", "-c", buildCommand(req)},
+		Command:      []string{"sh", "-c", buildCommand(req, cfg)},
 		VolumeMounts: volumeMounts,
 		Env:          env,
 		SecurityContext: &securityContext{
@@ -218,9 +249,14 @@ func podContainer(req build.Request, cfg Config) container {
 
 // buildCommand is the rootless build itself: buildkitd daemon in the
 // background, then buildctl builds from the mounted context and pushes by
-// digest. Args, target and platforms are all leveraged through buildctl, never
-// through a kelson DSL (ADR-0010).
-func buildCommand(req build.Request) string {
+// digest. Args, secrets, target and platforms are all leveraged through
+// buildctl, never through a kelson DSL (ADR-0010).
+//
+// This string ends up in the Job's command line, which `kubectl get job -o yaml`
+// prints — so what may appear in it is exactly what may appear in public. Build
+// args do (validateArgs refuses the ones that must not); secrets appear only as
+// an id and the path of a projected file.
+func buildCommand(req build.Request, cfg Config) string {
 	const sock = "/run/user/1000/buildkit/buildkitd.sock"
 
 	var b strings.Builder
@@ -245,9 +281,11 @@ func buildCommand(req build.Request) string {
 	if len(platforms) > 0 {
 		fmt.Fprintf(&b, " --opt platform=%s", strings.Join(platforms, ","))
 	}
+	secretFlags(&b, cfg.Secrets)
 	if len(req.Args) > 0 {
-		// Sorted for deterministic output: build args are never secrets, so
-		// sorting them for stable manifests costs nothing.
+		// Sorted for deterministic output. Build args are never secrets —
+		// validateArgs enforces that rather than trusting it — so sorting them
+		// for stable manifests costs nothing.
 		keys := make([]string, 0, len(req.Args))
 		for k := range req.Args {
 			keys = append(keys, k)
@@ -380,21 +418,21 @@ func volumes(cfg Config) []volume {
 		{Name: "buildkit-state", EmptyDir: &emptyDirVolume{}},
 		{Name: "tmp", EmptyDir: &emptyDirVolume{}},
 	}
-	if cfg.PushSecret == "" {
-		return vols
+	if cfg.PushSecret != "" {
+		mode := pushSecretMode
+		vols = append(vols, volume{
+			Name: pushSecretVolume,
+			Secret: &secretVolume{
+				SecretName:  cfg.PushSecret,
+				DefaultMode: &mode,
+				// Only the dockerconfigjson key is projected, renamed to the file
+				// name the docker config loader expects. Projecting the whole
+				// Secret would put whatever else it carries next to it.
+				Items: []keyToPath{{Key: dockerConfigJSONKey, Path: dockerConfigFile}},
+			},
+		})
 	}
-	mode := pushSecretMode
-	return append(vols, volume{
-		Name: pushSecretVolume,
-		Secret: &secretVolume{
-			SecretName:  cfg.PushSecret,
-			DefaultMode: &mode,
-			// Only the dockerconfigjson key is projected, renamed to the file
-			// name the docker config loader expects. Projecting the whole
-			// Secret would put whatever else it carries next to it.
-			Items: []keyToPath{{Key: dockerConfigJSONKey, Path: dockerConfigFile}},
-		},
-	})
+	return append(vols, secretVolumes(cfg.Secrets)...)
 }
 
 func resourceReqs(r ResourceRequirements) resources {

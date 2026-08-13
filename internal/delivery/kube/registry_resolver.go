@@ -11,6 +11,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/dafrie/kelson/internal/build/registry"
+	"github.com/dafrie/kelson/internal/redact"
 )
 
 // SecretResolver resolves a registry.SecretRef against a live cluster's
@@ -66,5 +67,11 @@ func (r *SecretResolver) Resolve(ctx context.Context, ref registry.SecretRef) (r
 		// Only the reference and the registry are named — never the payload.
 		return registry.Credential{}, fmt.Errorf("kube: parsing registry secret %s/%s: %w", ref.Namespace, ref.Name, err)
 	}
+	// This is the moment kelson learns a credential, so it is the moment the
+	// value becomes unprintable process-wide (issue #117). Registering here
+	// rather than at each surface that might echo it is what makes "no secret
+	// value reaches a log, an error or a diff" a property of the process instead
+	// of a rule every future caller has to remember.
+	redact.Register(cred.SecretValues()...)
 	return cred, nil
 }

@@ -76,6 +76,28 @@ func CredentialFromDockerConfigJSON(data []byte, registry string) (Credential, e
 	return c, nil
 }
 
+// SecretValues returns the literal strings in this credential that must never
+// appear in any output, for registration with internal/redact (issue #117).
+//
+// Credential.String protects the credential from being *formatted*; this
+// protects it from being echoed by something kelson does not format — a build
+// log, an API server message, a driver that prints its own auth config. The two
+// are complementary: String is the envelope, this is the net underneath it.
+//
+// The username is not included. It is an identity, it is printed deliberately
+// by String, and scrubbing it would blank a word like "robot" out of unrelated
+// output.
+func (c Credential) SecretValues() []string {
+	out := make([]string, 0, 2)
+	if c.Password != "" {
+		out = append(out, c.Password)
+	}
+	if c.Auth != "" {
+		out = append(out, c.Auth)
+	}
+	return out
+}
+
 // String implements fmt.Stringer so a Credential can never be leaked through a
 // log line or an error message that interpolates it with %v or %s. This is the
 // envelope for the "never log a credential" property (ADR-0009): producers
