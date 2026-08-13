@@ -15,7 +15,7 @@ import {
 import { DeployService } from "../gen/kelson/v1alpha1/deploy_pb";
 import { SpecService } from "../gen/kelson/v1alpha1/spec_pb";
 import { renderAt } from "../test/render";
-import { applicationNames, LogsPage } from "./LogsPage";
+import { componentNames, LogsPage } from "./LogsPage";
 
 const PROJECT_YAML = `apiVersion: kelson.dev/v1alpha1
 kind: Project
@@ -23,7 +23,7 @@ metadata:
   name: checkout
 spec:
   image: ghcr.io/acme/checkout:v1
-  applications:
+  components:
     - name: web
       port: 8080
     - name: worker
@@ -109,13 +109,35 @@ function renderLogs(t: Transport = transport) {
   );
 }
 
-describe("applicationNames", () => {
+describe("componentNames", () => {
   it("reads the names out of the stored Project document", () => {
-    expect(applicationNames(PROJECT_YAML)).toEqual(["web", "worker"]);
+    expect(componentNames(PROJECT_YAML)).toEqual(["web", "worker"]);
   });
 
   it("returns nothing rather than guessing when there is no list", () => {
-    expect(applicationNames("kind: Project\nspec:\n  image: x\n")).toEqual([]);
+    expect(componentNames("kind: Project\nspec:\n  image: x\n")).toEqual([]);
+  });
+
+  // One list means the picker can now see components that have no pods at all.
+  // Offering a database in a log picker would promise a stream nothing can
+  // produce (ADR-0014), so the data kinds are dropped.
+  it("leaves out data components, which have no logs", () => {
+    const yaml = `apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: checkout
+spec:
+  image: ghcr.io/acme/checkout:v1
+  components:
+    - name: db
+      kind: postgres
+      preset: small
+    - name: cache
+      kind: valkey
+    - name: web
+      port: 8080
+`;
+    expect(componentNames(yaml)).toEqual(["web"]);
   });
 });
 
@@ -129,7 +151,7 @@ describe("LogsPage", () => {
       expect((namespace as HTMLInputElement).value).toBe("checkout-sandbox"),
     );
     expect(screen.getByText(/resolved by the server/)).toBeTruthy();
-    // The application picker fills in from the parsed spec once it arrives.
+    // The workload picker fills in from the parsed spec once it arrives.
     await waitFor(() =>
       expect(screen.getByText(/from the stored Project document/)).toBeTruthy(),
     );

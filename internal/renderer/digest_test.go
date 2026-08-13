@@ -21,8 +21,8 @@ func TestDigestPinnedImageRendersUnchanged(t *testing.T) {
 	// Every application, not just the first: the fixture's second app would
 	// otherwise supply a tagged reference to the same repository and make the
 	// "no mutable tag" assertion below meaningless.
-	for i := range resolved.Applications {
-		resolved.Applications[i].Image = pinned
+	for i := range resolved.Components {
+		resolved.Components[i].Image = pinned
 	}
 
 	// A gateway profile, because the fixture's web application declares

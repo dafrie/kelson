@@ -8,7 +8,7 @@ metadata:
     kelson.dev/environment: production
     kelson.dev/project: checkout
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:63d694e731f07cbc7a7a9b49755cc24854ff04cab16e6662e80f18ca0b9709a8
     kelson.dev/namespace-ownership: declared
 ---
@@ -23,7 +23,7 @@ metadata:
     kelson.dev/environment: production
     kelson.dev/project: checkout
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:8a91b0c6f0fd0d74975904ee63990c32079c8477c00dafdde2c0904b302641c7
 ---
 apiVersion: v1
@@ -37,7 +37,7 @@ metadata:
     kelson.dev/environment: production
     kelson.dev/project: checkout
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:8a91b0c6f0fd0d74975904ee63990c32079c8477c00dafdde2c0904b302641c7
 spec:
   selector:
@@ -59,7 +59,7 @@ metadata:
     kelson.dev/environment: production
     kelson.dev/project: checkout
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:8a91b0c6f0fd0d74975904ee63990c32079c8477c00dafdde2c0904b302641c7
 spec:
   selector:
@@ -110,7 +110,7 @@ metadata:
     kelson.dev/environment: production
     kelson.dev/project: checkout
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:8a91b0c6f0fd0d74975904ee63990c32079c8477c00dafdde2c0904b302641c7
 spec:
   scaleTargetRef:
@@ -138,7 +138,7 @@ metadata:
     kelson.dev/environment: production
     kelson.dev/project: checkout
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:8a91b0c6f0fd0d74975904ee63990c32079c8477c00dafdde2c0904b302641c7
 spec:
   parentRefs:
@@ -165,7 +165,7 @@ metadata:
     kelson.dev/environment: production
     kelson.dev/project: checkout
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:8a91b0c6f0fd0d74975904ee63990c32079c8477c00dafdde2c0904b302641c7
 spec:
   secretName: web-tls
@@ -186,7 +186,7 @@ metadata:
     kelson.dev/environment: production
     kelson.dev/project: checkout
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:8a91b0c6f0fd0d74975904ee63990c32079c8477c00dafdde2c0904b302641c7
 spec:
   selector:
@@ -196,6 +196,20 @@ spec:
   endpoints:
     - port: http
       path: /metrics
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: worker
+  namespace: checkout-prod
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: worker
+    kelson.dev/environment: production
+    kelson.dev/project: checkout
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:f280cf003479f4aa6effc6d649f61f60c1a8b4361bea53449f3fdd8e9a1907cb
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -208,7 +222,7 @@ metadata:
     kelson.dev/environment: production
     kelson.dev/project: checkout
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:f280cf003479f4aa6effc6d649f61f60c1a8b4361bea53449f3fdd8e9a1907cb
 spec:
   replicas: 2
@@ -224,6 +238,7 @@ spec:
         kelson.dev/environment: production
         kelson.dev/project: checkout
     spec:
+      serviceAccountName: worker
       containers:
         - name: worker
           image: ghcr.io/acme/checkout:1.4.2
@@ -234,6 +249,20 @@ spec:
           env:
             - name: LOG_LEVEL
               value: info
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: nightly-report
+  namespace: checkout-prod
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: nightly-report
+    kelson.dev/environment: production
+    kelson.dev/project: checkout
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:ef54d298cf2320476019d466fa96de1c37320b3440a3bbaa898f3c0a1c409b40
 ---
 apiVersion: batch/v1
 kind: CronJob
@@ -246,7 +275,7 @@ metadata:
     kelson.dev/environment: production
     kelson.dev/project: checkout
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:ef54d298cf2320476019d466fa96de1c37320b3440a3bbaa898f3c0a1c409b40
 spec:
   schedule: 0 3 * * *
@@ -260,6 +289,7 @@ spec:
             kelson.dev/environment: production
             kelson.dev/project: checkout
         spec:
+          serviceAccountName: nightly-report
           restartPolicy: Never
           containers:
             - name: nightly-report

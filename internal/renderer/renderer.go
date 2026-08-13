@@ -23,7 +23,7 @@
 //
 // Manifests are built as ordered yaml.Node trees; env maps are sorted before
 // emission; the spec hash is a sha256 over the canonical JSON encoding of the
-// resolved per-application spec (JSON marshals maps with sorted keys). Same
+// resolved per-component spec (JSON marshals maps with sorted keys). Same
 // inputs render byte-identical output, which the golden harness asserts on
 // every fixture (issue #27).
 package renderer
@@ -44,7 +44,12 @@ import (
 // kelson.dev/renderer-version. It distinguishes "the user changed the spec"
 // from "kelson changed how it renders" across upgrades (docs/architecture.md,
 // Provenance). Bump it deliberately when rendered output changes shape.
-const Version = "0.1.0"
+//
+// 0.2.0: every component renders its own ServiceAccount and its pod template
+// names it (ADR-0014 decision D). Worker and cron workloads that previously ran
+// as `default` acquire an identity, which is a shape change for unchanged
+// input — exactly what this constant exists to announce.
+const Version = "0.2.0"
 
 // OverlayResolver loads the body of an overlay referenced by path from the
 // spec (paths are relative to the authoring documents). The renderer never
@@ -73,8 +78,8 @@ func Render(resolved *model.Resolved, profile clusterprofile.ClusterProfile, res
 	// by failing to find a Secret. Nothing waits for readiness — ordering is
 	// the only sequencing a rendered set can express (issue #89).
 	services := map[string]boundService{}
-	for i := range resolved.Services {
-		svc := &resolved.Services[i]
+	for i := range resolved.DataServices {
+		svc := &resolved.DataServices[i]
 		ms, bound, err := serviceManifests(resolved, svc, profile)
 		if err != nil {
 			return nil, err
@@ -83,8 +88,8 @@ func Render(resolved *model.Resolved, profile clusterprofile.ClusterProfile, res
 		services[svc.Name] = bound
 	}
 
-	for i := range resolved.Applications {
-		ms, err := appManifests(resolved, &resolved.Applications[i], profile, services)
+	for i := range resolved.Components {
+		ms, err := componentManifests(resolved, &resolved.Components[i], profile, services)
 		if err != nil {
 			return nil, err
 		}
@@ -112,16 +117,16 @@ func Render(resolved *model.Resolved, profile clusterprofile.ClusterProfile, res
 // manifest that no cluster accepts and that nothing explained (issue #136), so
 // the placeholder now fails the render instead of reaching the output. The
 // decision is pure data: the renderer never asks whether a build ran, only
-// whether the resolved spec names an image. Every offending application is
+// whether the resolved spec names an image. Every offending component is
 // reported, not just the first — one run should list all the work.
 func unresolvedImages(resolved *model.Resolved) Errors {
 	var errs Errors
-	for i := range resolved.Applications {
-		app := &resolved.Applications[i]
+	for i := range resolved.Components {
+		app := &resolved.Components[i]
 		var message string
 		switch app.Image {
 		case model.ImageUnresolved:
-			message = "no image yet: the spec builds this application from source and no build result was supplied"
+			message = "no image yet: the spec builds this component from source and no build result was supplied"
 		case "":
 			message = "no image: the resolved spec names none"
 		default:
@@ -131,7 +136,7 @@ func unresolvedImages(resolved *model.Resolved) Errors {
 			Code:        ErrImageUnresolved,
 			Application: app.Name,
 			Message:     message,
-			Remediation: "pass the built reference with --image, or set spec.image on the Project or image on the application",
+			Remediation: "pass the built reference with --image, or set spec.image on the Project or image on the component",
 		})
 	}
 	return errs
@@ -218,17 +223,23 @@ func selectorLabels(prov provenance) *yaml.Node {
 	)
 }
 
-// specHash computes kelson.dev/spec-hash for one application: a sha256 over
-// the canonical JSON of the resolved per-application input. JSON marshalling
+// specHash computes kelson.dev/spec-hash for one component: a sha256 over
+// the canonical JSON of the resolved per-component input. JSON marshalling
 // is deterministic (struct field order fixed, map keys sorted), so equal
-// inputs hash identically. Per-application scoping means an unchanged
-// application produces an unchanged artifact across sibling edits
+// inputs hash identically. Per-component scoping means an unchanged
+// component produces an unchanged artifact across sibling edits
 // (docs/model.md, "What is versioned").
-func specHash(resolved *model.Resolved, app *model.ResolvedApplication) (string, error) {
+//
+// The payload's JSON key stays "application" through ADR-0014's rename. The
+// hash is a change detector, not a document: renaming the key would churn the
+// annotation on every workload in every cluster to say nothing new, and the
+// thing that genuinely changed about rendering — the per-component
+// ServiceAccount — is what Version is for.
+func specHash(resolved *model.Resolved, app *model.ResolvedComponent) (string, error) {
 	payload := struct {
-		Project     string                    `json:"project"`
-		Environment hashEnv                   `json:"environment"`
-		Application model.ResolvedApplication `json:"application"`
+		Project     string                  `json:"project"`
+		Environment hashEnv                 `json:"environment"`
+		Application model.ResolvedComponent `json:"application"`
 	}{
 		Project: resolved.Project,
 		Environment: hashEnv{

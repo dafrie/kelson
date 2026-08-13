@@ -10,7 +10,7 @@ metadata:
   name: hello
 spec:
   image: ghcr.io/acme/hello:v1
-  applications:
+  components:
     - name: web
       port: 8080
       env:

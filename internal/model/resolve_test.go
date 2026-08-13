@@ -30,19 +30,18 @@ spec:
     REGION: eu-central
     DATABASE_URL:
       from: {service: db, key: uri}
-  services:
-    - {name: db, type: postgres, preset: shared}
-    - {name: cache, type: valkey}
-  applications:
+  components:
+    - {name: db, kind: postgres, preset: shared}
+    - {name: cache, kind: valkey}
     - name: web
       port: 8080
       env:
-        LOG_LEVEL: debug          # application beats project (P1)
+        LOG_LEVEL: debug          # component beats project (P1)
       replicas: {min: 2, max: 4}
       resources:
         requests: {cpu: 100m}
     - name: worker
-      image: ghcr.io/acme/shop-worker:2   # application beats project (P3)
+      image: ghcr.io/acme/shop-worker:2   # component beats project (P3)
   defaults:
     deliveryMode: flux
     policy:
@@ -89,13 +88,13 @@ spec:
   delivery:
     mode: flux
     git: {repo: r}
-  applications:
+  components:
     - name: web
       env:
         LOG_LEVEL: trace          # environment override beats application (P1)
 `)
 	r := resolve(p, e)
-	web := r.Applications[0]
+	web := r.Components[0]
 	if web.Env["LOG_LEVEL"].Literal != "trace" {
 		t.Errorf("LOG_LEVEL = %q, want trace (environment override wins)", web.Env["LOG_LEVEL"].Literal)
 	}
@@ -118,12 +117,12 @@ spec:
   delivery:
     mode: flux
     git: {repo: r}
-  applications:
+  components:
     - name: web
       replicas: {min: 5}          # replaces the application's {2,4} whole (P2)
 `)
 	r := resolve(p, e)
-	web := r.Applications[0]
+	web := r.Components[0]
 	if web.Replicas != (Replicas{Min: 5}) {
 		t.Errorf("replicas = %+v, want {Min:5} — environment replaces whole, no deep merge", web.Replicas)
 	}
@@ -133,7 +132,7 @@ spec:
 	if !slices.Equal(web.Domains, []string{"web.staging.example.com"}) {
 		t.Errorf("default host derived from domainSuffix, got %v", web.Domains)
 	}
-	worker := r.Applications[1]
+	worker := r.Components[1]
 	if worker.Image != "ghcr.io/acme/shop-worker:2" {
 		t.Errorf("worker image = %q, want application override (P3)", worker.Image)
 	}
@@ -149,7 +148,7 @@ kind: Project
 metadata: {name: shop}
 spec:
   image: i:1
-  applications:
+  components:
     - {name: web, port: 8080, domains: [shop.example.com]}
 `, `
 apiVersion: kelson.dev/v1alpha1
@@ -160,8 +159,8 @@ spec:
   routing: {domainSuffix: staging.example.com}
 `)
 	r, _ := Resolve(p, e)
-	if !slices.Equal(r.Applications[0].Domains, []string{"shop.example.com"}) {
-		t.Errorf("explicit domains must win over the suffix, got %v", r.Applications[0].Domains)
+	if !slices.Equal(r.Components[0].Domains, []string{"shop.example.com"}) {
+		t.Errorf("explicit domains must win over the suffix, got %v", r.Components[0].Domains)
 	}
 }
 
@@ -203,7 +202,7 @@ kind: Project
 metadata: {name: shop}
 spec:
   image: ghcr.io/acme/shop:2
-  applications:
+  components:
     - {name: web, port: 8080}
   defaults:
     deliveryMode: flux
@@ -261,15 +260,15 @@ spec:
   project: shop
   delivery:
     git: {repo: git@github.com:acme/deploy.git}
-  services:
+  components:
     - {name: db, preset: ha-small}
 `)
 	r := resolve(p, e)
-	if r.Services[0].Preset != PresetHASmall {
-		t.Errorf("db preset = %q, want ha-small (P5)", r.Services[0].Preset)
+	if r.DataServices[0].Preset != PresetHASmall {
+		t.Errorf("db preset = %q, want ha-small (P5)", r.DataServices[0].Preset)
 	}
-	if r.Services[1].Preset != PresetShared {
-		t.Errorf("cache preset = %q, want shared (project value survives; preset default is shared)", r.Services[1].Preset)
+	if r.DataServices[1].Preset != PresetShared {
+		t.Errorf("cache preset = %q, want shared (project value survives; preset default is shared)", r.DataServices[1].Preset)
 	}
 }
 
@@ -298,7 +297,7 @@ kind: Project
 metadata: {name: hello}
 spec:
   image: i:1
-  applications:
+  components:
     - {name: web, port: 8080}
     - {name: nightly, schedule: "0 3 * * *"}
 `, `
@@ -327,8 +326,8 @@ spec:
 	if !r.Environment.Routing.TLS {
 		t.Errorf("TLS must default to true")
 	}
-	if r.Applications[1].Kind != WorkloadCron {
-		t.Errorf("kind = %q, want cron", r.Applications[1].Kind)
+	if r.Components[1].Kind != ComponentCron {
+		t.Errorf("kind = %q, want cron", r.Components[1].Kind)
 	}
 }
 
@@ -339,7 +338,7 @@ kind: Project
 metadata: {name: hello}
 spec:
   image: i:1
-  applications:
+  components:
     - {name: web, port: 8080}
 `, `
 apiVersion: kelson.dev/v1alpha1
@@ -347,10 +346,10 @@ kind: Environment
 metadata: {name: dev}
 spec:
   project: hello
-  applications:
+  components:
     - {name: ghost, replicas: {min: 2}}
 `)
-	if _, errs := Resolve(p, e); !slices.Contains(errs.Codes(), ErrUnknownApplication) {
+	if _, errs := Resolve(p, e); !slices.Contains(errs.Codes(), ErrUnknownComponent) {
 		t.Errorf("resolving an invalid pair must fail with ref/unknown-application, got %v", errs)
 	}
 }

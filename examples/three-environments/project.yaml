@@ -16,10 +16,10 @@ spec:
 
   # Secret backends return with M8; kelson rejects unimplemented fields rather
   # than ignoring them (#141), so they are absent rather than decorative. A
-  # `services:` block with a per-environment preset override is what
+  # `kind: postgres` component with a per-environment preset override is what
   # examples/checkout-multi shows, since #89.
 
-  applications:
+  components:
     - name: api
       port: 3000
       health: /livez

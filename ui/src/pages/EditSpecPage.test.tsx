@@ -24,7 +24,7 @@ metadata:
 spec:
   image: ghcr.io/acme/hello:1.4.2
 
-  applications:
+  components:
     - name: web
       port: 8080
 
@@ -48,7 +48,7 @@ metadata:
 # the one that serves traffic
 spec:
   image: ghcr.io/acme/hello:1.4.2
-  applications:
+  components:
     - name: web
       port: 8080
 `;
@@ -204,7 +204,7 @@ describe("EditSpecPage", () => {
       "k-tab--active",
     );
     expect(screen.queryByText(/was hand-edited/)).toBeNull();
-    // Both applications are reachable, not only the first: each has its own
+    // Both components are reachable, not only the first: each has its own
     // section, named, with the workload its shape derives.
     expect(screen.getAllByText("web").length).toBeGreaterThan(0);
     expect(screen.getAllByText("worker").length).toBeGreaterThan(0);
@@ -231,7 +231,7 @@ describe("EditSpecPage", () => {
     expect(screen.queryByRole("button", { name: "Add variable" })).toBeNull();
   });
 
-  it("puts a project-level variable on the Project document and a per-application one on its application", async () => {
+  it("puts a project-level variable on the Project document and a per-component one on its component", async () => {
     const { recorder } = renderEditor();
     await openedOnForm();
 
@@ -259,7 +259,7 @@ spec:
   env:
     LOG_LEVEL: debug
 
-  applications:
+  components:
     - name: web
       port: 8080
 
@@ -271,7 +271,7 @@ spec:
     const { recorder } = renderEditor();
     await openedOnForm();
 
-    // Per-application scope: the worker's own section, the last one on screen.
+    // Per-component scope: the worker's own section, the last one on screen.
     const adds = screen.getAllByRole("button", { name: "Add variable" });
     fireEvent.click(adds.at(-1)!);
     fireEvent.change(screen.getByLabelText("Environment variables 1 name"), {
@@ -296,13 +296,13 @@ spec:
     ).toBe(true);
   });
 
-  it("maps findings onto the field that caused them, including applications[1]", async () => {
+  it("maps findings onto the field that caused them, including components[1]", async () => {
     const { recorder } = renderEditor({
       findings: [
         create(ErrorSchema, {
           code: "schema/invalid-value",
           resource: "Project/hello",
-          field: "$.spec.applications[1].replicas.min",
+          field: "$.spec.components[1].replicas.min",
           message: "replicas.min must not be negative",
           line: 14,
           column: 7,
@@ -343,7 +343,7 @@ spec:
         create(ErrorSchema, {
           code: "schema/invalid-format",
           resource: "Project/hello",
-          field: "$.spec.applications[0].port",
+          field: "$.spec.components[0].port",
           message: "port must be an integer",
           line: 10,
           column: 13,

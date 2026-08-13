@@ -9,59 +9,72 @@ import (
 	"github.com/dafrie/kelson/internal/model"
 )
 
-// appManifests renders one application in a fixed resource order:
+// componentManifests renders one workload component in a fixed resource order:
 // ServiceAccount, Service, workload (Deployment|CronJob), HPA, HTTPRoute,
 // Certificate, ServiceMonitor. Kinds that do not apply are simply absent.
-func appManifests(
+//
+// The ServiceAccount is the one resource every kind gets (ADR-0014 decision D).
+// An agent renders as a worker with that identity and nothing else: its tool
+// policy is refused at validation until #75, so nothing agent-specific can
+// reach this function.
+func componentManifests(
 	resolved *model.Resolved,
-	app *model.ResolvedApplication,
+	c *model.ResolvedComponent,
 	profile clusterprofile.ClusterProfile,
 	services map[string]boundService,
 ) ([]Manifest, error) {
-	hash, err := specHash(resolved, app)
+	hash, err := specHash(resolved, c)
 	if err != nil {
 		return nil, Errors{{Code: ErrInternal, Message: err.Error()}}
 	}
-	env, berrs := envList(app, services)
+	env, berrs := envList(c, services)
 	if len(berrs) > 0 {
 		return nil, berrs
 	}
 	prov := provenance{
 		project:     resolved.Project,
 		environment: resolved.Environment.Name,
-		application: app.Name,
+		application: c.Name,
 		namespace:   resolved.Environment.Namespace,
 		specHash:    hash,
 	}
 
-	var out []Manifest
-	if app.Kind == model.WorkloadService {
-		out = append(out, serviceAccount(prov), service(app, prov))
+	out := []Manifest{serviceAccount(prov)}
+	if c.Kind == model.ComponentService {
+		out = append(out, service(c, prov))
 	}
-	switch app.Kind {
-	case model.WorkloadService, model.WorkloadWorker:
-		out = append(out, deployment(app, prov, env))
-		if hpa, ok := autoscaler(app, prov); ok {
+	switch c.Kind {
+	case model.ComponentService, model.ComponentWorker, model.ComponentAgent:
+		out = append(out, deployment(c, prov, env))
+		if hpa, ok := autoscaler(c, prov); ok {
 			out = append(out, hpa)
 		}
-	case model.WorkloadCron:
-		out = append(out, cronJob(app, prov, env))
+	case model.ComponentCron:
+		out = append(out, cronJob(c, prov, env))
 	}
-	routes, err := routingResources(resolved, app, profile, prov)
+	routes, err := routingResources(resolved, c, profile, prov)
 	if err != nil {
 		return nil, err
 	}
 	out = append(out, routes...)
-	if app.Kind == model.WorkloadService && profile.Prometheus != nil {
-		out = append(out, serviceMonitor(app, prov))
+	if c.Kind == model.ComponentService && profile.Prometheus != nil {
+		out = append(out, serviceMonitor(c, prov))
 	}
 	return out, nil
 }
 
 func serviceAccount(prov provenance) Manifest {
-	// A ServiceAccount is metadata-only for now: it exists so workloads have
-	// a per-application identity to hang future policy (IRSA, image pull)
-	// on without re-keying pods later.
+	// Every component gets one, named after it (ADR-0014 decision D). It is
+	// metadata-only for now: it exists so a component has an identity to hang
+	// policy on — IRSA, image pull, and for an agent the per-agent
+	// ServiceAccount the prior art calls the primary blast-radius control —
+	// without re-keying pods when that policy lands.
+	//
+	// Uniform across kinds on purpose. "Services have one, workers share
+	// default" is a fact a reader has to learn; "every component has one" is a
+	// fact they can derive, and the extra object costs a cluster nothing.
+	// Data components are not here at all: CloudNativePG owns the identity its
+	// clusters run under (ADR-0005).
 	root := mapNode(
 		"apiVersion", "v1",
 		"kind", "ServiceAccount",
@@ -70,7 +83,7 @@ func serviceAccount(prov provenance) Manifest {
 	return Manifest{APIVersion: "v1", Kind: "ServiceAccount", Name: prov.name(), Namespace: prov.namespace, doc: docNode(root)}
 }
 
-func service(app *model.ResolvedApplication, prov provenance) Manifest {
+func service(app *model.ResolvedComponent, prov provenance) Manifest {
 	spec := mapNode(
 		"selector", selectorLabels(prov),
 		"ports", seqNode(mapNode(
@@ -82,7 +95,7 @@ func service(app *model.ResolvedApplication, prov provenance) Manifest {
 	return baseManifest("v1", "Service", prov, spec)
 }
 
-func deployment(app *model.ResolvedApplication, prov provenance, env *yaml.Node) Manifest {
+func deployment(app *model.ResolvedComponent, prov provenance, env *yaml.Node) Manifest {
 	specKV := []any{}
 	if !autoscaling(app) {
 		// With an HPA the replicas field is owned by the autoscaler; setting
@@ -96,12 +109,12 @@ func deployment(app *model.ResolvedApplication, prov provenance, env *yaml.Node)
 	return baseManifest("apps/v1", "Deployment", prov, mapNode(specKV...))
 }
 
-func autoscaling(app *model.ResolvedApplication) bool {
+func autoscaling(app *model.ResolvedComponent) bool {
 	return app.Replicas.Max > app.Replicas.Min
 }
 
-func autoscaler(app *model.ResolvedApplication, prov provenance) (Manifest, bool) {
-	if !autoscaling(app) || app.Kind == model.WorkloadCron {
+func autoscaler(app *model.ResolvedComponent, prov provenance) (Manifest, bool) {
+	if !autoscaling(app) || app.Kind == model.ComponentCron {
 		return Manifest{}, false
 	}
 	spec := mapNode(
@@ -123,7 +136,7 @@ func autoscaler(app *model.ResolvedApplication, prov provenance) (Manifest, bool
 	return baseManifest("autoscaling/v2", "HorizontalPodAutoscaler", prov, spec), true
 }
 
-func cronJob(app *model.ResolvedApplication, prov provenance, env *yaml.Node) Manifest {
+func cronJob(app *model.ResolvedComponent, prov provenance, env *yaml.Node) Manifest {
 	spec := mapNode(
 		"schedule", app.Schedule,
 		"jobTemplate", mapNode(
@@ -135,30 +148,31 @@ func cronJob(app *model.ResolvedApplication, prov provenance, env *yaml.Node) Ma
 	return baseManifest("batch/v1", "CronJob", prov, spec)
 }
 
-func podTemplate(app *model.ResolvedApplication, prov provenance, env *yaml.Node) *yaml.Node {
-	specKV := []any{}
-	if app.Kind == model.WorkloadService {
-		specKV = append(specKV, "serviceAccountName", app.Name)
-	}
-	specKV = append(specKV, "containers", seqNode(container(app, env)))
-	return mapNode(
-		"metadata", mapNode("labels", prov.labels()),
-		"spec", mapNode(specKV...),
-	)
-}
-
-func cronPodTemplate(app *model.ResolvedApplication, prov provenance, env *yaml.Node) *yaml.Node {
-	c := container(app, env)
+// podTemplate names the component's own ServiceAccount on every kind. A pod
+// that falls back to `default` inherits whatever that namespace's default
+// carries, which is the opposite of a blast radius anyone chose (ADR-0014).
+func podTemplate(app *model.ResolvedComponent, prov provenance, env *yaml.Node) *yaml.Node {
 	return mapNode(
 		"metadata", mapNode("labels", prov.labels()),
 		"spec", mapNode(
-			"restartPolicy", "Never",
-			"containers", seqNode(c),
+			"serviceAccountName", app.Name,
+			"containers", seqNode(container(app, env)),
 		),
 	)
 }
 
-func container(app *model.ResolvedApplication, env *yaml.Node) *yaml.Node {
+func cronPodTemplate(app *model.ResolvedComponent, prov provenance, env *yaml.Node) *yaml.Node {
+	return mapNode(
+		"metadata", mapNode("labels", prov.labels()),
+		"spec", mapNode(
+			"serviceAccountName", app.Name,
+			"restartPolicy", "Never",
+			"containers", seqNode(container(app, env)),
+		),
+	)
+}
+
+func container(app *model.ResolvedComponent, env *yaml.Node) *yaml.Node {
 	kv := []any{
 		"name", app.Name,
 		"image", app.Image,
@@ -190,7 +204,7 @@ func container(app *model.ResolvedApplication, env *yaml.Node) *yaml.Node {
 //
 // Every unresolvable binding is reported, not just the first: one run should
 // list all the work.
-func envList(app *model.ResolvedApplication, services map[string]boundService) (*yaml.Node, Errors) {
+func envList(app *model.ResolvedComponent, services map[string]boundService) (*yaml.Node, Errors) {
 	if len(app.Env) == 0 {
 		return nil, nil
 	}

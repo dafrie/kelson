@@ -8,7 +8,7 @@ metadata:
     kelson.dev/environment: development
     kelson.dev/project: shop
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:5fe6f74ae21d3fb943350dde1ec171ca43c4a9034dda741fd04f392dec7352bc
     kelson.dev/namespace-ownership: declared
 ---
@@ -22,8 +22,8 @@ metadata:
     kelson.dev/environment: development
     kelson.dev/project: shop
   annotations:
-    kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:40dd09e6f56882cb51c200b5b508bfb4e3776424dfe0800b62ef35357db882b4
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:6f40554775b6f3717b5b0dc2fe9a6e151f31d64566c833680bee65ce9d6cd5c4
 spec:
   cluster:
     name: kelson-shared-development
@@ -42,7 +42,7 @@ metadata:
     kelson.dev/environment: development
     kelson.dev/project: shop
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:d8d05b94f069c60bace2edd90ea766a1bab6c0160721fdf710ab973ff9a27c1f
 ---
 apiVersion: v1
@@ -56,7 +56,7 @@ metadata:
     kelson.dev/environment: development
     kelson.dev/project: shop
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:d8d05b94f069c60bace2edd90ea766a1bab6c0160721fdf710ab973ff9a27c1f
 spec:
   selector:
@@ -78,7 +78,7 @@ metadata:
     kelson.dev/environment: development
     kelson.dev/project: shop
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:d8d05b94f069c60bace2edd90ea766a1bab6c0160721fdf710ab973ff9a27c1f
 spec:
   replicas: 1

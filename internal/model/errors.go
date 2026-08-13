@@ -25,12 +25,16 @@ const (
 	ErrNotImplemented Code = "schema/not-implemented"
 
 	// Semantic: cross-references and model rules.
-	ErrUnknownService     Code = "ref/unknown-service"
-	ErrUnknownServiceKey  Code = "ref/unknown-service-key"
-	ErrUnknownApplication Code = "ref/unknown-application"
-	ErrSecretLiteral      Code = "secret/literal"
-	ErrNoImageSource      Code = "semantic/no-image-source"
-	ErrGitTargetMissing   Code = "semantic/git-target-missing"
+	ErrUnknownService    Code = "ref/unknown-service"
+	ErrUnknownServiceKey Code = "ref/unknown-service-key"
+	// ErrUnknownComponent replaces ref/unknown-application, which named the
+	// leaf ADR-0014 renamed. The code changed with the vocabulary rather than
+	// outliving it: kelson is pre-alpha and a code whose noun no longer exists
+	// in the spec is worse than a breaking rename.
+	ErrUnknownComponent Code = "ref/unknown-component"
+	ErrSecretLiteral    Code = "secret/literal"
+	ErrNoImageSource    Code = "semantic/no-image-source"
+	ErrGitTargetMissing Code = "semantic/git-target-missing"
 )
 
 // DocsBaseURL is the stable basis for error documentation links. The docs
@@ -41,7 +45,7 @@ const DocsBaseURL = "https://kelson.dev/model/errors"
 type Error struct {
 	Code        Code   `json:"code"`
 	Resource    string `json:"resource"` // e.g. "Project/checkout"
-	Field       string `json:"field"`    // JSONPath-like: $.spec.applications[2].port
+	Field       string `json:"field"`    // JSONPath-like: $.spec.components[2].port
 	Message     string `json:"message"`
 	Remediation string `json:"remediation"` // the fix, stated as an action
 	DocsURL     string `json:"docsUrl"`

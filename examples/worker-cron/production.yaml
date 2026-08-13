@@ -12,7 +12,7 @@ spec:
 
   # `policy: {agents: allow, require: [dry-run]}` returns with M7 (#141).
 
-  applications:
+  components:
     - name: worker
       resources:
         requests: { cpu: 100m, memory: 128Mi }

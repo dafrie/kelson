@@ -1,7 +1,7 @@
 package model
 
 // Environment is where a Project runs and what differs there: target,
-// routing, delivery mode, policy, secret backend, and per-Application
+// routing, delivery mode, policy, secret backend, and per-Component
 // overrides (issue #25). Environments are scoped to a Project by reference
 // (spec.project); everything precedence-related is defined by rules P1–P6 in
 // docs/model.md.
@@ -27,13 +27,11 @@ type EnvironmentSpec struct {
 	Policy   *Policy        `yaml:"policy,omitempty" json:"policy,omitempty"`
 	Secrets  *SecretBackend `yaml:"secrets,omitempty" json:"secrets,omitempty"`
 
-	// Applications carry per-Application overrides, matched by name
-	// (rules P1, P2). Names must exist in the Project.
-	Applications []AppOverride `yaml:"applications,omitempty" json:"applications,omitempty"`
-
-	// Services carry per-Environment preset overrides, matched by name
-	// (rule P5). Names must exist in the Project.
-	Services []ServiceOverride `yaml:"services,omitempty" json:"services,omitempty"`
+	// Components carry per-Component overrides, matched by name. Names must
+	// exist in the Project, and what an override may set follows the kind of
+	// the component it names: replicas/resources/env for a workload (rules
+	// P1, P2), preset for a data component (rule P5).
+	Components []ComponentOverride `yaml:"components,omitempty" json:"components,omitempty"`
 
 	// Overlays concatenate after the Project's own overlays (rule P6).
 	Overlays []Overlay `yaml:"overlays,omitempty" json:"overlays,omitempty"`
@@ -41,8 +39,8 @@ type EnvironmentSpec struct {
 
 // Routing carries domain and gateway defaults for an Environment.
 type Routing struct {
-	// DomainSuffix provides the default hostname <application>.<suffix> for
-	// applications with a port and no explicit domains.
+	// DomainSuffix provides the default hostname <component>.<suffix> for
+	// components with a port and no explicit domains.
 	DomainSuffix string `yaml:"domainSuffix,omitempty" json:"domainSuffix,omitempty"`
 
 	// GatewayClass names the Gateway the rendered HTTPRoute attaches to;
@@ -57,18 +55,23 @@ type Routing struct {
 	TLS *bool `yaml:"tls,omitempty" json:"tls,omitempty"`
 }
 
-// AppOverride changes one Project Application in this Environment only.
-type AppOverride struct {
+// ComponentOverride changes one Project Component in this Environment only.
+//
+// It is one type for both halves of the component list, matching the spec's
+// one list (ADR-0014). The fields are disjoint by kind and validation says so:
+// a workload override sets replicas/resources/env and a data override sets
+// preset, and each is an error on the other side rather than a field that
+// resolves into nothing.
+type ComponentOverride struct {
 	Name      string              `yaml:"name" json:"name" jsonschema:"required"`
 	Replicas  *Replicas           `yaml:"replicas,omitempty" json:"replicas,omitempty"`
 	Resources *Resources          `yaml:"resources,omitempty" json:"resources,omitempty"`
 	Env       map[string]EnvValue `yaml:"env,omitempty" json:"env,omitempty"`
-}
 
-// ServiceOverride changes a service's preset in this Environment (rule P5).
-type ServiceOverride struct {
-	Name   string        `yaml:"name" json:"name" jsonschema:"required"`
-	Preset ServicePreset `yaml:"preset" json:"preset" jsonschema:"required,enum=shared,enum=small,enum=ha-small,enum=ha-medium,enum=branch"`
+	// Preset overrides a data component's topology for this Environment
+	// (rule P5): `shared` in development, `ha-small` in production, from one
+	// Project spec.
+	Preset ServicePreset `yaml:"preset,omitempty" json:"preset,omitempty" jsonschema:"enum=shared,enum=small,enum=ha-small,enum=ha-medium,enum=branch,description=data components only"`
 }
 
 type DeliveryMode string

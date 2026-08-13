@@ -3,16 +3,16 @@ kind: Project
 metadata:
   name: mailroom
 
-# A queue system: one long-running worker and two cron applications.
-# Workload kinds are derived — no type field anywhere (docs/model.md).
+# A queue system: one long-running worker and two cron components.
+# Workload kinds are derived — no `kind:` needed anywhere here (docs/model.md).
 spec:
   image: registry.acme.run/mailroom:2.0.7
 
-  # A valkey queue service and the QUEUE_URL/QUEUE_PASSWORD bindings onto it
-  # belong here. Postgres services render since #89; valkey does not, and kelson
-  # refuses it loudly rather than rendering nothing (#98).
+  # A `kind: valkey` queue component and the QUEUE_URL/QUEUE_PASSWORD bindings
+  # onto it belong here. Postgres components render since #89; valkey does not,
+  # and kelson refuses it loudly rather than rendering nothing (#98).
 
-  applications:
+  components:
     - name: worker            # no port, no schedule → worker (Deployment)
       command: ["mailroom", "work"]
       replicas: { min: 2 }

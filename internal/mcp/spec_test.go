@@ -46,7 +46,7 @@ func TestPutSpecRendersValidationErrorsVerbatim(t *testing.T) {
 		putSpec: func(*kelsonv1alpha1.PutSpecRequest) (*kelsonv1alpha1.PutSpecResponse, error) {
 			return &kelsonv1alpha1.PutSpecResponse{Errors: []*kelsonv1alpha1.Error{
 				{
-					Code: "schema/unknown-field", Resource: "Project/hello", Field: "$.spec.applications[0].prot",
+					Code: "schema/unknown-field", Resource: "Project/hello", Field: "$.spec.components[0].prot",
 					Message: "unknown field prot", Remediation: "did you mean port?",
 					DocsUrl: "https://kelson.dev/model/errors#schema-unknown-field", Line: 9, Column: 7,
 				},
@@ -59,7 +59,7 @@ func TestPutSpecRendersValidationErrorsVerbatim(t *testing.T) {
 	mustContain(t, out,
 		"REJECTED with 2 error(s). Nothing was stored.",
 		"code: schema/unknown-field",
-		"field: $.spec.applications[0].prot",
+		"field: $.spec.components[0].prot",
 		"remediation: did you mean port?",
 		"docs_url: https://kelson.dev/model/errors#schema-unknown-field",
 		"position: line 9, column 7",

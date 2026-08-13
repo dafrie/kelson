@@ -17,7 +17,7 @@ func buildFromSource() *model.Resolved {
 		Spec: model.ProjectSpec{
 			Source: &model.Source{Git: "https://github.com/acme/checkout", Ref: "main"},
 			Build:  &model.Build{Strategy: model.BuildDockerfile},
-			Applications: []model.Application{
+			Components: []model.Component{
 				{Name: "web", Port: 8080, Health: "/healthz"},
 				{Name: "worker", Command: []string{"bundle", "exec", "sidekiq"}},
 			},
@@ -41,7 +41,7 @@ func buildFromSource() *model.Resolved {
 // exited 0.
 func TestRenderRejectsUnresolvedImage(t *testing.T) {
 	resolved := buildFromSource()
-	if got := resolved.Applications[0].Image; got != model.ImageUnresolved {
+	if got := resolved.Components[0].Image; got != model.ImageUnresolved {
 		t.Fatalf("fixture precondition: image = %q, want the unresolved sentinel", got)
 	}
 
@@ -79,7 +79,7 @@ func TestRenderRejectsUnresolvedImage(t *testing.T) {
 // still must not render `image: ""`.
 func TestRenderRejectsEmptyImage(t *testing.T) {
 	resolved := resolvedFixture()
-	resolved.Applications[1].Image = ""
+	resolved.Components[1].Image = ""
 	_, err := Render(resolved, gatewayProfile(), nil)
 	rerrs, ok := err.(Errors)
 	if !ok || len(rerrs) != 1 || rerrs[0].Code != ErrImageUnresolved || rerrs[0].Application != "worker" {
@@ -93,8 +93,8 @@ func TestRenderRejectsEmptyImage(t *testing.T) {
 func TestRenderAcceptsSuppliedBuildImage(t *testing.T) {
 	const ref = "ghcr.io/acme/checkout@sha256:9f6ad2c1b4d5e8073a1c2f4b6d8e0a1c3e5f7091b2d4c6e8a0f2b4d6c8e0a2f4"
 	resolved := buildFromSource()
-	for i := range resolved.Applications {
-		resolved.Applications[i].Image = ref
+	for i := range resolved.Components {
+		resolved.Components[i].Image = ref
 	}
 	manifests, err := Render(resolved, gatewayProfile(), nil)
 	if err != nil {

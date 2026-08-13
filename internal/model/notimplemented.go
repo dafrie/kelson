@@ -8,7 +8,7 @@ import (
 // Gating spec fields no plane consumes yet (issue #141).
 //
 // The model has always validated more than the rest of kelson implements. A
-// spec declaring `services:`, `policy:` or `secrets:` passed validation,
+// spec declaring data services, `policy:` or `secrets:` passed validation,
 // resolved into Resolved, and then reached a renderer that reads none of it.
 // The author got a clean deploy and no signal that part of their spec did
 // nothing at all. For an agent that silence is indistinguishable from success,
@@ -19,12 +19,12 @@ import (
 // The gate is validation-level only, deliberately. The types stay and the
 // resolver keeps resolving these fields, so landing a milestone means deleting
 // a row from the table below and its call site, not rebuilding the feature.
-// M9 · Data services is the first proof of that: `$.spec.services` and the
-// `from:` bindings left this table when the renderer began emitting
+// M9 · Data services is the first proof of that: the data-service fields and
+// the `from:` bindings left this table when the renderer began emitting
 // CloudNativePG resources for them (issue #89), and nothing else had to move.
 //
-// What replaced their rows is *not* silence. A service the renderer cannot
-// emit — `type: valkey`, `preset: branch` — is a structured render error naming
+// What replaced their rows is *not* silence. A data component the renderer
+// cannot emit — `kind: valkey`, `preset: branch` — is a structured render error naming
 // its issue, and so is a preset the ClusterProfile says the cluster cannot
 // host. That check needs a cluster profile, which validation deliberately does
 // not have (ADR-0001), so it lives in the renderer; every surface that can
@@ -34,7 +34,7 @@ import (
 // the work that would make it real is tracked.
 type notImplemented struct {
 	// Kind is KindProject or KindEnvironment: the two documents share field
-	// names (`$.spec.services` exists on both) but not their gate status.
+	// names (`$.spec.components` exists on both) but not their gate status.
 	Kind string
 
 	// Path is the canonical spec path, with `[]` for a sequence entry and `*`
@@ -57,6 +57,16 @@ type notImplemented struct {
 // coverage_test.go then requires the field to be on the rendered allow-list
 // instead, so a feature cannot quietly go back to being silent.
 var notImplementedFields = []notImplemented{
+	{
+		Kind: KindProject,
+		Path: "$.spec.components[].tools",
+		What: "per-agent tool policy",
+		// ADR-0014 lands `kind: agent` thin: the identity is real today (every
+		// component renders its own ServiceAccount) and the capability policy
+		// is not. An allow-list nothing enforces is the silent success this
+		// gate exists to prevent, so the field is validated and refused.
+		TrackedBy: "milestone M7 · Agent surface & MCP, issue #75",
+	},
 	{
 		Kind:      KindProject,
 		Path:      "$.spec.defaults.policy",
@@ -128,7 +138,7 @@ func (v *validator) gate(canonical, field string) {
 			trimRoot(g.Path), g.TrackedBy))
 }
 
-// trimRoot turns "$.spec.services" into "spec.services" for prose.
+// trimRoot turns "$.spec.components" into "spec.components" for prose.
 func trimRoot(path string) string {
 	return strings.TrimPrefix(path, "$.")
 }

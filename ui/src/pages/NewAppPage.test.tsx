@@ -49,7 +49,7 @@ metadata:
 spec:
   image: ghcr.io/acme/hello:1.4.2
 
-  applications:
+  components:
     - name: web
       port: 8080
 `;
@@ -100,7 +100,7 @@ describe("NewAppPage", () => {
               {
                 code: "schema/out-of-range",
                 resource: "Project/hello",
-                field: "$.spec.applications[0].port",
+                field: "$.spec.components[0].port",
                 message: "port must be 1-65535, got 70000",
                 remediation: "set a valid TCP port, or omit port for a worker",
                 line: 11,
@@ -109,14 +109,14 @@ describe("NewAppPage", () => {
               {
                 code: "schema/invalid-format",
                 resource: "Project/hello",
-                field: "$.spec.applications[0].health",
+                field: "$.spec.components[0].health",
                 message: 'health path "healthz" must start with /',
                 remediation: "use a URL path such as /healthz",
               },
               {
                 code: "semantic/no-image-source",
                 resource: "Project/hello",
-                field: "$.spec.applications[0]",
+                field: "$.spec.components[0]",
                 message: 'application "web" has no image source',
                 remediation: "set image on the application or the Project",
               },

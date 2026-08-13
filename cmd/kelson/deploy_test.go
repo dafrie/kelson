@@ -231,7 +231,7 @@ func runDeliveryStdin(t *testing.T, connect deliveryConnector, stdin string, arg
 // direct through the P4 default chain.
 func writeDeliverySpec(t *testing.T, dir, name, mode, repo string) string {
 	t.Helper()
-	project := "apiVersion: kelson.dev/v1alpha1\nkind: Project\nmetadata:\n  name: hello\n\nspec:\n  image: ghcr.io/acme/hello:1.0.0\n\n  applications:\n    - name: web\n      port: 8080\n"
+	project := "apiVersion: kelson.dev/v1alpha1\nkind: Project\nmetadata:\n  name: hello\n\nspec:\n  image: ghcr.io/acme/hello:1.0.0\n\n  components:\n    - name: web\n      port: 8080\n"
 	environment := "apiVersion: kelson.dev/v1alpha1\nkind: Environment\nmetadata:\n  name: development\n\nspec:\n  project: hello\n"
 	if mode != "" {
 		environment += "  delivery:\n    mode: " + mode + "\n"

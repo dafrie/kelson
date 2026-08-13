@@ -98,7 +98,7 @@ func TestDedicatedPresetSizing(t *testing.T) {
 // a resource that never reconciles.
 func TestSharedPresetRendersDatabaseInSharedNamespace(t *testing.T) {
 	resolved := resolvedFixture()
-	resolved.Services = []model.ResolvedService{{Name: "db", Type: "postgres", Preset: model.PresetShared}}
+	resolved.DataServices = []model.ResolvedDataService{{Name: "db", Kind: model.ComponentPostgres, Preset: model.PresetShared}}
 	ms, err := Render(resolved, cnpgProfile(), nil)
 	if err != nil {
 		t.Fatalf("Render failed: %v", err)
@@ -161,15 +161,15 @@ func TestSharedPresetBindingRefused(t *testing.T) {
 func TestNotImplementedServices(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
-		svc   model.ResolvedService
+		svc   model.ResolvedDataService
 		issue string
 	}{
-		{"valkey", model.ResolvedService{Name: "cache", Type: "valkey", Preset: model.PresetSmall}, "#98"},
-		{"branch", model.ResolvedService{Name: "db", Type: "postgres", Preset: model.PresetBranch}, "#99"},
+		{"valkey", model.ResolvedDataService{Name: "cache", Kind: model.ComponentValkey, Preset: model.PresetSmall}, "#98"},
+		{"branch", model.ResolvedDataService{Name: "db", Kind: model.ComponentPostgres, Preset: model.PresetBranch}, "#99"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			resolved := resolvedFixture()
-			resolved.Services = []model.ResolvedService{tc.svc}
+			resolved.DataServices = []model.ResolvedDataService{tc.svc}
 			_, err := Render(resolved, cnpgProfile(), nil)
 			if err == nil {
 				t.Fatalf("%s must not render", tc.name)
@@ -219,7 +219,7 @@ func TestPresetCapabilityTriState(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			resolved := resolvedFixture()
-			resolved.Services = []model.ResolvedService{{Name: "db", Type: "postgres", Preset: tc.preset}}
+			resolved.DataServices = []model.ResolvedDataService{{Name: "db", Kind: model.ComponentPostgres, Preset: tc.preset}}
 			_, err := Render(resolved, tc.profile, nil)
 			if tc.wantErr == "" {
 				if err != nil {
@@ -241,9 +241,9 @@ func TestPresetCapabilityTriState(t *testing.T) {
 // the operator's, and `database` is the one that differs.
 func TestBindingKeyMapping(t *testing.T) {
 	resolved := boundFixture(model.PresetSmall)
-	resolved.Applications[0].Env = map[string]model.EnvValue{}
-	for _, key := range model.ServiceKeys["postgres"] {
-		resolved.Applications[0].Env["PG_"+strings.ToUpper(key)] = model.EnvValue{
+	resolved.Components[0].Env = map[string]model.EnvValue{}
+	for _, key := range model.ServiceKeys[model.ComponentPostgres] {
+		resolved.Components[0].Env["PG_"+strings.ToUpper(key)] = model.EnvValue{
 			From: &model.ServiceBinding{Service: "db", Key: key},
 		}
 	}
@@ -269,7 +269,7 @@ func TestBindingKeyMapping(t *testing.T) {
 func TestBindingErrors(t *testing.T) {
 	t.Run("unknown service", func(t *testing.T) {
 		resolved := resolvedFixture()
-		resolved.Applications[0].Env["DATABASE_URL"] = model.EnvValue{
+		resolved.Components[0].Env["DATABASE_URL"] = model.EnvValue{
 			From: &model.ServiceBinding{Service: "nope", Key: "uri"},
 		}
 		_, err := Render(resolved, cnpgProfile(), nil)
@@ -283,7 +283,7 @@ func TestBindingErrors(t *testing.T) {
 
 	t.Run("unknown key", func(t *testing.T) {
 		resolved := boundFixture(model.PresetSmall)
-		resolved.Applications[0].Env["DATABASE_URL"] = model.EnvValue{
+		resolved.Components[0].Env["DATABASE_URL"] = model.EnvValue{
 			From: &model.ServiceBinding{Service: "db", Key: "jdbc-uri"},
 		}
 		_, err := Render(resolved, cnpgProfile(), nil)
@@ -305,7 +305,7 @@ func TestBindingErrors(t *testing.T) {
 
 	t.Run("application is named", func(t *testing.T) {
 		resolved := resolvedFixture()
-		resolved.Applications[1].Env = map[string]model.EnvValue{
+		resolved.Components[1].Env = map[string]model.EnvValue{
 			"DATABASE_URL": {From: &model.ServiceBinding{Service: "nope", Key: "uri"}},
 		}
 		_, err := Render(resolved, cnpgProfile(), nil)
@@ -324,7 +324,7 @@ func TestBindingErrors(t *testing.T) {
 func TestServiceNameLengthRefused(t *testing.T) {
 	resolved := resolvedFixture()
 	resolved.Project = strings.Repeat("a", 40)
-	resolved.Services = []model.ResolvedService{{Name: "db", Type: "postgres", Preset: model.PresetSmall}}
+	resolved.DataServices = []model.ResolvedDataService{{Name: "db", Kind: model.ComponentPostgres, Preset: model.PresetSmall}}
 	_, err := Render(resolved, cnpgProfile(), nil)
 	if err == nil {
 		t.Fatalf("an over-long derived name must be refused")
@@ -363,7 +363,7 @@ func TestServiceHashIsLocal(t *testing.T) {
 	before := hashOf(boundFixture(model.PresetSmall))
 
 	changed := boundFixture(model.PresetSmall)
-	changed.Applications[0].Image = "ghcr.io/acme/checkout:9.9.9"
+	changed.Components[0].Image = "ghcr.io/acme/checkout:9.9.9"
 	if got := hashOf(changed); got != before {
 		t.Errorf("an application image change moved the database spec-hash:\n%s\n%s", before, got)
 	}

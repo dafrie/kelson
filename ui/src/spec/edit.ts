@@ -25,9 +25,18 @@ import { errorTarget, yamlScalar, type EnvVar } from "./documents";
  *
  * Step 3 is a *total* guard, not a heuristic, and that is what makes the simple
  * strategy honest: anything the parser fails to capture — a comment, a key
- * order, a `services:` block, a flow sequence, an anchor — is absent from the
- * rebuild and shows up as a byte difference. There is no way for this module to
- * silently drop something and still claim the document is editable.
+ * order, a component kind this form does not model, a flow sequence, an anchor —
+ * is absent from the rebuild and shows up as a byte difference. There is no way
+ * for this module to silently drop something and still claim the document is
+ * editable.
+ *
+ * That is why ADR-0014's wider kind set needs nothing here. The parser reads
+ * exactly the fields the builder writes, which are the workload fields; a
+ * `kind: postgres` component (or an agent, or a `preset:`) is a key the parser
+ * captures nowhere, so the rebuild omits it, the bytes differ, and the document
+ * goes to the YAML tab whole. Teaching the parser to *read* a data component
+ * without teaching the form to edit one would break that symmetry and turn the
+ * byte guard from a proof into a hope.
  *
  * The parser is deliberately small and deliberately strict. It reads the
  * restricted grammar the builders emit (2-space indentation, block mappings,
@@ -43,8 +52,8 @@ export interface SpecTextSet {
   environments: Record<string, string>;
 }
 
-/** One application's editable fields. Every value is the raw text of an input. */
-export interface AppEdit {
+/** One component's editable fields. Every value is the raw text of an input. */
+export interface ComponentEdit {
   name: string;
   image: string;
   port: string;
@@ -60,7 +69,7 @@ export interface ProjectEdit {
   name: string;
   image: string;
   env: EnvVar[];
-  applications: AppEdit[];
+  components: ComponentEdit[];
 }
 
 export interface EnvironmentEdit {
@@ -74,10 +83,10 @@ export interface SpecEdit {
   environments: EnvironmentEdit[];
 }
 
-/** The workload rules of docs/model.md, mirrored from documents.ts. */
-export function appWorkload(app: AppEdit): "service" | "worker" | "cron" {
-  if (app.schedule.trim() !== "") return "cron";
-  if (app.port.trim() !== "") return "service";
+/** The kind-derivation rules of docs/model.md, mirrored from documents.ts. */
+export function componentWorkload(c: ComponentEdit): "service" | "worker" | "cron" {
+  if (c.schedule.trim() !== "") return "cron";
+  if (c.port.trim() !== "") return "service";
   return "worker";
 }
 
@@ -89,8 +98,8 @@ export function appWorkload(app: AppEdit): "service" | "worker" | "cron" {
  * This is a superset of what documents.ts writes for a new app and produces
  * byte-identical output for that subset — which is what makes the round-trip
  * guard usable at all: a document the create form stored yesterday is editable
- * today. Applications are separated by a blank line, as examples/checkout-multi
- * writes them; a single application is therefore unchanged from #63's output.
+ * today. Components are separated by a blank line, as examples/checkout-multi
+ * writes them; a single component is therefore unchanged from #63's output.
  */
 export function buildProjectDocument(p: ProjectEdit): string {
   const env = namedEnv(p.env);
@@ -110,17 +119,17 @@ export function buildProjectDocument(p: ProjectEdit): string {
     }
   }
 
-  lines.push("", "  applications:");
-  p.applications.forEach((app, i) => {
+  lines.push("", "  components:");
+  p.components.forEach((component, i) => {
     if (i > 0) lines.push("");
-    lines.push(...applicationLines(app));
+    lines.push(...componentLines(component));
   });
 
   return lines.join("\n") + "\n";
 }
 
-function applicationLines(app: AppEdit): string[] {
-  const kind = appWorkload(app);
+function componentLines(app: ComponentEdit): string[] {
+  const kind = componentWorkload(app);
   const domains = app.domains.filter(set);
   const env = namedEnv(app.env);
   const lines = [`    - name: ${yamlScalar(app.name)}`];
@@ -208,19 +217,26 @@ export function parseProjectDocument(text: string): ProjectEdit | undefined {
   const env = readEnv(spec.get("env"));
   if (env === undefined) return undefined;
 
-  const apps = spec.get("applications");
-  if (!Array.isArray(apps)) return undefined;
-  const applications: AppEdit[] = [];
-  for (const node of apps) {
-    const app = readApplication(node);
-    if (app === undefined) return undefined;
-    applications.push(app);
+  const nodes = spec.get("components");
+  if (!Array.isArray(nodes)) return undefined;
+  const components: ComponentEdit[] = [];
+  for (const node of nodes) {
+    const component = readComponent(node);
+    if (component === undefined) return undefined;
+    components.push(component);
   }
 
-  return { name, image, env, applications };
+  return { name, image, env, components };
 }
 
-function readApplication(node: YNode): AppEdit | undefined {
+/**
+ * One component, in the workload vocabulary the form edits.
+ *
+ * `kind:`, `preset:` and `tools:` are deliberately absent: a component carrying
+ * any of them is a component this form cannot edit, and the round-trip guard
+ * turns that into a read-only document rather than a lossy one.
+ */
+function readComponent(node: YNode): ComponentEdit | undefined {
   if (!isMap(node)) return undefined;
   const name = node.get("name");
   if (typeof name !== "string") return undefined;
@@ -496,8 +512,8 @@ function decodeScalar(text: string): string | undefined {
 /**
  * Which edit-form input a structured error belongs to.
  *
- * The edit form reaches every application the document declares, not only the
- * first, so an error at `$.spec.applications[1].port` has an input to land on
+ * The edit form reaches every component the document declares, not only the
+ * first, so an error at `$.spec.components[1].port` has an input to land on
  * here where the create form had none. Keys are dotted paths rather than the
  * create form's flat union for the same reason: they carry the index and the
  * environment name.
@@ -519,17 +535,17 @@ export function editFieldForError(error: WireError): EditFieldKey | undefined {
       return "project.image";
     case "env":
       return `project.env.${target.name}`;
-    case "app-env":
-      return `app.${target.index}.env.${target.name}`;
-    case "app":
-      // An application-level finding with no subfield is about the whole
-      // application; the image is the field the form can act on.
+    case "component-env":
+      return `component.${target.index}.env.${target.name}`;
+    case "component":
+      // A component-level finding with no subfield is about the whole
+      // component; the image is the field the form can act on.
       if (target.field === "whole") {
         return error.code === "semantic/no-image-source"
-          ? `app.${target.index}.image`
+          ? `component.${target.index}.image`
           : undefined;
       }
-      return `app.${target.index}.${target.field}`;
+      return `component.${target.index}.${target.field}`;
   }
 }
 

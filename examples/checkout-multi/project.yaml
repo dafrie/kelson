@@ -12,19 +12,20 @@ spec:
   build:
     strategy: auto            # auto | dockerfile | buildpacks | none
 
-  env:                        # shared by every application
+  env:                        # shared by every component
     LOG_LEVEL: info
     # A reference, never a value (ADR-0009). It renders as a secretKeyRef
     # against the credentials CloudNativePG generates for the cluster below —
     # kelson never holds the password.
     DATABASE_URL: { from: { service: db, key: uri } }
 
-  services:                   # topology is the operator's job (ADR-0005, ADR-0007)
+  # One list, kinds tell them apart (ADR-0014). Workload kinds derive from the
+  # shape; a data component says what it is, because nothing could derive it.
+  components:
     - name: db
-      type: postgres
+      kind: postgres          # topology is the operator's job (ADR-0005, ADR-0007)
       preset: ha-small        # 3 instances, synchronous; see docs/data-services.md
 
-  applications:
     - name: web
       port: 8080
       health: /healthz

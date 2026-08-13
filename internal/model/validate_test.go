@@ -19,7 +19,7 @@ spec:
     strategy: auto
   env:
     LOG_LEVEL: info
-  applications:
+  components:
     - name: web
       port: 8080
       health: /healthz
@@ -35,11 +35,11 @@ spec:
 	if !ok {
 		t.Fatalf("expected *Project, got %T", docs[0])
 	}
-	if got := p.Spec.Applications[0].Workload(); got != WorkloadService {
-		t.Fatalf("web workload = %q, want %q", got, WorkloadService)
+	if got := p.Spec.Components[0].EffectiveKind(); got != ComponentService {
+		t.Fatalf("web workload = %q, want %q", got, ComponentService)
 	}
-	if got := p.Spec.Applications[1].Workload(); got != WorkloadWorker {
-		t.Fatalf("worker workload = %q, want %q", got, WorkloadWorker)
+	if got := p.Spec.Components[1].EffectiveKind(); got != ComponentWorker {
+		t.Fatalf("worker workload = %q, want %q", got, ComponentWorker)
 	}
 }
 
@@ -58,7 +58,7 @@ spec:
     DATABASE_URL: postgres://app:s3cret@db.internal:5432/shop
     CACHE_URL:
       from: {service: cache, key: uri}
-  applications:
+  components:
     - name: web
       port: 70000
     - name: web
@@ -96,7 +96,7 @@ kind: Project
 metadata: {name: p}
 spec:
   image: i:1
-  applications:
+  components:
     - name: web
       port: 70000
 `))
@@ -104,8 +104,8 @@ spec:
 	for _, e := range errs {
 		if e.Code == ErrOutOfRange {
 			found = true
-			if e.Field != "$.spec.applications[0].port" {
-				t.Errorf("field = %q, want $.spec.applications[0].port", e.Field)
+			if e.Field != "$.spec.components[0].port" {
+				t.Errorf("field = %q, want $.spec.components[0].port", e.Field)
 			}
 			if !strings.Contains(e.Message, "1-65535") {
 				t.Errorf("message should state the range, got %q", e.Message)
@@ -137,7 +137,7 @@ spec:
   image: i:1
   env:
 ` + tc.env + `
-  applications:
+  components:
     - name: web
       port: 8080
 `))
@@ -185,9 +185,8 @@ spec:
     DATABASE_URL:
       from: {service: db, key: uri}
     LOG_LEVEL: info
-  services:
-    - {name: db, type: postgres}
-  applications:
+  components:
+    - {name: db, kind: postgres}
     - {name: web, port: 8080}
 `))
 	if slices.Contains(errs.Codes(), ErrSecretLiteral) {
@@ -206,7 +205,7 @@ metadata:
   name: pos
 spec:
   image: i:1
-  applications:
+  components:
     - name: web
       port: 70000
 `
@@ -236,7 +235,7 @@ metadata: {name: p}
 spec:
   image: i:1
   replicaz: 3
-  applications:
+  components:
     - {name: web, port: 8080}
 `))
 	var uf *Error
@@ -254,7 +253,7 @@ spec:
 	if uf.Line != 6 {
 		t.Errorf("line = %d, want 6", uf.Line)
 	}
-	if !strings.Contains(uf.Remediation, "applications") {
+	if !strings.Contains(uf.Remediation, "components") {
 		t.Errorf("remediation should list valid fields, got %q", uf.Remediation)
 	}
 }
@@ -268,9 +267,8 @@ kind: Project
 metadata: {name: p}
 spec:
   image: i:1
-  services:
-    - {name: db, type: postgres, plan: shared}
-  applications:
+  components:
+    - {name: db, kind: postgres, plan: shared}
     - {name: web, port: 8080}
 `))
 	var uf *Error
@@ -282,11 +280,77 @@ spec:
 	if uf == nil {
 		t.Fatalf("old field name %q must be rejected as unknown, got:\n%v", "plan", errs)
 	}
-	if uf.Field != "$.spec.services[0].plan" {
-		t.Errorf("field = %q, want $.spec.services[0].plan", uf.Field)
+	if uf.Field != "$.spec.components[0].plan" {
+		t.Errorf("field = %q, want $.spec.components[0].plan", uf.Field)
 	}
 	if !strings.Contains(uf.Remediation, "preset") {
 		t.Errorf("remediation should point at the current field name, got %q", uf.Remediation)
+	}
+}
+
+// TestApplicationsFieldRejected is the same rule for ADR-0014's rename: the
+// two lists the leaf used to be written as are unknown fields now, not silent
+// aliases, and the remediation names `components` because the decoder lists the
+// document's real field set. A stored spec that still says `applications:`
+// therefore fails at the first validation with a fix in the message, which is
+// the only migration path a pre-alpha rename gets.
+func TestApplicationsFieldRejected(t *testing.T) {
+	for _, old := range []string{"applications", "services"} {
+		t.Run(old, func(t *testing.T) {
+			_, errs := DecodeDocuments([]byte(`
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata: {name: p}
+spec:
+  image: i:1
+  ` + old + `:
+    - {name: web, port: 8080}
+  components:
+    - {name: api, port: 9090}
+`))
+			var uf *Error
+			for i := range errs {
+				if errs[i].Code == ErrUnknownField && errs[i].Field == "$.spec."+old {
+					uf = &errs[i]
+				}
+			}
+			if uf == nil {
+				t.Fatalf("%q must be rejected as unknown after ADR-0014, got:\n%v", old, errs)
+			}
+			if !strings.Contains(uf.Remediation, "components") {
+				t.Errorf("remediation must name the field that replaced it, got %q", uf.Remediation)
+			}
+			if uf.Line == 0 {
+				t.Errorf("unknown-field error must carry a source line: %+v", uf)
+			}
+		})
+	}
+}
+
+// TestEnvironmentOverrideListsRejected is the Environment half: an environment
+// that still overrides `applications:` or `services:` fails the same way.
+func TestEnvironmentOverrideListsRejected(t *testing.T) {
+	for _, old := range []string{"applications", "services"} {
+		t.Run(old, func(t *testing.T) {
+			_, errs := DecodeDocuments([]byte(`
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata: {name: production}
+spec:
+  project: p
+  ` + old + `:
+    - {name: web, preset: small}
+`))
+			found := false
+			for _, e := range errs {
+				if e.Code == ErrUnknownField && e.Field == "$.spec."+old && strings.Contains(e.Remediation, "components") {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("Environment spec.%s must be an unknown field naming components, got:\n%v", old, errs)
+			}
+		})
 	}
 }
 
@@ -331,9 +395,8 @@ kind: Project
 metadata: {name: shop}
 spec:
   image: i:1
-  services:
-    - {name: db, type: postgres}
-  applications:
+  components:
+    - {name: db, kind: postgres}
     - {name: web, port: 8080}
 ---
 apiVersion: kelson.dev/v1alpha1
@@ -343,9 +406,8 @@ spec:
   project: shop
   delivery:
     mode: github
-  services:
+  components:
     - {name: warehouse, preset: small}
-  applications:
     - name: web
       env:
         PG_URL:
@@ -369,10 +431,9 @@ spec:
 
 	envErrs := ValidateEnvironment(e, p)
 	want := []Code{
-		ErrInvalidEnum,        // delivery mode github
-		ErrUnknownService,     // warehouse not in the project
-		ErrUnknownServiceKey,  // tls is not a postgres key
-		ErrUnknownApplication, // api not in the project
+		ErrInvalidEnum,       // delivery mode github
+		ErrUnknownServiceKey, // tls is not a postgres key
+		ErrUnknownComponent,  // warehouse and api are not in the project
 	}
 	codes := envErrs.Codes()
 	for _, w := range want {
@@ -421,14 +482,14 @@ kind: Project
 metadata: {name: p}
 spec:
   image: i:1
-  applications:
+  components:
     - name: nightly
       schedule: "0 3 * * *"
 `))
 	if len(errs) != 0 {
 		t.Fatalf("cron application must be valid, got %v", errs)
 	}
-	if got := docs[0].(*Project).Spec.Applications[0].Workload(); got != WorkloadCron {
+	if got := docs[0].(*Project).Spec.Components[0].EffectiveKind(); got != ComponentCron {
 		t.Errorf("workload = %q, want cron", got)
 	}
 
@@ -438,7 +499,7 @@ kind: Project
 metadata: {name: p}
 spec:
   image: i:1
-  applications:
+  components:
     - name: bad
       schedule: "0 3 * * *"
       health: /healthz
@@ -456,7 +517,7 @@ metadata: {name: p}
 spec:
   source: {git: https://github.com/a/b}
   build: {strategy: none}
-  applications:
+  components:
     - name: web
       port: 8080
 `))
@@ -500,7 +561,7 @@ kind: Project
 metadata: {name: p}
 spec:
   image: i:1
-  applications:
+  components:
     - name: nightly
       schedule: "` + tc.schedule + `"
 `))

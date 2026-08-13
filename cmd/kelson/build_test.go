@@ -182,7 +182,7 @@ func writeBuildSpec(t *testing.T, opts buildSpecOptions) string {
 	if opts.image != "" {
 		b.WriteString("  image: " + opts.image + "\n")
 	}
-	b.WriteString("\n  applications:\n    - name: web\n      port: 8080\n    - name: worker\n")
+	b.WriteString("\n  components:\n    - name: web\n      port: 8080\n    - name: worker\n")
 	b.WriteString("---\napiVersion: kelson.dev/v1alpha1\nkind: Environment\nmetadata:\n  name: production\n\nspec:\n  project: shop\n")
 
 	path := filepath.Join(t.TempDir(), "spec.yaml")

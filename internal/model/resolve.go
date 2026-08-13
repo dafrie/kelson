@@ -5,20 +5,29 @@ import (
 	"strings"
 )
 
-// ImageUnresolved is the image a ResolvedApplication carries when the spec
+// ImageUnresolved is the image a ResolvedComponent carries when the spec
 // builds it from source and no build result has been supplied yet. It is a
 // sentinel, not a reference: it must never reach a manifest, and the renderer
-// refuses to render an application still carrying it (issue #136).
+// refuses to render a component still carrying it (issue #136).
 const ImageUnresolved = "@"
 
 // Resolved is the precedence-resolved output for one (Project, Environment)
 // pair — the concrete input the renderer consumes (issue #26). Resolution
 // applies every rule from docs/model.md (P1–P6) and the built-in defaults.
+//
+// The spec's one components list (ADR-0014) resolves into two slices, because
+// the two halves are consumed differently and by different rules: a workload
+// carries the P1/P2/P3 merge and renders pods, a data component carries the P5
+// preset override and renders an operator's resources. Keeping them apart here
+// is what lets resolve() read as one rule per paragraph, and lets Render state
+// its ordering contract — data services before the workloads that bind to
+// them — as two loops rather than two passes over one list with a kind test in
+// each.
 type Resolved struct {
 	Project      string
 	Environment  ResolvedEnvironment
-	Applications []ResolvedApplication
-	Services     []ResolvedService
+	Components   []ResolvedComponent
+	DataServices []ResolvedDataService
 	Overlays     []Overlay
 }
 
@@ -39,9 +48,11 @@ type ResolvedRouting struct {
 	TLS          bool // defaulted to true
 }
 
-type ResolvedApplication struct {
+// ResolvedComponent is one workload-kind component after resolution:
+// service, worker, cron or agent.
+type ResolvedComponent struct {
 	Name      string
-	Kind      WorkloadKind
+	Kind      ComponentKind
 	Image     string
 	Command   []string
 	Port      int
@@ -50,12 +61,13 @@ type ResolvedApplication struct {
 	Domains   []string            // explicit domains, or the derived default hostname
 	Replicas  Replicas            // after P2 defaults
 	Resources *Resources          // after P2; nil if unset at both scopes
-	Env       map[string]EnvValue // P1 merge: project < application < environment
+	Env       map[string]EnvValue // P1 merge: project < component < environment
 }
 
-type ResolvedService struct {
+// ResolvedDataService is one data-kind component after resolution.
+type ResolvedDataService struct {
 	Name   string
-	Type   string
+	Kind   ComponentKind // postgres | valkey
 	Preset ServicePreset // after the P5 environment override
 }
 
@@ -73,9 +85,10 @@ func Resolve(p *Project, e *Environment) (*Resolved, Errors) {
 // because issue #141 gates fields the resolver still resolves — policy and
 // secret backends among them. Keeping resolution reachable without the gate
 // means P4 stays under test, and means landing M7/M8 is a matter of deleting a
-// gate row rather than rebuilding precedence. M9 already proved it: services
-// and their P5 preset override left the gate table when the renderer began
-// emitting CloudNativePG resources (issue #89), and nothing here changed.
+// gate row rather than rebuilding precedence. M9 already proved it: data
+// components and their P5 preset override left the gate table when the
+// renderer began emitting CloudNativePG resources (issue #89), and nothing
+// here changed.
 func resolve(p *Project, e *Environment) *Resolved {
 	r := &Resolved{Project: p.Metadata.Name}
 
@@ -128,82 +141,88 @@ func resolve(p *Project, e *Environment) *Resolved {
 		r.Environment.Secrets = *sb
 	}
 
-	// P5: service preset overrides by name.
-	svcPresets := map[string]ServicePreset{}
-	for _, ov := range e.Spec.Services {
-		svcPresets[ov.Name] = ov.Preset
-	}
-	for _, svc := range p.Spec.Services {
-		preset := svc.Preset
-		if preset == "" {
-			preset = PresetShared
-		}
-		if ov, ok := svcPresets[svc.Name]; ok {
-			preset = ov
-		}
-		r.Services = append(r.Services, ResolvedService{Name: svc.Name, Type: svc.Type, Preset: preset})
-	}
-
 	// P6: project overlays first.
 	r.Overlays = append(r.Overlays, p.Spec.Overlays...)
 	r.Overlays = append(r.Overlays, e.Spec.Overlays...)
 
-	// Applications: P1 (env), P2 (replicas/resources), P3 (image/command).
-	overrides := map[string]AppOverride{}
-	for _, ov := range e.Spec.Applications {
+	// One spec list, two resolutions: P5 for data components, P1/P2/P3 for
+	// workloads. Spec order is preserved within each.
+	overrides := map[string]ComponentOverride{}
+	for _, ov := range e.Spec.Components {
 		overrides[ov.Name] = ov
 	}
 	builtFromSource := p.Spec.Source != nil && (p.Spec.Build == nil || p.Spec.Build.Strategy != BuildNone)
-	for _, app := range p.Spec.Applications {
-		ra := ResolvedApplication{
-			Name:     app.Name,
-			Kind:     app.Workload(),
-			Port:     app.Port,
-			Health:   app.Health,
-			Schedule: app.Schedule,
-			Replicas: Replicas{Min: 1},
+	for _, c := range p.Spec.Components {
+		if kind := c.EffectiveKind(); kind.IsData() {
+			r.DataServices = append(r.DataServices, resolveDataService(c, kind, overrides[c.Name]))
+			continue
 		}
-		if app.Replicas != nil {
-			ra.Replicas = *app.Replicas
-		}
-		ra.Env = map[string]EnvValue{}
-		for k, ev := range p.Spec.Env {
-			ra.Env[k] = ev
-		}
-		for k, ev := range app.Env {
-			ra.Env[k] = ev
-		}
-		ra.Image, ra.Command = app.Image, app.Command
-		if ra.Image == "" {
-			ra.Image = p.Spec.Image
-		}
-		if ra.Image == "" && builtFromSource {
-			// The build plane fills the digest in; until it does, the image is
-			// explicitly unresolved rather than blank, so a consumer can tell
-			// "waiting on a build" from "the spec named nothing" (issue #136).
-			ra.Image = ImageUnresolved
-		}
-		ra.Resources = app.Resources
-		ra.Domains = app.Domains
-
-		if ov, ok := overrides[app.Name]; ok {
-			if ov.Replicas != nil {
-				ra.Replicas = *ov.Replicas
-			}
-			if ov.Resources != nil {
-				ra.Resources = ov.Resources
-			}
-			for k, ev := range ov.Env {
-				ra.Env[k] = ev
-			}
-		}
-
-		// Domain defaulting.
-		if len(ra.Domains) == 0 && ra.Port != 0 && r.Environment.Routing.DomainSuffix != "" {
-			ra.Domains = []string{fmt.Sprintf("%s.%s", app.Name, strings.TrimPrefix(r.Environment.Routing.DomainSuffix, "."))}
-		}
-		r.Applications = append(r.Applications, ra)
+		r.Components = append(r.Components, resolveComponent(p, r, c, overrides[c.Name], builtFromSource))
 	}
 
 	return r
+}
+
+// resolveDataService applies P5: the Environment's preset override, else the
+// component's own preset, else the built-in `shared`.
+func resolveDataService(c Component, kind ComponentKind, ov ComponentOverride) ResolvedDataService {
+	preset := c.Preset
+	if preset == "" {
+		preset = PresetShared
+	}
+	if ov.Preset != "" {
+		preset = ov.Preset
+	}
+	return ResolvedDataService{Name: c.Name, Kind: kind, Preset: preset}
+}
+
+// resolveComponent applies P1 (env merge), P2 (replicas/resources) and P3
+// (image/command) to one workload component, then the domain default.
+func resolveComponent(p *Project, r *Resolved, c Component, ov ComponentOverride, builtFromSource bool) ResolvedComponent {
+	rc := ResolvedComponent{
+		Name:     c.Name,
+		Kind:     c.EffectiveKind(),
+		Port:     c.Port,
+		Health:   c.Health,
+		Schedule: c.Schedule,
+		Replicas: Replicas{Min: 1},
+	}
+	if c.Replicas != nil {
+		rc.Replicas = *c.Replicas
+	}
+	rc.Env = map[string]EnvValue{}
+	for k, ev := range p.Spec.Env {
+		rc.Env[k] = ev
+	}
+	for k, ev := range c.Env {
+		rc.Env[k] = ev
+	}
+	rc.Image, rc.Command = c.Image, c.Command
+	if rc.Image == "" {
+		rc.Image = p.Spec.Image
+	}
+	if rc.Image == "" && builtFromSource {
+		// The build plane fills the digest in; until it does, the image is
+		// explicitly unresolved rather than blank, so a consumer can tell
+		// "waiting on a build" from "the spec named nothing" (issue #136).
+		rc.Image = ImageUnresolved
+	}
+	rc.Resources = c.Resources
+	rc.Domains = c.Domains
+
+	if ov.Replicas != nil {
+		rc.Replicas = *ov.Replicas
+	}
+	if ov.Resources != nil {
+		rc.Resources = ov.Resources
+	}
+	for k, ev := range ov.Env {
+		rc.Env[k] = ev
+	}
+
+	// Domain defaulting.
+	if len(rc.Domains) == 0 && rc.Port != 0 && r.Environment.Routing.DomainSuffix != "" {
+		rc.Domains = []string{fmt.Sprintf("%s.%s", c.Name, strings.TrimPrefix(r.Environment.Routing.DomainSuffix, "."))}
+	}
+	return rc
 }

@@ -104,6 +104,11 @@ const sidebars: SidebarsConfig = {
           id: 'adr/0012-flux-only-gitops',
           label: '0012 — Flux-only GitOps',
         },
+        {
+          type: 'doc',
+          id: 'adr/0014-components',
+          label: '0014 — Components',
+        },
       ],
     },
   ],

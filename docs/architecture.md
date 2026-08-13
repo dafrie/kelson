@@ -68,17 +68,16 @@ spec:
   build:
     strategy: auto          # auto | dockerfile | buildpacks | none
 
-  env:                      # shared by every Application
+  env:                      # shared by every Component
     LOG_LEVEL: info
     DATABASE_URL:
       from: { service: db, key: uri }   # binding, never a literal
 
-  services:
+  components:               # one list; kinds tell them apart (ADR-0014)
     - name: db
-      type: postgres
+      kind: postgres
       preset: ha-small      # topology preset → CloudNativePG Cluster with PITR
 
-  applications:
     - name: web
       port: 8080
       health: /healthz
@@ -100,11 +99,16 @@ spec:
 One HA, TLS-terminated, database-backed service with a worker and a cron job, in about thirty lines with no
 duplication. Everything beyond this is progressive disclosure: reachable, not present by default.
 
-This is the target shape, not today's. The `services:` block and its `from:` binding are designed and
-validated but nothing provisions them yet, so kelson rejects them with `schema/not-implemented` naming
-M9 rather than accepting them and rendering nothing
-([#141](https://github.com/dafrie/kelson/issues/141)); the same holds for `policy:` (M7), `secrets:` (M8)
-and `cluster:` (M10). See [the model reference](model.md) for the current table.
+Every leaf of the spec is a component, and the kind is derived where the shape says it (`port:` → service,
+`schedule:` → cron, neither → worker) and written where it cannot be (`kind: postgres`)
+([ADR-0014](adr/0014-components.md)).
+
+This is close to today's shape, not identical to it. The `kind: postgres` component and its `from:` binding
+render since [#89](https://github.com/dafrie/kelson/issues/89); `policy:` (M7), `secrets:` (M8) and
+`cluster:` (M10) are still rejected with `schema/not-implemented` rather than accepted and rendered as
+nothing ([#141](https://github.com/dafrie/kelson/issues/141)), as is `tools:` on a `kind: agent` component
+(M7, [#75](https://github.com/dafrie/kelson/issues/75)). See [the model reference](model.md) for the
+current table.
 
 Environments carry what differs between deployments — cluster, namespace, domain suffix, replica and
 resource overrides, delivery mode, policy. Projects stay environment-agnostic; environments stay

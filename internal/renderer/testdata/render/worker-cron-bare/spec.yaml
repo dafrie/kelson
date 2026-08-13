@@ -1,6 +1,11 @@
 # Fixture: a bare cluster — no gateway API, no ingress class, no
 # cert-manager, no prometheus. Only workloads render: a queue worker and two
-# cron applications (derived from examples/worker-cron).
+# cron components (derived from examples/worker-cron).
+#
+# It is also where per-component identity is pinned for the kinds that used to
+# have none (ADR-0014 decision D): a worker and a cron each render their own
+# ServiceAccount and name it in the pod template, rather than inheriting the
+# namespace's `default`.
 apiVersion: kelson.dev/v1alpha1
 kind: Project
 metadata:
@@ -9,7 +14,7 @@ spec:
   image: registry.acme.run/mailroom:2.0.7
   # The queue service and its QUEUE_URL/QUEUE_PASSWORD bindings are gated
   # until M9 (#141).
-  applications:
+  components:
     - name: worker
       command: ["mailroom", "work"]
       replicas: { min: 2 }
@@ -29,7 +34,7 @@ spec:
   namespace: mailroom
   delivery:
     mode: direct
-  applications:
+  components:
     - name: worker
       resources:
         requests: { cpu: 100m, memory: 128Mi }

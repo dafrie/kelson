@@ -9,7 +9,7 @@ spec:
   env:
     LOG_LEVEL: info
 
-  applications:
+  components:
     - name: web
       port: 8080
       health: /healthz

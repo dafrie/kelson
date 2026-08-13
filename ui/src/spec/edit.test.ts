@@ -30,7 +30,7 @@ metadata:
 spec:
   image: ghcr.io/acme/hello:1.4.2
 
-  applications:
+  components:
     - name: web
       port: 8080
 `;
@@ -51,8 +51,8 @@ const MINIMAL: SpecTextSet = {
 
 /**
  * The document the edit form writes once it has been used: project-level and
- * per-application env, an image override, autoscaling bounds, a second
- * application.
+ * per-component env, an image override, autoscaling bounds, a second
+ * component.
  *
  * These exact bytes are the second half of the cross-side fixture convention
  * #63 established — internal/api/uispec_test.go holds them byte-identically and
@@ -76,7 +76,7 @@ spec:
     LOG_LEVEL: info
     PORT: "3000"
 
-  applications:
+  components:
     - name: web
       port: 8080
       health: /healthz
@@ -123,8 +123,8 @@ describe("round trip", () => {
     expect(edit).toBeDefined();
     expect(edit?.project.name).toBe("hello");
     expect(edit?.project.image).toBe("ghcr.io/acme/hello:1.4.2");
-    expect(edit?.project.applications).toHaveLength(1);
-    expect(edit?.project.applications[0]?.port).toBe("8080");
+    expect(edit?.project.components).toHaveLength(1);
+    expect(edit?.project.components[0]?.port).toBe("8080");
     expect(edit?.environments).toEqual([
       { name: "development", project: "hello", namespace: "" },
     ]);
@@ -141,7 +141,7 @@ describe("round trip", () => {
     const edit = readSpec(rich);
     expect(edit).toBeDefined();
 
-    const web = edit?.project.applications[0];
+    const web = edit?.project.components[0];
     expect(web?.name).toBe("web");
     expect(web?.health).toBe("/healthz");
     expect(web?.domains).toEqual(["hello.dev.acme.run"]);
@@ -149,7 +149,7 @@ describe("round trip", () => {
     expect(web?.replicasMax).toBe("10");
     expect(web?.env).toEqual([{ key: "ROLE", value: "web" }]);
 
-    const worker = edit?.project.applications[1];
+    const worker = edit?.project.components[1];
     expect(worker?.name).toBe("worker");
     expect(worker?.image).toBe("ghcr.io/acme/hello-worker:1.4.2");
     expect(worker?.replicasMin).toBe("1");
@@ -206,7 +206,7 @@ metadata:
   name: hello
 
 spec:
-  applications:
+  components:
     - name: web
       port: 8080
 
@@ -216,8 +216,25 @@ spec:
     {
       name: "a key this module does not model",
       project: MINIMAL_PROJECT.replace(
-        "  applications:",
-        "  services:\n    - name: db\n      type: postgres\n\n  applications:",
+        "  components:",
+        "  labels:\n    team: platform\n\n  components:",
+      ),
+    },
+    {
+      // ADR-0014 widened the kind set; the parser deliberately did not follow.
+      // A data component is a key the parser captures nowhere, so the rebuild
+      // drops it and the byte guard sends the whole document to the YAML tab.
+      name: "a data component",
+      project: MINIMAL_PROJECT.replace(
+        "    - name: web\n",
+        "    - name: db\n      kind: postgres\n      preset: small\n\n    - name: web\n",
+      ),
+    },
+    {
+      name: "an agent component's tool policy",
+      project: MINIMAL_PROJECT.replace(
+        "      port: 8080\n",
+        "      port: 8080\n\n    - name: triage\n      kind: agent\n      tools: [search]\n",
       ),
     },
     {
@@ -290,7 +307,7 @@ describe("environment variables through the form", () => {
     return edit.project;
   };
 
-  it("adds a project-level variable under spec.env, shared by every application", () => {
+  it("adds a project-level variable under spec.env, shared by every component", () => {
     const project = base();
     project.env = [{ key: "LOG_LEVEL", value: "info" }];
 
@@ -305,16 +322,16 @@ spec:
   env:
     LOG_LEVEL: info
 
-  applications:
+  components:
     - name: web
       port: 8080
 `);
   });
 
-  it("adds a per-application variable under the application, not the project", () => {
+  it("adds a per-component variable under the component, not the project", () => {
     const project = base();
-    const web = project.applications[0];
-    if (web === undefined) throw new Error("the fixture must have an application");
+    const web = project.components[0];
+    if (web === undefined) throw new Error("the fixture must have a component");
     web.env = [{ key: "ROLE", value: "web" }];
 
     const doc = buildProjectDocument(project);
@@ -358,30 +375,30 @@ describe("editFieldForError", () => {
   const wire = (resource: string, field: string, code = "schema/invalid-format") =>
     create(ErrorSchema, { resource, field, code });
 
-  it("reaches applications beyond the first", () => {
-    expect(editFieldForError(wire("Project/hello", "$.spec.applications[1].port"))).toBe(
-      "app.1.port",
+  it("reaches components beyond the first", () => {
+    expect(editFieldForError(wire("Project/hello", "$.spec.components[1].port"))).toBe(
+      "component.1.port",
     );
     expect(
-      editFieldForError(wire("Project/hello", "$.spec.applications[1].replicas.max")),
-    ).toBe("app.1.replicas");
+      editFieldForError(wire("Project/hello", "$.spec.components[1].replicas.max")),
+    ).toBe("component.1.replicas");
     expect(
-      editFieldForError(wire("Project/hello", "$.spec.applications[2].domains[0]")),
-    ).toBe("app.2.domains");
-    expect(editFieldForError(wire("Project/hello", "$.spec.applications[0].health"))).toBe(
-      "app.0.health",
+      editFieldForError(wire("Project/hello", "$.spec.components[2].domains[0]")),
+    ).toBe("component.2.domains");
+    expect(editFieldForError(wire("Project/hello", "$.spec.components[0].health"))).toBe(
+      "component.0.health",
     );
   });
 
-  it("keeps project env and per-application env apart", () => {
+  it("keeps project env and per-component env apart", () => {
     expect(
       editFieldForError(wire("Project/hello", "$.spec.env.DB_PASSWORD", "secret/literal")),
     ).toBe("project.env.DB_PASSWORD");
     expect(
       editFieldForError(
-        wire("Project/hello", "$.spec.applications[1].env.DB_PASSWORD", "secret/literal"),
+        wire("Project/hello", "$.spec.components[1].env.DB_PASSWORD", "secret/literal"),
       ),
-    ).toBe("app.1.env.DB_PASSWORD");
+    ).toBe("component.1.env.DB_PASSWORD");
   });
 
   it("names the environment a namespace error belongs to", () => {
@@ -392,19 +409,19 @@ describe("editFieldForError", () => {
 
   it("sends a path no input owns to the general panel", () => {
     const mapped = mapEditErrors([
-      wire("Project/hello", "$.spec.applications[0].name"),
+      wire("Project/hello", "$.spec.components[0].name"),
       wire("Project/hello", "$.spec.overlays[0].patch"),
-      wire("Project/hello", "$.spec.applications[1].port"),
+      wire("Project/hello", "$.spec.components[1].port"),
     ]);
     expect(mapped.general).toHaveLength(2);
-    expect([...mapped.byField.keys()]).toEqual(["app.1.port"]);
+    expect([...mapped.byField.keys()]).toEqual(["component.1.port"]);
   });
 
-  it("points a missing image source at the application that has none", () => {
+  it("points a missing image source at the component that has none", () => {
     expect(
       editFieldForError(
-        wire("Project/hello", "$.spec.applications[1]", "semantic/no-image-source"),
+        wire("Project/hello", "$.spec.components[1]", "semantic/no-image-source"),
       ),
-    ).toBe("app.1.image");
+    ).toBe("component.1.image");
   });
 });

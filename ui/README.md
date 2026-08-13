@@ -43,7 +43,7 @@ a deploy or a log tail is a link that keeps working.
 | Route | What it does | RPCs |
 | --- | --- | --- |
 | `/apps` | One card per (project, environment): phase pill, revision, cause, live/degraded counts | `ListSpecs`, then one `DeployService.Status` per card |
-| `/apps/new` | Create an application: three fields, a rendered preview, then the store | `PutSpec` at `RENDER`, then with an idempotency key |
+| `/apps/new` | Create a component: three fields, a rendered preview, then the store | `PutSpec` at `RENDER`, then with an idempotency key |
 | `/apps/:project` | Environment tabs with status, workload verdicts and the stored documents; buttons into the four flows | `GetSpec`, `Status` |
 | `/apps/:project/edit` | Edit the stored spec: a form tab and a raw YAML tab, a diff before saving, an optimistic-concurrency save | `GetSpec`, `PutSpec` at `RENDER` then for real, `Diff` |
 | `/apps/:project/:env/deploy` | Preview (render dry-run) then a confirm that streams the deployment live | `Deploy` at `RENDER`, then at `NONE`; optional `Diff` at `SERVER` |
@@ -104,7 +104,7 @@ stores. Three things about it are load-bearing:
   the cases.
 - **It owns the map back from JSONPaths to inputs.** `PutSpec` at `RENDER`
   answers with `kelson.v1alpha1.Error`s carrying `field` paths, and the builder
-  is what decided the port lands at `$.spec.applications[0].port`, so
+  is what decided the port lands at `$.spec.components[0].port`, so
   `fieldForError` lives beside it. `resource` separates the two documents,
   which share paths. Anything unrecognised goes to `ErrorPanel` whole — a rule
   the form does not model still has to reach the reader with its code, its
@@ -138,7 +138,7 @@ a document the UI can rebuild byte-identically**:
 
 Step 3 is a **total** guard, not a heuristic, and that is what makes so simple a
 strategy honest: anything the parser fails to capture — a comment, a key order,
-a `services:` block, an anchor — is missing from the rebuild and shows up as a
+a data component, an anchor — is missing from the rebuild and shows up as a
 byte difference. There is no path where the module drops something *and* still
 claims the document is editable. The reader is never asked to trust the parser;
 they are shown its output compared against their own bytes.

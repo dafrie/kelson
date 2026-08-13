@@ -68,7 +68,7 @@ func (v *validator) domain(field, s string) {
 // envMap validates one env map: variable names, secret literals (ADR-0009) and
 // service bindings. Passing services nil checks a binding's shape only, for the
 // Environment pass whose targets are re-checked against the Project later.
-func (v *validator) envMap(field string, env map[string]EnvValue, services map[string]Service) {
+func (v *validator) envMap(field string, env map[string]EnvValue, services map[string]Component) {
 	keys := make([]string, 0, len(env))
 	for k := range env {
 		keys = append(keys, k)
@@ -96,28 +96,34 @@ func (v *validator) envMap(field string, env map[string]EnvValue, services map[s
 	}
 }
 
-func (v *validator) serviceRef(field string, b *ServiceBinding, services map[string]Service) {
+// serviceRef checks a binding against the Project's data components. `services`
+// holds only those: binding to a worker is as wrong as binding to a name
+// nothing declares, and the remediation says which names are bindable.
+func (v *validator) serviceRef(field string, b *ServiceBinding, services map[string]Component) {
 	svc, ok := services[b.Service]
 	if !ok {
 		names := make([]string, 0, len(services))
 		for n := range services {
 			names = append(names, n)
 		}
+		slices.Sort(names)
 		v.err(ErrUnknownService, field+".from.service",
-			fmt.Sprintf("service %q is not declared in the Project", b.Service),
-			fmt.Sprintf("declare it under spec.services, or use one of: %s", strings.Join(names, ", ")))
+			fmt.Sprintf("service %q is not a data component of the Project", b.Service),
+			fmt.Sprintf("declare it under spec.components with kind: postgres or kind: valkey, or bind to one of: %s",
+				strings.Join(names, ", ")))
 		return
 	}
+	kind := svc.EffectiveKind()
 	if b.Key == "" {
 		v.err(ErrMissingRequired, field+".from.key",
 			"binding key is required",
-			"valid keys for "+svc.Type+": "+strings.Join(ServiceKeys[svc.Type], ", "))
+			"valid keys for "+string(kind)+": "+strings.Join(ServiceKeys[kind], ", "))
 		return
 	}
-	if !slices.Contains(ServiceKeys[svc.Type], b.Key) {
+	if !slices.Contains(ServiceKeys[kind], b.Key) {
 		v.err(ErrUnknownServiceKey, field+".from.key",
-			fmt.Sprintf("key %q does not exist for service type %q", b.Key, svc.Type),
-			"valid keys for "+svc.Type+": "+strings.Join(ServiceKeys[svc.Type], ", "))
+			fmt.Sprintf("key %q does not exist for component kind %q", b.Key, kind),
+			"valid keys for "+string(kind)+": "+strings.Join(ServiceKeys[kind], ", "))
 	}
 }
 
@@ -131,7 +137,8 @@ func (v *validator) serviceRef(field string, b *ServiceBinding, services map[str
 // is the answer for the credential this check catches most often, a database
 // URL. Everything else is still an overlay against a Secret the user manages.
 const secretRemediation = "the spec carries references, never values (ADR-0009). For a managed service, declare it " +
-	"under spec.services and bind: {from: {service: <name>, key: uri}} — kelson renders a secretKeyRef against the " +
+	"under spec.components with kind: postgres and bind: {from: {service: <name>, key: uri}} — kelson renders a " +
+	"secretKeyRef against the " +
 	"credentials the operator generates. For anything else kelson cannot hold the value yet (there is no command to " +
 	"set one, milestone M8 · Secrets): remove this variable and inject it with an overlay patch (spec.overlays) that " +
 	"references a Secret you manage."
@@ -394,54 +401,229 @@ func (v *validator) delivery(field string, d *Delivery) {
 	}
 }
 
-func (v *validator) applications(field string, apps []Application, services map[string]Service, projectImage string) {
+// components validates the one leaf list of ADR-0014. The kind decides which
+// half of the rules a component is held to; a field belonging to the other
+// half is an error, never a no-op (issue #141).
+func (v *validator) components(field string, comps []Component, services map[string]Component, projectImage string) {
 	seen := map[string]int{}
-	for i, a := range apps {
+	for i, c := range comps {
 		f := fmt.Sprintf("%s[%d]", field, i)
-		v.name(f+".name", a.Name, "application")
-		if prev, dup := seen[a.Name]; dup {
+		v.name(f+".name", c.Name, "component")
+		if prev, dup := seen[c.Name]; dup {
 			v.err(ErrDuplicateName, f+".name",
-				fmt.Sprintf("duplicate application name %q (first at applications[%d])", a.Name, prev),
-				"application names must be unique within the Project")
+				fmt.Sprintf("duplicate component name %q (first at components[%d])", c.Name, prev),
+				"component names must be unique within the Project; they name a workload or a database in one namespace")
 		}
-		seen[a.Name] = i
+		seen[c.Name] = i
 
-		if a.Port != 0 && (a.Port < 1 || a.Port > 65535) {
-			v.err(ErrOutOfRange, f+".port",
-				fmt.Sprintf("port must be 1-65535, got %d", a.Port),
-				"set a valid TCP port, or omit port for a worker")
+		kind, ok := v.componentKind(f, c)
+		if !ok {
+			continue // nothing below is meaningful against a kind we cannot name
 		}
-		if a.Health != "" && !strings.HasPrefix(a.Health, "/") {
-			v.err(ErrInvalidFormat, f+".health",
-				fmt.Sprintf("health path %q must start with /", a.Health),
-				"use a URL path such as /healthz")
+		if kind.IsData() {
+			v.dataComponent(f, c, kind)
+			continue
 		}
-		for j, d := range a.Domains {
-			v.domain(fmt.Sprintf("%s.domains[%d]", f, j), d)
-		}
-		if a.Schedule != "" {
-			v.cron(f+".schedule", a.Schedule)
-			switch {
-			case a.Port != 0:
-				v.err(ErrMutuallyExclusive, f,
-					fmt.Sprintf("application %q sets both schedule and port", a.Name),
-					"split it into two applications: a cron application with schedule, and a service with port")
-			case len(a.Domains) > 0 || a.Health != "":
-				v.err(ErrMutuallyExclusive, f,
-					fmt.Sprintf("cron application %q sets domains or health", a.Name),
-					"cron jobs are not routed or health-checked; remove domains/health")
-			}
-		}
-		v.replicas(f+".replicas", a.Replicas)
-		v.resources(f+".resources", a.Resources)
-		v.envMap(f+".env", a.Env, services)
+		v.workloadComponent(f, c, kind, services, projectImage)
+	}
+}
 
-		hasImage := a.Image != "" || projectImage != ""
-		if !hasImage {
-			v.err(ErrNoImageSource, f,
-				fmt.Sprintf("application %q has no image source", a.Name),
-				"set image on the application or the Project, or configure spec.source + spec.build with a strategy other than none")
+// componentKind resolves a component's kind and reports the ways a written
+// `kind:` can be wrong: not a member of the enum, or contradicting the shape
+// the component actually has. An explicit kind is allowed to *state* what a
+// component is; it is not allowed to change it silently.
+func (v *validator) componentKind(field string, c Component) (ComponentKind, bool) {
+	if c.Kind == "" {
+		return c.DerivedKind(), true
+	}
+	if !c.Kind.Valid() {
+		v.err(ErrInvalidEnum, field+".kind",
+			fmt.Sprintf("unknown component kind %q", c.Kind),
+			"valid kinds: "+strings.Join(kindNames(), ", ")+" — new kinds land via ADR, not ad hoc strings")
+		return "", false
+	}
+	if c.Kind.IsData() {
+		return c.Kind, true
+	}
+	if c.Port != 0 && c.Schedule != "" {
+		// The shape contradicts itself; workloadComponent reports that, and a
+		// second complaint about the kind would only obscure it.
+		return c.Kind, true
+	}
+	derived := c.DerivedKind()
+	want := c.Kind
+	if c.Kind == ComponentAgent {
+		// An agent is worker-shaped: it has an image and no inbound traffic.
+		want = ComponentWorker
+	}
+	if derived != want {
+		v.err(ErrMutuallyExclusive, field+".kind",
+			fmt.Sprintf("component %q declares kind %q but its shape is %q", c.Name, c.Kind, derived),
+			kindShapeRemediation(c.Kind))
+		return "", false
+	}
+	return c.Kind, true
+}
+
+// kindShapeRemediation names the field that would make a written kind true.
+func kindShapeRemediation(kind ComponentKind) string {
+	switch kind {
+	case ComponentService:
+		return "a service is the component that serves traffic: set port, or drop kind: and let the shape derive it"
+	case ComponentCron:
+		return "a cron component is defined by its schedule: set schedule, or drop kind:"
+	case ComponentWorker:
+		return "a worker has neither port nor schedule: remove them, or drop kind: and let the shape derive it"
+	case ComponentAgent:
+		return "an agent is worker-shaped: remove port and schedule. An agent that also serves traffic is two components"
+	}
+	return "drop kind: and let the shape derive it"
+}
+
+func kindNames() []string {
+	out := make([]string, 0, len(ComponentKinds))
+	for _, k := range ComponentKinds {
+		out = append(out, string(k))
+	}
+	return out
+}
+
+// dataComponent validates a postgres/valkey component: its preset, and the
+// absence of everything that only means something for a workload.
+func (v *validator) dataComponent(field string, c Component, kind ComponentKind) {
+	switch c.Preset {
+	case "", PresetShared, PresetSmall, PresetHASmall, PresetHAMedium, PresetBranch:
+	default:
+		v.err(ErrInvalidEnum, field+".preset",
+			fmt.Sprintf("unknown preset %q", c.Preset),
+			"valid presets: shared, small, ha-small, ha-medium, branch (docs/data-services.md, ADR-0007)")
+	}
+	for _, set := range workloadOnlyFields(c) {
+		v.err(ErrMutuallyExclusive, field+"."+set,
+			fmt.Sprintf("component %q has kind %q, which renders a managed data service, but sets %s", c.Name, kind, set),
+			"remove "+set+"; a data component's whole configuration is its preset, because its topology belongs to the "+
+				"operator (ADR-0005). Bind a workload to it with {from: {service: "+c.Name+", key: uri}}")
+	}
+}
+
+// workloadOnlyFields lists the workload fields a component actually sets, in
+// spec order, so a data component's errors name every offending key at once.
+func workloadOnlyFields(c Component) []string {
+	var out []string
+	if c.Image != "" {
+		out = append(out, "image")
+	}
+	if len(c.Command) > 0 {
+		out = append(out, "command")
+	}
+	if c.Port != 0 {
+		out = append(out, "port")
+	}
+	if c.Health != "" {
+		out = append(out, "health")
+	}
+	if c.Schedule != "" {
+		out = append(out, "schedule")
+	}
+	if len(c.Domains) > 0 {
+		out = append(out, "domains")
+	}
+	if c.Replicas != nil {
+		out = append(out, "replicas")
+	}
+	if c.Resources != nil {
+		out = append(out, "resources")
+	}
+	if len(c.Env) > 0 {
+		out = append(out, "env")
+	}
+	if len(c.Tools) > 0 {
+		out = append(out, "tools")
+	}
+	return out
+}
+
+// workloadComponent validates a service/worker/cron/agent component.
+func (v *validator) workloadComponent(
+	field string,
+	c Component,
+	kind ComponentKind,
+	services map[string]Component,
+	projectImage string,
+) {
+	if c.Port != 0 && (c.Port < 1 || c.Port > 65535) {
+		v.err(ErrOutOfRange, field+".port",
+			fmt.Sprintf("port must be 1-65535, got %d", c.Port),
+			"set a valid TCP port, or omit port for a worker")
+	}
+	if c.Health != "" && !strings.HasPrefix(c.Health, "/") {
+		v.err(ErrInvalidFormat, field+".health",
+			fmt.Sprintf("health path %q must start with /", c.Health),
+			"use a URL path such as /healthz")
+	}
+	for j, d := range c.Domains {
+		v.domain(fmt.Sprintf("%s.domains[%d]", field, j), d)
+	}
+	if c.Schedule != "" {
+		v.cron(field+".schedule", c.Schedule)
+		switch {
+		case c.Port != 0:
+			v.err(ErrMutuallyExclusive, field,
+				fmt.Sprintf("component %q sets both schedule and port", c.Name),
+				"split it into two components: a cron component with schedule, and a service with port")
+		case len(c.Domains) > 0 || c.Health != "":
+			v.err(ErrMutuallyExclusive, field,
+				fmt.Sprintf("cron component %q sets domains or health", c.Name),
+				"cron jobs are not routed or health-checked; remove domains/health")
 		}
+	}
+	if c.Preset != "" {
+		v.err(ErrMutuallyExclusive, field+".preset",
+			fmt.Sprintf("component %q has kind %q, and a preset is the topology of a data component", c.Name, kind),
+			"remove preset, or set kind: postgres if this was meant to be a database")
+	}
+	if len(c.Tools) > 0 {
+		if kind != ComponentAgent {
+			v.err(ErrMutuallyExclusive, field+".tools",
+				fmt.Sprintf("component %q has kind %q, and tools is the capability policy of an agent", c.Name, kind),
+				"remove tools, or set kind: agent — a tool allow-list on anything else attaches to nothing (ADR-0014)")
+		} else {
+			v.tools(field+".tools", c.Tools)
+			v.gate("$.spec.components[].tools", field+".tools")
+		}
+	}
+	v.replicas(field+".replicas", c.Replicas)
+	v.resources(field+".resources", c.Resources)
+	v.envMap(field+".env", c.Env, services)
+
+	if c.Image == "" && projectImage == "" {
+		v.err(ErrNoImageSource, field,
+			fmt.Sprintf("component %q has no image source", c.Name),
+			"set image on the component or the Project, or configure spec.source + spec.build with a strategy other than none")
+	}
+}
+
+// tools validates an agent's tool allow-list. It runs even though the field is
+// gated: the gate is about what kelson implements, not about what the author
+// wrote, and an author fixing the shape of a list should not discover a second
+// problem in it after #75 lands.
+func (v *validator) tools(field string, tools []string) {
+	seen := map[string]int{}
+	for i, t := range tools {
+		f := fmt.Sprintf("%s[%d]", field, i)
+		if strings.TrimSpace(t) == "" {
+			v.err(ErrMissingRequired, f,
+				"a tool name is required",
+				"name the tool the agent may call, e.g. search; remove the entry if it is a leftover")
+			continue
+		}
+		if prev, dup := seen[t]; dup {
+			v.err(ErrDuplicateName, f,
+				fmt.Sprintf("duplicate tool %q (first at %s[%d])", t, field, prev),
+				"a tool is allowed or it is not; listing it twice says nothing more")
+			continue
+		}
+		seen[t] = i
 	}
 }
 
@@ -449,41 +631,15 @@ func validateProject(p *Project, v *validator) {
 	v.name("$.metadata.name", p.Metadata.Name, "project")
 
 	s := &p.Spec
-	if len(s.Applications) == 0 {
-		v.err(ErrMissingRequired, "$.spec.applications",
-			"a Project declares at least one application",
-			"add spec.applications with at least one entry; a cron or worker counts")
+	if len(s.Components) == 0 {
+		v.err(ErrMissingRequired, "$.spec.components",
+			"a Project declares at least one component",
+			"add spec.components with at least one entry; a cron, a worker or a database counts")
 	}
 
-	services := map[string]Service{}
-	for i, svc := range s.Services {
-		f := fmt.Sprintf("$.spec.services[%d]", i)
-		v.name(f+".name", svc.Name, "service")
-		switch svc.Type {
-		case "postgres", "valkey":
-		case "":
-			v.err(ErrMissingRequired, f+".type",
-				fmt.Sprintf("service %q has no type", svc.Name),
-				"valid types: postgres, valkey — new engines land via ADR, not ad hoc strings")
-		default:
-			v.err(ErrInvalidEnum, f+".type",
-				fmt.Sprintf("unknown service type %q", svc.Type),
-				"valid types: postgres, valkey")
-		}
-		switch svc.Preset {
-		case "", PresetShared, PresetSmall, PresetHASmall, PresetHAMedium, PresetBranch:
-		default:
-			v.err(ErrInvalidEnum, f+".preset",
-				fmt.Sprintf("unknown preset %q", svc.Preset),
-				"valid presets: shared, small, ha-small, ha-medium, branch (docs/architecture.md, ADR-0007)")
-		}
-		if _, dup := services[svc.Name]; dup {
-			v.err(ErrDuplicateName, f+".name",
-				fmt.Sprintf("duplicate service name %q", svc.Name),
-				"service names must be unique within the Project")
-		}
-		services[svc.Name] = svc
-	}
+	// Bindable names come first: an env map anywhere in the document may
+	// reference a data component declared further down the same list.
+	services := dataComponents(s.Components)
 
 	if s.Source != nil && s.Source.Git == "" {
 		v.err(ErrMissingRequired, "$.spec.source.git",
@@ -505,7 +661,7 @@ func validateProject(p *Project, v *validator) {
 	}
 
 	v.envMap("$.spec.env", s.Env, services)
-	v.applications("$.spec.applications", s.Applications, services, projectImage)
+	v.components("$.spec.components", s.Components, services, projectImage)
 
 	if d := s.Defaults; d != nil {
 		switch d.DeliveryMode {
@@ -566,32 +722,20 @@ func validateEnvironmentShape(e *Environment, v *validator) {
 	v.secrets("$.spec.secrets", s.Secrets)
 
 	seen := map[string]int{}
-	for i, ov := range s.Applications {
-		f := fmt.Sprintf("$.spec.applications[%d]", i)
-		v.name(f+".name", ov.Name, "application")
+	for i, ov := range s.Components {
+		f := fmt.Sprintf("$.spec.components[%d]", i)
+		v.name(f+".name", ov.Name, "component")
 		if prev, dup := seen[ov.Name]; dup {
 			v.err(ErrDuplicateName, f+".name",
-				fmt.Sprintf("duplicate override for application %q (first at applications[%d])", ov.Name, prev),
-				"one override block per application")
+				fmt.Sprintf("duplicate override for component %q (first at components[%d])", ov.Name, prev),
+				"one override block per component")
 		}
 		seen[ov.Name] = i
 		v.replicas(f+".replicas", ov.Replicas)
 		v.resources(f+".resources", ov.Resources)
 		v.envMap(f+".env", ov.Env, nil) // binding targets re-checked against the Project in ValidateEnvironment
-	}
-
-	seenSvc := map[string]int{}
-	for i, ov := range s.Services {
-		f := fmt.Sprintf("$.spec.services[%d]", i)
-		v.name(f+".name", ov.Name, "service")
-		if prev, dup := seenSvc[ov.Name]; dup {
-			v.err(ErrDuplicateName, f+".name",
-				fmt.Sprintf("duplicate override for service %q (first at services[%d])", ov.Name, prev),
-				"one override block per service")
-		}
-		seenSvc[ov.Name] = i
 		switch ov.Preset {
-		case PresetShared, PresetSmall, PresetHASmall, PresetHAMedium, PresetBranch:
+		case "", PresetShared, PresetSmall, PresetHASmall, PresetHAMedium, PresetBranch:
 		default:
 			v.err(ErrInvalidEnum, f+".preset",
 				fmt.Sprintf("unknown preset %q", ov.Preset),
@@ -605,13 +749,59 @@ func validateEnvironmentShape(e *Environment, v *validator) {
 }
 
 // validateServiceRefs re-checks an environment's binding targets against the
-// Project's declared services.
-func validateServiceRefs(e *Environment, services map[string]Service, v *validator) {
-	for i, ov := range e.Spec.Applications {
+// Project's data components.
+func validateServiceRefs(e *Environment, services map[string]Component, v *validator) {
+	for i, ov := range e.Spec.Components {
 		// No canonical path: this is a second pass over env maps the shape
 		// check already walked, and the #141 gate fired there.
-		v.envMap(fmt.Sprintf("$.spec.applications[%d].env", i), ov.Env, services)
+		v.envMap(fmt.Sprintf("$.spec.components[%d].env", i), ov.Env, services)
 	}
+}
+
+// overrideShape holds an Environment override to the half of the model its
+// target belongs to. Which half that is only becomes knowable once the Project
+// is in hand, so this is a cross-document check even though it reads like a
+// shape one.
+func (v *validator) overrideShape(field string, ov ComponentOverride, kind ComponentKind) {
+	if !kind.IsData() {
+		if ov.Preset != "" {
+			v.err(ErrMutuallyExclusive, field+".preset",
+				fmt.Sprintf("component %q has kind %q, and a preset is the topology of a data component", ov.Name, kind),
+				"remove preset; a workload is overridden with replicas, resources and env")
+		}
+		return
+	}
+	var set []string
+	if ov.Replicas != nil {
+		set = append(set, "replicas")
+	}
+	if ov.Resources != nil {
+		set = append(set, "resources")
+	}
+	if len(ov.Env) > 0 {
+		set = append(set, "env")
+	}
+	for _, f := range set {
+		v.err(ErrMutuallyExclusive, field+"."+f,
+			fmt.Sprintf("component %q has kind %q, which renders a managed data service, but the override sets %s", ov.Name, kind, f),
+			"remove "+f+"; a data component is overridden per environment with preset only (rule P5)")
+	}
+	if ov.Preset == "" {
+		v.err(ErrMissingRequired, field+".preset",
+			fmt.Sprintf("the override for data component %q sets nothing", ov.Name),
+			"set preset to the topology this environment wants (shared, small, ha-small, ha-medium, branch), or remove the block")
+	}
+}
+
+// dataComponents indexes the components a binding may target, by name.
+func dataComponents(comps []Component) map[string]Component {
+	out := map[string]Component{}
+	for _, c := range comps {
+		if c.EffectiveKind().IsData() {
+			out[c.Name] = c
+		}
+	}
+	return out
 }
 
 // ValidateEnvironment validates an Environment against its Project: shape,
@@ -626,35 +816,30 @@ func ValidateEnvironment(e *Environment, p *Project) Errors {
 		return v.errs
 	}
 	if e.Spec.Project != "" && e.Spec.Project != p.Metadata.Name {
-		v.err(ErrUnknownApplication, "$.spec.project",
+		v.err(ErrUnknownComponent, "$.spec.project",
 			fmt.Sprintf("environment targets project %q but was validated against project %q", e.Spec.Project, p.Metadata.Name),
 			fmt.Sprintf("set spec.project to %q, or validate against the %q project", p.Metadata.Name, e.Spec.Project))
 	}
 
-	services := map[string]Service{}
-	for _, svc := range p.Spec.Services {
-		services[svc.Name] = svc
-	}
-	apps := map[string]bool{}
-	for _, a := range p.Spec.Applications {
-		apps[a.Name] = true
+	services := dataComponents(p.Spec.Components)
+	kinds := map[string]ComponentKind{}
+	for _, c := range p.Spec.Components {
+		kinds[c.Name] = c.EffectiveKind()
 	}
 
-	for i, ov := range e.Spec.Applications {
-		if ov.Name != "" && !apps[ov.Name] {
-			v.err(ErrUnknownApplication, fmt.Sprintf("$.spec.applications[%d].name", i),
-				fmt.Sprintf("no application %q in project %q", ov.Name, p.Metadata.Name),
-				"override an application the project declares, or add it to the project")
+	for i, ov := range e.Spec.Components {
+		if ov.Name == "" {
+			continue
 		}
-	}
-	for i, ov := range e.Spec.Services {
-		if ov.Name != "" {
-			if _, ok := services[ov.Name]; !ok {
-				v.err(ErrUnknownService, fmt.Sprintf("$.spec.services[%d].name", i),
-					fmt.Sprintf("no service %q in project %q", ov.Name, p.Metadata.Name),
-					"override a service the project declares, or add it to the project")
-			}
+		f := fmt.Sprintf("$.spec.components[%d]", i)
+		kind, ok := kinds[ov.Name]
+		if !ok {
+			v.err(ErrUnknownComponent, f+".name",
+				fmt.Sprintf("no component %q in project %q", ov.Name, p.Metadata.Name),
+				"override a component the project declares, or add it to the project")
+			continue
 		}
+		v.overrideShape(f, ov, kind)
 	}
 	validateServiceRefs(e, services, &v)
 

@@ -5,7 +5,7 @@ metadata:
 spec:
   image: ghcr.io/acme/streaming:0.9.1
   # The cache service and its REDIS_URL binding are gated until M9 (#141).
-  applications:
+  components:
     - name: transcoder
       port: 8443
       domains: [stream.acme.com]
@@ -30,6 +30,6 @@ spec:
     git:
       repo: git@github.com:acme/streaming-deploy.git
       path: streaming/production
-  applications:
+  components:
     - name: transcoder
       replicas: { min: 2, max: 8 }

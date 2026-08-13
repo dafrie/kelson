@@ -4,7 +4,7 @@
 # never renders a Secret of its own — the spec carries references, never values.
 #
 # It exercises both scopes a binding can be written at (Project env, shared by
-# every application; Application env), all three workload kinds, and the key
+# every component; component env), all three workload kinds, and the key
 # mapping: kelson's `database` key is CloudNativePG's `dbname`, which is the
 # only one of the six where the two vocabularies differ.
 apiVersion: kelson.dev/v1alpha1
@@ -14,16 +14,15 @@ metadata:
 spec:
   image: ghcr.io/acme/checkout:1.4.2
 
-  services:
-    - name: db
-      type: postgres
-      preset: small
-
   env:
     LOG_LEVEL: info
     DATABASE_URL: { from: { service: db, key: uri } }
 
-  applications:
+  components:
+    - name: db
+      kind: postgres
+      preset: small
+
     - name: web
       port: 8080
       env:

@@ -28,7 +28,7 @@ metadata:
 spec:
   image: ghcr.io/acme/hello:1.4.2
 
-  applications:
+  components:
     - name: web
       port: 8080
 `
@@ -67,7 +67,7 @@ spec:
     LOG_LEVEL: info
     PORT: "3000"
 
-  applications:
+  components:
     - name: web
       port: 8080
       health: /healthz

@@ -23,7 +23,7 @@ spec:
   # (SOPS-encrypted in Git) with M8. kelson rejects unimplemented fields rather
   # than ignoring them (#141).
 
-  applications:
+  components:
     - name: web
       replicas: { min: 3, max: 20 }
       resources:

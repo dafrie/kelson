@@ -8,7 +8,7 @@ metadata:
     kelson.dev/environment: production
     kelson.dev/project: checkout
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:eab93cfe641f7bc1221d1fed8245114c56e76771e2934e2f9a21c453c4196a77
     kelson.dev/namespace-ownership: declared
 ---
@@ -23,7 +23,7 @@ metadata:
     kelson.dev/environment: production
     kelson.dev/project: checkout
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:aa261581aa25ed6866ddeda39ed64be4da7bfff997ad1ec2ad356cc603e7f85d
 ---
 apiVersion: v1
@@ -37,7 +37,7 @@ metadata:
     kelson.dev/environment: production
     kelson.dev/project: checkout
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:aa261581aa25ed6866ddeda39ed64be4da7bfff997ad1ec2ad356cc603e7f85d
 spec:
   selector:
@@ -59,7 +59,7 @@ metadata:
     kelson.dev/environment: production
     kelson.dev/project: checkout
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:aa261581aa25ed6866ddeda39ed64be4da7bfff997ad1ec2ad356cc603e7f85d
 spec:
   replicas: 1
@@ -94,6 +94,20 @@ spec:
               path: /healthz
               port: 8080
 ---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: worker
+  namespace: checkout-production
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: worker
+    kelson.dev/environment: production
+    kelson.dev/project: checkout
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:f6ccc944f373ddb5090151de07127ddaf4a10b32f377053e67ec9edec361c5ec
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -105,7 +119,7 @@ metadata:
     kelson.dev/environment: production
     kelson.dev/project: checkout
   annotations:
-    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/renderer-version: 0.2.0
     kelson.dev/spec-hash: sha256:f6ccc944f373ddb5090151de07127ddaf4a10b32f377053e67ec9edec361c5ec
 spec:
   replicas: 1
@@ -121,6 +135,7 @@ spec:
         kelson.dev/environment: production
         kelson.dev/project: checkout
     spec:
+      serviceAccountName: worker
       containers:
         - name: worker
           image: ghcr.io/acme/checkout@sha256:9f6ad2c1b4d5e8073a1c2f4b6d8e0a1c3e5f7091b2d4c6e8a0f2b4d6c8e0a2f4
