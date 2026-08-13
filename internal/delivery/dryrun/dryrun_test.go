@@ -94,6 +94,7 @@ var testKinds = []schema.GroupVersionKind{
 	{Version: "v1", Kind: "Namespace"},
 	{Version: "v1", Kind: "Service"},
 	{Version: "v1", Kind: "ConfigMap"},
+	{Version: "v1", Kind: "Secret"},
 	{Group: "apps", Version: "v1", Kind: "Deployment"},
 	{Group: "batch", Version: "v1", Kind: "CronJob"},
 	{Group: "apiextensions.k8s.io", Version: "v1", Kind: "CustomResourceDefinition"},

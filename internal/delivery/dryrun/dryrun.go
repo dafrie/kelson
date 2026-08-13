@@ -130,7 +130,11 @@ func (d *DryRun) Preview(ctx context.Context, set delivery.ManifestSet) (*diff.D
 
 	out.Violations = append(out.Violations, audit...)
 	out.Summary = summarize(out)
-	return out, nil
+	// L2 is the one preview level that reads live objects back, so it is the one
+	// that can pull a Secret's stored content into a diff even for a spec that
+	// never held a value (issue #117). The L1 engine redacts inside diff.Between;
+	// this engine builds its Diff itself and so must say so itself.
+	return diff.Redact(out), nil
 }
 
 // findings is what one resource's evaluation contributes to the preview
@@ -316,7 +320,7 @@ func (d *DryRun) degraded(ctx context.Context, _ diff.Level, set delivery.Manife
 		out.Resources = append(out.Resources, *rd)
 	}
 	out.Summary = summarize(out)
-	return out
+	return diff.Redact(out)
 }
 
 // permissionReason turns an RBAC rejection into a human-readable reason naming
