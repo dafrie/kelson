@@ -47,11 +47,6 @@ const (
 	// ErrBindingUnknownKey: an env binding names a key kelson does not map to
 	// a key of the credential Secret the operator generates.
 	ErrBindingUnknownKey = "render/binding-unknown-key"
-	// ErrBindingUnavailable: the service renders, but nothing yet produces a
-	// Secret this workload could reference — the `shared` preset, whose
-	// credentials live in the shared cluster's namespace (issue #93). Emitting
-	// a secretKeyRef to a Secret nothing creates is what issue #141 forbids.
-	ErrBindingUnavailable = "render/binding-unavailable"
 	// ErrInternal: an invariant failed inside the renderer itself.
 	ErrInternal = "render/internal"
 )
