@@ -1,6 +1,10 @@
 package support
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/dafrie/kelson/internal/clusterprofile"
+)
 
 // TestParseVersion exercises the ragged version space the check actually sees:
 // distro suffixes, a bare major.minor, pre-releases and casing. Anything the
@@ -90,6 +94,30 @@ func TestCompareVersion(t *testing.T) {
 			if inv := b.compare(a); inv != -c.want {
 				t.Errorf("compare(%q, %q) = %d, want %d (antisymmetry)", c.b, c.a, inv, -c.want)
 			}
+		}
+	}
+}
+
+// TestAtLeast covers the exported floor comparison the CNPG capability
+// judgement uses (issue #90): the three answers, including the Unknown that an
+// unreadable version must produce rather than a guessed pass or fail.
+func TestAtLeast(t *testing.T) {
+	cases := []struct {
+		found, minimum string
+		want           clusterprofile.Outcome
+	}{
+		{"1.26.0", "1.25.0", clusterprofile.OutcomeYes},
+		{"1.25.0", "1.25.0", clusterprofile.OutcomeYes},
+		{"v1.30.1", "1.26.0", clusterprofile.OutcomeYes},
+		{"1.24.2", "1.25.0", clusterprofile.OutcomeNo},
+		{"1.19.1", "1.20.0", clusterprofile.OutcomeNo},
+		{"", "1.25.0", clusterprofile.OutcomeUnknown},
+		{"latest", "1.25.0", clusterprofile.OutcomeUnknown},
+		{"1.26.0", "nonsense", clusterprofile.OutcomeUnknown},
+	}
+	for _, c := range cases {
+		if got := AtLeast(c.found, c.minimum); got != c.want {
+			t.Errorf("AtLeast(%q, %q) = %s, want %s", c.found, c.minimum, got, c.want)
 		}
 	}
 }

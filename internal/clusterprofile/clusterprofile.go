@@ -81,8 +81,15 @@ type ClusterProfile struct {
 	// time rather than a surprise at branch time.
 	StorageClasses []StorageClass `yaml:"storageClasses,omitempty" json:"storageClasses,omitempty"`
 
-	CloudNativePG *Component `yaml:"cnpg,omitempty" json:"cnpg,omitempty"`
-	Flux          *Component `yaml:"flux,omitempty" json:"flux,omitempty"`
+	// CloudNativePG is the CNPG operator: the prerequisite for every managed
+	// `type: postgres` service (ADR-0005). It is not a bare Component because
+	// which *preset* a cluster can host depends on more than presence — the
+	// `shared` preset needs the Database CRD that arrived in CNPG 1.25 — so the
+	// profile records the version and the CRDs the API server actually serves
+	// (issue #90).
+	CloudNativePG *CloudNativePG `yaml:"cnpg,omitempty" json:"cnpg,omitempty"`
+
+	Flux *Component `yaml:"flux,omitempty" json:"flux,omitempty"`
 
 	// FluxOperator is flux-operator, which is a separate finding from Flux:
 	// it manages the Flux installation and publishes a FluxReport the delivery
@@ -121,6 +128,58 @@ type Component struct {
 	// Namespace is where the component runs, when that is knowable and
 	// useful to report back to a human.
 	Namespace string `yaml:"namespace,omitempty" json:"namespace,omitempty"`
+}
+
+// CloudNativePG is the detected CNPG operator (issue #90).
+//
+// Presence alone does not answer the question a database service asks. kelson's
+// database rendering is declarative end to end — managed roles for application
+// credentials, the Database CRD for the `shared` preset of ADR-0007, schemas
+// and extensions on that Database — and each of those arrived in a different
+// CNPG release. So the profile records the raw facts (version, namespace, the
+// CRDs the API server actually serves) and leaves the per-capability verdict to
+// internal/clusterprofile/postgres, which is where the version floors live.
+//
+// kelson targets the *latest* CNPG as its baseline (owner decision,
+// 2026-08-13). An older operator is not a global refusal, it is a list of
+// declarative capabilities it cannot serve — which is why this records a
+// version rather than a boolean.
+//
+// Only one CNPG operator can run per cluster: its resources are cluster-scoped
+// and a second install fights the first. A profile that reports CNPG present is
+// therefore an instruction to adopt it, never to install alongside it
+// (ADR-0005).
+type CloudNativePG struct {
+	// Version is the operator version, e.g. 1.25.0, read from the operator
+	// Deployment. Empty means "installed, version unknown" — a real state that
+	// must not be read as too old.
+	Version string `yaml:"version,omitempty" json:"version,omitempty"`
+	// Namespace is where the operator Deployment runs (cnpg-system by default),
+	// so a human told to upgrade it knows where to look.
+	Namespace string `yaml:"namespace,omitempty" json:"namespace,omitempty"`
+	// CRDs are the resources the API server actually serves in the
+	// postgresql.cnpg.io group, as plural resource names: clusters, databases,
+	// poolers, backups. This is the capability as the cluster reports it rather
+	// than as the version implies — the two can disagree when a partial CRD set
+	// was applied, and the served set is the one that will accept a manifest.
+	//
+	// Empty means the served set could not be read; a Gap on "cnpg.crds"
+	// records why. Use [CloudNativePG.ServesCRD] rather than testing the slice,
+	// so "not served" and "not read" stay distinguishable at the call site.
+	CRDs []string `yaml:"crds,omitempty" json:"crds,omitempty"`
+}
+
+// ServesCRD reports whether the API server serves this plural resource in the
+// postgresql.cnpg.io group, e.g. "databases". False when the set was never read
+// — callers that need to tell that from a real absence must check len(CRDs) or
+// the detection Gap first, which is what the postgres judgement does.
+func (c CloudNativePG) ServesCRD(plural string) bool {
+	for _, name := range c.CRDs {
+		if name == plural {
+			return true
+		}
+	}
+	return false
 }
 
 // Kubernetes is the cluster itself.

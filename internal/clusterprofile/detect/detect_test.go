@@ -44,6 +44,7 @@ func detectScheme() *runtime.Scheme {
 	s := runtime.NewScheme()
 	for _, k := range []schema.GroupVersionKind{
 		{Version: "v1", Kind: "Node"},
+		{Group: "apps", Version: "v1", Kind: "Deployment"},
 		{Group: "networking.k8s.io", Version: "v1", Kind: "IngressClass"},
 		{Group: "storage.k8s.io", Version: "v1", Kind: "StorageClass"},
 		{Group: "snapshot.storage.k8s.io", Version: "v1", Kind: "VolumeSnapshotClass"},
@@ -102,7 +103,7 @@ func TestProbeFullCluster(t *testing.T) {
 		resourceList("external-secrets.io/v1"),
 		resourceList("kyverno.io/v1"),
 		resourceList("templates.gatekeeper.sh/v1"),
-		resourceList("postgresql.cnpg.io/v1"),
+		resourceList("postgresql.cnpg.io/v1", "clusters", "clusters/status", "databases", "poolers"),
 		resourceList("source.toolkit.fluxcd.io/v1"),
 		resourceList("fluxcd.controlplane.io/v1"),
 		resourceList("argoproj.io/v1alpha1"),
@@ -127,6 +128,7 @@ func TestProbeFullCluster(t *testing.T) {
 	}))
 	f.seed(t, volumeSnapshotClassGVR, unstruct(schema.GroupVersionKind{Group: "snapshot.storage.k8s.io", Version: "v1", Kind: "VolumeSnapshotClass"}, "gke-snap",
 		map[string]any{"driver": "pd.csi.storage.gke.io"}))
+	f.seed(t, deploymentGVR, cnpgOperatorDeployment("cnpg-system", "ghcr.io/cloudnative-pg/cloudnative-pg:1.26.0", nil))
 
 	prof, err := f.probe(context.Background())
 	if err != nil {
@@ -168,6 +170,12 @@ func TestProbeFullCluster(t *testing.T) {
 	}
 	if prof.CloudNativePG == nil || prof.Flux == nil || prof.ArgoCD == nil || prof.MetricsServer == nil {
 		t.Fatalf("expected cnpg/flux/argocd/metrics present, got %+v", prof)
+	}
+	// issue #90: the version and the served CRDs are the two facts the postgres
+	// judgement needs, and subresources are not CRDs a manifest targets.
+	if cnpg := prof.CloudNativePG; cnpg.Version != "1.26.0" || cnpg.Namespace != "cnpg-system" ||
+		!reflect.DeepEqual(cnpg.CRDs, []string{"clusters", "databases", "poolers"}) {
+		t.Fatalf("cnpg = %+v, want 1.26.0 in cnpg-system serving clusters/databases/poolers", cnpg)
 	}
 	if prof.FluxOperator == nil {
 		t.Fatalf("expected flux-operator present, got %+v", prof.FluxOperator)
@@ -264,6 +272,157 @@ func TestProbeForbiddenStorageKeepsSnapshotGap(t *testing.T) {
 	// than being guessed to something.
 	if len(prof.StorageClasses) != 1 || prof.StorageClasses[0].VolumeSnapshotClass != "" {
 		t.Fatalf("storage classes = %+v", prof.StorageClasses)
+	}
+}
+
+// --- CloudNativePG: version and served CRDs (issue #90) -----------------------
+
+// cnpgOperatorDeployment builds an operator Deployment shaped like both
+// supported installs: the upstream manifest and the Helm chart label it
+// app.kubernetes.io/name=cloudnative-pg, and the chart additionally carries an
+// app.kubernetes.io/version label.
+func cnpgOperatorDeployment(namespace, image string, extraLabels map[string]string) *unstructured.Unstructured {
+	labels := map[string]any{"app.kubernetes.io/name": "cloudnative-pg"}
+	for k, v := range extraLabels {
+		labels[k] = v
+	}
+	d := unstruct(schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"}, "cnpg-controller-manager", map[string]any{
+		"metadata": map[string]any{"namespace": namespace, "labels": labels},
+		"spec": map[string]any{"template": map[string]any{"spec": map[string]any{
+			"containers": []any{
+				map[string]any{"name": "manager", "image": image},
+			},
+		}}},
+	})
+	d.SetNamespace(namespace)
+	return d
+}
+
+func cnpgProber(t *testing.T) *fakeProber {
+	t.Helper()
+	return newFakeProber(t, []*metav1.APIResourceList{
+		resourceList("postgresql.cnpg.io/v1", "clusters", "databases", "poolers"),
+	})
+}
+
+// TestProbeCNPGVersionFromImageTag: the operator's running version is the image
+// tag, which is the one source present in both install methods.
+func TestProbeCNPGVersionFromImageTag(t *testing.T) {
+	f := cnpgProber(t)
+	f.seed(t, deploymentGVR, cnpgOperatorDeployment("cnpg-system", "ghcr.io/cloudnative-pg/cloudnative-pg:1.30.1", nil))
+
+	prof, err := f.probe(context.Background())
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	if prof.CloudNativePG == nil || prof.CloudNativePG.Version != "1.30.1" {
+		t.Fatalf("cnpg = %+v, want version 1.30.1", prof.CloudNativePG)
+	}
+	if len(prof.Incomplete) != 0 {
+		t.Fatalf("a fully readable CNPG install is a finding, not a gap: %+v", prof.Incomplete)
+	}
+}
+
+// TestProbeCNPGVersionFromChartLabel: a digest-pinned image has no readable
+// tag, so the Helm chart's version label is the fallback — and a guess is never
+// the fallback.
+func TestProbeCNPGVersionFromChartLabel(t *testing.T) {
+	f := cnpgProber(t)
+	f.seed(t, deploymentGVR, cnpgOperatorDeployment("postgres-operator",
+		"ghcr.io/cloudnative-pg/cloudnative-pg@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+		map[string]string{"app.kubernetes.io/version": "1.29.2"}))
+
+	prof, err := f.probe(context.Background())
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	if prof.CloudNativePG.Version != "1.29.2" || prof.CloudNativePG.Namespace != "postgres-operator" {
+		t.Fatalf("cnpg = %+v, want 1.29.2 in postgres-operator", prof.CloudNativePG)
+	}
+}
+
+// TestProbeCNPGUnrecognisedInstallKeepsPresence: no Deployment matches the
+// operator label (an install shape this probe does not recognise). CNPG stays
+// present with an empty version — "installed, version unknown" — and that is a
+// finding about the deployment, not a gap in permissions.
+func TestProbeCNPGUnrecognisedInstallKeepsPresence(t *testing.T) {
+	f := cnpgProber(t)
+	prof, err := f.probe(context.Background())
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	if prof.CloudNativePG == nil {
+		t.Fatal("CNPG must stay present when its API group is registered")
+	}
+	if prof.CloudNativePG.Version != "" {
+		t.Fatalf("version = %q, want empty rather than a guess", prof.CloudNativePG.Version)
+	}
+	if !reflect.DeepEqual(prof.CloudNativePG.CRDs, []string{"clusters", "databases", "poolers"}) {
+		t.Fatalf("crds = %v", prof.CloudNativePG.CRDs)
+	}
+	if len(prof.Incomplete) != 0 {
+		t.Fatalf("an unlabeled operator is not a permission gap: %+v", prof.Incomplete)
+	}
+}
+
+// TestProbeForbiddenDeploymentsGapsCNPGVersion is the contract that matters
+// most for CNPG: an unreadable version must never demote the operator to
+// absent, because absent is the one answer that would tell a caller to install
+// a second operator into a cluster that can only have one (ADR-0005).
+func TestProbeForbiddenDeploymentsGapsCNPGVersion(t *testing.T) {
+	f := cnpgProber(t)
+	f.dyn.PrependReactor("list", "deployments", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewForbidden(schema.GroupResource{Group: "apps", Resource: "deployments"}, "", nil)
+	})
+
+	prof, err := f.probe(context.Background())
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	if prof.CloudNativePG == nil {
+		t.Fatal("CNPG must stay present when only its version is forbidden")
+	}
+	if prof.CloudNativePG.Version != "" {
+		t.Fatalf("version = %q, want empty", prof.CloudNativePG.Version)
+	}
+	if !hasGap(prof.Incomplete, "cnpg.version") {
+		t.Fatalf("expected a gap on cnpg.version, got %+v", prof.Incomplete)
+	}
+}
+
+// TestProbeCNPGWithoutDatabaseCRD: an operator too old for the Database CRD
+// serves clusters and poolers only, and the profile records exactly that — the
+// served set is what a Database manifest would meet.
+func TestProbeCNPGWithoutDatabaseCRD(t *testing.T) {
+	f := newFakeProber(t, []*metav1.APIResourceList{
+		resourceList("postgresql.cnpg.io/v1", "clusters", "poolers"),
+	})
+	f.seed(t, deploymentGVR, cnpgOperatorDeployment("cnpg-system", "ghcr.io/cloudnative-pg/cloudnative-pg:1.24.2", nil))
+
+	prof, err := f.probe(context.Background())
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	if prof.CloudNativePG.ServesCRD("databases") {
+		t.Fatalf("crds = %v, must not claim databases", prof.CloudNativePG.CRDs)
+	}
+	if !prof.CloudNativePG.ServesCRD("clusters") {
+		t.Fatalf("crds = %v, want clusters", prof.CloudNativePG.CRDs)
+	}
+}
+
+func TestImageTag(t *testing.T) {
+	cases := map[string]string{
+		"ghcr.io/cloudnative-pg/cloudnative-pg:1.26.0":       "1.26.0",
+		"registry.local:5000/cloudnative-pg/cloudnative-pg":  "",
+		"ghcr.io/cloudnative-pg/cloudnative-pg:1.26.0@sha25": "1.26.0",
+		"ghcr.io/cloudnative-pg/cloudnative-pg@sha256:abc":   "",
+		"cloudnative-pg":                                     "",
+	}
+	for in, want := range cases {
+		if got := imageTag(in); got != want {
+			t.Errorf("imageTag(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 

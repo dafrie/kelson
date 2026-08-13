@@ -81,7 +81,11 @@ var Components = []Component{
 		Degrade:  DegradeRefuse,
 		GapField: "cnpg",
 		Note: "the CNPG Cluster API version kelson writes for database services is not emitted " +
-			"for older operators; the degradation is a refusal pending an older-API render path.",
+			"for older operators; the degradation is a refusal pending an older-API render path. " +
+			"kelson targets the latest CloudNativePG release: the declarative capabilities above this floor " +
+			"(managed roles from 1.20, the Database CRD from 1.25, schemas and extensions from 1.26) are reported " +
+			"per capability by internal/clusterprofile/postgres rather than refused here, so an older operator " +
+			"loses the features it cannot serve and keeps the ones it can (issue #90).",
 	},
 	{
 		Name:     "flux",

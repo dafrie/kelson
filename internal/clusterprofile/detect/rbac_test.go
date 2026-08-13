@@ -42,7 +42,7 @@ func TestDetectClusterRoleReadOnly(t *testing.T) {
 // minimum by checking every cluster-scoped list the probe issues is granted.
 func TestDetectClusterRoleCoversListedResources(t *testing.T) {
 	role := readDetectClusterRole(t)
-	needed := []string{"nodes", "ingressclasses", "storageclasses", "volumesnapshotclasses", "gatewayclasses", "clusterissuers", "clustersecretstores", "secretstores"}
+	needed := []string{"nodes", "deployments", "ingressclasses", "storageclasses", "volumesnapshotclasses", "gatewayclasses", "clusterissuers", "clustersecretstores", "secretstores"}
 	got := map[string]bool{}
 	for _, r := range role.Rules {
 		for _, res := range r.Resources {
