@@ -144,6 +144,10 @@
               "name": {
                 "type": "string"
               },
+              "image": {
+                "type": "string",
+                "description": "pins this component's image in this environment only; the promotion primitive (rule P3)"
+              },
               "replicas": {
                 "properties": {
                   "min": {

@@ -70,6 +70,26 @@ func (v *validator) name(field, s, what string) {
 	}
 }
 
+// imageRef validates an image reference wherever the spec carries one: the
+// Project's, a component's, and an Environment's per-component pin (rule P3).
+// One function so the three fields cannot acquire different ideas of what a
+// reference is — a pin written for a promotion is held to exactly what
+// `spec.image` is held to.
+//
+// The check is deliberately shallow: it rejects what no registry could accept
+// (blank, or embedded whitespace) and leaves tag/digest grammar to the
+// registry, which is the only thing that can actually resolve it.
+func (v *validator) imageRef(field, s string) {
+	if s == "" {
+		return // absence is precedence, not an error; no-image-source reports the real case
+	}
+	if strings.TrimSpace(s) == "" || strings.ContainsAny(s, " \t\n") {
+		v.err(ErrInvalidFormat, field,
+			fmt.Sprintf("%q is not an image reference", s),
+			"use a registry reference such as ghcr.io/acme/web:v1 or ghcr.io/acme/web@sha256:<digest>")
+	}
+}
+
 func (v *validator) domain(field, s string) {
 	if len(s) > 253 || !dnsDomainRE.MatchString(s) {
 		v.err(ErrInvalidFormat, field,
@@ -605,6 +625,7 @@ func (v *validator) workloadComponent(
 			v.gate("$.spec.components[].tools", field+".tools")
 		}
 	}
+	v.imageRef(field+".image", c.Image)
 	v.replicas(field+".replicas", c.Replicas)
 	v.resources(field+".resources", c.Resources)
 	v.envMap(field+".env", c.Env, services)
@@ -673,6 +694,7 @@ func validateProject(p *Project, v *validator) {
 		projectImage = "(built from source)"
 	}
 
+	v.imageRef("$.spec.image", s.Image)
 	v.envMap("$.spec.env", s.Env, services)
 	v.components("$.spec.components", s.Components, services, projectImage)
 
@@ -744,6 +766,7 @@ func validateEnvironmentShape(e *Environment, v *validator) {
 				"one override block per component")
 		}
 		seen[ov.Name] = i
+		v.imageRef(f+".image", ov.Image)
 		v.replicas(f+".replicas", ov.Replicas)
 		v.resources(f+".resources", ov.Resources)
 		v.envMap(f+".env", ov.Env, nil) // binding targets re-checked against the Project in ValidateEnvironment
@@ -780,11 +803,14 @@ func (v *validator) overrideShape(field string, ov ComponentOverride, kind Compo
 		if ov.Preset != "" {
 			v.err(ErrMutuallyExclusive, field+".preset",
 				fmt.Sprintf("component %q has kind %q, and a preset is the topology of a data component", ov.Name, kind),
-				"remove preset; a workload is overridden with replicas, resources and env")
+				"remove preset; a workload is overridden with image, replicas, resources and env")
 		}
 		return
 	}
 	var set []string
+	if ov.Image != "" {
+		set = append(set, "image")
+	}
 	if ov.Replicas != nil {
 		set = append(set, "replicas")
 	}

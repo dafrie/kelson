@@ -29,8 +29,8 @@ type EnvironmentSpec struct {
 
 	// Components carry per-Component overrides, matched by name. Names must
 	// exist in the Project, and what an override may set follows the kind of
-	// the component it names: replicas/resources/env for a workload (rules
-	// P1, P2), preset for a data component (rule P5).
+	// the component it names: image/replicas/resources/env for a workload
+	// (rules P1, P2, P3), preset for a data component (rule P5).
 	Components []ComponentOverride `yaml:"components,omitempty" json:"components,omitempty"`
 
 	// Overlays concatenate after the Project's own overlays (rule P6).
@@ -59,11 +59,20 @@ type Routing struct {
 //
 // It is one type for both halves of the component list, matching the spec's
 // one list (ADR-0014). The fields are disjoint by kind and validation says so:
-// a workload override sets replicas/resources/env and a data override sets
-// preset, and each is an error on the other side rather than a field that
+// a workload override sets image/replicas/resources/env and a data override
+// sets preset, and each is an error on the other side rather than a field that
 // resolves into nothing.
 type ComponentOverride struct {
-	Name      string              `yaml:"name" json:"name" jsonschema:"required"`
+	Name string `yaml:"name" json:"name" jsonschema:"required"`
+
+	// Image pins this component to one image reference in this Environment
+	// only, and is the promotion primitive of v0 (ADR-0016): promoting
+	// staging to production is writing the digest staging deployed here.
+	// It wins over the component's image and the Project's (rule P3), and
+	// therefore also over `--image`, which stands in for the Project's — a
+	// pinned environment does not move when a build produces something new.
+	Image string `yaml:"image,omitempty" json:"image,omitempty" jsonschema:"description=pins this component's image in this environment only; the promotion primitive (rule P3)"`
+
 	Replicas  *Replicas           `yaml:"replicas,omitempty" json:"replicas,omitempty"`
 	Resources *Resources          `yaml:"resources,omitempty" json:"resources,omitempty"`
 	Env       map[string]EnvValue `yaml:"env,omitempty" json:"env,omitempty"`

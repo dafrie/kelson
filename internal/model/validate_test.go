@@ -443,6 +443,83 @@ spec:
 	}
 }
 
+// TestEnvironmentImagePinValidation covers the three ways the promotion pin of
+// ADR-0016 can be wrong: it names a component the Project does not declare, it
+// pins a data component (whose image belongs to its operator), or it is not an
+// image reference at all — held to exactly what spec.image is held to.
+func TestEnvironmentImagePinValidation(t *testing.T) {
+	docs, errs := DecodeDocuments([]byte(`
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata: {name: shop}
+spec:
+  image: ghcr.io/acme/shop:2
+  components:
+    - {name: db, kind: postgres}
+    - {name: web, port: 8080}
+---
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata: {name: prod}
+spec:
+  project: shop
+  components:
+    - {name: db, image: ghcr.io/acme/postgres:16}
+    - {name: ghost, image: ghcr.io/acme/ghost:1}
+    - {name: web, image: "ghcr.io/acme/shop:2 "}
+`))
+	if !slices.Contains(errs.Codes(), ErrInvalidFormat) {
+		t.Fatalf("a reference with whitespace must fail like any other image field, got:\n%v", errs)
+	}
+	envErrs := ValidateEnvironment(docs[1].(*Environment), docs[0].(*Project))
+	for _, want := range []Code{ErrMutuallyExclusive, ErrUnknownComponent, ErrInvalidFormat} {
+		if !slices.Contains(envErrs.Codes(), want) {
+			t.Errorf("missing code %s in:\n%v", want, envErrs)
+		}
+	}
+	var pinnedData bool
+	for _, e := range envErrs {
+		if e.Code == ErrMutuallyExclusive && strings.HasSuffix(e.Field, "].image") {
+			pinnedData = true
+			if !strings.Contains(e.Remediation, "preset") {
+				t.Errorf("pinning a data component must point at preset: %s", e.Remediation)
+			}
+		}
+	}
+	if !pinnedData {
+		t.Errorf("pinning a data component's image must be rejected, got:\n%v", envErrs)
+	}
+}
+
+// TestEnvironmentImagePinAccepted: the pin is ordinary on a workload, and
+// nothing else in the pair has to change to carry it.
+func TestEnvironmentImagePinAccepted(t *testing.T) {
+	docs, errs := DecodeDocuments([]byte(`
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata: {name: shop}
+spec:
+  source: {git: https://github.com/acme/shop}
+  components:
+    - {name: web, port: 8080}
+---
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata: {name: prod}
+spec:
+  project: shop
+  components:
+    - name: web
+      image: ghcr.io/acme/shop@sha256:4444444444444444444444444444444444444444444444444444444444444444
+`))
+	if len(errs) != 0 {
+		t.Fatalf("a pinned environment must validate, got:\n%v", errs)
+	}
+	if envErrs := ValidateEnvironment(docs[1].(*Environment), docs[0].(*Project)); len(envErrs) != 0 {
+		t.Fatalf("a pinned environment must validate against its project, got:\n%v", envErrs)
+	}
+}
+
 func TestDeliveryModes(t *testing.T) {
 	mk := func(delivery string) *Environment {
 		docs, _ := DecodeDocuments([]byte(`

@@ -57,6 +57,14 @@ history from the repository. Both surface through the same `History() []Entry`
 API so the CLI/UI/API see one shape. `kelson eject --to-git` later replays
 that history rather than exporting it.
 
+### Promotion is not a delivery operation
+
+Moving a known-good image from one environment to another is an *authoring* change, not a mode of
+delivery: it edits the target Environment's per-component image pin and then takes the ordinary deploy
+path, whichever adapter that environment uses. No adapter knows what a promotion is, and none needs to
+([ADR-0016](adr/0016-delivery-flows-v0.md); the field is documented in
+[the model](model.md#promotion)).
+
 ## Optimistic concurrency (#40)
 
 Concurrent edits — agent vs human, or a hand-edit in Git mode vs a commit —

@@ -1,0 +1,147 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: shop-production
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/environment: production
+    kelson.dev/project: shop
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:513f178b98620b9189420d88d6b22a1e534a67ba88fb7d34dd8247a24d8fad0f
+    kelson.dev/namespace-ownership: declared
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: web
+  namespace: shop-production
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: web
+    kelson.dev/environment: production
+    kelson.dev/project: shop
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:ea595009b4489684e911349c83aa757b0ca0d9ad0f5f6eb47e7d50b3d85d5c4e
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: shop-production
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: web
+    kelson.dev/environment: production
+    kelson.dev/project: shop
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:ea595009b4489684e911349c83aa757b0ca0d9ad0f5f6eb47e7d50b3d85d5c4e
+spec:
+  selector:
+    kelson.dev/project: shop
+    kelson.dev/application: web
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: shop-production
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: web
+    kelson.dev/environment: production
+    kelson.dev/project: shop
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:ea595009b4489684e911349c83aa757b0ca0d9ad0f5f6eb47e7d50b3d85d5c4e
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      kelson.dev/project: shop
+      kelson.dev/application: web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/managed-by: kelson
+        kelson.dev/application: web
+        kelson.dev/environment: production
+        kelson.dev/project: shop
+    spec:
+      serviceAccountName: web
+      containers:
+        - name: web
+          image: ghcr.io/acme/shop@sha256:1c3ba5f0e6d94a7182b0c5e4d3f6a8b9c0d1e2f3a4b5c6d7e8f90a1b2c3d4e5f
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: LOG_LEVEL
+              value: info
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: worker
+  namespace: shop-production
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: worker
+    kelson.dev/environment: production
+    kelson.dev/project: shop
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:ee0b506417166b71b7fb692db50e4702c553cf05c4e1e50418733175f4417ac6
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: shop-production
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: worker
+    kelson.dev/environment: production
+    kelson.dev/project: shop
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:ee0b506417166b71b7fb692db50e4702c553cf05c4e1e50418733175f4417ac6
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      kelson.dev/project: shop
+      kelson.dev/application: worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/managed-by: kelson
+        kelson.dev/application: worker
+        kelson.dev/environment: production
+        kelson.dev/project: shop
+    spec:
+      serviceAccountName: worker
+      containers:
+        - name: worker
+          image: ghcr.io/acme/shop:2.4.0
+          command:
+            - shop
+            - work
+          env:
+            - name: LOG_LEVEL
+              value: info

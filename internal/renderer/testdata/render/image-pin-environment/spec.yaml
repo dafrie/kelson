@@ -1,0 +1,33 @@
+# Fixture: the per-environment image pin of ADR-0016 — the promotion primitive.
+# The Project names a moving tag; production pins `web` to the digest it was
+# promoted to and leaves `worker` alone. The pin is the innermost scope of rule
+# P3, so the rendered container carries the digest verbatim while its unpinned
+# sibling still carries the Project's tag.
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: shop
+spec:
+  image: ghcr.io/acme/shop:2.4.0
+  env:
+    LOG_LEVEL: info
+  components:
+    - name: web
+      port: 8080
+      health: /healthz
+    - name: worker
+      command: ["shop", "work"]
+---
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: production
+spec:
+  project: shop
+  namespace: shop-production
+  delivery:
+    mode: direct
+  components:
+    - name: web
+      image: ghcr.io/acme/shop@sha256:1c3ba5f0e6d94a7182b0c5e4d3f6a8b9c0d1e2f3a4b5c6d7e8f90a1b2c3d4e5f
+      replicas: { min: 3 }

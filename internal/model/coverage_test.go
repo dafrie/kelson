@@ -86,6 +86,7 @@ var renderedFields = map[string]map[string]string{
 		"$.spec.delivery.git.path":   "internal/delivery/git: directory for rendered manifests",
 
 		"$.spec.components[].name":                      "resolve P1/P2/P5: selects the Project component to override",
+		"$.spec.components[].image":                     "resolve P3 → renderer: the per-environment image pin, the promotion primitive (ADR-0016)",
 		"$.spec.components[].replicas.min":              "renderer: replica count and HPA floor",
 		"$.spec.components[].replicas.max":              "renderer: HPA ceiling",
 		"$.spec.components[].resources.requests.cpu":    "renderer: container resource requests",

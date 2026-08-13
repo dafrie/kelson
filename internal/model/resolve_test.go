@@ -360,6 +360,98 @@ spec:
 	}
 }
 
+// TestResolveEnvironmentImagePinWinsP3 is the promotion primitive of ADR-0016:
+// the Environment's pin is the innermost scope of rule P3, so it beats a
+// component image and the Project's alike. Promoting is writing this field.
+func TestResolveEnvironmentImagePinWinsP3(t *testing.T) {
+	p, e := loadPair(t, `
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata: {name: shop}
+spec:
+  image: ghcr.io/acme/shop:2
+  components:
+    - {name: web, port: 8080}
+    - {name: worker, image: ghcr.io/acme/shop-worker:2}
+    - {name: cron, schedule: "0 3 * * *"}
+`, `
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata: {name: production}
+spec:
+  project: shop
+  components:
+    - name: web
+      image: ghcr.io/acme/shop@sha256:1111111111111111111111111111111111111111111111111111111111111111
+    - name: worker
+      image: ghcr.io/acme/shop-worker@sha256:2222222222222222222222222222222222222222222222222222222222222222
+`)
+	r, errs := Resolve(p, e)
+	if len(errs) != 0 {
+		t.Fatalf("resolve: %v", errs)
+	}
+	want := map[string]string{
+		"web":    "ghcr.io/acme/shop@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+		"worker": "ghcr.io/acme/shop-worker@sha256:2222222222222222222222222222222222222222222222222222222222222222",
+		"cron":   "ghcr.io/acme/shop:2",
+	}
+	for _, c := range r.Components {
+		if c.Image != want[c.Name] {
+			t.Errorf("%s image = %q, want %q", c.Name, c.Image, want[c.Name])
+		}
+	}
+}
+
+// TestResolveImagePinSatisfiesBuiltFromSource is the promotion shape: one
+// environment pins the digest a build produced and resolves to it, its
+// unpinned sibling still resolves to the sentinel and fails to render (#136).
+func TestResolveImagePinSatisfiesBuiltFromSource(t *testing.T) {
+	const project = `
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata: {name: checkout}
+spec:
+  source: {git: https://github.com/acme/checkout}
+  build: {strategy: dockerfile}
+  components:
+    - {name: web, port: 8080}
+`
+	const pinned = "ghcr.io/acme/checkout@sha256:3333333333333333333333333333333333333333333333333333333333333333"
+
+	p, prod := loadPair(t, project, `
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata: {name: production}
+spec:
+  project: checkout
+  components:
+    - name: web
+      image: `+pinned+`
+`)
+	r, errs := Resolve(p, prod)
+	if len(errs) != 0 {
+		t.Fatalf("resolve pinned: %v", errs)
+	}
+	if got := r.Components[0].Image; got != pinned {
+		t.Errorf("pinned image = %q, want %q — a pin resolves a built-from-source component the way --image does", got, pinned)
+	}
+
+	_, staging := loadPair(t, project, `
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata: {name: staging}
+spec:
+  project: checkout
+`)
+	r, errs = Resolve(p, staging)
+	if len(errs) != 0 {
+		t.Fatalf("resolve unpinned: %v", errs)
+	}
+	if got := r.Components[0].Image; got != ImageUnresolved {
+		t.Errorf("unpinned image = %q, want %q — only the environment that was promoted to is pinned", got, ImageUnresolved)
+	}
+}
+
 func TestResolveRejectsInvalid(t *testing.T) {
 	p, e := loadPair(t, `
 apiVersion: kelson.dev/v1alpha1

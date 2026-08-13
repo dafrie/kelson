@@ -36,7 +36,10 @@
 // # Precedence (docs/model.md rules P1–P6)
 //
 // Environment variables merge key-by-key, innermost scope first:
-// Project env < Component env < Environment per-Component override env.
+// Project env < Component env < Environment per-Component override env. The
+// image follows the same chain and is taken whole: an Environment's per-
+// Component pin — the promotion primitive of ADR-0016 — beats a Component
+// image, which beats the Project's.
 // Per-Component replicas/resources, the Environment preset override on a data
 // component and the Environment-scoped concerns (delivery, policy, secrets)
 // are taken whole from the innermost scope that sets them; delivery/policy/

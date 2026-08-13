@@ -1,0 +1,39 @@
+# Fixture: the promotion shape. The Project builds from source and names no
+# image, so every component resolves to the unresolved sentinel and refuses to
+# render (#136) — unless the environment pins one. Production pins the digest a
+# staging deploy produced, and renders.
+#
+# The other half of this shape is the environment that has *not* been promoted
+# to: it still fails with image/unresolved, which no golden file can hold. That
+# case is TestRenderPromotionShape in image_test.go, against this same Project.
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: checkout
+spec:
+  source:
+    git: https://github.com/acme/checkout
+    ref: main
+  build:
+    strategy: dockerfile
+  components:
+    - name: web
+      port: 8080
+      health: /healthz
+    - name: worker
+      command: ["bundle", "exec", "sidekiq"]
+---
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: production
+spec:
+  project: checkout
+  namespace: checkout-production
+  delivery:
+    mode: direct
+  components:
+    - name: web
+      image: ghcr.io/acme/checkout@sha256:9f6ad2c1b4d5e8073a1c2f4b6d8e0a1c3e5f7091b2d4c6e8a0f2b4d6c8e0a2f4
+    - name: worker
+      image: ghcr.io/acme/checkout@sha256:9f6ad2c1b4d5e8073a1c2f4b6d8e0a1c3e5f7091b2d4c6e8a0f2b4d6c8e0a2f4
