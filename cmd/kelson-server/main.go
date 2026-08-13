@@ -8,12 +8,18 @@
 // replica loses and forks nothing, which is why there is no volume, no
 // migration and no leader election here (ADR-0013 §1).
 //
-// # v0 is loopback-only, and says so
+// # Loopback by default; one shared password buys more than that
 //
-// There is no authentication and no TLS. That is not a security posture, it is
-// the absence of one: the server binds 127.0.0.1 by default and refuses a
-// non-loopback --listen without --insecure-bind. The threat model (#84) owns
-// the real answer.
+// Without --password (or KELSON_PASSWORD) the posture is v0's: no
+// authentication, no TLS, loopback by default, and a non-loopback --listen
+// refused unless --insecure-bind accepts the risk out loud.
+//
+// With a password set, every /kelson.v1alpha1.* route requires a session — a
+// signed cookie for browsers, the password as a bearer token for everything
+// else (internal/api/auth.go) — and a non-loopback bind is allowed with a
+// warning instead of refused, because the port is no longer an open door. There
+// is still no TLS: put a TLS-terminating proxy in front. This is #84's interim
+// cut (ADR-0013 §3, amended 2026-08-13); #84 still owns the real answer.
 package main
 
 import (
@@ -69,6 +75,11 @@ type config struct {
 	namespace    string
 	keep         int
 
+	// password is the single shared secret web and non-browser clients
+	// authenticate with (#84's interim cut, ADR-0013 §3). Empty disables
+	// authentication entirely, which is the pre-#84 behaviour.
+	password string
+
 	// The build plane's destination configuration. It is flags and not spec for
 	// ADR-0010's reason (docs/build.md): where an image is pushed is
 	// infrastructure, and the same Project must build against a team's ghcr.io
@@ -82,6 +93,11 @@ type config struct {
 // the deployment rather than in every request. It is the same variable
 // `kelson build` reads.
 const registryEnv = "KELSON_REGISTRY"
+
+// passwordEnv supplies --password. It is the preferred way to set it: a flag
+// value is visible in `ps` and in shell history, an environment variable is at
+// least only readable by the process's owner. Same variable kelson-mcp reads.
+const passwordEnv = "KELSON_PASSWORD"
 
 // defaultNamespace is where the state ConfigMaps live. It matches the ADR's
 // default and the RBAC the deploy manifests grant.
@@ -98,7 +114,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err := checkBind(cfg.listen, cfg.insecureBind); err != nil {
+	warning, err := checkBind(cfg.listen, cfg.insecureBind, cfg.password != "")
+	if err != nil {
+		return err
+	}
+	if warning != "" {
+		_, _ = fmt.Fprintln(stderr, "warning:", warning)
+	}
+
+	auth, err := api.NewAuth(cfg.password)
+	if err != nil {
 		return err
 	}
 
@@ -115,7 +140,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	// (ADR-0013 §4: the fence extends rather than loosens). Adding gRPC-client
 	// support later is an http2 server, not a schema change.
 	srv := &http.Server{
-		Handler: newMux(server),
+		Handler: newMux(server, auth),
 		// Only the header deadline is set. A read or write deadline would kill
 		// the server-streaming RPCs this API exists to serve — a deploy stream
 		// lives as long as the deployment does.
@@ -127,8 +152,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	// The banner is courtesy, not a result: a failed write to stdout must not
 	// stop a server that is already listening.
-	_, _ = fmt.Fprintf(stdout, "kelson-server %s serving the kelson.v1alpha1 schema on http://%s (namespace %s)\n",
-		version.String(), listener.Addr(), cfg.namespace)
+	_, _ = fmt.Fprintf(stdout, "kelson-server %s serving the kelson.v1alpha1 schema on http://%s (namespace %s, %s)\n",
+		version.String(), listener.Addr(), cfg.namespace, authBanner(auth))
 
 	errs := make(chan error, 1)
 	go func() {
@@ -162,6 +187,8 @@ func parseFlags(args []string, stderr io.Writer) (config, error) {
 	fs.StringVar(&cfg.kubeconfig, "kubeconfig", "", "path to a kubeconfig (default: $KUBECONFIG, in-cluster credentials, then ~/.kube/config)")
 	fs.StringVar(&cfg.namespace, "namespace", defaultNamespace, "namespace holding kelson-server's state ConfigMaps")
 	fs.IntVar(&cfg.keep, "keep", direct.DefaultKeep, "number of deployment revisions to retain per environment")
+	fs.StringVar(&cfg.password, "password", os.Getenv(passwordEnv),
+		"shared password web clients log in with and non-browser clients send as a bearer token (default: $"+passwordEnv+"); empty disables authentication")
 	fs.StringVar(&cfg.registry, "registry", os.Getenv(registryEnv), "destination registry and namespace for builds, e.g. ghcr.io/acme (default: $"+registryEnv+"); a Build request may override it")
 	fs.StringVar(&cfg.pushSecret, "push-secret", "", "name of an existing kubernetes.io/dockerconfigjson Secret in the build namespace that authenticates the push")
 	fs.StringVar(&cfg.buildNamespace, "build-namespace", "", "namespace build Jobs run in (default: the environment's own namespace, as in the CLI)")
@@ -177,21 +204,43 @@ func parseFlags(args []string, stderr io.Writer) (config, error) {
 	return cfg, nil
 }
 
-// checkBind enforces the v0 trust model: loopback unless the operator says
-// otherwise, out loud (ADR-0013 §3).
-func checkBind(listen string, insecure bool) error {
-	if insecure {
-		return nil
-	}
+// checkBind decides whether this listen address may be served, and what the
+// operator should be told about it. It returns a warning to print and an error
+// that stops the process (ADR-0013 §3, as amended 2026-08-13).
+//
+// The split is on the password, not on the flag, because the password is what
+// changes the fact on the ground:
+//
+//   - Loopback is always fine, and says nothing.
+//   - Non-loopback with a password is allowed, with a warning: every API route
+//     now demands a secret, so the port is no longer an open door. There is
+//     still no TLS, so the warning says to put a TLS-terminating proxy in
+//     front — a password sent in clear is a password anyone on the path has.
+//   - Non-loopback with no password is refused, exactly as before, naming #84
+//     and both ways out: set a password, or pass --insecure-bind.
+//   - --insecure-bind still overrides the refusal, and still warns: it remains
+//     the escape hatch for "I know, I am on a private network", and it must not
+//     go quiet just because it works.
+func checkBind(listen string, insecure, password bool) (string, error) {
 	host, _, err := net.SplitHostPort(listen)
 	if err != nil {
-		return fmt.Errorf("--listen %q is not a host:port address: %w", listen, err)
+		return "", fmt.Errorf("--listen %q is not a host:port address: %w", listen, err)
 	}
 	if isLoopback(host) {
-		return nil
+		return "", nil
 	}
-	return fmt.Errorf("--listen %s would expose kelson-server beyond loopback, and v0 has no authentication and no TLS "+
-		"(ADR-0013 §3; the threat model is issue #84). Bind 127.0.0.1 and forward a port, or pass --insecure-bind to accept the risk deliberately", listen)
+	switch {
+	case password:
+		return fmt.Sprintf("--listen %s serves beyond loopback. Every kelson.v1alpha1 route requires the shared password, "+
+			"but there is no TLS: put a TLS-terminating proxy in front, or the password crosses the network in clear (issue #84)", listen), nil
+	case insecure:
+		return fmt.Sprintf("--listen %s serves beyond loopback with no authentication and no TLS (--insecure-bind). "+
+			"Anything that can reach this port can deploy to your cluster (ADR-0013 §3; the threat model is issue #84)", listen), nil
+	default:
+		return "", fmt.Errorf("--listen %s would expose kelson-server beyond loopback with no authentication and no TLS "+
+			"(ADR-0013 §3; the threat model is issue #84). Set --password (or $%s) so clients must authenticate, "+
+			"bind 127.0.0.1 and forward a port, or pass --insecure-bind to accept the risk deliberately", listen, passwordEnv)
+	}
 }
 
 // isLoopback reports whether host names only this machine. An empty host (":8420")
@@ -208,13 +257,30 @@ func isLoopback(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// newMux mounts the API and the health endpoint. It is separate from run so a
-// test can exercise the routing without a cluster or a listener.
-func newMux(server *api.Server) *http.ServeMux {
+// newMux mounts the API, the session endpoints and the health endpoint, behind
+// the auth gate. It is separate from run so a test can exercise the routing
+// without a cluster or a listener.
+//
+// The gate wraps the whole mux rather than only the RPC handlers because it has
+// to see the path to decide: it protects /kelson.v1alpha1.* and passes
+// everything else — /healthz answers a probe that holds no secret, and /auth/*
+// is how a client stops being unauthenticated (internal/api/auth.go).
+func newMux(server *api.Server, auth *api.Auth) http.Handler {
 	mux := http.NewServeMux()
 	server.Register(mux)
+	auth.Register(mux)
 	mux.HandleFunc("/healthz", healthz)
-	return mux
+	return auth.Middleware(mux)
+}
+
+// authBanner says which posture the process started in. An operator who set the
+// password in the environment and typo'd the variable name must not have to
+// discover it by finding the API open.
+func authBanner(auth *api.Auth) string {
+	if auth.Enabled() {
+		return "authentication: shared password"
+	}
+	return "authentication: none"
 }
 
 // healthz reports liveness and the build it is reporting for. Version is part

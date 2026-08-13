@@ -26,14 +26,21 @@
 // LogService.QueryLogs and never FollowLogs, and the streaming RPCs (Deploy,
 // Rollback, Watch) are consumed to a settled answer rather than forwarded.
 //
-// # v0 has no authentication
+// # One shared password, and it is not an identity
 //
-// kelson-server binds loopback and authenticates nobody (ADR-0013 §3), so this
-// server holds no credential and passes none. Agent identities are issue #74.
-// Policy-aware tool exposure (ADR-0008 §4) needs the policy engine of issue
-// #75 — there is nothing yet that could answer "may this caller deploy to
-// production", so every tool is exposed to every caller, and docs/mcp.md says
-// so rather than implying a boundary that is not enforced.
+// A kelson-server started with --password requires every RPC to authenticate,
+// and this server does it the way a non-browser client does: the shared
+// password as `Authorization: Bearer` on every call (Options.Password, from
+// $KELSON_PASSWORD). A server without a password takes anything, and this
+// server sends nothing — the pre-#84 behaviour, unchanged.
+//
+// The password is a shared secret, not a principal: it says the caller may
+// reach the server, never who the caller is. Agent identities — scoped,
+// expiring, agent-owned — are issue #74. Policy-aware tool exposure (ADR-0008
+// §4) needs the policy engine of issue #75 — there is nothing yet that could
+// answer "may this caller deploy to production", so every tool is exposed to
+// every caller, and docs/mcp.md says so rather than implying a boundary that is
+// not enforced.
 package mcp
 
 import (
@@ -59,6 +66,10 @@ type Options struct {
 	HTTPClient connect.HTTPClient
 	// Version is reported to the MCP client in the initialize handshake.
 	Version string
+	// Password is the kelson-server shared password (#84's interim cut). When
+	// set it rides on every RPC as `Authorization: Bearer`. Empty sends no
+	// header at all, which is what a server without a password expects.
+	Password string
 }
 
 // Server is the MCP server and its tool surface.
@@ -84,12 +95,13 @@ func New(opts Options) *Server {
 		version = "0.0.0-dev"
 	}
 
+	auth := bearerOptions(opts.Password)
 	c := &clients{
 		addr:   addr,
-		spec:   kelsonv1alpha1connect.NewSpecServiceClient(httpClient, addr),
-		deploy: kelsonv1alpha1connect.NewDeployServiceClient(httpClient, addr),
-		logs:   kelsonv1alpha1connect.NewLogServiceClient(httpClient, addr),
-		events: kelsonv1alpha1connect.NewEventServiceClient(httpClient, addr),
+		spec:   kelsonv1alpha1connect.NewSpecServiceClient(httpClient, addr, auth...),
+		deploy: kelsonv1alpha1connect.NewDeployServiceClient(httpClient, addr, auth...),
+		logs:   kelsonv1alpha1connect.NewLogServiceClient(httpClient, addr, auth...),
+		events: kelsonv1alpha1connect.NewEventServiceClient(httpClient, addr, auth...),
 	}
 
 	srv := mcpsdk.NewServer(&mcpsdk.Implementation{

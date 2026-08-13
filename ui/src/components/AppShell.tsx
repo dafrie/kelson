@@ -1,4 +1,5 @@
 import { Link, NavLink, Outlet } from "react-router-dom";
+import { useAuth } from "../api/auth";
 import { KelsonMark } from "./KelsonMark";
 import { ThemeToggle } from "./ThemeToggle";
 import "./AppShell.css";
@@ -13,9 +14,12 @@ import "./AppShell.css";
  *   - Its nav lists Apps / Agents / Sources / Events / Settings. Only Apps and
  *     Cluster are real destinations today, and a nav item that goes nowhere is
  *     a lie about what the product does. New items land when their screens do.
- *   - Its header carries an environment chip and an avatar. There is no
- *     environment selector yet and v0 has no authentication at all
- *     (ADR-0013 §3), so there is no user to put in an avatar.
+ *   - Its header carries an environment chip and an avatar. There is still no
+ *     environment selector. The avatar arrived with the interim login (#84,
+ *     docs/server.md) and holds the session's display name — one letter,
+ *     because a shared password has no account behind it to have a picture —
+ *     and it is absent entirely on a server with no password, which is the
+ *     default and the whole of today's behaviour.
  */
 
 // There is no hosted docs site: website/ builds on every PR but
@@ -27,6 +31,31 @@ const NAV = [
   { to: "/apps", label: "Apps" },
   { to: "/cluster", label: "Cluster" },
 ] as const;
+
+function SignedIn() {
+  const { state, signOut } = useAuth();
+  if (state.status !== "authenticated") return null;
+  // The server refuses an empty username, so the initial always exists; the
+  // fallback is for a bearer-authenticated caller, which has no display name.
+  const initial = state.username.trim().charAt(0) || "?";
+  return (
+    <div className="k-user">
+      <span className="k-user__avatar" aria-hidden="true">
+        {initial}
+      </span>
+      <span className="k-user__name" title={state.username}>
+        {state.username}
+      </span>
+      <button
+        className="k-user__out"
+        type="button"
+        onClick={() => void signOut()}
+      >
+        Sign out
+      </button>
+    </div>
+  );
+}
 
 export function AppShell() {
   return (
@@ -63,6 +92,7 @@ export function AppShell() {
             Docs
           </a>
           <ThemeToggle />
+          <SignedIn />
         </div>
       </header>
 

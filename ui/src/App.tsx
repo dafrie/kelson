@@ -1,6 +1,8 @@
 import { createRoutesFromElements, Navigate, Route } from "react-router-dom";
 
+import { AuthBoundary, RequireSession } from "./api/auth";
 import { AppShell } from "./components/AppShell";
+import { LoginPage } from "./pages/LoginPage";
 import { AppsPage } from "./pages/AppsPage";
 import { AppDetailPage } from "./pages/AppDetailPage";
 import { ClusterPage } from "./pages/ClusterPage";
@@ -31,30 +33,44 @@ import "./pages/pages.css";
  * else in the app uses a loader or an action; this is the whole reason the
  * router is a data one, and `createRoutesFromElements` keeps the declaration
  * readable as the route table it is.
+ *
+ * # Three layers, in this order
+ *
+ * `AuthBoundary` asks the server once whether there is anything to log in to
+ * (#84's interim cut, ../docs/server.md). `/login` sits inside it and outside
+ * the gate — a login screen behind a login gate is a redirect loop — and
+ * outside the AppShell, because a page with no session has no nav to offer.
+ * `RequireSession` gates everything else, and does nothing at all on a server
+ * with no password, which is the default.
  */
 export const routes = createRoutesFromElements(
-  <Route element={<AppShell />}>
-    <Route index element={<Navigate to="/apps" replace />} />
-    <Route path="apps" element={<AppsPage />} />
-    {/* Static before dynamic: /apps/new is the create flow, not a project
-        called "new". React Router ranks it first either way; the order here
-        says so to the reader too. */}
-    <Route path="apps/new" element={<NewAppPage />} />
-    <Route path="apps/:project" element={<AppDetailPage />} />
-    <Route path="apps/:project/edit" element={<EditSpecPage />} />
-    <Route path="apps/:project/:env/deploy" element={<DeployPage />} />
-    <Route path="apps/:project/:env/diff" element={<DiffPage />} />
-    <Route path="apps/:project/:env/logs" element={<LogsPage />} />
-    <Route path="apps/:project/:env/rollback" element={<RollbackPage />} />
-    <Route path="cluster" element={<ClusterPage />} />
-    <Route
-      path="*"
-      element={
-        <EmptyState title="No such page">
-          The UI starts at /apps; every flow hangs off a project and an
-          environment.
-        </EmptyState>
-      }
-    />
+  <Route element={<AuthBoundary />}>
+    <Route path="login" element={<LoginPage />} />
+    <Route element={<RequireSession />}>
+      <Route element={<AppShell />}>
+        <Route index element={<Navigate to="/apps" replace />} />
+        <Route path="apps" element={<AppsPage />} />
+        {/* Static before dynamic: /apps/new is the create flow, not a project
+            called "new". React Router ranks it first either way; the order here
+            says so to the reader too. */}
+        <Route path="apps/new" element={<NewAppPage />} />
+        <Route path="apps/:project" element={<AppDetailPage />} />
+        <Route path="apps/:project/edit" element={<EditSpecPage />} />
+        <Route path="apps/:project/:env/deploy" element={<DeployPage />} />
+        <Route path="apps/:project/:env/diff" element={<DiffPage />} />
+        <Route path="apps/:project/:env/logs" element={<LogsPage />} />
+        <Route path="apps/:project/:env/rollback" element={<RollbackPage />} />
+        <Route path="cluster" element={<ClusterPage />} />
+        <Route
+          path="*"
+          element={
+            <EmptyState title="No such page">
+              The UI starts at /apps; every flow hangs off a project and an
+              environment.
+            </EmptyState>
+          }
+        />
+      </Route>
+    </Route>
   </Route>,
 );

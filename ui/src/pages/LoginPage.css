@@ -1,0 +1,83 @@
+/* The login screen.
+ *
+ * It is the only page that renders outside the AppShell, so it carries its own
+ * centring and its own brand lockup. Everything else is tokens. */
+
+.k-login {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 26px;
+  padding: 40px 24px 80px;
+}
+
+.k-login__brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--kelson-text);
+}
+
+.k-login__wordmark {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.k-login__form {
+  width: 100%;
+  max-width: 340px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 26px;
+  background: var(--kelson-panel);
+  border: 1px solid var(--kelson-border);
+  border-radius: 8px;
+  box-shadow: var(--kelson-shadow);
+}
+
+.k-login__label {
+  font-family: var(--kelson-font-mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--kelson-muted);
+}
+
+/* Notes sit above the fields: "your session expired" explains why the form is
+   here at all, and reading it after typing a password is too late. */
+.k-login__note {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--kelson-text-2);
+}
+
+.k-login__note--expired {
+  padding: 9px 12px;
+  background: var(--kelson-degraded-fill);
+  border: 1px solid var(--kelson-degraded-border);
+  border-radius: 4px;
+  color: var(--kelson-degraded);
+}
+
+.k-login__error {
+  padding: 9px 12px;
+  background: var(--kelson-failed-fill);
+  border: 1px solid var(--kelson-failed-border);
+  border-radius: 4px;
+  font-size: 13px;
+  color: var(--kelson-failed);
+}
+
+.k-login__foot {
+  max-width: 340px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  text-align: center;
+  color: var(--kelson-muted-deep);
+}
+

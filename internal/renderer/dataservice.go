@@ -22,18 +22,6 @@ import (
 // imperative fallback (owner decision 2026-08-13, internal/clusterprofile/postgres).
 const cnpgAPIVersion = "postgresql.cnpg.io/v1"
 
-// SharedClusterNamespace is where the `shared` preset's Database resources are
-// rendered, because that is where the shared cluster lives.
-//
-// CloudNativePG's Database.spec.cluster is a corev1.LocalObjectReference: a
-// name and nothing else, with no namespace field and no cross-namespace form.
-// A Database must therefore sit in its cluster's namespace, and the shared
-// cluster is kelson-owned infrastructure serving every project in an
-// environment tier (ADR-0007's resource arithmetic only works that way), so it
-// cannot live in a project's namespace. Provisioning it is issue #93; this is
-// only the name the rendered Database points at.
-const SharedClusterNamespace = "kelson-data"
-
 // maxServiceResourceName caps the name kelson derives for a service resource.
 // CloudNativePG derives its own object names from the cluster's — <cluster>-app,
 // <cluster>-superuser, <cluster>-rw, <cluster>-1 — and the longest of those
@@ -90,37 +78,17 @@ var dedicatedPresets = map[model.ServicePreset]dedicatedPreset{
 const initdbDatabase = "app"
 
 // boundService is what an application binding resolves against: the Secret
-// holding the service's credentials and the key mapping into it. A service
-// that renders but cannot yet be bound to carries the reason instead, so the
-// binding error can name it rather than emitting a reference to a Secret
-// nothing creates (issue #141).
+// holding the service's credentials and the key mapping into it.
 type boundService struct {
 	name   string
 	secret string
 	keys   map[string]string
-
-	reason      string
-	remediation string
 }
 
 // serviceResourceName is the name every resource kelson renders for a service
 // carries: <project>-<environment>-<service>.
-//
-// It is qualified even for the dedicated presets, where the namespace already
-// disambiguates, so that one rule covers both topologies — in the shared
-// cluster the qualification is not optional, because a database called `db`
-// collides with the first other project that wants one.
 func serviceResourceName(project, environment, service string) string {
 	return project + "-" + environment + "-" + service
-}
-
-// sharedClusterName is the CNPG Cluster the `shared` preset's databases are
-// created in: one per environment tier, so two projects' `development`
-// environments share a cluster, which is the whole point of the preset. The
-// environment name is the only pure input that identifies the tier. Issue #93
-// provisions it and may make this configurable.
-func sharedClusterName(environment string) string {
-	return "kelson-shared-" + environment
 }
 
 // appSecretName is the Secret CloudNativePG generates for a cluster's
@@ -158,7 +126,25 @@ func serviceManifests(
 				", which kelson does not render yet",
 			Remediation: "a branch is bootstrapped from a source cluster with a snapshot mechanism " +
 				"chosen from the cluster profile and a TTL, none of which exists yet (issue #99). " +
-				"Use small, ha-small or ha-medium, or shared",
+				"Use small, ha-small or ha-medium",
+		}}
+	}
+	// shared was ADR-0007's cost optimization for a shared CNPG cluster — never
+	// an ask, and dedicated clusters work today including bindings at an
+	// acceptable pod cost (owner decision, 2026-08-13, issue #93). What used to
+	// render here was one Database CR into SharedClusterNamespace and a
+	// binding refusal naming the same issue; see git history (the commit that
+	// added this comment) for the removed sharedDatabase/sharedClusterName code
+	// and its golden fixture.
+	if svc.Preset == model.PresetShared {
+		return nil, boundService{}, Errors{{
+			Code: ErrServiceNotImplemented,
+			Message: "service " + quoted(svc.Name) + " requests preset " + quoted(string(model.PresetShared)) +
+				": the shared preset is deferred — dedicated presets (small, ha-small, ha-medium) work today",
+			Remediation: "the shared cluster was ADR-0007's cost optimization, never an ask; dedicated " +
+				"clusters per postgres component are simpler, work today including bindings, and the pod " +
+				"cost is acceptable at this stage (owner decision, issue #93, which tracks any return of " +
+				"shared). Use preset: small",
 		}}
 	}
 
@@ -182,18 +168,6 @@ func serviceManifests(
 	hash, herr := serviceHash(resolved, svc, name)
 	if herr != nil {
 		return nil, boundService{}, Errors{{Code: ErrInternal, Message: herr.Error()}}
-	}
-
-	if svc.Preset == model.PresetShared {
-		m := sharedDatabase(resolved, name, hash)
-		return []Manifest{m}, boundService{
-			name: svc.Name,
-			reason: "the shared cluster's credentials live in namespace " + quoted(SharedClusterNamespace) +
-				" beside the cluster itself, and a pod cannot reference a Secret across a namespace boundary",
-			remediation: "provisioning the shared cluster's per-project role and projecting its credentials " +
-				"into this namespace is issue #93. Until it lands, use preset small, ha-small or ha-medium " +
-				"for a service applications bind to — the shared database is still created",
-		}, nil
 	}
 
 	m := dedicatedCluster(resolved, svc, name, hash)
@@ -234,8 +208,8 @@ func supportedPreset(svc *model.ResolvedDataService, profile clusterprofile.Clus
 		Remediation: "blocking capabilities: " + strings.Join(blocking, ", ") +
 			". Upgrade the CloudNativePG operator this cluster already runs — its resources are " +
 			"cluster-scoped and a second install fights the first (ADR-0005) — then re-detect the " +
-			"cluster profile. A preset with lighter requirements may also work: shared needs the " +
-			"Database CRD, the dedicated presets do not",
+			"cluster profile. small, ha-small and ha-medium all need the same capabilities, so no " +
+			"lighter dedicated preset exists",
 	}}
 }
 
@@ -275,27 +249,6 @@ func dedicatedCluster(resolved *model.Resolved, svc *model.ResolvedDataService, 
 		),
 	)
 	return baseManifest(cnpgAPIVersion, "Cluster", prov, mapNode(specKV...))
-}
-
-// sharedDatabase renders the CNPG Database for the `shared` preset, into the
-// shared cluster's namespace because spec.cluster is a same-namespace
-// reference. The database, its owner role and the resource all take the
-// qualified name: in a cluster shared across projects an unqualified `db`
-// collides with the first other project that wants one.
-func sharedDatabase(resolved *model.Resolved, name, hash string) Manifest {
-	prov := serviceProvenance(resolved, name, hash)
-	prov.namespace = SharedClusterNamespace
-
-	spec := mapNode(
-		"cluster", mapNode("name", sharedClusterName(resolved.Environment.Name)),
-		"name", name,
-		"owner", name,
-		// CNPG's own default, written explicitly because it is ADR-0007's
-		// asymmetric-retention promise: removing a service from a spec must
-		// never drop a database.
-		"databaseReclaimPolicy", "retain",
-	)
-	return baseManifest(cnpgAPIVersion, "Database", prov, spec)
 }
 
 // serviceProvenance stamps a service resource like every other manifest, with
@@ -342,15 +295,6 @@ func bindingRef(app string, field string, b *model.ServiceBinding, services map[
 				", which the resolved spec does not declare",
 			Remediation: "declare it under spec.components on the Project with kind: postgres, or bind to one of: " +
 				strings.Join(serviceNames(services), ", "),
-		}
-	}
-	if svc.secret == "" {
-		return nil, &Error{
-			Code:        ErrBindingUnavailable,
-			Application: app,
-			Message: "environment variable " + quoted(field) + " binds to service " + quoted(b.Service) +
-				", which renders but cannot be bound to yet: " + svc.reason,
-			Remediation: svc.remediation,
 		}
 	}
 	key, ok := svc.keys[b.Key]

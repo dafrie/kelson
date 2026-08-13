@@ -1,6 +1,6 @@
 # ADR-0007: Data services — presets, delegation and branching
 
-- **Status:** Accepted (amended 2026-08-12: "plan" is renamed to "preset" — it is a topology preset, not a paid tier; rename tracked in [#146](https://github.com/dafrie/kelson/issues/146). Branching and Valkey moved to v0.2/M9b.)
+- **Status:** Accepted (amended 2026-08-12: "plan" is renamed to "preset" — it is a topology preset, not a paid tier; rename tracked in [#146](https://github.com/dafrie/kelson/issues/146). Branching and Valkey moved to v0.2/M9b. Amended 2026-08-13, owner decision: the `shared` preset is deferred — it was this ADR's cost optimization, never an ask, and dedicated clusters per postgres component are simpler, work today including bindings, and the pod cost is acceptable at this stage; dedicated-per-component is the model for now, and [#93](https://github.com/dafrie/kelson/issues/93) tracks any return of `shared`. Backups are also deferred — "Backups are configured once" below does not render yet; when they land, the near path is CloudNativePG's declarative volumeSnapshot-based `Backup`/`ScheduledBackup` on snapshot-capable storage, which kelson already detects ([#91](https://github.com/dafrie/kelson/issues/91)), with object-store WAL archiving as a later addition ([#94](https://github.com/dafrie/kelson/issues/94)-[#96](https://github.com/dafrie/kelson/issues/96)).)
 - **Date:** 2026-08-11
 
 > **Implementation reference:** [docs/data-services.md](../data-services.md) carries the decisions

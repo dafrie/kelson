@@ -93,15 +93,40 @@ Claude Code registers the same thing from the command line:
 claude mcp add kelson -- kelson-mcp --server http://127.0.0.1:8420
 ```
 
-## Authentication: there is none in v0
+## Authentication: the server's shared password, as a bearer token
 
-`kelson-server` has no authentication and no TLS in v0. It binds loopback and refuses a non-loopback
-`--listen` without `--insecure-bind` ([ADR-0013](adr/0013-server-state-and-api-v0.md) §3). `kelson-mcp`
-matches that posture exactly: it holds no credential and sends none, so it must run somewhere that can
-reach the server directly. A failure to connect says so in the tool error rather than looking like a
-missing token.
+A `kelson-server` started with `--password` requires every `kelson.v1alpha1.*` call to authenticate
+([the server](server.md), [ADR-0013](adr/0013-server-state-and-api-v0.md) §3 as amended 2026-08-13).
+`kelson-mcp` presents that same secret the way any client without a cookie jar does — as an
+`Authorization: Bearer` header on every call, unary and streaming:
 
-Two consequences worth stating plainly, because both are part of issue #73 and neither is implemented:
+```sh
+KELSON_PASSWORD=… kelson-mcp --server https://kelson.internal
+```
+
+```json
+{
+  "mcpServers": {
+    "kelson": {
+      "command": "kelson-mcp",
+      "args": ["--server", "https://kelson.internal"],
+      "env": { "KELSON_PASSWORD": "…" }
+    }
+  }
+}
+```
+
+The credential comes from `--password`, then `$KELSON_PASSWORD`. **Prefer the environment.** A flag
+value is readable in every `ps` on the machine, and an MCP client configuration's `env` block is where
+this belongs anyway. A server started without a password takes anything, and `kelson-mcp` then sends
+nothing at all.
+
+A rejected call comes back as ConnectRPC `unauthenticated` and the tool error names the variable to
+set, so an agent does not read a missing credential as a broken server and retry forever.
+
+**The password is a shared secret, not an identity.** It says the caller may reach the server; it
+never says who the caller is, and nothing authorizes on it. Two consequences worth stating plainly,
+because both are part of issue #73 and neither is implemented:
 
 - **Agents are not yet principals.** Scoped, expiring, agent-owned credentials are
   [#74](https://github.com/dafrie/kelson/issues/74). Until then an agent has whatever access the

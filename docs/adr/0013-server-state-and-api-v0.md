@@ -123,6 +123,60 @@ absence of one, stated loudly, gated to localhost, and tracked by the threat mod
 deciding the real answer (mTLS, tokens, or K8s TokenReview). The schema reserves nothing for auth —
 retrofitting an auth header does not break a Protobuf contract.
 
+#### Amendment, 2026-08-13: a single shared password (interim, part of #84)
+
+Owner decision, taken when the UI (M6) made "no authentication at all" untenable for anyone running
+kelson anywhere but their own laptop. This is explicitly the **interim** cut of #84 and not its
+design; #84 still owns the real answer.
+
+**The decision.** Someone with a kube context already has RBAC-mediated access to the cluster, so the
+CLI needs nothing and does not change: it talks to the cluster directly, and the cluster's RBAC is
+the access control. Click/web users get a normal username + password login against a **single shared
+password**. Project-level team auth (OIDC and the rest) is later.
+
+**Usernames are not identities.** The login accepts any username and verifies only the password. The
+name is signed into the session and displayed, so the login feels like a login and a future audit
+trail has somewhere to grow — but nothing checks it, nothing authorizes on it, and this ADR says so
+rather than letting the presence of a name imply a principal. Agent identities are #74.
+
+**Sessions are signed tokens, not server state.** §1's rule ("the process holds no state a restart or
+a second replica would lose or fork") applies to sessions too, so there is no session store. A session
+is an HMAC-SHA256 token whose signing key is derived from the password and a **per-process random
+salt**: every restart mints a new key and invalidates every outstanding session. That is a real cost —
+a server restart logs everyone out — and it is accepted rather than papered over, because the
+alternative is either a store §1 forbids or a key on disk that turns "rotate the password" into a
+second operation. There is no revocation list because there is nothing to revoke in.
+
+Browsers carry the token in an `HttpOnly`, `SameSite=Lax` cookie (`kelson_session`, `Secure` when the
+request arrived over TLS). Non-browser clients — kelson-mcp, curl, scripts — send the shared password
+directly as `Authorization: Bearer`. **One secret, two transports**, rather than a second credential
+nobody could rotate independently anyway. `/healthz` stays open; a probe holds no credential.
+
+`GET /auth/session` answers a deliberate **tri-state**: `204` authentication is disabled · `200
+{username}` you have a session · `401` log in. Two states would force a client to conflate "no
+password is configured" with "you are not logged in", and a UI doing that would show a login form no
+password could satisfy.
+
+**The bind gate splits on the password, not on the flag.** A non-loopback `--listen`:
+
+| | no password | password set |
+|---|---|---|
+| without `--insecure-bind` | **refused**, naming #84 and both ways out | **allowed, with a warning** |
+| with `--insecure-bind` | allowed, with a warning | allowed, with a warning |
+
+The password is what changed the fact on the ground, so it is what lifts the refusal. The warning does
+not lift: **there is still no TLS**, so a password crossing a network in clear is a password anyone on
+the path has, and the text says to put a TLS-terminating proxy in front. `--insecure-bind` survives as
+the escape hatch for a private network the operator has reasoned about, and it still warns every start.
+
+**What this is not.** Not TLS, not per-user identity, not authorization, not a defence against anyone
+who can read the process's environment. It raises the floor from *anything that can reach the port is
+the operator* to *a caller must hold the shared secret*, which is the difference between a UI that can
+be deployed and one that cannot. The schema is untouched, exactly as the paragraph above predicted:
+authentication arrived as an HTTP header and a cookie, and no Protobuf contract moved.
+
+Details and operational guidance: [the server](../server.md).
+
 ### 4. Codegen follows the repo's committed-and-drift-tested convention
 
 `buf` generates Go (`protoc-gen-go` + `protoc-gen-connect-go`) into `internal/api/gen/`; generated
@@ -171,11 +225,13 @@ problem ADR-0002 rejected for CRDs would reappear if the server normalized specs
   store) is deliberately out of scope until something needs it.
 - Idempotency keys are namespace-scoped annotations, not a real dedup store; two servers pointed at
   different namespaces do not share them.
-- No auth in v0 means the server must not be exposed beyond loopback until #84 lands — a documented
-  sharp edge.
+- Without a password the server must not be exposed beyond loopback until #84 lands — a documented
+  sharp edge. With one (the 2026-08-13 amendment) it may be, at the cost of a server restart logging
+  every web client out: sessions are signed with a per-process key rather than stored.
 
 ## Revisit when
 
-The controller exists (CRD store supersedes ConfigMaps behind the same interface); #84 decides authn/z;
+The controller exists (CRD store supersedes ConfigMaps behind the same interface); #84 decides the
+real authn/z and supersedes the 2026-08-13 amendment above;
 M6 turns on TypeScript client generation; or real usage shows spec round-tripping through ConfigMaps
 hits the size or update-frequency limits of etcd.

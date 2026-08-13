@@ -26,7 +26,7 @@ against memory. Field names that surprised us are called out where they appear.
 
 | Preset | Topology | Rendered by kelson | Instances |
 |---|---|---|---|
-| `shared` | a `Database` in a shared cluster | `Database` CR only | — (no pod) |
+| `shared` | a `Database` in a shared cluster | **deferred** ([#93](https://github.com/dafrie/kelson/issues/93)) | — |
 | `small` | dedicated cluster | `Cluster` CR | 1 |
 | `ha-small` | dedicated, synchronous | `Cluster` CR | 3 |
 | `ha-medium` | dedicated, synchronous | `Cluster` CR | 3 |
@@ -39,6 +39,17 @@ empty `small` cluster for it would be the silent-success failure
 [#141](https://github.com/dafrie/kelson/issues/141) exists to prevent.
 
 `kind: valkey` is the same story against [#98](https://github.com/dafrie/kelson/issues/98).
+
+**`shared` is deferred (owner decision, 2026-08-13, [ADR-0007](adr/0007-data-services.md)).**
+It rendered a `Database` CR into a kelson-owned shared cluster until the owner reconsidered:
+the shared cluster was ADR-0007's cost optimization for the resource math of many small
+databases, never something anyone asked for, and the dedicated presets are simpler, work
+today including bindings, and cost one pod — acceptable at this stage. `preset: shared`
+validates (the vocabulary survives) and renders the same structured not-implemented error
+shape as `branch`, naming #93 and suggesting `preset: small`. [#93](https://github.com/dafrie/kelson/issues/93)
+tracks any return of the preset; the rendering it used to do — the `Database` CR into
+`kelson-data`, the namespace convention, the credential-distribution gap — is preserved in
+git history rather than repeated here.
 
 ### The dedicated presets
 
@@ -104,9 +115,17 @@ default explicitly, but that would bake a detection snapshot into a manifest tha
 and it is the *branching* verdict — not provisioning — that actually depends on which class was
 used ([#91](https://github.com/dafrie/kelson/issues/91), [#108](https://github.com/dafrie/kelson/issues/108)).
 
-### The shared preset, and the constraint that shapes it
+### The shared preset, deferred — the design it would need if it returns
 
-`shared` renders one `Database` CR and no cluster: the shared cluster is kelson-owned
+**This section describes what kelson no longer renders.** `preset: shared` is deferred (owner
+decision, 2026-08-13, [ADR-0007](adr/0007-data-services.md)): the shared cluster was ADR-0007's
+cost optimization, never something anyone asked for, and dedicated clusters per postgres
+component are simpler, work today including bindings, and the pod cost is acceptable at this
+stage. What follows is preserved as the design record for whoever picks
+[#93](https://github.com/dafrie/kelson/issues/93) back up, not as current behaviour; the
+rendering code itself is in git history.
+
+`shared` would render one `Database` CR and no cluster: the shared cluster would be kelson-owned
 infrastructure provisioned once per environment tier by
 [#93](https://github.com/dafrie/kelson/issues/93), not per project. ADR-0007's resource
 arithmetic (10 apps × 3 environments → 12 clusters) only works if `shared` means *one cluster
@@ -150,16 +169,15 @@ Provenance labels and annotations are stamped exactly as on every other resource
 `kelson.dev/project` and `kelson.dev/environment` — which is how a human looking at
 `kelson-data` can tell whose database is whose, and how a future uninstall can find them.
 
-**What `shared` does not do yet: credentials.** The `Database` CRD creates a database, not a
-role, and generates no Secret. The owner role and its password live in the shared cluster, and
-the Secret holding them would live in `kelson-data` — while the workload that needs it runs in
-the project's namespace. Kubernetes Secrets are namespaced and a pod cannot `secretKeyRef`
-across a namespace boundary, so binding to a `shared` service needs a credential *distribution*
-step (a role provisioned in the shared cluster, its Secret projected into the consuming
-namespace) that belongs to #93 and does not exist. Until it does, `env: {from: {service: …}}`
-against a `shared`-preset service is a structured render error naming #93 rather than a
-`secretKeyRef` to a Secret nothing creates. The database is still created; only the automatic
-binding is missing.
+**What `shared` did not do even while it rendered: credentials.** The `Database` CRD creates a
+database, not a role, and generates no Secret. The owner role and its password would live in the
+shared cluster, and the Secret holding them would live in `kelson-data` — while the workload
+that needs it runs in the project's namespace. Kubernetes Secrets are namespaced and a pod
+cannot `secretKeyRef` across a namespace boundary, so binding to a `shared` service needed a
+credential *distribution* step (a role provisioned in the shared cluster, its Secret projected
+into the consuming namespace) that belonged to #93 and never existed — every binding refused.
+Now the preset itself refuses before rendering anything, for the same reason and the same issue,
+so this credential gap is moot until #93 revisits the preset, not only the binding.
 
 ---
 
@@ -230,8 +248,8 @@ spec edit. These are not equally cheap.
 | `ha-small` → `ha-medium` | **safe, in place** | Resource requests grow and the PVCs are resized upward. Rolling restart per instance. |
 | `ha-medium` → `ha-small` | **safe, lossy of headroom** | Requests shrink; **storage does not** — `spec.storage.size` cannot be decreased, so the PVCs stay at the larger size and the cost stays with them. |
 | `ha-*` → `small` | **safe, lossy of replicas** | `instances: 3 → 1`; the standbys and their PVCs are removed and synchronous replication stops. The data survives on the primary; the *availability* does not, and neither does the read capacity. |
-| `shared` → any dedicated | **migration, not in place** | Different cluster, different storage. The database has to be dumped and restored, or replicated and cut over. [#105](https://github.com/dafrie/kelson/issues/105). |
-| any dedicated → `shared` | **migration, not in place** | Same, in reverse, plus a name change: the database becomes `<project>-<environment>-<component>` inside the shared cluster instead of `app` inside its own. |
+| `shared` → any dedicated | **moot while deferred** ([#93](https://github.com/dafrie/kelson/issues/93)) | `shared` does not render, so there is nothing to migrate away from. Were it to return: different cluster, different storage, so the database would have to be dumped and restored, or replicated and cut over. [#105](https://github.com/dafrie/kelson/issues/105). |
+| any dedicated → `shared` | **moot while deferred** ([#93](https://github.com/dafrie/kelson/issues/93)) | Same reason, in reverse: `shared` refuses to render, so nothing can transition onto it. Were it to return: same migration, plus a name change — the database becomes `<project>-<environment>-<component>` inside the shared cluster instead of `app` inside its own. |
 | anything → `branch` | **not a transition** | A branch is a *new* service bootstrapped from a source, with a TTL and a lifecycle of its own (ADR-0007). Rewriting an existing service's preset to `branch` is not a topology change, it is a different object. [#99](https://github.com/dafrie/kelson/issues/99). |
 
 **What is enforced today: nothing beyond validation and the capability check.** The renderer is
@@ -241,6 +259,23 @@ preview/diff plane, which compares rendered output against live state; a `shared
 edit shows up there as a `Database` deleted and a `Cluster` created, which is at least visible.
 Turning that into a refusal with a named migration path is #105's job, and this table is the
 specification it should implement.
+
+---
+
+## Backups
+
+Deferred — "coming soon" (owner decision, 2026-08-13, [ADR-0007](adr/0007-data-services.md)).
+Nothing here renders yet: no `Backup`, no `ScheduledBackup`, no WAL archiving, no PITR.
+[#94](https://github.com/dafrie/kelson/issues/94)-[#96](https://github.com/dafrie/kelson/issues/96)
+track it.
+
+The near path, when it lands, is CloudNativePG's declarative volumeSnapshot-based `Backup` and
+`ScheduledBackup` resources on snapshot-capable storage — the same storage-class detection
+`internal/clusterprofile/storage` already does for branching
+([#91](https://github.com/dafrie/kelson/issues/91)) feeds directly into whether a cluster can be
+offered scheduled snapshot backups, so that detection work is not duplicated. Object-store WAL
+archiving and continuous PITR, the fuller promise ADR-0007's "Backups are configured once"
+describes, is a later addition once the snapshot path is in place.
 
 ---
 
@@ -340,9 +375,11 @@ because ordering is the only sequencing a rendered set can express.
 ```
 Namespace
   postgresql.cnpg.io/v1 Cluster    (small | ha-small | ha-medium)
-  postgresql.cnpg.io/v1 Database   (shared)
   ServiceAccount / Service / Deployment / … per workload component
 ```
+
+(`shared` would have rendered a `postgresql.cnpg.io/v1 Database` here; it is deferred — see
+[Preset → topology](#preset--topology).)
 
 Ordering is advisory rather than a guarantee — nothing waits for the cluster to be ready, and a
 workload whose database is still bootstrapping will crash-loop until it is. That is the same
@@ -372,12 +409,10 @@ their pods run under is CloudNativePG's to create, not kelson's
 |---|---|
 | `small`, `ha-small`, `ha-medium` → `Cluster` | rendered |
 | bindings against a dedicated preset | rendered (`secretKeyRef` → `<cluster>-app`) |
-| `shared` → `Database` | rendered |
-| bindings against `shared` | **structured error**, [#93](https://github.com/dafrie/kelson/issues/93) |
-| the shared cluster itself | not rendered, [#93](https://github.com/dafrie/kelson/issues/93) |
+| `preset: shared` | **deferred, structured error**, [#93](https://github.com/dafrie/kelson/issues/93) (owner decision, 2026-08-13) |
 | `preset: branch` | **structured error**, [#99](https://github.com/dafrie/kelson/issues/99) |
 | `kind: valkey` | **structured error**, [#98](https://github.com/dafrie/kelson/issues/98) |
-| backups, WAL archiving, PITR | not rendered, [#94](https://github.com/dafrie/kelson/issues/94) |
+| backups, WAL archiving, PITR | deferred, [#94](https://github.com/dafrie/kelson/issues/94)-[#96](https://github.com/dafrie/kelson/issues/96); see [Backups](#backups) |
 | declarative schemas and extensions | not authorable; the capability is judged, nothing consumes it |
 | preset transitions beyond rendering | not enforced, [#105](https://github.com/dafrie/kelson/issues/105) |
 

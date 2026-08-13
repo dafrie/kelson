@@ -34,6 +34,9 @@ import (
 type fakeServer struct {
 	mu    sync.Mutex
 	calls []string
+	// creds is the Authorization header of every request, in call order, so a
+	// test can assert the shared password rode along (#84's interim cut).
+	creds []string
 
 	listSpecs func(*kelsonv1alpha1.ListSpecsRequest) (*kelsonv1alpha1.ListSpecsResponse, error)
 	getSpec   func(*kelsonv1alpha1.GetSpecRequest) (*kelsonv1alpha1.GetSpecResponse, error)
@@ -147,9 +150,19 @@ type harness struct {
 	fake    *fakeServer
 	session *mcpsdk.ClientSession
 	address string
+	// client is the fake server's own HTTP client, for the rare test that has
+	// to make a call the tool surface does not expose.
+	client connect.HTTPClient
 }
 
 func start(t *testing.T, fake *fakeServer) *harness {
+	t.Helper()
+	return startWith(t, fake, "")
+}
+
+// startWith is start with a credential. A password makes the MCP server send
+// it as a bearer token on every call; empty is the no-authentication server.
+func startWith(t *testing.T, fake *fakeServer, password string) *harness {
 	t.Helper()
 
 	mux := http.NewServeMux()
@@ -160,7 +173,7 @@ func start(t *testing.T, fake *fakeServer) *harness {
 	srv := httptest.NewServer(record(fake, mux))
 	t.Cleanup(srv.Close)
 
-	server := New(Options{Server: srv.URL, HTTPClient: srv.Client(), Version: "test"})
+	server := New(Options{Server: srv.URL, HTTPClient: srv.Client(), Version: "test", Password: password})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -179,7 +192,7 @@ func start(t *testing.T, fake *fakeServer) *harness {
 	}
 	t.Cleanup(func() { _ = session.Close() })
 
-	return &harness{fake: fake, session: session, address: srv.URL}
+	return &harness{fake: fake, session: session, address: srv.URL, client: srv.Client()}
 }
 
 // record notes every procedure the tools call, which is what proves a tool
@@ -188,6 +201,7 @@ func record(fake *fakeServer, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fake.mu.Lock()
 		fake.calls = append(fake.calls, strings.TrimPrefix(strings.ReplaceAll(r.URL.Path, "/", "."), "."))
+		fake.creds = append(fake.creds, r.Header.Get("Authorization"))
 		fake.mu.Unlock()
 		next.ServeHTTP(w, r)
 	})
@@ -197,6 +211,12 @@ func (f *fakeServer) procedures() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.calls...)
+}
+
+func (f *fakeServer) credentials() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.creds...)
 }
 
 // call invokes one tool and returns its text, failing the test if the tool

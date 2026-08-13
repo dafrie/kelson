@@ -29,8 +29,37 @@ func TestParseFlagsResolvesTheServerAddress(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parseFlags: %v", err)
 			}
-			if got != tt.want {
-				t.Errorf("address = %q, want %q", got, tt.want)
+			if got.address != tt.want {
+				t.Errorf("address = %q, want %q", got.address, tt.want)
+			}
+		})
+	}
+}
+
+// TestParseFlagsResolvesThePassword: the same precedence as the address, and
+// the same reason — an MCP client configuration names the credential in its env
+// block, which is also where it belongs (a flag value is in every `ps`).
+// Absence is not an error: a kelson-server without --password takes anything.
+func TestParseFlagsResolvesThePassword(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		env  string
+		want string
+	}{
+		{name: "none"},
+		{name: "environment", env: "hunter2", want: "hunter2"},
+		{name: "flag wins", args: []string{"--password", "from-flag"}, env: "hunter2", want: "from-flag"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(passwordEnv, tt.env)
+			got, err := parseFlags(tt.args, io.Discard)
+			if err != nil {
+				t.Fatalf("parseFlags: %v", err)
+			}
+			if got.password != tt.want {
+				t.Errorf("password = %q, want %q", got.password, tt.want)
 			}
 		})
 	}

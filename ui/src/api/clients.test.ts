@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRouterTransport } from "@connectrpc/connect";
 import { create } from "@bufbuild/protobuf";
 
-import { createClients } from "./clients";
+import { onUnauthenticated } from "./auth";
+import { clients as defaultClients, createClients } from "./clients";
 import { SpecService } from "../gen/kelson/v1alpha1/spec_pb";
 import { RenderService } from "../gen/kelson/v1alpha1/render_pb";
 import { ProfileService } from "../gen/kelson/v1alpha1/profile_pb";
@@ -143,5 +144,53 @@ describe("generated clients", () => {
       }
     }
     expect(bodies).toEqual(["event", "resync"]);
+  });
+});
+
+/**
+ * The default transport is the only one that carries the auth interceptor: the
+ * router transports above are stand-ins for a server, and a test that had to
+ * stage a session would be testing the stand-in.
+ */
+describe("the default transport", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("reports a 401 to the auth layer and still throws it", async () => {
+    vi.stubGlobal("fetch", async () =>
+      Response.json(
+        { code: "unauthenticated", message: "kelson-server requires a session" },
+        { status: 401 },
+      ),
+    );
+    let reported = 0;
+    const stop = onUnauthenticated(() => {
+      reported += 1;
+    });
+
+    await expect(defaultClients.spec.listSpecs({})).rejects.toThrow();
+    stop();
+
+    // Reported once, so the session state flips — and rethrown, so the screen
+    // that made the call still sees the failure it always saw.
+    expect(reported).toBe(1);
+  });
+
+  it("leaves other failures alone", async () => {
+    vi.stubGlobal("fetch", async () =>
+      Response.json(
+        { code: "unavailable", message: "no cluster" },
+        { status: 503 },
+      ),
+    );
+    let reported = 0;
+    const stop = onUnauthenticated(() => {
+      reported += 1;
+    });
+
+    await expect(defaultClients.spec.listSpecs({})).rejects.toThrow();
+    stop();
+    expect(reported).toBe(0);
   });
 });

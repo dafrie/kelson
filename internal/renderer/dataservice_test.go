@@ -92,72 +92,11 @@ func TestDedicatedPresetSizing(t *testing.T) {
 	}
 }
 
-// TestSharedPresetRendersDatabaseInSharedNamespace: CNPG's Database.spec.cluster
-// is a same-namespace reference, so the Database cannot live beside the
-// application it serves. Rendering it into the project namespace would produce
-// a resource that never reconciles.
-func TestSharedPresetRendersDatabaseInSharedNamespace(t *testing.T) {
-	resolved := resolvedFixture()
-	resolved.DataServices = []model.ResolvedDataService{{Name: "db", Kind: model.ComponentPostgres, Preset: model.PresetShared}}
-	ms, err := Render(resolved, cnpgProfile(), nil)
-	if err != nil {
-		t.Fatalf("Render failed: %v", err)
-	}
-	var db *Manifest
-	for i := range ms {
-		if ms[i].Kind == "Database" {
-			db = &ms[i]
-		}
-		if ms[i].Kind == "Cluster" {
-			t.Fatalf("the shared preset must not render a Cluster; #93 provisions it")
-		}
-	}
-	if db == nil {
-		t.Fatalf("no Database rendered: %v", kinds(ms))
-	}
-	if db.Namespace != SharedClusterNamespace {
-		t.Errorf("Database namespace = %q, want %q", db.Namespace, SharedClusterNamespace)
-	}
-	if db.Name != "checkout-production-db" {
-		t.Errorf("Database name = %q, want the qualified name", db.Name)
-	}
-	body, err := db.YAML()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{
-		"name: kelson-shared-production",
-		"owner: checkout-production-db",
-		"databaseReclaimPolicy: retain",
-		"kelson.dev/project: checkout",
-	} {
-		if !strings.Contains(string(body), want) {
-			t.Errorf("Database missing %q:\n%s", want, body)
-		}
-	}
-	if strings.Contains(string(body), "kelson.dev/application") {
-		t.Errorf("a data service is not owned by one application:\n%s", body)
-	}
-}
-
-// TestSharedPresetBindingRefused: the shared cluster's credentials live in its
-// own namespace and a pod cannot reference a Secret across one, so a binding
-// fails loudly instead of pointing at a Secret nothing creates (#141, #93).
-func TestSharedPresetBindingRefused(t *testing.T) {
-	_, err := Render(boundFixture(model.PresetShared), cnpgProfile(), nil)
-	if err == nil {
-		t.Fatalf("binding to a shared-preset service must fail")
-	}
-	if code := renderErrorCode(t, err); code != ErrBindingUnavailable {
-		t.Fatalf("code = %q, want %q", code, ErrBindingUnavailable)
-	}
-	if !strings.Contains(err.Error(), "#93") {
-		t.Errorf("the error must name where the work is tracked: %v", err)
-	}
-}
-
 // TestNotImplementedServices: what the model accepts and the renderer does not
-// render yet must say so, and say where it is tracked.
+// render yet must say so, and say where it is tracked. `shared` (#93) is a
+// deferral rather than something never built: it rendered a Database CR until
+// the owner decided dedicated-per-component is the model for now (2026-08-13)
+// — see git history for the removed rendering path.
 func TestNotImplementedServices(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -166,6 +105,7 @@ func TestNotImplementedServices(t *testing.T) {
 	}{
 		{"valkey", model.ResolvedDataService{Name: "cache", Kind: model.ComponentValkey, Preset: model.PresetSmall}, "#98"},
 		{"branch", model.ResolvedDataService{Name: "db", Kind: model.ComponentPostgres, Preset: model.PresetBranch}, "#99"},
+		{"shared", model.ResolvedDataService{Name: "db", Kind: model.ComponentPostgres, Preset: model.PresetShared}, "#93"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			resolved := resolvedFixture()
@@ -210,9 +150,14 @@ func TestPresetCapabilityTriState(t *testing.T) {
 		preset  model.ServicePreset
 		wantErr string // "" means it must render
 	}{
+		// shared is not exercised here: it is refused before the capability check
+		// even runs (TestNotImplementedServices), because the preset itself is
+		// deferred (#93) regardless of what the cluster can do. The capability
+		// judgement it used to demonstrate — a preset needing more than the
+		// baseline Cluster capability — is still pinned directly in
+		// internal/clusterprofile/postgres.
 		{"supported", yes, model.PresetHASmall, ""},
 		{"no cnpg at all", no, model.PresetSmall, ErrPostgresUnsupported},
-		{"too old for shared", tooOld, model.PresetShared, ErrPostgresUnsupported},
 		{"old enough for dedicated", tooOld, model.PresetSmall, ""},
 		{"version unreadable renders", unreadable, model.PresetSmall, ""},
 		{"detection gap renders", gapped, model.PresetSmall, ""},

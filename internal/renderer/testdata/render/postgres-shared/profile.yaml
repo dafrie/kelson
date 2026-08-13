@@ -1,7 +1,0 @@
-# The `shared` preset needs the Database CRD, which arrived in CloudNativePG
-# 1.25 — so this profile has to report both a new-enough version and the served
-# resource, or the capability judgement refuses the preset (issue #90).
-cnpg:
-  version: 1.30.0
-  namespace: cnpg-system
-  crds: [clusters, databases]

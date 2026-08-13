@@ -23,6 +23,7 @@ const sidebars: SidebarsConfig = {
         {type: 'doc', id: 'reference/project', label: 'Project spec'},
         {type: 'doc', id: 'reference/environment', label: 'Environment spec'},
         {type: 'doc', id: 'detection', label: 'Cluster detection'},
+        {type: 'doc', id: 'server', label: 'Server'},
         {type: 'doc', id: 'mcp', label: 'MCP server'},
         {type: 'doc', id: 'reference/support-matrix', label: 'Support matrix'},
         {type: 'doc', id: 'e2e', label: 'E2E harness'},

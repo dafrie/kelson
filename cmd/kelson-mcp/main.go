@@ -9,13 +9,18 @@
 // http://127.0.0.1:8420). There is no listener, no port and therefore no
 // container image — the process lives and dies with the client that started it.
 //
-// # v0 carries no credential
+// # The credential it carries is a shared password, not an identity
 //
-// kelson-server has no authentication in v0 and binds loopback (ADR-0013 §3),
-// so this process sends none: it must be able to reach the server directly, on
-// a machine that is allowed to. Agent identities are issue #74, and policy-aware
-// tool exposure (ADR-0008 §4) waits on the policy engine of issue #75 — until
-// then every tool is offered to every caller.
+// A kelson-server started with --password requires one, and this process sends
+// it as `Authorization: Bearer` (--password, KELSON_PASSWORD — the same
+// variable the server reads). Without one it sends nothing, which is what a
+// server without a password expects. Either way the address must be one this
+// process can reach directly.
+//
+// The password says the caller may reach the server, never who the caller is.
+// Agent identities are issue #74, and policy-aware tool exposure (ADR-0008 §4)
+// waits on the policy engine of issue #75 — until then every tool is offered to
+// every caller.
 package main
 
 import (
@@ -49,41 +54,64 @@ func cli() int {
 }
 
 func run(ctx context.Context, args []string, stderr io.Writer) error {
-	address, err := parseFlags(args, stderr)
+	cfg, err := parseFlags(args, stderr)
 	if err != nil {
 		return err
 	}
 
 	// Diagnostics go to stderr, never stdout: stdout IS the protocol here, and
-	// one stray line of prose on it corrupts the session.
-	fmt.Fprintf(stderr, "kelson-mcp %s serving the MCP tool surface over stdio against %s\n", //nolint:errcheck // a lost banner must not stop the server
-		version.String(), address)
+	// one stray line of prose on it corrupts the session. The password itself is
+	// never printed — only whether there is one, which is the part an operator
+	// debugging a 401 needs.
+	credential := "no credential"
+	if cfg.password != "" {
+		credential = "shared password"
+	}
+	fmt.Fprintf(stderr, "kelson-mcp %s serving the MCP tool surface over stdio against %s (%s)\n", //nolint:errcheck // a lost banner must not stop the server
+		version.String(), cfg.address, credential)
 
-	server := mcp.New(mcp.Options{Server: address, Version: version.String()})
+	server := mcp.New(mcp.Options{Server: cfg.address, Version: version.String(), Password: cfg.password})
 	if err := server.Run(ctx, &mcpsdk.StdioTransport{}); err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}
 	return nil
 }
 
-// parseFlags resolves the server address: the flag wins, then the environment,
-// then the default kelson-server listens on.
-func parseFlags(args []string, stderr io.Writer) (string, error) {
+// passwordEnv is the shared password kelson-server was started with. It is the
+// preferred way to pass it — an MCP client configuration's `env` block keeps it
+// out of the argv every `ps` on the machine can read.
+const passwordEnv = "KELSON_PASSWORD"
+
+// config is this process's resolved command line.
+type config struct {
+	address  string
+	password string
+}
+
+// parseFlags resolves the server address and the credential: the flag wins,
+// then the environment, then (for the address) the default kelson-server
+// listens on. An absent password is not an error — a server without one takes
+// anything, and the 401 from a server with one says exactly what to set.
+func parseFlags(args []string, stderr io.Writer) (config, error) {
 	fs := flag.NewFlagSet("kelson-mcp", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	address := fs.String("server", "", "base URL of a kelson-server (default $KELSON_SERVER, then "+mcp.DefaultServer+")")
+	password := fs.String("password", "", "kelson-server's shared password, sent as an Authorization: Bearer header (default $"+passwordEnv+")")
 	if err := fs.Parse(args); err != nil {
-		return "", err
+		return config{}, err
 	}
 	if fs.NArg() > 0 {
-		return "", fmt.Errorf("unexpected argument %q: kelson-mcp takes flags only", fs.Arg(0))
+		return config{}, fmt.Errorf("unexpected argument %q: kelson-mcp takes flags only", fs.Arg(0))
 	}
-	switch {
-	case *address != "":
-		return *address, nil
-	case os.Getenv("KELSON_SERVER") != "":
-		return os.Getenv("KELSON_SERVER"), nil
-	default:
-		return mcp.DefaultServer, nil
+	cfg := config{address: *address, password: *password}
+	if cfg.address == "" {
+		cfg.address = os.Getenv("KELSON_SERVER")
 	}
+	if cfg.address == "" {
+		cfg.address = mcp.DefaultServer
+	}
+	if cfg.password == "" {
+		cfg.password = os.Getenv(passwordEnv)
+	}
+	return cfg, nil
 }
