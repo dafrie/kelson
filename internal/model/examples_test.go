@@ -3,7 +3,6 @@ package model
 import (
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 )
@@ -76,6 +75,13 @@ func TestExamplesAreValid(t *testing.T) {
 
 // TestThreeEnvironmentsDeliveryModes is the #25 acceptance: one Project
 // renders correctly into three environments with three delivery modes.
+//
+// It used to assert service presets and agent policy from the same example.
+// Both are gated until M9 and M7 (issue #141), so the example no longer
+// declares them and this test no longer reads them; the precedence rules they
+// covered (P4 for policy, P5 for presets) are exercised against the resolver
+// directly in resolve_test.go, which is where they belong now that a spec
+// carrying them does not validate.
 func TestThreeEnvironmentsDeliveryModes(t *testing.T) {
 	root := filepath.Join("..", "..", "examples", "three-environments")
 	var project *Project
@@ -110,11 +116,6 @@ func TestThreeEnvironmentsDeliveryModes(t *testing.T) {
 		"staging":     DeliveryFlux,
 		"production":  DeliveryArgoCD,
 	}
-	wantPlans := map[string]ServicePlan{
-		"development": PlanShared,
-		"staging":     PlanSmall,
-		"production":  PlanHAMedium,
-	}
 	for name, mode := range wantModes {
 		env, ok := envs[name]
 		if !ok {
@@ -127,24 +128,8 @@ func TestThreeEnvironmentsDeliveryModes(t *testing.T) {
 		if r.Environment.Mode != mode {
 			t.Errorf("%s mode = %q, want %q", name, r.Environment.Mode, mode)
 		}
-		if r.Services[0].Plan != wantPlans[name] {
-			t.Errorf("%s db plan = %q, want %q", name, r.Services[0].Plan, wantPlans[name])
-		}
 		if mode == DeliveryDirect && r.Environment.Delivery.Git != nil {
 			t.Errorf("%s: direct mode must not carry a git target", name)
 		}
-	}
-	// Agents are free in development, dry-run-bound in staging, PR-only in prod.
-	devAgent, _ := Resolve(project, envs["development"])
-	prodAgent, _ := Resolve(project, envs["production"])
-	if devAgent.Environment.Policy.Agents != AgentsAllow {
-		t.Errorf("development agents = %q, want allow", devAgent.Environment.Policy.Agents)
-	}
-	if prodAgent.Environment.Policy.Agents != AgentsProposeOnly {
-		t.Errorf("production agents = %q, want propose-only", prodAgent.Environment.Policy.Agents)
-	}
-	stagingAgent, _ := Resolve(project, envs["staging"])
-	if !slices.Contains(stagingAgent.Environment.Policy.Require, "dry-run") {
-		t.Errorf("staging must require dry-run, got %v", stagingAgent.Environment.Policy.Require)
 	}
 }

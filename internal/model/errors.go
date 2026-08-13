@@ -19,6 +19,10 @@ const (
 	ErrInvalidEnum       Code = "schema/invalid-enum"
 	ErrDuplicateName     Code = "schema/duplicate-name"
 	ErrMutuallyExclusive Code = "schema/mutually-exclusive"
+	// ErrNotImplemented marks a field the schema defines but no plane consumes
+	// yet. Accepting it would report success for work that never happened
+	// (issue #141); see notimplemented.go for the gate table.
+	ErrNotImplemented Code = "schema/not-implemented"
 
 	// Semantic: cross-references and model rules.
 	ErrUnknownService     Code = "ref/unknown-service"

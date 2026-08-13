@@ -14,5 +14,5 @@ spec:
   delivery:
     mode: direct
 
-  policy:
-    agents: allow             # agents deploy freely in development
+  # `policy: {agents: allow}` would let agents deploy freely here. It returns
+  # with M7; kelson rejects unimplemented fields rather than ignoring them (#141).

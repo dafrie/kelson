@@ -1,6 +1,6 @@
-# Half of the portability pair (issue #56): a Gateway API cluster with no
-# ingress class. Rendering the portable spec.yaml through this profile must
-# produce an HTTPRoute and nothing the portable-ingress sibling does not.
+# Half of the portability pair (issue #56): a Gateway API cluster running
+# Envoy Gateway. Rendering the portable spec.yaml through this profile must
+# produce an HTTPRoute and nothing the portable-gateway-istio sibling does not.
 gatewayAPI:
   version: v1.6.0
   classes: [envoy]

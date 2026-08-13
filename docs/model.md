@@ -9,6 +9,26 @@ Target shape: one HA, TLS-terminated, database-backed service with a worker and 
 thirty lines, with no duplication. Everything past that target is progressive disclosure — reachable,
 not present.
 
+## What this document describes, and what kelson implements today
+
+This is the *designed* model. Several fields below are designed, typed and validated but not yet
+consumed by anything downstream. kelson **rejects** those fields with `schema/not-implemented` rather
+than accepting them and rendering nothing — a spec that silently does half of what it says is worse
+than one that fails ([#141](https://github.com/dafrie/kelson/issues/141)). Each error names the
+milestone that will implement the field.
+
+| Field | Rejected until |
+|---|---|
+| `Project.spec.services` and every `{from: {service, key}}` binding | M9 · Data services ([#10](https://github.com/dafrie/kelson/issues/10)) |
+| `Environment.spec.services` | M9 · Data services |
+| `Project.spec.defaults.secrets`, `Environment.spec.secrets` | M8 · Secrets |
+| `Project.spec.defaults.policy`, `Environment.spec.policy` | M7 · Agent surface & MCP |
+| `Environment.spec.cluster` | M10 · Environments & promotion |
+
+The gate lives in validation only: `internal/model/notimplemented.go` holds the table, and
+`internal/model/coverage_test.go` fails the build if a new spec field is neither consumed nor gated.
+Resolution and rendering of these fields already work, so a milestone lands by deleting a table row.
+
 ## Documents
 
 The model is two YAML (or JSON) documents. There is deliberately no third kind.
@@ -111,6 +131,12 @@ Project-level variable for one Environment, override it to an empty string.
 image anywhere is a validation error (`semantic/no-image-source`). Application `command:` always wins;
 Project has no command.
 
+Until a build produces that artifact, such an application resolves to an *unresolved* image, and
+rendering it fails with the structured render error `image/unresolved` naming each application —
+kelson never emits a placeholder image into a manifest. Supply the built reference with `--image`
+(`kelson render`, `diff`, `deploy`, `status`, `rollback`), which stands in for Project `image:` and so
+still loses to an Application `image:`.
+
 **P4 — Environment-scoped concerns (delivery, policy, secrets):** an explicit Environment value always
 wins over the Project `defaults` value; otherwise the Project default; otherwise the built-in default:
 
@@ -126,8 +152,8 @@ must stay propose-only, that is written on the production Environment. `delivery
 Environments (a Project-level Git target for deployments would be meaningless; every environment needs
 its own repo/branch/path).
 
-**P5 — Service plans:** `Environment.spec.services[].plan` (matched by service name) replaces the Project
-service's plan for that Environment — `shared` in development, `ha-small` in production, from one Project
+**P5 — Service presets:** `Environment.spec.services[].preset` (matched by service name) replaces the Project
+service's preset for that Environment — `shared` in development, `ha-small` in production, from one Project
 spec ([ADR-0007](adr/0007-data-services.md)).
 
 **P6 — Overlays:** concatenate, Project first, then Environment. Each patch applies in order to the
@@ -141,12 +167,17 @@ carry distinct suffixes so defaults never collide.
 
 ## Services and bindings
 
+> Not implemented yet. `services:` and `from:` bindings are rejected with `schema/not-implemented`
+> until M9 · Data services lands ([#141](https://github.com/dafrie/kelson/issues/141)): nothing
+> provisions the credential Secret a binding names, so rendering one would produce a workload that
+> never starts.
+
 ```yaml
 spec:
   services:
     - name: db
       type: postgres           # postgres | valkey
-      plan: ha-small           # shared | small | ha-small | ha-medium | branch
+      preset: ha-small         # shared | small | ha-small | ha-medium | branch
   env:
     DATABASE_URL:
       from: { service: db, key: uri }
@@ -175,12 +206,16 @@ see the failure before render:
   - it parses as a URL containing a password (`postgres://user:pass@host/db`), or
   - the variable name matches a secret pattern (`PASSWORD`, `SECRET`, `TOKEN`, `_KEY`, `PRIVATE`,
     `CREDENTIAL`, `AUTH`) and the value is non-empty.
-- The error names the field and gives the fix: declare the secret (`kelson secret set NAME=...`) and
-  reference it with `from:`.
+- The error names the field and a fix that exists today. There is no `kelson secret set` command
+  ([#142](https://github.com/dafrie/kelson/issues/142)) and `from:` bindings are themselves gated
+  ([#141](https://github.com/dafrie/kelson/issues/141)), so the remediation points at an overlay patch
+  referencing a Secret you manage, until M8 · Secrets lands.
 
 The heuristic deliberately errs toward rejection on secret-shaped variables; the fix is cheap and correct
-in both directions. The Environment picks the backend (`cluster` built-in default, `externalSecrets` with
-`store:`, `sops`) — a schema-level choice since day one so v0.2 backends are not a breaking change.
+in both directions. The Environment is designed to pick the backend (`cluster` built-in default,
+`externalSecrets` with `store:`, `sops`) — a schema-level choice since day one so v0.2 backends are not a
+breaking change — but `secrets:` is rejected with `schema/not-implemented` until M8, because nothing
+reads the resolved backend.
 
 ## Environment schema
 
@@ -191,11 +226,11 @@ metadata:
   name: production
 spec:
   project: checkout                  # required: the Project this environment deploys
-  cluster: prod-eu                   # target cluster (from the ClusterProfile registry)
+  cluster: prod-eu                   # rejected until M10 — there is no cluster registry (#141)
   namespace: checkout-prod           # target namespace
   routing:
     domainSuffix: acme.run
-    gatewayClass: envoy              # Gateway API only; `ingressClass` is removed by #140
+    gatewayClass: envoy              # Gateway API only (#140); a spec with `ingressClass` is rejected
     tls: true                        # default true
   delivery:
     mode: flux                       # direct | flux (argocd removed — ADR-0012)
@@ -203,11 +238,11 @@ spec:
       repo: git@github.com:acme/deploy.git
       branch: main
       path: checkout/production
-  policy:
+  policy:                            # whole block rejected until M7 (#141)
     agents: propose-only             # allow | propose-only
     require: [dry-run]               # only dry-run is defined today
     deployers: [team-platform]       # who may deploy; default: the Project's team
-  secrets:
+  secrets:                           # whole block rejected until M8 (#141)
     backend: sops                    # cluster | externalSecrets | sops
   applications:
     - name: web                      # must name an Application in the Project
@@ -217,9 +252,9 @@ spec:
         limits:   { memory: 1Gi }
       env:
         LOG_LEVEL: warning
-  services:
+  services:                          # whole block rejected until M9 (#141)
     - name: db
-      plan: ha-small
+      preset: ha-small
 ```
 
 Delivery mode is per-Environment ([ADR-0001](adr/0001-hybrid-state-model.md)): development applies
@@ -266,6 +301,7 @@ Stable code taxonomy:
 | `schema/invalid-enum` | schema | `delivery.mode: github` |
 | `schema/duplicate-name` | schema | two Applications named `web` |
 | `schema/mutually-exclusive` | semantic-shape | `schedule:` with `port:` |
+| `schema/not-implemented` | schema | `services:`, `policy:`, `secrets:`, `cluster:` — validated, not yet rendered |
 | `ref/unknown-application` | semantic | Environment override for undeclared app |
 | `ref/unknown-service` | semantic | `from: {service: cache}` never declared |
 | `ref/unknown-service-key` | semantic | `from: {service: db, key: tls}` |

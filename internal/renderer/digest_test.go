@@ -3,8 +3,6 @@ package renderer
 import (
 	"strings"
 	"testing"
-
-	"github.com/dafrie/kelson/internal/clusterprofile"
 )
 
 // TestDigestPinnedImageRendersUnchanged guards the property #51 exists to
@@ -27,7 +25,9 @@ func TestDigestPinnedImageRendersUnchanged(t *testing.T) {
 		resolved.Applications[i].Image = pinned
 	}
 
-	manifests, err := Render(resolved, clusterprofile.ClusterProfile{}, nil)
+	// A gateway profile, because the fixture's web application declares
+	// domains and a profile without Gateway API is now a capability gap (#140).
+	manifests, err := Render(resolved, gatewayProfile(), nil)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}

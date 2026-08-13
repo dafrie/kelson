@@ -63,6 +63,7 @@ func newDeployCmdFactory(connect deliveryConnector) *cobra.Command {
 	f.StringVar(&opts.profile, "profile", "", "ClusterProfile YAML file, or from-cluster to capture a live profile (requires cluster access)")
 	f.StringVar(&opts.kubeconfig, "kubeconfig", "", "path to a kubeconfig (default: $KUBECONFIG, in-cluster credentials, then ~/.kube/config)")
 	f.StringVar(&opts.mode, "mode", "", "delivery adapter to use, overriding the environment's delivery mode (direct or flux)")
+	f.StringVar(&opts.image, "image", "", imageFlagUsage)
 	f.DurationVar(&opts.timeout, "timeout", defaultDeployTimeout, "budget for the deployment to reach a healthy phase")
 	f.BoolVar(&opts.yes, "yes", false, "do not ask for confirmation before applying (already the default when stdin is not a terminal)")
 	f.StringVar(&opts.history, "history", "", "kelson data directory holding the direct-mode rendered history (default: $KELSON_DATA_DIR, else $XDG_DATA_HOME/kelson)")
@@ -82,19 +83,16 @@ const defaultDeployTimeout = 5 * time.Minute
 const deployPollInterval = 2 * time.Second
 
 type deployOptions struct {
-	files      []string
-	env        string
-	profile    string
-	kubeconfig string
-	mode       string
-	history    string
-	timeout    time.Duration
-	yes        bool
-	connect    deliveryConnector
+	specInput
+	mode    string
+	history string
+	timeout time.Duration
+	yes     bool
+	connect deliveryConnector
 }
 
 func runDeploy(cmd *cobra.Command, opts *deployOptions) error {
-	target, set, err := resolveDeliveryTarget(opts.files, opts.env, opts.profile, opts.kubeconfig, opts.history, opts.mode)
+	target, set, err := resolveDeliveryTarget(opts.specInput, opts.history, opts.mode)
 	if err != nil {
 		return err
 	}
@@ -179,9 +177,11 @@ func watchDeployment(ctx context.Context, adapter delivery.Adapter, set delivery
 		return state, nil
 	case ctx.Err() != nil:
 		// The budget expired. That is an answer ("not healthy in time"), not a
-		// machinery failure, and the caller reports it with the last phase the
-		// engine reached — which is the diagnosis.
-		return state, nil
+		// machinery failure — the same answer the engine's own progress timer
+		// gives, and the two expire together when nothing progresses, so which
+		// fires first is scheduler jitter. Ask the engine for the stuck verdict
+		// either way: it names the phase-specific cause the caller reports.
+		return engine.MarkStuck(), nil
 	default:
 		return state, err
 	}
@@ -314,8 +314,13 @@ func connectDelivery(t deliveryTarget) (*deliveryPlane, error) {
 				Identity: git.IdentityFromEnv(nil),
 				Auth:     gitAuth(),
 			},
-			Reconciler: flux.CLIReconciler{},
-			Status:     flux.CLIStatusReader{},
+			// Both halves ride the one cluster connection this function
+			// already made, rather than a kubectl/flux binary on PATH (#137).
+			// The Receiver webhook is the preferred trigger but has no flag to
+			// configure it yet, so the annotation patch — what `flux reconcile`
+			// does under the hood — is what the CLI wires today.
+			Reconciler: flux.AnnotationReconciler{Client: cluster.Dynamic},
+			Status:     flux.DynamicStatusReader{Client: cluster.Dynamic},
 		}); err != nil {
 			return nil, err
 		}
@@ -369,8 +374,8 @@ func selectAdapter(connect deliveryConnector, t deliveryTarget) (delivery.Adapte
 // rollback: load the spec, render it, and derive the delivery target. Keeping
 // it in one place is what stops the three commands drifting on what "the
 // current render" or "this environment's mode" means.
-func resolveDeliveryTarget(files []string, env, profile, kubeconfig, history, mode string) (deliveryTarget, delivery.ManifestSet, error) {
-	project, environment, manifests, _, err := resolveAndRender(files, env, profile, kubeconfig)
+func resolveDeliveryTarget(in specInput, history, mode string) (deliveryTarget, delivery.ManifestSet, error) {
+	project, environment, manifests, _, err := resolveAndRender(in)
 	if err != nil {
 		return deliveryTarget{}, delivery.ManifestSet{}, err
 	}
@@ -393,7 +398,7 @@ func resolveDeliveryTarget(files []string, env, profile, kubeconfig, history, mo
 		return deliveryTarget{}, delivery.ManifestSet{}, err
 	}
 	t := deliveryTarget{
-		kubeconfig:  kubeconfig,
+		kubeconfig:  in.kubeconfig,
 		history:     dir,
 		project:     project.Metadata.Name,
 		environment: environment.Metadata.Name,

@@ -10,11 +10,20 @@
 //     pull-request mode, with the read-modify-write conflict guarantee (issue
 //     #40);
 //   - a Reconciler triggers immediate reconciliation of the Kustomization(s)
-//     covering the written path (webhook or flux CLI);
+//     covering the written path (Receiver webhook, or a requestedAt annotation
+//     patch through the dynamic client);
 //   - a StatusReader turns Flux Kustomization/HelmRelease state into the
 //     delivery.Phase state machine, keeping the three answers distinct:
 //     not-picked-up-yet (Committed), rejected (Rejected), applied-but-unhealthy
 //     (Degraded) — see statemachine docs.
+//
+// Both of the cluster-facing halves talk to the API server through the dynamic
+// client (dynamic.go), like every other package in the delivery plane, rather
+// than shelling out to kubectl or flux (issue #137). Where flux-operator is
+// installed, its FluxReport answers "is Flux itself healthy" instead of kelson
+// aggregating controller state — read as unstructured CR data only, because
+// flux-operator is AGPL-3.0 and kelson is MIT (docs/architecture.md, "Living
+// with flux-operator").
 package flux
 
 import (
@@ -38,7 +47,8 @@ type Options struct {
 	// Mode (commit or pull-request), Identity, Auth, PR and Now.
 	Writer git.Config
 	// Reconciler triggers reconciliation after a commit. A Chain of
-	// {webhook, CLI} is the typical value; NoopReconciler disables the trigger.
+	// {webhook, annotation} is the typical value; NoopReconciler disables the
+	// trigger.
 	Reconciler Reconciler
 	// Status reads Flux objects back from the cluster.
 	Status StatusReader
@@ -52,7 +62,7 @@ func New(opts Options) (*Adapter, error) {
 	if opts.Status == nil {
 		return nil, delivery.ApplyFailed("flux/config", "status",
 			"the flux adapter needs a status reader",
-			"configure a CLIStatusReader or another StatusReader so kelson can answer is-my-change-live")
+			"configure a DynamicStatusReader or another StatusReader so kelson can answer is-my-change-live")
 	}
 	w, err := git.New(opts.Writer)
 	if err != nil {
@@ -185,7 +195,44 @@ func (a *Adapter) Status(ctx context.Context, set delivery.ManifestSet) (deliver
 			best = k
 		}
 	}
-	return phaseFor(best, set.Revision), nil
+	return a.explainWithHealth(ctx, phaseFor(best, set.Revision)), nil
+}
+
+// explainWithHealth names the state of the Flux control plane itself on a
+// status that is still waiting for Flux (issue #137). "Flux has not observed
+// this revision yet" reads the same whether Flux is a minute behind or its
+// source-controller has been crash-looping since Tuesday, and only the second
+// is worth waking someone for.
+//
+// Health is advisory in both directions: a status source that cannot report it
+// (or fails to) leaves the phase exactly as the Kustomization described it,
+// because a health probe must never turn a good status read into an error.
+func (a *Adapter) explainWithHealth(ctx context.Context, st delivery.Status) delivery.Status {
+	reader, ok := a.status.(HealthReader)
+	if !ok {
+		return st
+	}
+	switch st.Phase {
+	case delivery.PhaseCommitted, delivery.PhaseReconciling:
+	default:
+		// Flux demonstrably works: it applied something. Its own health adds
+		// nothing the Kustomization has not already said.
+		return st
+	}
+	h, err := reader.Health(ctx)
+	if err != nil || h.Ready {
+		return st
+	}
+	if st.Detail == nil {
+		st.Detail = map[string]string{}
+	}
+	st.Detail["fluxHealth"] = h.Source + ": " + h.Message
+	if st.Cause == "" {
+		st.Cause = h.Message
+	} else {
+		st.Cause += "; " + h.Message
+	}
+	return st
 }
 
 func filterCovering(ks []Kustomization, repo, path string) []Kustomization {

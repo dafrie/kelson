@@ -8,14 +8,7 @@ metadata:
 spec:
   image: ghcr.io/acme/streaming:0.9.1
 
-  env:
-    REDIS_URL:
-      from: { service: cache, key: uri }
-
-  services:
-    - name: cache
-      type: valkey
-      plan: small
+  # The cache service and its REDIS_URL binding are gated until M9 (#141).
 
   applications:
     - name: transcoder

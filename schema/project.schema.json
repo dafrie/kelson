@@ -120,7 +120,7 @@
                   "valkey"
                 ]
               },
-              "plan": {
+              "preset": {
                 "type": "string",
                 "enum": [
                   "shared",

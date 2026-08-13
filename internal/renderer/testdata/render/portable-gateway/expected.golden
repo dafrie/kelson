@@ -1,5 +1,18 @@
 ---
 apiVersion: v1
+kind: Namespace
+metadata:
+  name: portable-production
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/environment: production
+    kelson.dev/project: portable
+  annotations:
+    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/spec-hash: sha256:f5c1656b8cc44446df1e1b8d545152637c7d0bf799d0d991ee1e4f06df30735e
+    kelson.dev/namespace-ownership: declared
+---
+apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: web
@@ -11,7 +24,7 @@ metadata:
     kelson.dev/project: portable
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:e42d6c28a4fb0cea19994ce2340cf4e8a024d2ddf6e2f3df058b1ce50bcd92ab
+    kelson.dev/spec-hash: sha256:0545c0792f046e0c9a009f6a289a89e7e03a8c74c20b6030ac25cd18167fd78a
 ---
 apiVersion: v1
 kind: Service
@@ -25,7 +38,7 @@ metadata:
     kelson.dev/project: portable
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:e42d6c28a4fb0cea19994ce2340cf4e8a024d2ddf6e2f3df058b1ce50bcd92ab
+    kelson.dev/spec-hash: sha256:0545c0792f046e0c9a009f6a289a89e7e03a8c74c20b6030ac25cd18167fd78a
 spec:
   selector:
     kelson.dev/project: portable
@@ -47,7 +60,7 @@ metadata:
     kelson.dev/project: portable
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:e42d6c28a4fb0cea19994ce2340cf4e8a024d2ddf6e2f3df058b1ce50bcd92ab
+    kelson.dev/spec-hash: sha256:0545c0792f046e0c9a009f6a289a89e7e03a8c74c20b6030ac25cd18167fd78a
 spec:
   replicas: 1
   selector:
@@ -93,7 +106,7 @@ metadata:
     kelson.dev/project: portable
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:e42d6c28a4fb0cea19994ce2340cf4e8a024d2ddf6e2f3df058b1ce50bcd92ab
+    kelson.dev/spec-hash: sha256:0545c0792f046e0c9a009f6a289a89e7e03a8c74c20b6030ac25cd18167fd78a
 spec:
   parentRefs:
     - name: envoy

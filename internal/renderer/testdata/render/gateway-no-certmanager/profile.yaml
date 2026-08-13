@@ -1,0 +1,5 @@
+# Two gateway classes, "public" second: the environment names it explicitly,
+# so detection order must not decide.
+gatewayAPI:
+  version: v1.6.0
+  classes: [internal, public]

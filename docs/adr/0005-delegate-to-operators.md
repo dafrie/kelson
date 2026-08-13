@@ -43,8 +43,8 @@ no degraded mode, because the type name is a promise.
 | `kafka` (later) | Strimzi |
 | object storage (later) | MinIO operator, or external S3 |
 
-`type: postgres` always means CloudNativePG, with plans, HA, point-in-time recovery, backups and
-branching as described in [ADR-0007](0007-data-services.md). There is no `plan: container` and no
+`type: postgres` always means CloudNativePG, with presets, HA, point-in-time recovery, backups and
+branching as described in [ADR-0007](0007-data-services.md). There is no `preset: container` and no
 operator-free mode. A field that sometimes means "HA Postgres with PITR" and sometimes means "a container
 that will lose your data" is a trap, and someone will find it in production.
 
@@ -53,7 +53,7 @@ that will lose your data" is a trap, and someone will find it in production.
 **Any workload or Helm chart can be installed.** Third-party applications, databases you would rather run
 yourself, anything at all. kelson runs it, routes to it, and binds applications to it.
 
-What it does not do is claim anything about durability. No plans, no managed backups, no branching, no
+What it does not do is claim anything about durability. No presets, no managed backups, no branching, no
 failover. It is your workload and yours to look after — the same deal you get from `kubectl apply`, with
 better ergonomics.
 

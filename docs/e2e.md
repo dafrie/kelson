@@ -48,8 +48,10 @@ still run and the script then fails fast with an explicit message rather than fa
 with [`traefik/whoami`](https://github.com/traefik/whoami) — a small, real, publicly hosted image that
 actually starts and answers HTTP (every path, 200), which keeps the "healthy" case boringly
 deterministic. It carries no `delivery.mode`, so it resolves to the `direct` adapter, and no routing,
-since a stock kind cluster has no ingress controller or Gateway API for the renderer to attach a route
-to (`internal/renderer/routing.go`).
+since a stock kind cluster has no Gateway API for the renderer to attach a route to. Declaring domains
+against such a cluster is a render-time capability gap since
+[#140](https://github.com/dafrie/kelson/issues/140), not a silent Ingress
+(`internal/renderer/routing.go`).
 
 ## What's out of scope here
 

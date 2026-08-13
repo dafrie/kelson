@@ -18,33 +18,49 @@ const (
 	// ErrOverlayTarget: a patch names a resource that does not exist in
 	// the set rendered so far.
 	ErrOverlayTarget = "overlay/unknown-target"
+	// ErrImageUnresolved: an application reached the renderer without a usable
+	// image — the spec builds it from source and no build result was supplied,
+	// so its image is still model.ImageUnresolved (issue #136).
+	ErrImageUnresolved = "image/unresolved"
+	// ErrGatewayAPIMissing: the spec asks for routing but the ClusterProfile
+	// reports no Gateway API. kelson renders Gateway API only (#140), so this
+	// is a capability gap the caller must see rather than an Ingress rendered
+	// behind their back.
+	ErrGatewayAPIMissing = "render/gateway-api-missing"
 	// ErrInternal: an invariant failed inside the renderer itself.
 	ErrInternal = "render/internal"
 )
 
 // Error is one structured render problem.
 type Error struct {
-	Code    string `json:"code"`
-	Overlay string `json:"overlay,omitempty"` // overlay path, for overlay failures
-	Target  string `json:"target,omitempty"`  // "Kind/name", for targeting failures
-	Message string `json:"message"`
+	Code        string `json:"code"`
+	Application string `json:"application,omitempty"` // application whose spec is at fault
+	Overlay     string `json:"overlay,omitempty"`     // overlay path, for overlay failures
+	Target      string `json:"target,omitempty"`      // "Kind/name", for targeting failures
+	Message     string `json:"message"`
+	Remediation string `json:"remediation,omitempty"` // the fix, stated as an action
 }
 
 func (e Error) Error() string {
-	loc := ""
+	var loc []string
+	if e.Application != "" {
+		loc = append(loc, "application "+e.Application)
+	}
 	if e.Overlay != "" {
-		loc = fmt.Sprintf("overlay %s", e.Overlay)
+		loc = append(loc, "overlay "+e.Overlay)
 	}
 	if e.Target != "" {
-		if loc != "" {
-			loc += " "
-		}
-		loc += "targeting " + e.Target
+		loc = append(loc, "targeting "+e.Target)
 	}
-	if loc != "" {
-		loc = " (" + loc + ")"
+	out := fmt.Sprintf("[%s]", e.Code)
+	if len(loc) > 0 {
+		out += " (" + strings.Join(loc, " ") + ")"
 	}
-	return fmt.Sprintf("[%s]%s %s", e.Code, loc, e.Message)
+	out += " " + e.Message
+	if e.Remediation != "" {
+		out += "; " + e.Remediation
+	}
+	return out
 }
 
 // Errors is the collected result of a failed render. Rendering fails fast on

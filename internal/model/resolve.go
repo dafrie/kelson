@@ -5,6 +5,12 @@ import (
 	"strings"
 )
 
+// ImageUnresolved is the image a ResolvedApplication carries when the spec
+// builds it from source and no build result has been supplied yet. It is a
+// sentinel, not a reference: it must never reach a manifest, and the renderer
+// refuses to render an application still carrying it (issue #136).
+const ImageUnresolved = "@"
+
 // Resolved is the precedence-resolved output for one (Project, Environment)
 // pair — the concrete input the renderer consumes (issue #26). Resolution
 // applies every rule from docs/model.md (P1–P6) and the built-in defaults.
@@ -29,7 +35,6 @@ type ResolvedEnvironment struct {
 
 type ResolvedRouting struct {
 	DomainSuffix string
-	IngressClass string
 	GatewayClass string
 	TLS          bool // defaulted to true
 }
@@ -49,9 +54,9 @@ type ResolvedApplication struct {
 }
 
 type ResolvedService struct {
-	Name string
-	Type string
-	Plan ServicePlan // after the P5 environment override
+	Name   string
+	Type   string
+	Preset ServicePreset // after the P5 environment override
 }
 
 // Resolve validates the (Project, Environment) pair and returns the effective
@@ -61,7 +66,15 @@ func Resolve(p *Project, e *Environment) (*Resolved, Errors) {
 	if errs := ValidateSet(p, e); len(errs) > 0 {
 		return nil, errs
 	}
+	return resolve(p, e), nil
+}
 
+// resolve applies the precedence rules without validating. It is split out
+// because issue #141 gates fields the resolver still resolves — services,
+// policy and secret backends among them. Keeping resolution reachable without
+// the gate means P4 and P5 stay under test, and means landing M7/M8/M9 is a
+// matter of deleting a gate row rather than rebuilding precedence.
+func resolve(p *Project, e *Environment) *Resolved {
 	r := &Resolved{Project: p.Metadata.Name}
 
 	// Environment identity and target.
@@ -75,7 +88,6 @@ func Resolve(p *Project, e *Environment) (*Resolved, Errors) {
 
 	if routing := e.Spec.Routing; routing != nil {
 		r.Environment.Routing.DomainSuffix = routing.DomainSuffix
-		r.Environment.Routing.IngressClass = routing.IngressClass
 		r.Environment.Routing.GatewayClass = routing.GatewayClass
 		r.Environment.Routing.TLS = true
 		if routing.TLS != nil {
@@ -114,20 +126,20 @@ func Resolve(p *Project, e *Environment) (*Resolved, Errors) {
 		r.Environment.Secrets = *sb
 	}
 
-	// P5: service plan overrides by name.
-	svcPlans := map[string]ServicePlan{}
+	// P5: service preset overrides by name.
+	svcPresets := map[string]ServicePreset{}
 	for _, ov := range e.Spec.Services {
-		svcPlans[ov.Name] = ov.Plan
+		svcPresets[ov.Name] = ov.Preset
 	}
 	for _, svc := range p.Spec.Services {
-		plan := svc.Plan
-		if plan == "" {
-			plan = PlanShared
+		preset := svc.Preset
+		if preset == "" {
+			preset = PresetShared
 		}
-		if ov, ok := svcPlans[svc.Name]; ok {
-			plan = ov
+		if ov, ok := svcPresets[svc.Name]; ok {
+			preset = ov
 		}
-		r.Services = append(r.Services, ResolvedService{Name: svc.Name, Type: svc.Type, Plan: plan})
+		r.Services = append(r.Services, ResolvedService{Name: svc.Name, Type: svc.Type, Preset: preset})
 	}
 
 	// P6: project overlays first.
@@ -164,7 +176,10 @@ func Resolve(p *Project, e *Environment) (*Resolved, Errors) {
 			ra.Image = p.Spec.Image
 		}
 		if ra.Image == "" && builtFromSource {
-			ra.Image = "@" // built artifact placeholder; the build plane fills the digest
+			// The build plane fills the digest in; until it does, the image is
+			// explicitly unresolved rather than blank, so a consumer can tell
+			// "waiting on a build" from "the spec named nothing" (issue #136).
+			ra.Image = ImageUnresolved
 		}
 		ra.Resources = app.Resources
 		ra.Domains = app.Domains
@@ -188,5 +203,5 @@ func Resolve(p *Project, e *Environment) (*Resolved, Errors) {
 		r.Applications = append(r.Applications, ra)
 	}
 
-	return r, nil
+	return r
 }

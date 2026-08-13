@@ -244,6 +244,43 @@ func TestPruneRemovesOwnedResources(t *testing.T) {
 	}
 }
 
+// TestPruneNeverDeletesANamespace: since the renderer emits the environment's
+// Namespace (#150) it sits in kelson's provenance-labelled inventory, so a
+// renamed namespace would otherwise be pruned — cascading to everything inside
+// it, including resources kelson never created (#59).
+func TestPruneNeverDeletesANamespace(t *testing.T) {
+	c := newCluster()
+	a := newAdapter(t, c)
+	ctx := context.Background()
+
+	first := set(
+		manifest(t, "v1", "Namespace", testNS, ""),
+		manifest(t, "apps/v1", "Deployment", "checkout", testNS),
+	)
+	if _, err := a.Apply(ctx, first); err != nil {
+		t.Fatalf("first apply: %v", err)
+	}
+
+	// The environment moves to a different namespace: the old one leaves the
+	// desired set entirely.
+	second := set(
+		manifest(t, "v1", "Namespace", "checkout-next", ""),
+		manifest(t, "apps/v1", "Deployment", "checkout", "checkout-next"),
+	)
+	if _, err := a.Apply(ctx, second); err != nil {
+		t.Fatalf("second apply: %v", err)
+	}
+
+	if c.get(t, "namespaces", "", testNS) == nil {
+		t.Fatal("the abandoned namespace was deleted; uninstall must decide that, not prune")
+	}
+	for _, d := range c.deleteLog() {
+		if strings.HasPrefix(d, "namespaces/") {
+			t.Fatalf("prune issued a namespace delete: %v", c.deleteLog())
+		}
+	}
+}
+
 // TestPruneRefusesResourceWithoutProvenance is the #33 safety acceptance:
 // kelson never deletes a resource that does not carry its provenance labels.
 func TestPruneRefusesResourceWithoutProvenance(t *testing.T) {

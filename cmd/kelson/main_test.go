@@ -25,9 +25,25 @@ func examplesHello(t *testing.T) (project, env string) {
 		filepath.Join("..", "..", "examples", "hello-single", "development.yaml")
 }
 
+// profileFile writes a ClusterProfile to a temp file and returns its path.
+// The hello example declares a domain suffix, and since #140 a profile with no
+// Gateway API cannot route it, so CLI render tests must say what the cluster
+// provides instead of relying on the zero profile.
+func profileFile(t *testing.T, body string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "profile.yaml")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+const gatewayProfileYAML = "gatewayAPI:\n  version: v1.6.0\n  classes: [envoy]\n"
+
 func TestRenderToStdout(t *testing.T) {
 	project, env := examplesHello(t)
-	stdout, _, err := runKelson(t, "render", "-f", project, "-f", env)
+	stdout, _, err := runKelson(t, "render", "-f", project, "-f", env,
+		"--profile", profileFile(t, gatewayProfileYAML))
 	if err != nil {
 		t.Fatalf("render failed: %v", err)
 	}
@@ -49,11 +65,12 @@ func TestRenderToStdout(t *testing.T) {
 // output — previews and diffs are trustworthy (ADR-0001).
 func TestRenderDeterministicAcrossRuns(t *testing.T) {
 	project, env := examplesHello(t)
-	a, _, err := runKelson(t, "render", "-f", project, "-f", env)
+	profile := profileFile(t, gatewayProfileYAML)
+	a, _, err := runKelson(t, "render", "-f", project, "-f", env, "--profile", profile)
 	if err != nil {
 		t.Fatalf("render failed: %v", err)
 	}
-	b, _, err := runKelson(t, "render", "-f", project, "-f", env)
+	b, _, err := runKelson(t, "render", "-f", project, "-f", env, "--profile", profile)
 	if err != nil {
 		t.Fatalf("render failed: %v", err)
 	}
@@ -63,18 +80,34 @@ func TestRenderDeterministicAcrossRuns(t *testing.T) {
 }
 
 func TestRenderWithProfile(t *testing.T) {
-	dir := t.TempDir()
-	profilePath := filepath.Join(dir, "profile.yaml")
-	if err := os.WriteFile(profilePath, []byte("ingressClasses:\n  - { name: nginx }\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	project, env := examplesHello(t)
-	stdout, _, err := runKelson(t, "render", "-f", project, "-f", env, "--profile", profilePath)
+	stdout, _, err := runKelson(t, "render", "-f", project, "-f", env,
+		"--profile", profileFile(t, gatewayProfileYAML))
 	if err != nil {
 		t.Fatalf("render failed: %v", err)
 	}
-	if !strings.Contains(stdout, "kind: Ingress") || !strings.Contains(stdout, "ingressClassName: nginx") {
-		t.Fatalf("expected Ingress for the nginx profile:\n%s", stdout)
+	if !strings.Contains(stdout, "kind: HTTPRoute") || !strings.Contains(stdout, "name: envoy") {
+		t.Fatalf("expected an HTTPRoute attached to the detected gateway:\n%s", stdout)
+	}
+}
+
+// TestRenderIngressOnlyProfileFails is #140 at the CLI boundary: a cluster
+// with only an ingress class cannot serve a spec that declares domains, and
+// the user must be told so with the fix, never handed an Ingress.
+func TestRenderIngressOnlyProfileFails(t *testing.T) {
+	project, env := examplesHello(t)
+	stdout, _, err := runKelson(t, "render", "-f", project, "-f", env,
+		"--profile", profileFile(t, "ingressClasses:\n  - { name: nginx, default: true }\n"))
+	if err == nil {
+		t.Fatalf("expected a capability-gap error, got:\n%s", stdout)
+	}
+	for _, want := range []string{"render/gateway-api-missing", "Envoy Gateway"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error must contain %q, got: %v", want, err)
+		}
+	}
+	if strings.Contains(stdout, "kind: Ingress") {
+		t.Fatalf("an Ingress was rendered; kelson renders Gateway API only:\n%s", stdout)
 	}
 }
 
@@ -120,7 +153,8 @@ func TestRenderMissingEnvFlag(t *testing.T) {
 func TestRenderToDirectory(t *testing.T) {
 	project, env := examplesHello(t)
 	dir := filepath.Join(t.TempDir(), "out")
-	stdout, _, err := runKelson(t, "render", "-f", project, "-f", env, "-o", dir)
+	stdout, _, err := runKelson(t, "render", "-f", project, "-f", env, "-o", dir,
+		"--profile", profileFile(t, gatewayProfileYAML))
 	if err != nil {
 		t.Fatalf("render failed: %v", err)
 	}
@@ -128,10 +162,10 @@ func TestRenderToDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading output dir: %v", err)
 	}
-	// hello/development renders ServiceAccount + Service + Deployment (no
-	// route: the default profile detects no routing substrate).
-	if len(entries) != 3 {
-		t.Fatalf("expected 3 manifest files, got %d: %v", len(entries), entries)
+	// hello/development renders Namespace + ServiceAccount + Service +
+	// Deployment + HTTPRoute against a Gateway API profile.
+	if len(entries) != 5 {
+		t.Fatalf("expected 5 manifest files, got %d: %v", len(entries), entries)
 	}
 	for _, e := range entries {
 		if !strings.HasSuffix(e.Name(), ".yaml") {

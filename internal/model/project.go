@@ -123,19 +123,19 @@ type ResourceList struct {
 // application-facing abstraction; topology is delegated to operators
 // (ADR-0005, ADR-0007).
 type Service struct {
-	Name string      `yaml:"name" json:"name" jsonschema:"required"`
-	Type string      `yaml:"type" json:"type" jsonschema:"required,enum=postgres,enum=valkey"`
-	Plan ServicePlan `yaml:"plan,omitempty" json:"plan,omitempty" jsonschema:"default=shared,enum=shared,enum=small,enum=ha-small,enum=ha-medium,enum=branch"`
+	Name   string        `yaml:"name" json:"name" jsonschema:"required"`
+	Type   string        `yaml:"type" json:"type" jsonschema:"required,enum=postgres,enum=valkey"`
+	Preset ServicePreset `yaml:"preset,omitempty" json:"preset,omitempty" jsonschema:"default=shared,enum=shared,enum=small,enum=ha-small,enum=ha-medium,enum=branch"`
 }
 
-type ServicePlan string
+type ServicePreset string
 
 const (
-	PlanShared   ServicePlan = "shared"
-	PlanSmall    ServicePlan = "small"
-	PlanHASmall  ServicePlan = "ha-small"
-	PlanHAMedium ServicePlan = "ha-medium"
-	PlanBranch   ServicePlan = "branch"
+	PresetShared   ServicePreset = "shared"
+	PresetSmall    ServicePreset = "small"
+	PresetHASmall  ServicePreset = "ha-small"
+	PresetHAMedium ServicePreset = "ha-medium"
+	PresetBranch   ServicePreset = "branch"
 )
 
 // Overlay is the escape hatch: strategic-merge patches applied to rendered

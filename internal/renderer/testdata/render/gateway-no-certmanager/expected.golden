@@ -1,5 +1,18 @@
 ---
 apiVersion: v1
+kind: Namespace
+metadata:
+  name: shopfront
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/environment: production
+    kelson.dev/project: shopfront
+  annotations:
+    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/spec-hash: sha256:459efca4f7b11be6fe9ba102540cfa95a203ef8c272aea9861bd338aa8e8ba95
+    kelson.dev/namespace-ownership: declared
+---
+apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: web
@@ -11,7 +24,7 @@ metadata:
     kelson.dev/project: shopfront
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:0e8e4a0e329e6a7c8e10870b619bbfa60ed25d459aa3e091acc130ee83f41558
+    kelson.dev/spec-hash: sha256:e0b7c9b9a4b79538fd3e67f01cf52f2f5fe71d32478cf73e0c475d983a70e556
 ---
 apiVersion: v1
 kind: Service
@@ -25,7 +38,7 @@ metadata:
     kelson.dev/project: shopfront
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:0e8e4a0e329e6a7c8e10870b619bbfa60ed25d459aa3e091acc130ee83f41558
+    kelson.dev/spec-hash: sha256:e0b7c9b9a4b79538fd3e67f01cf52f2f5fe71d32478cf73e0c475d983a70e556
 spec:
   selector:
     kelson.dev/project: shopfront
@@ -47,7 +60,7 @@ metadata:
     kelson.dev/project: shopfront
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:0e8e4a0e329e6a7c8e10870b619bbfa60ed25d459aa3e091acc130ee83f41558
+    kelson.dev/spec-hash: sha256:e0b7c9b9a4b79538fd3e67f01cf52f2f5fe71d32478cf73e0c475d983a70e556
 spec:
   replicas: 3
   selector:
@@ -69,12 +82,6 @@ spec:
           ports:
             - name: http
               containerPort: 3000
-          env:
-            - name: CACHE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: shopfront-cache-credentials
-                  key: uri
           resources:
             requests:
               cpu: 250m
@@ -91,8 +98,8 @@ spec:
               path: /up
               port: 3000
 ---
-apiVersion: networking.k8s.io/v1
-kind: Ingress
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
 metadata:
   name: web
   namespace: shopfront
@@ -103,24 +110,20 @@ metadata:
     kelson.dev/project: shopfront
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:0e8e4a0e329e6a7c8e10870b619bbfa60ed25d459aa3e091acc130ee83f41558
+    kelson.dev/spec-hash: sha256:e0b7c9b9a4b79538fd3e67f01cf52f2f5fe71d32478cf73e0c475d983a70e556
 spec:
-  ingressClassName: public
+  parentRefs:
+    - name: public
+  hostnames:
+    - web.shop.acme.io
   rules:
-    - host: web.shop.acme.io
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: web
-                port:
-                  number: 3000
-  tls:
-    - hosts:
-        - web.shop.acme.io
-      secretName: web-tls
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: web
+          port: 3000
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -134,7 +137,7 @@ metadata:
     kelson.dev/project: shopfront
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:9a625bad2d5d100641470738fe14fad39bf8ada930c7b0416285d43db10e5a19
+    kelson.dev/spec-hash: sha256:2a327dfc660d19af221be680f7c3b35bd7962b1d459c10c52362d07bb96019c6
 spec:
   replicas: 1
   selector:
@@ -155,9 +158,3 @@ spec:
           command:
             - shopfront
             - process-images
-          env:
-            - name: CACHE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: shopfront-cache-credentials
-                  key: uri

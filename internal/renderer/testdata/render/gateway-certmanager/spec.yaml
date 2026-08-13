@@ -1,0 +1,26 @@
+# Fixture: single web service on a Gateway API cluster with cert-manager.
+# No gatewayClass in the environment: the renderer takes the class the profile
+# detected. Hostname is derived (web.staging.acme.run) and tls defaults to
+# true, so a Certificate is emitted without the spec asking for one.
+# Converted from the former ingress-certmanager fixture (#140): the
+# cert-manager interaction it covered is unchanged, only the substrate.
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: hello
+spec:
+  image: ghcr.io/acme/hello:v1
+  applications:
+    - name: web
+      port: 8080
+      env:
+        GREETING: hello
+---
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: staging
+spec:
+  project: hello
+  routing:
+    domainSuffix: staging.acme.run

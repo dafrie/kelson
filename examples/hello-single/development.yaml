@@ -9,5 +9,6 @@ spec:
   routing:
     domainSuffix: dev.acme.run
 
-  policy:
-    agents: allow            # development is where agents deploy freely
+  # `policy: {agents: allow}` — development is where agents deploy freely —
+  # returns with M7; kelson rejects unimplemented fields rather than ignoring
+  # them (#141).

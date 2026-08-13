@@ -1,5 +1,18 @@
 ---
 apiVersion: v1
+kind: Namespace
+metadata:
+  name: hello-staging
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/environment: staging
+    kelson.dev/project: hello
+  annotations:
+    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/spec-hash: sha256:84f6393d01372945a0710db65b98ccbff1e45f6ed44e7ee65e56b75f91b5ecab
+    kelson.dev/namespace-ownership: declared
+---
+apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: web
@@ -11,7 +24,7 @@ metadata:
     kelson.dev/project: hello
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:8f70450b5af36312a39859041648a2d81cafed494b6cd526b874d5f7ad95c869
+    kelson.dev/spec-hash: sha256:bcf9d8958f799aed0f79117f810f3ffce5e7b6a024effee49da0b2926e29a8be
 ---
 apiVersion: v1
 kind: Service
@@ -25,7 +38,7 @@ metadata:
     kelson.dev/project: hello
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:8f70450b5af36312a39859041648a2d81cafed494b6cd526b874d5f7ad95c869
+    kelson.dev/spec-hash: sha256:bcf9d8958f799aed0f79117f810f3ffce5e7b6a024effee49da0b2926e29a8be
 spec:
   selector:
     kelson.dev/project: hello
@@ -47,7 +60,7 @@ metadata:
     kelson.dev/project: hello
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:8f70450b5af36312a39859041648a2d81cafed494b6cd526b874d5f7ad95c869
+    kelson.dev/spec-hash: sha256:bcf9d8958f799aed0f79117f810f3ffce5e7b6a024effee49da0b2926e29a8be
 spec:
   replicas: 1
   selector:
@@ -73,8 +86,8 @@ spec:
             - name: GREETING
               value: hello
 ---
-apiVersion: networking.k8s.io/v1
-kind: Ingress
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
 metadata:
   name: web
   namespace: hello-staging
@@ -85,24 +98,20 @@ metadata:
     kelson.dev/project: hello
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:8f70450b5af36312a39859041648a2d81cafed494b6cd526b874d5f7ad95c869
+    kelson.dev/spec-hash: sha256:bcf9d8958f799aed0f79117f810f3ffce5e7b6a024effee49da0b2926e29a8be
 spec:
-  ingressClassName: nginx
+  parentRefs:
+    - name: envoy
+  hostnames:
+    - web.staging.acme.run
   rules:
-    - host: web.staging.acme.run
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: web
-                port:
-                  number: 8080
-  tls:
-    - hosts:
-        - web.staging.acme.run
-      secretName: web-tls
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: web
+          port: 8080
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
@@ -116,7 +125,7 @@ metadata:
     kelson.dev/project: hello
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:8f70450b5af36312a39859041648a2d81cafed494b6cd526b874d5f7ad95c869
+    kelson.dev/spec-hash: sha256:bcf9d8958f799aed0f79117f810f3ffce5e7b6a024effee49da0b2926e29a8be
 spec:
   secretName: web-tls
   issuerRef:

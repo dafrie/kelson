@@ -162,6 +162,73 @@ func TestStatusMapsPhase(t *testing.T) {
 	}
 }
 
+// unhealthyStatus is a status reader whose cluster runs a broken Flux.
+type unhealthyStatus struct {
+	fakeStatus
+	calls int
+}
+
+func (u *unhealthyStatus) Health(context.Context) (Health, error) {
+	u.calls++
+	return Health{
+		Source:  HealthFromReport,
+		Ready:   false,
+		Unready: []string{"source-controller"},
+		Message: "Flux is not ready: source-controller unavailable",
+	}, nil
+}
+
+// TestStatusExplainsUnhealthyFlux is the #137 readback: a revision Flux has not
+// observed stays Committed — the phase is a fact about the change, not about
+// Flux — but the cause names the broken controller instead of leaving the user
+// to guess whether waiting will help.
+func TestStatusExplainsUnhealthyFlux(t *testing.T) {
+	a, _, _, _ := newTestAdapter(t)
+	unhealthy := &unhealthyStatus{fakeStatus: fakeStatus{ks: []Kustomization{{
+		Name: "web", Namespace: "apps", Path: "./manifests", Ready: ConditionUnknown,
+	}}}}
+	a.status = unhealthy
+
+	st, err := a.Status(context.Background(), testSet())
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if st.Phase != delivery.PhaseCommitted {
+		t.Fatalf("phase = %q, want committed", st.Phase)
+	}
+	if !strings.Contains(st.Cause, "source-controller") {
+		t.Fatalf("cause = %q, want the unready component named", st.Cause)
+	}
+	if st.Detail["fluxHealth"] == "" {
+		t.Fatalf("detail = %v, want a fluxHealth entry", st.Detail)
+	}
+	if unhealthy.calls != 1 {
+		t.Fatalf("health read %d times, want 1", unhealthy.calls)
+	}
+}
+
+// TestStatusSkipsHealthWhenFluxIsDemonstrablyWorking verifies the extra read is
+// not made when the Kustomization already proves Flux applied something.
+func TestStatusSkipsHealthWhenFluxIsDemonstrablyWorking(t *testing.T) {
+	a, _, _, _ := newTestAdapter(t)
+	unhealthy := &unhealthyStatus{fakeStatus: fakeStatus{ks: []Kustomization{{
+		Name: "web", Namespace: "apps", Path: "./manifests",
+		Ready: ConditionTrue, LastAppliedRevision: "main@sha1:deadbeef",
+	}}}}
+	a.status = unhealthy
+
+	st, err := a.Status(context.Background(), testSet())
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if st.Phase != delivery.PhaseHealthy {
+		t.Fatalf("phase = %q, want healthy", st.Phase)
+	}
+	if unhealthy.calls != 0 {
+		t.Fatalf("health read %d times on an applied revision, want 0", unhealthy.calls)
+	}
+}
+
 // TestStatusReportsNotWatched verifies Status answers "unwatched" too, rather
 // than fabricating a phase from nothing.
 func TestStatusReportsNotWatched(t *testing.T) {

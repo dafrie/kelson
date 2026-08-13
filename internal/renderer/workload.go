@@ -10,9 +10,8 @@ import (
 )
 
 // appManifests renders one application in a fixed resource order:
-// ServiceAccount, Service, workload (Deployment|CronJob), HPA, routing
-// (HTTPRoute|Ingress), Certificate, ServiceMonitor. Kinds that do not apply
-// are simply absent.
+// ServiceAccount, Service, workload (Deployment|CronJob), HPA, HTTPRoute,
+// Certificate, ServiceMonitor. Kinds that do not apply are simply absent.
 func appManifests(resolved *model.Resolved, app *model.ResolvedApplication, profile clusterprofile.ClusterProfile) ([]Manifest, error) {
 	hash, err := specHash(resolved, app)
 	if err != nil {
@@ -39,7 +38,11 @@ func appManifests(resolved *model.Resolved, app *model.ResolvedApplication, prof
 	case model.WorkloadCron:
 		out = append(out, cronJob(app, prov))
 	}
-	out = append(out, routingResources(resolved, app, profile, prov)...)
+	routes, err := routingResources(resolved, app, profile, prov)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, routes...)
 	if app.Kind == model.WorkloadService && profile.Prometheus != nil {
 		out = append(out, serviceMonitor(app, prov))
 	}

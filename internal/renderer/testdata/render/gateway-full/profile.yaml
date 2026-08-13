@@ -1,5 +1,7 @@
-# A cluster that has everything: Gateway API AND an ingress class (Gateway
-# API must win), cert-manager, Prometheus.
+# A cluster that has everything: Gateway API AND an ingress class,
+# cert-manager, Prometheus. The ingress class is kept deliberately: detection
+# still records it for the migration nudge (#112), and this fixture pins that
+# the renderer never renders against it (#140).
 gatewayAPI:
   version: v1.6.0
   classes: [envoy]

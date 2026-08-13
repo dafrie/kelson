@@ -1,7 +1,14 @@
 # Fixture: full-featured spec against a cluster that has everything —
-# Gateway API (preferred over the detected ingress class), cert-manager and
-# Prometheus. Exercises all three workload kinds, bindings, env precedence
-# (P1), per-environment replicas/resources overrides (P2) and autoscaling.
+# Gateway API (the detected ingress class is advisory and never rendered
+# against, #140), cert-manager and Prometheus. Exercises all three workload
+# kinds, env precedence (P1), per-environment replicas/resources overrides (P2)
+# and autoscaling.
+#
+# Service bindings and secret backends used to sit here too. Validation now
+# rejects them until M9 and M8 land (#141), and this fixture goes through full
+# validation, so binding rendering is covered by TestRenderEnvSecretKeyRef in
+# renderer_test.go instead — that builds the Resolved directly, which is where
+# the renderer's binding support stays exercised.
 apiVersion: kelson.dev/v1alpha1
 kind: Project
 metadata:
@@ -11,13 +18,6 @@ spec:
 
   env:
     LOG_LEVEL: info
-    DATABASE_URL:
-      from: { service: db, key: uri }
-
-  services:
-    - name: db
-      type: postgres
-      plan: ha-small
 
   applications:
     - name: web
@@ -50,9 +50,6 @@ spec:
       repo: git@github.com:acme/deploy.git
       branch: main
       path: checkout/production
-
-  secrets:
-    backend: sops
 
   applications:
     - name: web

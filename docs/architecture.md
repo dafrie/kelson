@@ -76,7 +76,7 @@ spec:
   services:
     - name: db
       type: postgres
-      plan: ha-small        # topology preset → CloudNativePG Cluster with PITR (field renamed to `preset:` by #146)
+      preset: ha-small      # topology preset → CloudNativePG Cluster with PITR
 
   applications:
     - name: web
@@ -99,6 +99,12 @@ spec:
 
 One HA, TLS-terminated, database-backed service with a worker and a cron job, in about thirty lines with no
 duplication. Everything beyond this is progressive disclosure: reachable, not present by default.
+
+This is the target shape, not today's. The `services:` block and its `from:` binding are designed and
+validated but nothing provisions them yet, so kelson rejects them with `schema/not-implemented` naming
+M9 rather than accepting them and rendering nothing
+([#141](https://github.com/dafrie/kelson/issues/141)); the same holds for `policy:` (M7), `secrets:` (M8)
+and `cluster:` (M10). See [the model reference](model.md) for the current table.
 
 Environments carry what differs between deployments — cluster, namespace, domain suffix, replica and
 resource overrides, delivery mode, policy. Projects stay environment-agnostic; environments stay
@@ -320,8 +326,8 @@ than build arguments or image layers, and no secret value is ever written to a l
 Delegated to CloudNativePG and a Valkey operator, with kelson owning only the application-facing
 abstraction. Full reasoning in [ADR-0007](adr/0007-data-services.md).
 
-**Presets determine topology** (the spec field is currently `plan:`, renamed to `preset:` by #146 —
-these are topology presets, not paid tiers; kelson has no paid anything). CNPG recommends one database
+**Presets determine topology** (the spec field is `preset:` — these are topology presets, not paid
+tiers; kelson has no paid anything). CNPG recommends one database
 per cluster, which is right for production and unaffordable below it — ten apps across three
 environments is 30 pods and roughly 15 GB before any application code runs.
 

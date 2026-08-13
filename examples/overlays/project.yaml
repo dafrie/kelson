@@ -11,14 +11,8 @@ spec:
   build:
     strategy: dockerfile
 
-  env:
-    REDIS_URL:
-      from: { service: cache, key: uri }
-
-  services:
-    - name: cache
-      type: valkey
-      plan: small
+  # A valkey `services:` entry and the `REDIS_URL` binding onto it return with
+  # M9; kelson rejects unimplemented fields rather than ignoring them (#141).
 
   applications:
     - name: transcoder

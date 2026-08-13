@@ -6,9 +6,11 @@
 // bootstrapping a new one from it. Whether that snapshot is cheap depends on
 // the storage driver: Ceph RBD, ZFS and LVM-thin give thin copy-on-write
 // clones, EBS and GCE PD give a full-size restore, and the local-path
-// provisioner that `kelson up` defaults to has no snapshot driver at all. On
-// that bootstrap path snapshot-based branching cannot work, and the decision
-// is to say so at the point of use instead of quietly falling back.
+// provisioner that the planned minimal k3s bootstrap (M5) defaults to has no
+// snapshot driver at all (issue #142: that bootstrap path has no `kelson up`
+// command yet). On that bootstrap path snapshot-based branching cannot work,
+// and the decision is to say so at the point of use instead of quietly
+// falling back.
 //
 // The clusterprofile.StorageClass carries the enablement: VolumeSnapshotClass
 // is non-empty exactly when a CSI snapshot class matches that class's

@@ -19,12 +19,6 @@ spec:
     strategy: auto
   env:
     LOG_LEVEL: info
-    DATABASE_URL:
-      from: {service: db, key: uri}
-  services:
-    - name: db
-      type: postgres
-      plan: ha-small
   applications:
     - name: web
       port: 8080
@@ -156,15 +150,31 @@ spec:
 			if secret == nil {
 				t.Fatalf("secret literal not rejected:\n%v", errs)
 			}
-			if !strings.Contains(secret.Remediation, "kelson secret set") {
-				t.Errorf("remediation should name the fix, got %q", secret.Remediation)
+			// The remediation may only name things that work today. It used to
+			// send authors to a `kelson secret set` that does not exist (#142),
+			// then to a service binding, which #141 now rejects. What is left
+			// is the overlay escape hatch, which is implemented.
+			if strings.Contains(secret.Remediation, "kelson secret set") {
+				t.Errorf("remediation references the nonexistent `kelson secret set` command, got %q", secret.Remediation)
+			}
+			if !strings.Contains(secret.Remediation, "overlay") {
+				t.Errorf("remediation should name a fix that works today, got %q", secret.Remediation)
+			}
+			// Prescribing a binding would send the author into a gated field.
+			if strings.Contains(secret.Remediation, "{from:") {
+				t.Errorf("remediation prescribes a service binding, which is gated until M9 (#141): %q", secret.Remediation)
 			}
 		})
 	}
 }
 
-// TestSecretReferenceAccepted: the same variable through from: is valid.
-func TestSecretReferenceAccepted(t *testing.T) {
+// TestSecretReferenceGatedNotSecretViolation: the same variable through from:
+// is well-formed under ADR-0009 — it carries a reference, not a value — so it
+// must not be reported as a secret literal. It is rejected anyway, because
+// nothing provisions the Secret the binding names until M9 (issue #141). The
+// distinction matters: the author is told the feature is missing, not that
+// they wrote a credential into the spec.
+func TestSecretReferenceGatedNotSecretViolation(t *testing.T) {
 	_, errs := DecodeDocuments([]byte(`
 apiVersion: kelson.dev/v1alpha1
 kind: Project
@@ -180,8 +190,22 @@ spec:
   applications:
     - {name: web, port: 8080}
 `))
-	if len(errs) != 0 {
-		t.Fatalf("references must be accepted, got:\n%v", errs)
+	if slices.Contains(errs.Codes(), ErrSecretLiteral) {
+		t.Errorf("a binding carries a reference, not a value: it must never be a secret/literal, got:\n%v", errs)
+	}
+	var binding *Error
+	for i := range errs {
+		if errs[i].Code == ErrNotImplemented && errs[i].Field == "$.spec.env.DATABASE_URL.from" {
+			binding = &errs[i]
+		}
+	}
+	if binding == nil {
+		t.Fatalf("the binding must be gated as %s, got:\n%v", ErrNotImplemented, errs)
+	}
+	for _, code := range errs.Codes() {
+		if code != ErrNotImplemented {
+			t.Errorf("the only complaint should be the gate, got %s in:\n%v", code, errs)
+		}
 	}
 }
 
@@ -246,6 +270,71 @@ spec:
 	}
 }
 
+// TestServicePlanFieldRejected covers #146: the pre-rename field name `plan`
+// is not a silent alias for `preset` — it is an unknown field like any typo.
+func TestServicePlanFieldRejected(t *testing.T) {
+	_, errs := DecodeDocuments([]byte(`
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata: {name: p}
+spec:
+  image: i:1
+  services:
+    - {name: db, type: postgres, plan: shared}
+  applications:
+    - {name: web, port: 8080}
+`))
+	var uf *Error
+	for i := range errs {
+		if errs[i].Code == ErrUnknownField {
+			uf = &errs[i]
+		}
+	}
+	if uf == nil {
+		t.Fatalf("old field name %q must be rejected as unknown, got:\n%v", "plan", errs)
+	}
+	if uf.Field != "$.spec.services[0].plan" {
+		t.Errorf("field = %q, want $.spec.services[0].plan", uf.Field)
+	}
+	if !strings.Contains(uf.Remediation, "preset") {
+		t.Errorf("remediation should point at the current field name, got %q", uf.Remediation)
+	}
+}
+
+// TestIngressClassFieldRejected is the same rule for #140: kelson renders
+// Gateway API only, so `ingressClass` is gone from the model and a spec that
+// still carries it fails as an unknown field. Silently ignoring it would route
+// nothing while looking configured.
+func TestIngressClassFieldRejected(t *testing.T) {
+	_, errs := DecodeDocuments([]byte(`apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata: {name: production}
+spec:
+  project: shop
+  routing:
+    domainSuffix: acme.com
+    ingressClass: nginx
+`))
+	var uf *Error
+	for i := range errs {
+		if errs[i].Code == ErrUnknownField && strings.Contains(errs[i].Field, "ingressClass") {
+			uf = &errs[i]
+		}
+	}
+	if uf == nil {
+		t.Fatalf("ingressClass must be rejected as an unknown field, got:\n%v", errs)
+	}
+	if uf.Field != "$.spec.routing.ingressClass" {
+		t.Errorf("field = %q, want $.spec.routing.ingressClass", uf.Field)
+	}
+	if uf.Line != 8 {
+		t.Errorf("line = %d, want 8 (the ingressClass: key)", uf.Line)
+	}
+	if !strings.Contains(uf.Remediation, "gatewayClass") {
+		t.Errorf("remediation should point at gatewayClass, got %q", uf.Remediation)
+	}
+}
+
 func TestEnvironmentCrossReferences(t *testing.T) {
 	docs, errs := DecodeDocuments([]byte(`
 apiVersion: kelson.dev/v1alpha1
@@ -266,7 +355,7 @@ spec:
   delivery:
     mode: github
   services:
-    - {name: warehouse, plan: small}
+    - {name: warehouse, preset: small}
   applications:
     - name: web
       env:
@@ -278,14 +367,13 @@ spec:
 	if !slices.Contains(errs.Codes(), ErrInvalidEnum) {
 		t.Fatalf("delivery mode github must be caught at decode, got:\n%v", errs)
 	}
-	shapeOnly := 0
+	// Decode is otherwise clean: the gated services and binding (issue #141)
+	// are expected, everything else would be a shape complaint this document
+	// should not produce.
 	for _, e := range errs {
-		if e.Code != ErrInvalidEnum {
-			shapeOnly++
+		if e.Code != ErrInvalidEnum && e.Code != ErrNotImplemented {
+			t.Fatalf("decode must be otherwise clean, got:\n%v", errs)
 		}
-	}
-	if shapeOnly != 0 {
-		t.Fatalf("decode must be otherwise clean, got:\n%v", errs)
 	}
 	p := docs[0].(*Project)
 	e := docs[1].(*Environment)
@@ -385,5 +473,55 @@ spec:
 `))
 	if !slices.Contains(errs.Codes(), ErrNoImageSource) {
 		t.Errorf("build.strategy none without image must fail, got %v", errs)
+	}
+}
+
+// TestCronFieldRanges covers issue #143: cronFieldRE only checked shape, so a
+// schedule like "99 * * * *" passed validation and failed only once applied
+// to the cluster as a CronJob. Bounds mirror what Kubernetes' CronJob accepts
+// (robfig/cron's standard 5-field parser), field by field, with no
+// cross-field check (schedule "0 0 31 2 *" is accepted here even though no
+// February has a 31st — that is deliberately out of scope).
+func TestCronFieldRanges(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		schedule string
+		wantErr  bool
+	}{
+		{"plain schedule", "0 3 * * *", false},
+		{"ranges, steps and lists", "*/15 2-4 * * 1-5", false},
+		{"no cross-field check", "0 0 31 2 *", false},
+		{"month name", "0 0 1 JAN *", false},
+		{"day-of-week name", "0 0 * * MON", false},
+		{"day-of-week 0 is Sunday", "0 0 * * 0", false},
+		{"day-of-week 7 is also Sunday", "0 0 * * 7", false},
+		{"minute out of range", "99 * * * *", true},
+		{"hour out of range", "* 24 * * *", true},
+		{"step of zero", "*/0 * * * *", true},
+		{"range end out of range", "5-99 * * * *", true},
+		{"day-of-month zero", "0 0 0 * *", true},
+		{"day-of-week out of range", "0 0 * * 8", true},
+		{"month out of range", "0 0 1 13 *", true},
+		{"list member out of range", "0 0 * * 1,2,8", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, errs := DecodeDocuments([]byte(`
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata: {name: p}
+spec:
+  image: i:1
+  applications:
+    - name: nightly
+      schedule: "` + tc.schedule + `"
+`))
+			hasRangeErr := slices.Contains(errs.Codes(), ErrOutOfRange)
+			if tc.wantErr && !hasRangeErr {
+				t.Errorf("schedule %q: want an out-of-range error, got %v", tc.schedule, errs)
+			}
+			if !tc.wantErr && len(errs) != 0 {
+				t.Errorf("schedule %q: want no errors, got %v", tc.schedule, errs)
+			}
+		})
 	}
 }

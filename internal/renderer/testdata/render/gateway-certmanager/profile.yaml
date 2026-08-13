@@ -1,4 +1,5 @@
-ingressClasses:
-  - { name: nginx }
+gatewayAPI:
+  version: v1.6.0
+  classes: [envoy]
 certManager:
   clusterIssuers: [letsencrypt-prod]

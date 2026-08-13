@@ -108,6 +108,7 @@ func TestRenderResourceSet(t *testing.T) {
 		t.Fatalf("Render failed: %v", err)
 	}
 	want := []string{
+		"Namespace/checkout-prod",
 		"ServiceAccount/web",
 		"Service/web",
 		"Deployment/web",
@@ -127,6 +128,12 @@ func TestRenderResourceSet(t *testing.T) {
 // TestRenderEnvSecretKeyRef: bindings become secretKeyRefs against the
 // service credential Secret, and no Secret resource is ever emitted
 // (ADR-0009).
+//
+// This is now the only place binding rendering is exercised. Issue #141 gates
+// `services:` and `from:` in validation until M9, and every golden fixture
+// goes through full validation, so the fixtures lost their bindings. The
+// renderer's support for them did not: it is reached here by building the
+// Resolved directly, which is the seam M9 will use.
 func TestRenderEnvSecretKeyRef(t *testing.T) {
 	ms, err := Render(resolvedFixture(), gatewayProfile(), nil)
 	if err != nil {
@@ -173,6 +180,9 @@ func TestRenderEnvSorted(t *testing.T) {
 }
 
 // TestRenderRoutingMatrix pins the ClusterProfile branching for routing.
+// Since #140 there is one substrate: Gateway API present renders an HTTPRoute,
+// Gateway API absent is a capability gap (TestRenderGatewayAPIMissing), and
+// detected ingress classes change nothing either way.
 func TestRenderRoutingMatrix(t *testing.T) {
 	resolved := resolvedFixture()
 	cases := []struct {
@@ -182,29 +192,22 @@ func TestRenderRoutingMatrix(t *testing.T) {
 		unexpected []string
 	}{
 		{
-			name:      "gateway api preferred over ingress",
-			profile:   clusterprofile.ClusterProfile{GatewayAPI: &clusterprofile.GatewayAPI{Classes: []string{"envoy"}}, IngressClasses: []clusterprofile.IngressClass{{Name: "nginx"}}},
-			wantKinds: []string{"HTTPRoute"},
+			name:       "ingress classes are advisory and never rendered against",
+			profile:    clusterprofile.ClusterProfile{GatewayAPI: &clusterprofile.GatewayAPI{Classes: []string{"envoy"}}, IngressClasses: []clusterprofile.IngressClass{{Name: "nginx"}}},
+			wantKinds:  []string{"HTTPRoute"},
+			unexpected: []string{"Ingress"},
 		},
 		{
-			name:      "ingress when no gateway api",
-			profile:   clusterprofile.ClusterProfile{IngressClasses: []clusterprofile.IngressClass{{Name: "nginx"}}},
-			wantKinds: []string{"Ingress"},
+			name:       "certificate only with cert-manager",
+			profile:    clusterprofile.ClusterProfile{GatewayAPI: &clusterprofile.GatewayAPI{Classes: []string{"envoy"}}, CertManager: &clusterprofile.CertManager{ClusterIssuers: []string{"letsencrypt-prod"}}},
+			wantKinds:  []string{"HTTPRoute", "Certificate"},
+			unexpected: []string{"Ingress"},
 		},
 		{
-			name:       "no route on a bare cluster",
-			profile:    clusterprofile.ClusterProfile{},
-			unexpected: []string{"HTTPRoute", "Ingress", "Certificate"},
-		},
-		{
-			name:      "certificate only with cert-manager",
-			profile:   clusterprofile.ClusterProfile{IngressClasses: []clusterprofile.IngressClass{{Name: "nginx"}}, CertManager: &clusterprofile.CertManager{ClusterIssuers: []string{"letsencrypt-prod"}}},
-			wantKinds: []string{"Ingress", "Certificate"},
-		},
-		{
-			name:      "no service monitor without prometheus",
-			profile:   clusterprofile.ClusterProfile{GatewayAPI: &clusterprofile.GatewayAPI{Classes: []string{"envoy"}}},
-			wantKinds: []string{"HTTPRoute"},
+			name:       "no service monitor without prometheus",
+			profile:    clusterprofile.ClusterProfile{GatewayAPI: &clusterprofile.GatewayAPI{Classes: []string{"envoy"}}},
+			wantKinds:  []string{"HTTPRoute"},
+			unexpected: []string{"ServiceMonitor", "Certificate"},
 		},
 	}
 	for _, tc := range cases {
@@ -232,18 +235,95 @@ func TestRenderRoutingMatrix(t *testing.T) {
 }
 
 // TestRenderNoDomainsNoRoute: a service with no domains and no routing suffix
-// produces no routing resources regardless of the profile.
+// produces no routing resources regardless of the profile — including on a
+// cluster with no Gateway API, which is only a capability gap for a spec that
+// actually asks to be reachable (#140).
 func TestRenderNoDomainsNoRoute(t *testing.T) {
-	resolved := resolvedFixture()
-	resolved.Environment.Routing.DomainSuffix = ""
-	resolved.Applications[0].Domains = nil
-	ms, err := Render(resolved, gatewayProfile(), nil)
+	for _, profile := range []clusterprofile.ClusterProfile{gatewayProfile(), {}} {
+		resolved := resolvedFixture()
+		resolved.Environment.Routing.DomainSuffix = ""
+		resolved.Applications[0].Domains = nil
+		ms, err := Render(resolved, profile, nil)
+		if err != nil {
+			t.Fatalf("Render failed: %v", err)
+		}
+		for _, m := range ms {
+			if m.Kind == "HTTPRoute" || m.Kind == "Ingress" || m.Kind == "Certificate" {
+				t.Fatalf("routing resource %s rendered with no domains", m.Kind)
+			}
+		}
+	}
+}
+
+// TestRenderGatewayAPIMissing is the loud half of #140: a cluster without
+// Gateway API can no longer be served by silently emitting an Ingress, so a
+// spec that declares domains fails with a structured capability gap naming the
+// remediation. Detected ingress classes must not rescue it — they are advisory
+// data for the migration nudge (#112), not a routing substrate.
+func TestRenderGatewayAPIMissing(t *testing.T) {
+	profiles := map[string]clusterprofile.ClusterProfile{
+		"bare cluster":          {},
+		"ingress-only cluster":  {IngressClasses: []clusterprofile.IngressClass{{Name: "nginx", Default: true}}},
+		"cert-manager, no gate": {CertManager: &clusterprofile.CertManager{ClusterIssuers: []string{"letsencrypt-prod"}}},
+	}
+	for name, profile := range profiles {
+		t.Run(name, func(t *testing.T) {
+			_, err := Render(resolvedFixture(), profile, nil)
+			if err == nil {
+				t.Fatalf("expected a capability-gap error, got a successful render")
+			}
+			rerrs, ok := err.(Errors)
+			if !ok || len(rerrs) != 1 {
+				t.Fatalf("expected a single renderer.Errors entry, got %#v", err)
+			}
+			got := rerrs[0]
+			if got.Code != ErrGatewayAPIMissing {
+				t.Fatalf("code = %q, want %q", got.Code, ErrGatewayAPIMissing)
+			}
+			if got.Target != "HTTPRoute/web" {
+				t.Errorf("target = %q, want HTTPRoute/web", got.Target)
+			}
+			if !strings.Contains(got.Message, "checkout.acme.com") {
+				t.Errorf("message must name the unroutable domain, got %q", got.Message)
+			}
+			if !strings.Contains(got.Remediation, "Gateway API implementation") ||
+				!strings.Contains(got.Remediation, "Envoy Gateway") {
+				t.Errorf("remediation must point at installing a Gateway implementation, got %q", got.Remediation)
+			}
+			if !strings.Contains(got.Error(), got.Remediation) {
+				t.Errorf("Error() must carry the remediation, got %q", got.Error())
+			}
+		})
+	}
+}
+
+// TestRenderGatewayAPIPresentUnaffected: with Gateway API the render is
+// exactly what it always was — HTTPRoute attached to the detected class, plus
+// the cert-manager Certificate.
+func TestRenderGatewayAPIPresentUnaffected(t *testing.T) {
+	ms, err := Render(resolvedFixture(), gatewayProfile(), nil)
 	if err != nil {
 		t.Fatalf("Render failed: %v", err)
 	}
-	for _, m := range ms {
-		if m.Kind == "HTTPRoute" || m.Kind == "Ingress" || m.Kind == "Certificate" {
-			t.Fatalf("routing resource %s rendered with no domains", m.Kind)
+	var route *Manifest
+	for i := range ms {
+		if ms[i].Kind == "HTTPRoute" {
+			route = &ms[i]
+		}
+		if ms[i].Kind == "Ingress" {
+			t.Fatalf("renderer emitted an Ingress; kelson renders Gateway API only (#140)")
+		}
+	}
+	if route == nil {
+		t.Fatalf("no HTTPRoute rendered: %v", kinds(ms))
+	}
+	out, err := route.YAML()
+	if err != nil {
+		t.Fatalf("YAML failed: %v", err)
+	}
+	for _, want := range []string{"name: envoy", "hostnames:", "- checkout.acme.com"} {
+		if !strings.Contains(string(out), want) {
+			t.Fatalf("HTTPRoute missing %q:\n%s", want, out)
 		}
 	}
 }

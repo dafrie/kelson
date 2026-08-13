@@ -5,12 +5,14 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 )
 
 // validator accumulates structured errors against one resource document.
 type validator struct {
 	resource string // e.g. "Project/checkout"
+	kind     string // KindProject or KindEnvironment; selects the #141 gate rows
 	pos      positions
 	errs     Errors
 }
@@ -37,6 +39,7 @@ var (
 	cpuRE        = regexp.MustCompile(`^(\d+|\d*\.\d+)m?$`)
 	memoryRE     = regexp.MustCompile(`^\d+(Ei|Pi|Ti|Gi|Mi|Ki|E|P|T|G|M|K)?$`)
 	cronFieldRE  = regexp.MustCompile(`^[\d*,\-/]+$|^[A-Za-z]{3}$`)
+	cronNameRE   = regexp.MustCompile(`^[A-Za-z]{3}$`)
 	secretNameRE = regexp.MustCompile(`(?i)(PASSWORD|PASSWD|SECRET|TOKEN|API[_-]?KEY|PRIVATE[_-]?KEY|CREDENTIAL|_AUTH)`)
 	envVarNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 )
@@ -62,7 +65,11 @@ func (v *validator) domain(field, s string) {
 	}
 }
 
-func (v *validator) envMap(field string, env map[string]EnvValue, services map[string]Service) {
+// envMap validates one env map. canonical is the map's path with indices and
+// keys collapsed ("$.spec.applications[].env"), used to look up the #141 gate
+// rows; passing "" suppresses gating for a re-validation pass that would
+// otherwise report the same gated field twice.
+func (v *validator) envMap(field, canonical string, env map[string]EnvValue, services map[string]Service) {
 	keys := make([]string, 0, len(env))
 	for k := range env {
 		keys = append(keys, k)
@@ -77,6 +84,9 @@ func (v *validator) envMap(field string, env map[string]EnvValue, services map[s
 				"use letters, digits and underscores, not starting with a digit")
 		}
 		if ev.From != nil {
+			if canonical != "" {
+				v.gate(canonical+".*.from", f+".from")
+			}
 			if services != nil {
 				v.serviceRef(f, ev.From, services)
 			} else if ev.From.Service == "" || ev.From.Key == "" {
@@ -117,6 +127,17 @@ func (v *validator) serviceRef(field string, b *ServiceBinding, services map[str
 
 // secretLiteral rejects values that look like credentials (ADR-0009): URLs
 // embedding passwords, and literals for secret-shaped variable names.
+//
+// The remediation names only what kelson can actually do today. It used to
+// send authors to a `kelson secret set` that does not exist (issue #142), then
+// to a service binding — which issue #141 gates until M9. What is left, and
+// what is genuinely implemented, is an overlay patch against a Secret the user
+// manages themselves.
+const secretRemediation = "the spec carries references, never values (ADR-0009). kelson cannot hold a secret value yet: " +
+	"there is no command to set one (milestone M8 · Secrets) and service bindings are rejected until they render " +
+	"end to end (milestone M9 · Data services, issue #141). Remove this variable, and until then inject it with an " +
+	"overlay patch (spec.overlays) that references a Secret you manage."
+
 func (v *validator) secretLiteral(field, name, literal string) {
 	if literal == "" {
 		return
@@ -125,14 +146,14 @@ func (v *validator) secretLiteral(field, name, literal string) {
 		if _, hasPassword := u.User.Password(); hasPassword {
 			v.err(ErrSecretLiteral, field,
 				fmt.Sprintf("%q contains a credential (URL with embedded password)", name),
-				fmt.Sprintf("declare a service and reference it, e.g. %s: {from: {service: <name>, key: uri}}, or run: kelson secret set %s=<value>", name, name))
+				secretRemediation)
 			return
 		}
 	}
 	if secretNameRE.MatchString(name) {
 		v.err(ErrSecretLiteral, field,
 			fmt.Sprintf("%q looks like a secret but is a plaintext literal", name),
-			fmt.Sprintf("run: kelson secret set %s=<value>, then reference it with {from: ...} — the spec carries references, never values (ADR-0009)", name))
+			secretRemediation)
 	}
 }
 
@@ -180,7 +201,29 @@ func (v *validator) resources(field string, r *Resources) {
 	check(field+".limits", r.Limits)
 }
 
-// cron validates a five-field cron expression field by field.
+// cronField names one of the five cron positions and its inclusive numeric
+// bounds. Kubernetes CronJob parses the schedule with robfig/cron's standard
+// 5-field parser, so these mirror that parser's bounds rather than inventing
+// our own (issue #143) — day-of-week keeps both 0 and 7 as Sunday, matching
+// crontab(5) rather than robfig's stricter 0-6.
+type cronField struct {
+	name     string
+	min, max int
+}
+
+var cronFields = [5]cronField{
+	{"minute", 0, 59},
+	{"hour", 0, 23},
+	{"day-of-month", 1, 31},
+	{"month", 1, 12},
+	{"day-of-week", 0, 7},
+}
+
+// cron validates a five-field cron expression field by field: shape first
+// (cronFieldRE), then numeric bounds. A shape-valid field like "99" used to
+// reach the CronJob unchecked and fail only when applied to the cluster
+// (issue #143), instead of at validation time where the field path and a fix
+// are available.
 func (v *validator) cron(field, s string) {
 	fields := strings.Fields(s)
 	if len(fields) != 5 {
@@ -194,8 +237,70 @@ func (v *validator) cron(field, s string) {
 			v.err(ErrInvalidFormat, field,
 				fmt.Sprintf("cron field %d %q is not valid", i+1, f),
 				"use numbers, ranges, steps and *, e.g. \"*/15 2-4 * * 1-5\"; month/day names (JAN, MON) are allowed")
+			continue
+		}
+		if cronNameRE.MatchString(f) {
+			continue // a bare 3-letter name (JAN, MON, ...) has no numeric bound to check
+		}
+		spec := cronFields[i]
+		if reason := cronRangeError(f, spec); reason != "" {
+			v.err(ErrOutOfRange, field,
+				fmt.Sprintf("cron field %d (%s) %q %s", i+1, spec.name, f, reason),
+				fmt.Sprintf("%s must be between %d and %d", spec.name, spec.min, spec.max))
 		}
 	}
+}
+
+// cronRangeError checks one already shape-valid cron field against its
+// numeric bounds. It covers every form cronFieldRE accepts: *, a bare number,
+// a range (a-b), a step (base/n, including */n), and a comma-separated list
+// of any of those. Returns "" when every item is in bounds.
+func cronRangeError(field string, spec cronField) string {
+	for _, item := range strings.Split(field, ",") {
+		if reason := cronItemRangeError(item, spec); reason != "" {
+			return reason
+		}
+	}
+	return ""
+}
+
+// cronItemRangeError checks one list item (no commas) of a cron field.
+func cronItemRangeError(item string, spec cronField) string {
+	base, step, hasStep := strings.Cut(item, "/")
+	if hasStep {
+		n, err := strconv.Atoi(step)
+		if err != nil || n <= 0 {
+			return fmt.Sprintf("has step %q, which must be a positive integer", step)
+		}
+	}
+	if base == "*" {
+		return ""
+	}
+	if lo, hi, isRange := strings.Cut(base, "-"); isRange {
+		start, errStart := strconv.Atoi(lo)
+		end, errEnd := strconv.Atoi(hi)
+		if errStart != nil || errEnd != nil {
+			return fmt.Sprintf("has a malformed range %q", base)
+		}
+		if start < spec.min || start > spec.max {
+			return fmt.Sprintf("has range start %d outside %d-%d", start, spec.min, spec.max)
+		}
+		if end < spec.min || end > spec.max {
+			return fmt.Sprintf("has range end %d outside %d-%d", end, spec.min, spec.max)
+		}
+		if start > end {
+			return fmt.Sprintf("has range %d-%d with start after end", start, end)
+		}
+		return ""
+	}
+	n, err := strconv.Atoi(base)
+	if err != nil {
+		return fmt.Sprintf("has a malformed value %q", base)
+	}
+	if n < spec.min || n > spec.max {
+		return fmt.Sprintf("value %d is outside %d-%d", n, spec.min, spec.max)
+	}
+	return ""
 }
 
 func (v *validator) overlay(field string, o Overlay) {
@@ -291,7 +396,7 @@ func (v *validator) delivery(field string, d *Delivery) {
 	}
 }
 
-func (v *validator) applications(field string, apps []Application, services map[string]Service, projectImage string) {
+func (v *validator) applications(field, canonical string, apps []Application, services map[string]Service, projectImage string) {
 	seen := map[string]int{}
 	for i, a := range apps {
 		f := fmt.Sprintf("%s[%d]", field, i)
@@ -331,7 +436,7 @@ func (v *validator) applications(field string, apps []Application, services map[
 		}
 		v.replicas(f+".replicas", a.Replicas)
 		v.resources(f+".resources", a.Resources)
-		v.envMap(f+".env", a.Env, services)
+		v.envMap(f+".env", canonical+".env", a.Env, services)
 
 		hasImage := a.Image != "" || projectImage != ""
 		if !hasImage {
@@ -352,6 +457,10 @@ func validateProject(p *Project, v *validator) {
 			"add spec.applications with at least one entry; a cron or worker counts")
 	}
 
+	if len(s.Services) > 0 {
+		v.gate("$.spec.services", "$.spec.services")
+	}
+
 	services := map[string]Service{}
 	for i, svc := range s.Services {
 		f := fmt.Sprintf("$.spec.services[%d]", i)
@@ -367,12 +476,12 @@ func validateProject(p *Project, v *validator) {
 				fmt.Sprintf("unknown service type %q", svc.Type),
 				"valid types: postgres, valkey")
 		}
-		switch svc.Plan {
-		case "", PlanShared, PlanSmall, PlanHASmall, PlanHAMedium, PlanBranch:
+		switch svc.Preset {
+		case "", PresetShared, PresetSmall, PresetHASmall, PresetHAMedium, PresetBranch:
 		default:
-			v.err(ErrInvalidEnum, f+".plan",
-				fmt.Sprintf("unknown plan %q", svc.Plan),
-				"valid plans: shared, small, ha-small, ha-medium, branch (docs/architecture.md, ADR-0007)")
+			v.err(ErrInvalidEnum, f+".preset",
+				fmt.Sprintf("unknown preset %q", svc.Preset),
+				"valid presets: shared, small, ha-small, ha-medium, branch (docs/architecture.md, ADR-0007)")
 		}
 		if _, dup := services[svc.Name]; dup {
 			v.err(ErrDuplicateName, f+".name",
@@ -401,8 +510,8 @@ func validateProject(p *Project, v *validator) {
 		projectImage = "(built from source)"
 	}
 
-	v.envMap("$.spec.env", s.Env, services)
-	v.applications("$.spec.applications", s.Applications, services, projectImage)
+	v.envMap("$.spec.env", "$.spec.env", s.Env, services)
+	v.applications("$.spec.applications", "$.spec.applications[]", s.Applications, services, projectImage)
 
 	if d := s.Defaults; d != nil {
 		switch d.DeliveryMode {
@@ -411,6 +520,12 @@ func validateProject(p *Project, v *validator) {
 			v.err(ErrInvalidEnum, "$.spec.defaults.deliveryMode",
 				fmt.Sprintf("unknown delivery mode %q", d.DeliveryMode),
 				"valid modes: direct, flux, argocd")
+		}
+		if d.Policy != nil {
+			v.gate("$.spec.defaults.policy", "$.spec.defaults.policy")
+		}
+		if d.Secrets != nil {
+			v.gate("$.spec.defaults.secrets", "$.spec.defaults.secrets")
 		}
 		v.policy("$.spec.defaults.policy", d.Policy)
 		v.secrets("$.spec.defaults.secrets", d.Secrets)
@@ -436,19 +551,23 @@ func validateEnvironmentShape(e *Environment, v *validator) {
 	if s.Namespace != "" {
 		v.name("$.spec.namespace", s.Namespace, "namespace")
 	}
+	if s.Cluster != "" {
+		v.gate("$.spec.cluster", "$.spec.cluster")
+	}
 
 	if r := s.Routing; r != nil {
 		if r.DomainSuffix != "" {
 			v.domain("$.spec.routing.domainSuffix", r.DomainSuffix)
 		}
-		if r.IngressClass != "" && r.GatewayClass != "" {
-			v.err(ErrMutuallyExclusive, "$.spec.routing",
-				"ingressClass and gatewayClass are mutually exclusive",
-				"set the one matching your cluster; the ClusterProfile lists available classes")
-		}
 	}
 
 	v.delivery("$.spec.delivery", s.Delivery)
+	if s.Policy != nil {
+		v.gate("$.spec.policy", "$.spec.policy")
+	}
+	if s.Secrets != nil {
+		v.gate("$.spec.secrets", "$.spec.secrets")
+	}
 	v.policy("$.spec.policy", s.Policy)
 	v.secrets("$.spec.secrets", s.Secrets)
 
@@ -464,7 +583,11 @@ func validateEnvironmentShape(e *Environment, v *validator) {
 		seen[ov.Name] = i
 		v.replicas(f+".replicas", ov.Replicas)
 		v.resources(f+".resources", ov.Resources)
-		v.envMap(f+".env", ov.Env, nil) // binding targets re-checked against the Project in ValidateEnvironment
+		v.envMap(f+".env", "$.spec.applications[].env", ov.Env, nil) // binding targets re-checked against the Project in ValidateEnvironment
+	}
+
+	if len(s.Services) > 0 {
+		v.gate("$.spec.services", "$.spec.services")
 	}
 
 	seenSvc := map[string]int{}
@@ -477,12 +600,12 @@ func validateEnvironmentShape(e *Environment, v *validator) {
 				"one override block per service")
 		}
 		seenSvc[ov.Name] = i
-		switch ov.Plan {
-		case PlanShared, PlanSmall, PlanHASmall, PlanHAMedium, PlanBranch:
+		switch ov.Preset {
+		case PresetShared, PresetSmall, PresetHASmall, PresetHAMedium, PresetBranch:
 		default:
-			v.err(ErrInvalidEnum, f+".plan",
-				fmt.Sprintf("unknown plan %q", ov.Plan),
-				"valid plans: shared, small, ha-small, ha-medium, branch")
+			v.err(ErrInvalidEnum, f+".preset",
+				fmt.Sprintf("unknown preset %q", ov.Preset),
+				"valid presets: shared, small, ha-small, ha-medium, branch")
 		}
 	}
 
@@ -495,7 +618,9 @@ func validateEnvironmentShape(e *Environment, v *validator) {
 // Project's declared services.
 func validateServiceRefs(e *Environment, services map[string]Service, v *validator) {
 	for i, ov := range e.Spec.Applications {
-		v.envMap(fmt.Sprintf("$.spec.applications[%d].env", i), ov.Env, services)
+		// No canonical path: this is a second pass over env maps the shape
+		// check already walked, and the #141 gate fired there.
+		v.envMap(fmt.Sprintf("$.spec.applications[%d].env", i), "", ov.Env, services)
 	}
 }
 
@@ -504,7 +629,7 @@ func validateServiceRefs(e *Environment, services map[string]Service, v *validat
 // overrides, binding targets). The Environment's spec.project must equal the
 // Project's name.
 func ValidateEnvironment(e *Environment, p *Project) Errors {
-	v := validator{resource: fmt.Sprintf("%s/%s", KindEnvironment, e.Metadata.Name)}
+	v := validator{resource: fmt.Sprintf("%s/%s", KindEnvironment, e.Metadata.Name), kind: KindEnvironment}
 	validateEnvironmentShape(e, &v)
 
 	if p == nil {
@@ -565,7 +690,7 @@ func ValidateEnvironment(e *Environment, p *Project) Errors {
 // ValidateSet validates a Project and all its Environments as a set. This is
 // the entry point the API, CLI and renderer share.
 func ValidateSet(p *Project, envs ...*Environment) Errors {
-	vp := validator{resource: fmt.Sprintf("%s/%s", KindProject, p.Metadata.Name)}
+	vp := validator{resource: fmt.Sprintf("%s/%s", KindProject, p.Metadata.Name), kind: KindProject}
 	validateProject(p, &vp)
 	errs := vp.errs
 	for _, e := range envs {

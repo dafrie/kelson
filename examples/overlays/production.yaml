@@ -18,8 +18,7 @@ spec:
       branch: main
       path: streaming/production
 
-  policy:
-    agents: propose-only
+  # `policy: {agents: propose-only}` returns with M7 (#141).
 
   applications:
     - name: transcoder

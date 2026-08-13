@@ -77,21 +77,19 @@ func newDiffCmdFactory(newServer func(kubeconfig string, profile clusterprofile.
 	f.StringVar(&opts.dryRun, "dry-run", "render", "fidelity of the preview: render (offline, L1) or server (cluster access, L2)")
 	f.StringVar(&opts.output, "output", "", "output format: empty for the terminal report, or json for the structured diff")
 	f.StringVar(&opts.kubeconfig, "kubeconfig", "", "path to a kubeconfig for --dry-run=server (default: $KUBECONFIG, in-cluster credentials, then ~/.kube/config)")
+	f.StringVar(&opts.image, "image", "", imageFlagUsage)
 	f.BoolVar(&opts.noColor, "no-color", false, "disable ANSI colour even on a terminal (also honoured via NO_COLOR)")
 	cobra.CheckErr(cmd.MarkFlagRequired("file"))
 	return cmd
 }
 
 type diffOptions struct {
-	files      []string
-	env        string
-	profile    string
-	from       string
-	dryRun     string
-	kubeconfig string
-	output     string
-	noColor    bool
-	newServer  func(kubeconfig string, profile clusterprofile.ClusterProfile) (diffRunner, error)
+	specInput
+	from      string
+	dryRun    string
+	output    string
+	noColor   bool
+	newServer func(kubeconfig string, profile clusterprofile.ClusterProfile) (diffRunner, error)
 }
 
 // newServerDryRun constructs the live L2 engine. The Kubernetes client
@@ -112,7 +110,7 @@ func newServerDryRun(kubeconfig string, profile clusterprofile.ClusterProfile) (
 }
 
 func runDiff(cmd *cobra.Command, opts *diffOptions) error {
-	project, environment, cur, profile, err := resolveAndRender(opts.files, opts.env, opts.profile, opts.kubeconfig)
+	project, environment, cur, profile, err := resolveAndRender(opts.specInput)
 	if err != nil {
 		return err
 	}
@@ -147,7 +145,10 @@ func runDiff(cmd *cobra.Command, opts *diffOptions) error {
 func runRenderedDiff(project *model.Project, environment *model.Environment, opts *diffOptions, cur []renderer.Manifest) (*diff.Diff, error) {
 	var prev []renderer.Manifest
 	if opts.from != "" {
-		_, _, fromManifests, _, err := resolveAndRender([]string{opts.from}, environment.Metadata.Name, opts.profile, opts.kubeconfig)
+		before := opts.specInput
+		before.files = []string{opts.from}
+		before.env = environment.Metadata.Name
+		_, _, fromManifests, _, err := resolveAndRender(before)
 		if err != nil {
 			return nil, err
 		}

@@ -56,7 +56,17 @@ type OverlayResolver func(path string) ([]byte, error)
 // Environment) pair against one ClusterProfile. It is a pure function: no
 // cluster, no network, no clock, no filesystem beyond the injected resolver.
 func Render(resolved *model.Resolved, profile clusterprofile.ClusterProfile, resolver OverlayResolver) ([]Manifest, error) {
-	out := []Manifest{}
+	if errs := unresolvedImages(resolved); len(errs) > 0 {
+		return nil, errs
+	}
+	// The Namespace leads the set: delivery.ManifestSet documents apply order as
+	// "namespaces first", and every following resource targets it (issue #150).
+	// Overlays append after the core resources, so nothing can displace it.
+	ns, err := namespaceManifest(resolved)
+	if err != nil {
+		return nil, err
+	}
+	out := []Manifest{ns}
 	for i := range resolved.Applications {
 		ms, err := appManifests(resolved, &resolved.Applications[i], profile)
 		if err != nil {
@@ -76,6 +86,39 @@ func Render(resolved *model.Resolved, profile clusterprofile.ClusterProfile, res
 		}
 	}
 	return out, nil
+}
+
+// unresolvedImages rejects every application whose image is not a reference a
+// cluster could pull.
+//
+// A spec that builds from source resolves to model.ImageUnresolved until a
+// build fills the digest in. Emitting that sentinel produced `image: "@"` — a
+// manifest that no cluster accepts and that nothing explained (issue #136), so
+// the placeholder now fails the render instead of reaching the output. The
+// decision is pure data: the renderer never asks whether a build ran, only
+// whether the resolved spec names an image. Every offending application is
+// reported, not just the first — one run should list all the work.
+func unresolvedImages(resolved *model.Resolved) Errors {
+	var errs Errors
+	for i := range resolved.Applications {
+		app := &resolved.Applications[i]
+		var message string
+		switch app.Image {
+		case model.ImageUnresolved:
+			message = "no image yet: the spec builds this application from source and no build result was supplied"
+		case "":
+			message = "no image: the resolved spec names none"
+		default:
+			continue
+		}
+		errs = append(errs, Error{
+			Code:        ErrImageUnresolved,
+			Application: app.Name,
+			Message:     message,
+			Remediation: "pass the built reference with --image, or set spec.image on the Project or image on the application",
+		})
+	}
+	return errs
 }
 
 // provenance carries the identity stamped onto every rendered resource

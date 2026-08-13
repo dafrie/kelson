@@ -5,8 +5,15 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	k8stesting "k8s.io/client-go/testing"
 
 	"github.com/dafrie/kelson/internal/delivery"
 )
@@ -73,26 +80,85 @@ func TestWebhookReconcilerErrorsAreStructured(t *testing.T) {
 	}
 }
 
-// TestCLIReconcilerTriggersSourceThenKustomization verifies the flux CLI path
-// reconciles the source first, then the kustomization.
-func TestCLIReconcilerTriggersSourceThenKustomization(t *testing.T) {
-	var calls [][]string
-	r := CLIReconciler{Bin: "flux", Run: func(_ context.Context, name string, args ...string) ([]byte, error) {
-		calls = append(calls, append([]string{name}, args...))
-		return []byte("ok"), nil
-	}}
+// TestAnnotationReconcilerTriggersSourceThenKustomization is the same contract
+// the flux-CLI reconciler used to carry — source first, then the Kustomization
+// — asserted against the dynamic client that replaced it (#137): two patches,
+// in that order, each stamping reconcile.fluxcd.io/requestedAt.
+func TestAnnotationReconcilerTriggersSourceThenKustomization(t *testing.T) {
+	dyn := newFakeCluster(t, allFluxKinds()...)
+	seed(t, dyn, gitRepositoryGVR, object(gitRepositoryGVK, "apps", "deploy", nil))
+	seed(t, dyn, kustomizationGVR, object(kustomizationGVK, "apps", "web", nil))
+
+	var patched []string
+	dyn.PrependReactor("patch", "*", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		pa := action.(k8stesting.PatchAction)
+		patched = append(patched, pa.GetResource().Resource+"/"+pa.GetName())
+		return false, nil, nil
+	})
+
+	at := time.Date(2026, 8, 13, 10, 30, 0, 0, time.UTC)
+	r := AnnotationReconciler{Client: dyn, Now: func() time.Time { return at }}
 	k := Kustomization{Name: "web", Namespace: "apps", SourceKind: "GitRepository", SourceName: "deploy"}
 	if err := r.Reconcile(context.Background(), k); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
-	if len(calls) != 2 {
-		t.Fatalf("calls = %v, want 2", calls)
+	if want := []string{"gitrepositories/deploy", "kustomizations/web"}; !reflect.DeepEqual(patched, want) {
+		t.Fatalf("patched = %v, want %v", patched, want)
 	}
-	if calls[0][1] != "reconcile" || calls[0][2] != "source" || calls[0][3] != "git" || calls[0][4] != "deploy" {
-		t.Fatalf("source call = %v", calls[0])
+
+	// The annotation is the whole trigger: a patch that landed without it would
+	// touch the object and reconcile nothing.
+	for _, c := range []struct {
+		gvr  schema.GroupVersionResource
+		name string
+	}{{gitRepositoryGVR, "deploy"}, {kustomizationGVR, "web"}} {
+		got, err := dyn.Resource(c.gvr).Namespace("apps").Get(context.Background(), c.name, metav1.GetOptions{})
+		if err != nil {
+			t.Fatalf("get %s: %v", c.name, err)
+		}
+		if stamp := got.GetAnnotations()[requestedAtAnnotation]; stamp != at.Format(time.RFC3339Nano) {
+			t.Fatalf("%s annotation = %q, want %q", c.name, stamp, at.Format(time.RFC3339Nano))
+		}
 	}
-	if calls[1][1] != "reconcile" || calls[1][2] != "kustomization" || calls[1][3] != "web" {
-		t.Fatalf("kustomization call = %v", calls[1])
+}
+
+// TestAnnotationReconcilerReportsFailure verifies a trigger that could not
+// reach the object is a delivery/apply-failed saying the commit is safe — the
+// same contract the CLI fallback carried.
+func TestAnnotationReconcilerReportsFailure(t *testing.T) {
+	dyn := newFakeCluster(t, allFluxKinds()...)
+	r := AnnotationReconciler{Client: dyn}
+	err := r.Reconcile(context.Background(), Kustomization{Name: "web", Namespace: "apps"})
+	if err == nil {
+		t.Fatal("patching a Kustomization that does not exist must fail")
+	}
+	if !delivery.AsApplyFailed(err) {
+		t.Fatalf("error = %v, want delivery/apply-failed", err)
+	}
+	if !strings.Contains(err.Error(), "committed") {
+		t.Fatalf("error must note the change is committed: %v", err)
+	}
+}
+
+// TestAnnotationReconcilerWithoutClientIsLoud verifies the misconfiguration is
+// named rather than silently degrading to the poll interval.
+func TestAnnotationReconcilerWithoutClientIsLoud(t *testing.T) {
+	err := AnnotationReconciler{}.Reconcile(context.Background(), Kustomization{Name: "web", Namespace: "apps"})
+	if err == nil || !delivery.AsApplyFailed(err) {
+		t.Fatalf("error = %v, want delivery/apply-failed", err)
+	}
+}
+
+// TestAnnotationReconcilerRejectsNonGitSource verifies a source kind this
+// adapter cannot have written is reported instead of guessed at.
+func TestAnnotationReconcilerRejectsNonGitSource(t *testing.T) {
+	dyn := newFakeCluster(t, allFluxKinds()...)
+	r := AnnotationReconciler{Client: dyn}
+	err := r.Reconcile(context.Background(), Kustomization{
+		Name: "web", Namespace: "apps", SourceKind: "OCIRepository", SourceName: "artifacts",
+	})
+	if err == nil || !strings.Contains(err.Error(), "OCIRepository") {
+		t.Fatalf("error = %v, want the source kind named", err)
 	}
 }
 

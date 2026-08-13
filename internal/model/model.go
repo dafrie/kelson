@@ -31,7 +31,7 @@
 //
 // Environment variables merge key-by-key, innermost scope first:
 // Project env < Application env < Environment per-Application override env.
-// Per-Application replicas/resources, Environment service plan overrides and
+// Per-Application replicas/resources, Environment service preset overrides and
 // the Environment-scoped concerns (delivery, policy, secrets) are taken whole
 // from the innermost scope that sets them; delivery/policy/secrets fall back
 // to Project defaults, then to built-in defaults (direct, propose-only,

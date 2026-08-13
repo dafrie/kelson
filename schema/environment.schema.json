@@ -43,9 +43,6 @@
             "domainSuffix": {
               "type": "string"
             },
-            "ingressClass": {
-              "type": "string"
-            },
             "gatewayClass": {
               "type": "string"
             },
@@ -250,7 +247,7 @@
               "name": {
                 "type": "string"
               },
-              "plan": {
+              "preset": {
                 "type": "string",
                 "enum": [
                   "shared",
@@ -265,7 +262,7 @@
             "type": "object",
             "required": [
               "name",
-              "plan"
+              "preset"
             ]
           },
           "type": "array"

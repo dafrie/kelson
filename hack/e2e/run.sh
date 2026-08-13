@@ -57,6 +57,9 @@ log "== stage: profile + render =="
 "$KELSON" render -f "$PROJECT_FILE" -f "$ENV_FILE" --env "$ENV_NAME" \
 	--profile "$WORKDIR/cluster-profile.yaml" >"$WORKDIR/rendered.yaml" ||
 	die "kelson render failed for examples/hello-e2e"
+# Without the Namespace (issue #150) the deploy stage below fails on its first
+# resource against a fresh cluster, so assert it rather than pre-creating it.
+grep -q '^kind: Namespace$' "$WORKDIR/rendered.yaml" || die "render did not produce a Namespace for hello-e2e"
 grep -q '^kind: Deployment$' "$WORKDIR/rendered.yaml" || die "render did not produce a Deployment for hello-e2e/web"
 grep -q '^kind: Service$' "$WORKDIR/rendered.yaml" || die "render did not produce a Service for hello-e2e/web"
 log "render OK: $(grep -c '^kind:' "$WORKDIR/rendered.yaml") manifests"
@@ -69,15 +72,6 @@ log "== stage: probe for deploy/status/rollback (issue #135) =="
 if ! "$KELSON" deploy --help >/dev/null 2>&1; then
 	die "kelson binary lacks 'deploy' — build from a branch containing #135 (the CLI wiring for deploy/status/rollback). Cluster provisioning, profile capture and render all passed; the deploy/status/rollback lifecycle cannot run until that command exists."
 fi
-
-# TODO(#150): the renderer targets namespace "<project>-<environment>" but
-# never emits a Namespace manifest, so `kelson deploy` server-side-applies
-# into a namespace that doesn't exist yet and fails. Remove this stage once
-# the renderer emits the Namespace itself. Idempotent, and covers the broken
-# revision and rollback below too — they deploy into the same namespace.
-log "== stage: ensure namespace (workaround for #150) =="
-kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f - >/dev/null ||
-	die "failed to ensure namespace ${NAMESPACE} exists"
 
 log "== stage: deploy (good revision) =="
 if ! "$KELSON" deploy -f "$PROJECT_FILE" -f "$ENV_FILE" --env "$ENV_NAME" \

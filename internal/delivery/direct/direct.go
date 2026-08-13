@@ -516,7 +516,7 @@ func (a *Adapter) pruneCandidates(ctx context.Context, set delivery.ManifestSet,
 	seen := map[string]bool{}
 
 	add := func(ref ResourceRef, gvr schema.GroupVersionResource) {
-		if desired[ref.key()] || seen[ref.key()] {
+		if desired[ref.key()] || seen[ref.key()] || isNamespace(ref) {
 			return
 		}
 		seen[ref.key()] = true
@@ -578,6 +578,20 @@ func (a *Adapter) pruneCandidates(ctx context.Context, set delivery.ManifestSet,
 		}
 	}
 	return out, nil
+}
+
+// isNamespace reports whether a prune candidate is a core/v1 Namespace.
+//
+// Since issue #150 the renderer emits the environment's Namespace, which puts
+// it in kelson's provenance-labelled inventory and therefore within reach of
+// pruning. It must stay out of reach: deleting a namespace cascades to
+// everything inside it, including resources kelson never created, so a renamed
+// namespace or a removed environment would take unrelated workloads with it —
+// exactly what the non-destructive guarantee of issue #59 forbids. A namespace
+// that leaves the desired set is left behind for a deliberate uninstall to
+// decide on.
+func isNamespace(ref ResourceRef) bool {
+	return ref.Kind == "Namespace" && ref.APIVersion == "v1"
 }
 
 func (a *Adapter) resourceFor(ref ResourceRef) (schema.GroupVersionResource, error) {

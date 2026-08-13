@@ -60,6 +60,19 @@ func TestRegistrySelectAndNegotiate(t *testing.T) {
 		t.Fatal("flux should require git and support PRs; direct should not")
 	}
 
+	// The seam is not hardcoded to two adapters (ADR-0012): registering a third
+	// under an arbitrary name works with no change to Registry itself.
+	if err := r.Register(stubAdapter{name: "custom-gitops", capabilities: Capabilities{RequiresGit: true}}); err != nil {
+		t.Fatal(err)
+	}
+	custom, err := r.Select("custom-gitops")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if custom.Name() != "custom-gitops" {
+		t.Fatalf("got %q", custom.Name())
+	}
+
 	if _, err := r.Select("nope"); err == nil {
 		t.Fatal("selecting an unregistered adapter should fail")
 	}

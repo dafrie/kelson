@@ -19,12 +19,9 @@ spec:
       branch: main
       path: checkout/production
 
-  policy:
-    agents: propose-only      # agents open PRs; humans merge
-    deployers: [team-checkout]
-
-  secrets:
-    backend: sops             # encrypted in Git, age keys held by CI
+  # `policy:` (agents open PRs, humans merge) returns with M7 and `secrets:`
+  # (SOPS-encrypted in Git) with M8. kelson rejects unimplemented fields rather
+  # than ignoring them (#141).
 
   applications:
     - name: web

@@ -1,5 +1,18 @@
 ---
 apiVersion: v1
+kind: Namespace
+metadata:
+  name: streaming
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/environment: production
+    kelson.dev/project: streaming
+  annotations:
+    kelson.dev/renderer-version: 0.1.0
+    kelson.dev/spec-hash: sha256:bf7ccd00998817353f2ffcc4137a45af9e22ea52c6d021d0b054a3f92d1f1835
+    kelson.dev/namespace-ownership: declared
+---
+apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: transcoder
@@ -11,7 +24,7 @@ metadata:
     kelson.dev/project: streaming
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:c126d103294e74c66e4d7439af4a5350ad339eeb499795de0ccebd2663555cfd
+    kelson.dev/spec-hash: sha256:a187f61dce5a14c3f8c7ad9437b82e334b934ad1a65f47f1bc1dcd1d7bc51a7b
 ---
 apiVersion: v1
 kind: Service
@@ -25,7 +38,7 @@ metadata:
     kelson.dev/project: streaming
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:c126d103294e74c66e4d7439af4a5350ad339eeb499795de0ccebd2663555cfd
+    kelson.dev/spec-hash: sha256:a187f61dce5a14c3f8c7ad9437b82e334b934ad1a65f47f1bc1dcd1d7bc51a7b
 spec:
   selector:
     kelson.dev/project: streaming
@@ -47,7 +60,7 @@ metadata:
     kelson.dev/project: streaming
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:c126d103294e74c66e4d7439af4a5350ad339eeb499795de0ccebd2663555cfd
+    kelson.dev/spec-hash: sha256:a187f61dce5a14c3f8c7ad9437b82e334b934ad1a65f47f1bc1dcd1d7bc51a7b
     kelson.dev/overlays: ./k8s/patches/affinity.yaml
 spec:
   selector:
@@ -69,12 +82,6 @@ spec:
           ports:
             - name: http
               containerPort: 8443
-          env:
-            - name: REDIS_URL
-              valueFrom:
-                secretKeyRef:
-                  name: streaming-cache-credentials
-                  key: uri
           resources:
             requests:
               cpu: "4"
@@ -100,7 +107,7 @@ metadata:
     kelson.dev/project: streaming
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:c126d103294e74c66e4d7439af4a5350ad339eeb499795de0ccebd2663555cfd
+    kelson.dev/spec-hash: sha256:a187f61dce5a14c3f8c7ad9437b82e334b934ad1a65f47f1bc1dcd1d7bc51a7b
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
@@ -128,7 +135,7 @@ metadata:
     kelson.dev/project: streaming
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:c126d103294e74c66e4d7439af4a5350ad339eeb499795de0ccebd2663555cfd
+    kelson.dev/spec-hash: sha256:a187f61dce5a14c3f8c7ad9437b82e334b934ad1a65f47f1bc1dcd1d7bc51a7b
 spec:
   parentRefs:
     - name: envoy
@@ -155,7 +162,7 @@ metadata:
     kelson.dev/project: streaming
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:c126d103294e74c66e4d7439af4a5350ad339eeb499795de0ccebd2663555cfd
+    kelson.dev/spec-hash: sha256:a187f61dce5a14c3f8c7ad9437b82e334b934ad1a65f47f1bc1dcd1d7bc51a7b
 spec:
   secretName: transcoder-tls
   issuerRef:
@@ -176,7 +183,7 @@ metadata:
     kelson.dev/project: streaming
   annotations:
     kelson.dev/renderer-version: 0.1.0
-    kelson.dev/spec-hash: sha256:8ec082da17704ab1d06df1f3e217b3a911b583e37fa2bed826c992841169488e
+    kelson.dev/spec-hash: sha256:4aa949392e11d6e385a54cf564ac8d9f6987003c817c3365bbb17ceb797ef68a
     kelson.dev/overlays: ./k8s/extra/networkpolicy.yaml
 spec:
   podSelector:
