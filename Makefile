@@ -10,7 +10,7 @@ LDFLAGS := -s -w \
   -X github.com/dafrie/kelson/internal/version.Version=$(VERSION) \
   -X github.com/dafrie/kelson/internal/version.Commit=$(COMMIT)
 
-.PHONY: all build binaries proto test lint fmt clean install release release-snapshot e2e-up e2e e2e-down
+.PHONY: all build binaries proto test test-e2e lint fmt clean install release release-snapshot e2e-up e2e e2e-down
 
 all: lint test build
 
@@ -73,3 +73,11 @@ e2e: e2e-up
 
 e2e-down:
 	hack/e2e/down.sh
+
+# The Go end-to-end suite (test/e2e, behind the `e2e` build tag) — the shape CI
+# runs. It provisions the same kind cluster first and leaves it up afterwards.
+# `go test ./...` never runs it: the build tag keeps it out, and KELSON_E2E=1 is
+# required on top of that. See test/e2e/README.md.
+test-e2e: e2e-up
+	KELSON_E2E=1 KUBECONFIG=$(CURDIR)/hack/bin/e2e.kubeconfig \
+		$(GO) test -tags e2e -v -timeout 15m ./test/e2e/...
