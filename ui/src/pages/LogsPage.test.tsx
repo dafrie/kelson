@@ -1,12 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
-import { createRouterTransport } from "@connectrpc/connect";
+import {
+  Code,
+  ConnectError,
+  createRouterTransport,
+  type Transport,
+} from "@connectrpc/connect";
 import { create } from "@bufbuild/protobuf";
 
 import {
   FollowLogsResponseSchema,
   LogService,
 } from "../gen/kelson/v1alpha1/logs_pb";
+import { DeployService } from "../gen/kelson/v1alpha1/deploy_pb";
 import { SpecService } from "../gen/kelson/v1alpha1/spec_pb";
 import { renderAt } from "../test/render";
 import { applicationNames, LogsPage } from "./LogsPage";
@@ -23,7 +29,32 @@ spec:
     - name: worker
 `;
 
+/** `status` stands in for the delivery plane: `undefined` is a build without one. */
+function logsTransport(namespace: string | undefined) {
+  return createRouterTransport((router) => {
+    router.service(DeployService, {
+      status: () => {
+        if (namespace === undefined) {
+          throw new ConnectError(
+            "the delivery plane is not available in this server",
+            Code.Unimplemented,
+          );
+        }
+        return { phase: "healthy", namespace };
+      },
+    });
+    routes(router);
+  });
+}
+
 const transport = createRouterTransport((router) => {
+  router.service(DeployService, {
+    status: () => ({ phase: "healthy", namespace: "checkout-production" }),
+  });
+  routes(router);
+});
+
+function routes(router: Parameters<Parameters<typeof createRouterTransport>[0]>[0]) {
   router.service(SpecService, {
     getSpec: () => ({
       spec: {
@@ -67,11 +98,11 @@ const transport = createRouterTransport((router) => {
       });
     },
   });
-});
+}
 
-function renderLogs() {
+function renderLogs(t: Transport = transport) {
   return renderAt(
-    transport,
+    t,
     "/apps/checkout/production/logs",
     "/apps/:project/:env/logs",
     <LogsPage />,
@@ -89,14 +120,38 @@ describe("applicationNames", () => {
 });
 
 describe("LogsPage", () => {
-  it("prefills the namespace with the model's default for the pair", async () => {
-    renderLogs();
+  it("prefills the namespace with the one Status resolved (#161)", async () => {
+    renderLogs(logsTransport("checkout-sandbox"));
     const namespace = screen.getByPlaceholderText("checkout-production");
+    // The guess is what the field opens with; the server's answer replaces it.
     expect((namespace as HTMLInputElement).value).toBe("checkout-production");
+    await waitFor(() =>
+      expect((namespace as HTMLInputElement).value).toBe("checkout-sandbox"),
+    );
+    expect(screen.getByText(/resolved by the server/)).toBeTruthy();
     // The application picker fills in from the parsed spec once it arrives.
     await waitFor(() =>
       expect(screen.getByText(/from the stored Project document/)).toBeTruthy(),
     );
+  });
+
+  it("keeps the model's default when the server cannot resolve one", async () => {
+    renderLogs(logsTransport(undefined));
+    const namespace = screen.getByPlaceholderText("checkout-production");
+    await waitFor(() =>
+      expect(screen.getByText(/the model's default for this pair/)).toBeTruthy(),
+    );
+    expect((namespace as HTMLInputElement).value).toBe("checkout-production");
+  });
+
+  it("leaves an edited namespace alone once it has been resolved", async () => {
+    renderLogs(logsTransport("checkout-sandbox"));
+    const namespace = screen.getByPlaceholderText("checkout-production");
+    await waitFor(() =>
+      expect((namespace as HTMLInputElement).value).toBe("checkout-sandbox"),
+    );
+    fireEvent.change(namespace, { target: { value: "checkout-other" } });
+    expect((namespace as HTMLInputElement).value).toBe("checkout-other");
   });
 
   it("streams lines and reports dropped ones as loss, not silence", async () => {

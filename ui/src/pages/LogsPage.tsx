@@ -11,14 +11,14 @@ import "./LogsPage.css";
  * Logs for one environment, in the engine's two shapes: a bounded Query and an
  * unbounded Follow (proto/kelson/v1alpha1/logs.proto).
  *
- * LogSelector wants a namespace and an application, and the UI has neither
- * resolved for it: resolving a spec is the server's job and no RPC exposes the
- * resolved namespace. So the namespace is an input, prefilled with the model's
- * documented default `<project>-<environment>` (docs/model.md — "Namespace is
- * the target namespace; default <project>-<environment>"), and the application
- * list is read out of the stored Project document. A spec that sets an explicit
- * `spec.namespace` needs that field corrected, which is why it is an editable
- * input and not a caption.
+ * LogSelector wants a namespace and an application. The namespace is the
+ * server's answer: StatusResponse carries the resolved one (#161), so the input
+ * prefills from Status and a spec that sets `spec.namespace` is right without
+ * anyone correcting it. Status needs a delivery plane, and a build started
+ * without one answers Unimplemented — so the model's documented default
+ * `<project>-<environment>` (docs/model.md) stays as the fallback for exactly
+ * that case, and the field stays an editable input either way. The application
+ * list is read out of the stored Project document.
  *
  * The bounds rules are the engine's and are not duplicated here: a query must
  * carry tail, since or around, and around and tail are mutually exclusive. The
@@ -33,14 +33,39 @@ export function LogsPage() {
     [clients, project],
   );
 
+  // Status is read for one field: the resolved namespace. Its error is
+  // deliberately not surfaced — a server with no delivery plane cannot answer
+  // it, and that is not a failure of the log screen, only a reason to fall back
+  // to the model's default.
+  const status = useAsync(
+    (signal) =>
+      clients.deploy.status(
+        { spec: { spec: { case: "project", value: project } }, environment: env },
+        { signal },
+      ),
+    [clients, project, env],
+  );
+
   const applications = useMemo(() => {
     const doc = spec.data?.spec?.documents?.project;
     return doc ? applicationNames(new TextDecoder().decode(doc)) : [];
   }, [spec.data]);
 
-  const [namespace, setNamespace] = useState(`${project}-${env}`);
+  const fallbackNamespace = `${project}-${env}`;
+  const [namespace, setNamespace] = useState(fallbackNamespace);
+  const [resolved, setResolved] = useState(false);
   const [application, setApplication] = useState("");
   const [mode, setMode] = useState<"query" | "follow">("query");
+
+  // The server's answer replaces the guess once, and only once: after that the
+  // field belongs to whoever is typing in it.
+  useEffect(() => {
+    const ns = status.data?.namespace;
+    if (!resolved && ns !== undefined && ns !== "") {
+      setNamespace(ns);
+      setResolved(true);
+    }
+  }, [status.data, resolved]);
 
   // The picker fills itself in once, from the parsed spec. It stays a free-text
   // input either way: a parse that found nothing must not lock the screen.
@@ -67,11 +92,12 @@ export function LogsPage() {
             className="k-input k-mono"
             value={namespace}
             onChange={(e) => setNamespace(e.target.value)}
-            placeholder={`${project}-${env}`}
+            placeholder={fallbackNamespace}
           />
           <span className="k-field__note k-mono">
-            the model's default for this pair; override it if the Environment
-            sets spec.namespace
+            {resolved
+              ? "resolved by the server from this environment's spec"
+              : "the model's default for this pair — the server has not answered with the resolved one"}
           </span>
         </label>
 

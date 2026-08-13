@@ -320,12 +320,18 @@ func (x *StatusRequest) GetMode() string {
 }
 
 type StatusResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Phase         string                 `protobuf:"bytes,1,opt,name=phase,proto3" json:"phase,omitempty"`
-	Revision      string                 `protobuf:"bytes,2,opt,name=revision,proto3" json:"revision,omitempty"`
-	Cause         string                 `protobuf:"bytes,3,opt,name=cause,proto3" json:"cause,omitempty"`
-	Detail        map[string]string      `protobuf:"bytes,4,rep,name=detail,proto3" json:"detail,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // adapter detail: resources/live/degraded, ...
-	Verdicts      []*WorkloadVerdict     `protobuf:"bytes,5,rep,name=verdicts,proto3" json:"verdicts,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Phase    string                 `protobuf:"bytes,1,opt,name=phase,proto3" json:"phase,omitempty"`
+	Revision string                 `protobuf:"bytes,2,opt,name=revision,proto3" json:"revision,omitempty"`
+	Cause    string                 `protobuf:"bytes,3,opt,name=cause,proto3" json:"cause,omitempty"`
+	Detail   map[string]string      `protobuf:"bytes,4,rep,name=detail,proto3" json:"detail,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // adapter detail: resources/live/degraded, ...
+	Verdicts []*WorkloadVerdict     `protobuf:"bytes,5,rep,name=verdicts,proto3" json:"verdicts,omitempty"`
+	// The resolved environment's namespace. Resolving a spec is the server's job
+	// and no other RPC exposes the answer, so a client that needs to address the
+	// environment's workloads — the UI's log selector — had to guess it from the
+	// model's `<project>-<environment>` default and get a spec.namespace override
+	// wrong (#161).
+	Namespace     string `protobuf:"bytes,6,opt,name=namespace,proto3" json:"namespace,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -393,6 +399,13 @@ func (x *StatusResponse) GetVerdicts() []*WorkloadVerdict {
 		return x.Verdicts
 	}
 	return nil
+}
+
+func (x *StatusResponse) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
 }
 
 // WorkloadVerdict mirrors observation's classification (the same predicate
@@ -1465,13 +1478,14 @@ const file_kelson_v1alpha1_deploy_proto_rawDesc = "" +
 	"\venvironment\x18\x02 \x01(\tR\venvironment\x125\n" +
 	"\aprofile\x18\x03 \x01(\v2\x1b.kelson.v1alpha1.ProfileRefR\aprofile\x12\x14\n" +
 	"\x05image\x18\x04 \x01(\tR\x05image\x12\x12\n" +
-	"\x04mode\x18\x05 \x01(\tR\x04mode\"\x96\x02\n" +
+	"\x04mode\x18\x05 \x01(\tR\x04mode\"\xb4\x02\n" +
 	"\x0eStatusResponse\x12\x14\n" +
 	"\x05phase\x18\x01 \x01(\tR\x05phase\x12\x1a\n" +
 	"\brevision\x18\x02 \x01(\tR\brevision\x12\x14\n" +
 	"\x05cause\x18\x03 \x01(\tR\x05cause\x12C\n" +
 	"\x06detail\x18\x04 \x03(\v2+.kelson.v1alpha1.StatusResponse.DetailEntryR\x06detail\x12<\n" +
-	"\bverdicts\x18\x05 \x03(\v2 .kelson.v1alpha1.WorkloadVerdictR\bverdicts\x1a9\n" +
+	"\bverdicts\x18\x05 \x03(\v2 .kelson.v1alpha1.WorkloadVerdictR\bverdicts\x12\x1c\n" +
+	"\tnamespace\x18\x06 \x01(\tR\tnamespace\x1a9\n" +
 	"\vDetailEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb3\x01\n" +

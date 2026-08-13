@@ -264,6 +264,10 @@ func (s *Server) Status(ctx context.Context, req *connect.Request[kelsonv1alpha1
 		Cause:    st.Cause,
 		Detail:   st.Detail,
 		Verdicts: verdicts,
+		// The namespace the target resolved to, so a client addressing this
+		// environment's workloads reads it rather than reconstructing the
+		// model's default and missing a spec.namespace override (#161).
+		Namespace: t.Namespace,
 	}), nil
 }
 

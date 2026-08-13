@@ -265,6 +265,45 @@ func TestStatusReportsPhaseAndVerdicts(t *testing.T) {
 	if !verdicts[0].GetDegraded() || verdicts[0].GetHealthy() {
 		t.Errorf("verdict = %+v, want degraded", verdicts[0])
 	}
+	if res.Msg.GetNamespace() != "hello-development" {
+		t.Errorf("namespace = %q, want the model's default for this pair", res.Msg.GetNamespace())
+	}
+}
+
+// TestStatusReportsResolvedNamespace: the namespace on the response is the one
+// the spec resolved to, not the `<project>-<environment>` default a client
+// could have reconstructed. An Environment that sets spec.namespace is exactly
+// the case a guess gets wrong, which is why #161 put the answer on the wire.
+func TestStatusReportsResolvedNamespace(t *testing.T) {
+	const overriddenDoc = `apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: development
+spec:
+  project: hello
+  namespace: hello-dev-sandbox
+  routing:
+    domainSuffix: dev.acme.run
+`
+	adapter := newFakeAdapter("direct")
+	adapter.statuses = []delivery.Status{{Phase: delivery.PhaseHealthy, Revision: "rev-00000001"}}
+	connector, targets := connectorFor(adapter, nil, nil)
+	c := serve(t, Options{Delivery: connector})
+
+	res, err := c.deploy.Status(context.Background(), connect.NewRequest(&kelsonv1alpha1.StatusRequest{
+		Spec:        inlineSpec(projectDoc, map[string]string{"development": overriddenDoc}),
+		Environment: "development",
+		Profile:     profileRef(),
+	}))
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if res.Msg.GetNamespace() != "hello-dev-sandbox" {
+		t.Errorf("namespace = %q, want the Environment's spec.namespace", res.Msg.GetNamespace())
+	}
+	if len(*targets) != 1 || (*targets)[0].Namespace != "hello-dev-sandbox" {
+		t.Errorf("targets = %+v, want the same namespace the delivery target carries", *targets)
+	}
 }
 
 // TestHistoryDoesNotRender: history needs the project, environment and mode and
