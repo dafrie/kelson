@@ -140,12 +140,63 @@ destinations that are real, there is no environment selector and no user avatar,
 and the fonts are self-hosted via `@fontsource` rather than pulled from the
 Google Fonts CDN the mockups use.
 
-**The UI is dark-only by design.** The mockups explore no light palette and
-`docs/design/README.md` records that as the decision, so there is no light theme
-and no theme toggle — one palette that is right beats two that are half-done.
-
 One animation exists: `kelson-pulse`, reserved for reconciling status dots. If
-something else starts pulsing, the signal stops meaning "work is in flight".
+something else starts pulsing, the signal stops meaning "work is in flight". It
+honours `prefers-reduced-motion` in both themes.
+
+### Two themes
+
+The UI **follows the operating system by default** and can be pinned either way.
+`docs/design/README.md` records the mockups as dark-only; the owner decided
+otherwise on 2026-08-13, and dark remains the shipped design — not one value of
+it moved to make room for the second theme.
+
+The control is one button in the header, cycling **light → dark → system**. The
+third state is the absence of the `kelson-theme` key in `localStorage`, which is
+why a fresh browser and a browser that was reset behave identically; while it is
+in that state a `matchMedia` listener applies OS changes live, and the button
+carries a small `auto` mark so "dark because you asked" is distinguishable from
+"dark because your machine is". `src/theme.ts` holds all of it; the toggle is
+`src/components/ThemeToggle.tsx` and its two glyphs are inline SVG, because two
+icons are not worth a dependency.
+
+Selection is a `data-theme` attribute on `<html>`, and it is **never absent at
+paint time**: a blocking inline script in `index.html` reads storage and
+`prefers-color-scheme` before the bundle loads, so the page never flashes the
+wrong theme. That script duplicates exactly three things from `src/theme.ts` —
+the storage key, the media query and the two `theme-color` values — and the two
+have to be kept in step.
+
+`tokens.css` has three blocks: `:root` for type and layout (no colours, ever),
+`:root, :root[data-theme="dark"]` for the dark palette, and
+`:root[data-theme="light"]` for the light one. Components never learn which
+theme is on; they use tokens, and a component that hardcodes a colour is a
+component the light theme cannot reach. `src/styles/tokens.test.ts` parses the
+file and fails if the two palettes stop defining the same token names — the
+guard for the token someone adds to one block and forgets in the other.
+
+**Where the light palette comes from.** The design project contains exactly one
+light surface: the logo board in `docs/design/Kelson Logo.dc.html`. Its paper
+(`#f4f5f3`) is the page, and its OKLCH chrome — heading `oklch(0.24 0.015 250)`,
+body `0.42`, eyebrow `0.55`, borders `0.88` and `0.93` — converted to sRGB, is
+the text ramp and the hairlines. Everything else moves along the board's own
+axes: neutrals stay on hue 250, and each status hue keeps its dark-theme hue and
+drops in lightness until its 11.5px mono pill text clears WCAG AA against its own
+fill (synced 5.4:1, reconciling 5.4:1, degraded 4.9:1, failed 5.8:1, suspended
+4.9:1).
+
+Two consequences worth knowing:
+
+- **`--kelson-green` and `--kelson-accent` are different tokens.** The mark's
+  `#0FA36B` is theme-independent — a logo does not change hue because the page
+  went white. Brand-as-*text* (links, `fix:` labels, primary buttons) is
+  `--kelson-accent`, and on light it drops to `#0b724b`, the darkest step of the
+  ramp in `website/src/css/custom.css`, because `#0FA36B` on white is 3.2:1 and
+  fails AA.
+- **`--kelson-shadow` is the only elevation in the system**, `none` under dark
+  and a 1px whisper under light, where a white panel on near-white paper needs
+  more than a border to read as raised. It is on `.k-panel` and `.k-env` and
+  nowhere else; this is a calm console, not a card gallery.
 
 There are no CSS frameworks and no component library: the primitives in
 `src/styles/base.css` and `src/pages/pages.css` are hand-rolled against the

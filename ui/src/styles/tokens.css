@@ -1,19 +1,70 @@
 /*
  * kelson design tokens.
  *
- * Values are taken verbatim from docs/design/assets/README.md and
- * docs/design/README.md, and the names follow website/src/css/custom.css so
- * the docs site and the app speak one vocabulary. Where the two files agree,
- * they agree; where the mockups add a value the READMEs do not name (the chip
- * inset, the status pill fills), it is recorded here rather than inlined at
- * the use site.
+ * Two themes, one vocabulary. The dark values are taken verbatim from
+ * docs/design/assets/README.md and docs/design/README.md, and the names follow
+ * website/src/css/custom.css so the docs site and the app speak one language.
+ * Where the two files agree, they agree; where the mockups add a value the
+ * READMEs do not name (the chip inset, the status pill fills), it is recorded
+ * here rather than inlined at the use site.
  *
- * Dark-only, deliberately. The mockups explore no light palette
- * (docs/design/README.md), so there is no light theme and no toggle — a
- * half-designed second theme is worse than one that was decided.
+ * THEME SELECTION
+ *
+ * `data-theme` on <html>, "dark" or "light". Never absent at paint time: the
+ * inline script in index.html sets it from localStorage + prefers-color-scheme
+ * before the bundle loads, and `useTheme` (src/theme.ts) owns it afterwards.
+ * The bare `:root` in the dark block is the belt-and-braces fallback for a
+ * document that somehow reaches paint without the attribute — dark is the
+ * shipped design, so that is the safe direction to fall.
+ *
+ * THE LIGHT PALETTE
+ *
+ * docs/design/README.md records the mockups as dark-only; the owner decided on
+ * 2026-08-13 to ship a light theme anyway. It is not invented from nothing:
+ * the design project contains exactly one light surface — the logo board in
+ * `docs/design/Kelson Logo.dc.html` — and the light palette is that board's
+ * paper chrome extended into a full system. The board's own values, converted
+ * from OKLCH to sRGB:
+ *
+ *   paper       #f4f5f3                       -> --kelson-page
+ *   heading     oklch(0.24 0.015 250) #1a2026 -> --kelson-text
+ *   body        oklch(0.42 0.015 250) #474e55 -> --kelson-text-2
+ *   eyebrow     oklch(0.55 0.02  250) #69737d -> the muted ramp
+ *   border      oklch(0.88 0.008 250) #d4d8dd -> --kelson-border
+ *   hairline    oklch(0.93 0.006 250) #e5e8ec -> --kelson-hairline
+ *
+ * Everything else moves along the board's own axes: neutrals stay on hue 250
+ * at its chroma, status hues keep the dark theme's hue and drop in lightness
+ * until the text clears WCAG AA (4.5:1) on its own pill fill.
+ *
+ * STRUCTURE — and the rule the test enforces
+ *
+ *   1. `:root`                         type and layout. No colours, ever.
+ *   2. `:root, :root[data-theme=dark]` the dark palette. Every colour token.
+ *   3. `:root[data-theme=light]`       the light palette. The same token set.
+ *
+ * src/styles/tokens.test.ts parses this file and fails if blocks 2 and 3 stop
+ * defining exactly the same names, or if a colour appears in block 1. A token
+ * added to the dark palette without a light value is a bug the build catches,
+ * not one a screenshot catches later.
  */
 
 :root {
+  /* Type. Self-hosted via @fontsource — the mockups pull Space Grotesk and IBM
+     Plex Mono from the Google Fonts CDN, which an app that binds loopback and
+     may run in an air-gapped cluster must not do. */
+  --kelson-font: "Space Grotesk", Helvetica, Arial, sans-serif;
+  --kelson-font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* Layout */
+  --kelson-header-height: 56px;
+  --kelson-content-max: 1240px;
+}
+
+/* ------------------------------------------------------------------- dark */
+
+:root,
+:root[data-theme="dark"] {
   color-scheme: dark;
 
   /* Surfaces */
@@ -39,9 +90,17 @@
   --kelson-muted-deep: #4d5763;
   --kelson-code: #cdd8e3;
 
-  /* Brand */
+  /* Brand.
+
+     --kelson-green is the mark's colour and is theme-independent: #0FA36B is
+     what the SVGs in docs/design/assets ship, and a logo does not change hue
+     because the page went white. --kelson-accent is the same brand read as
+     *text* — links, the `fix:` label, primary buttons — and that one must move,
+     because #0FA36B on white is 3.2:1 and fails AA for body text. On light it
+     becomes the darkest step of the ramp in website/src/css/custom.css. */
   --kelson-green: #0fa36b;
-  --kelson-green-hover: #3ed49b;
+  --kelson-accent: #0fa36b;
+  --kelson-accent-hover: #3ed49b;
 
   /* Status */
   --kelson-synced: #0fa36b;
@@ -62,13 +121,74 @@
   --kelson-suspended-fill: #151b22;
   --kelson-suspended-border: #232d38;
 
-  /* Type. Self-hosted via @fontsource — the mockups pull Space Grotesk and IBM
-     Plex Mono from the Google Fonts CDN, which an app that binds loopback and
-     may run in an air-gapped cluster must not do. */
-  --kelson-font: "Space Grotesk", Helvetica, Arial, sans-serif;
-  --kelson-font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+  /* Elevation. Dark separates surfaces with borders and needs no shadow; the
+     token exists so the light theme can add a whisper of one without any
+     component learning about themes. */
+  --kelson-shadow: none;
+}
 
-  /* Layout */
-  --kelson-header-height: 56px;
-  --kelson-content-max: 1240px;
+/* ------------------------------------------------------------------ light */
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  /* Surfaces. The board's paper is the page; panels are plain white above it,
+     and the recessed surfaces sit a step below the paper rather than above it,
+     which is the dark theme's relationship reflected rather than reversed. */
+  --kelson-page: #f4f5f3;
+  --kelson-panel: #ffffff;
+  --kelson-panel-dim: #f1f4f6;
+  --kelson-header: #fbfbfa;
+  --kelson-border: #d4d8dd;
+  --kelson-hairline: #e5e8ec;
+  --kelson-border-hover: #b5bbc2;
+
+  --kelson-inset: #eef0f3;
+  --kelson-inset-border: #dadee3;
+
+  /* Text. The board's heading/body/eyebrow ramp, continued: six steps at
+     hue 250, descending prominence as lightness rises. The eyebrow step is the
+     board's 0.55 nudged to 0.53 so the 11.5px mono of an `unknown` pill clears
+     AA against --kelson-inset (4.62:1 rather than 4.23:1). */
+  --kelson-text: #1a2026;
+  --kelson-text-2: #474e55;
+  --kelson-text-3: #525960;
+  --kelson-muted: #5d646c;
+  --kelson-muted-2: #636d77;
+  --kelson-muted-deep: #727c86;
+  --kelson-code: #2c343c;
+
+  /* Brand. The mark keeps #0FA36B; brand-as-text drops to the ramp's darkest
+     step (5.96:1 on panel, 5.45:1 on page) and hovers darker still, which is
+     the dark theme's "hover moves away from the surface" read on a light one. */
+  --kelson-green: #0fa36b;
+  --kelson-accent: #0b724b;
+  --kelson-accent-hover: #005735;
+
+  /* Status. Same hues as dark, dropped in lightness until each clears AA both
+     on its pill fill and on a panel: synced 5.39, reconciling 5.41,
+     degraded 4.94, failed 5.77, suspended 4.94 against their own fills. */
+  --kelson-synced: #0b724b;
+  --kelson-reconciling: #0563b5;
+  --kelson-degraded: #8d5f00;
+  --kelson-failed: #af2d16;
+  --kelson-suspended: #606a74;
+
+  /* Pill fills and borders: soft tints of each hue, the dark pattern inverted
+     — fill barely off the surface, border a visible but quiet step further. */
+  --kelson-synced-fill: #e2f9ec;
+  --kelson-synced-border: #b6e4ca;
+  --kelson-reconciling-fill: #e5f4ff;
+  --kelson-reconciling-border: #bedafc;
+  --kelson-degraded-fill: #fff0d1;
+  --kelson-degraded-border: #f4d29b;
+  --kelson-failed-fill: #ffede8;
+  --kelson-failed-border: #facbc1;
+  --kelson-suspended-fill: #f0f3f5;
+  --kelson-suspended-border: #d7dbe0;
+
+  /* One hairline of elevation on cards, because a white panel on near-white
+     paper needs more than a 1px border to read as raised. Deliberately almost
+     invisible: this is a calm mono-accented console, not a card gallery. */
+  --kelson-shadow: 0 1px 2px rgba(16, 24, 32, 0.05);
 }

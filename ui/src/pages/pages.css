@@ -129,13 +129,13 @@
 }
 
 .k-button--primary {
-  border-color: var(--kelson-green);
-  color: var(--kelson-green);
+  border-color: var(--kelson-accent);
+  color: var(--kelson-accent);
 }
 
 .k-button--primary:hover:not(:disabled) {
-  border-color: var(--kelson-green-hover);
-  color: var(--kelson-green-hover);
+  border-color: var(--kelson-accent-hover);
+  color: var(--kelson-accent-hover);
 }
 
 .k-button--wide {
@@ -165,13 +165,13 @@
 }
 
 .k-copy:hover {
-  border-bottom-color: var(--kelson-green);
+  border-bottom-color: var(--kelson-accent);
   color: var(--kelson-text);
 }
 
 .k-copy__flag {
   font-size: 10.5px;
-  color: var(--kelson-green);
+  color: var(--kelson-accent);
 }
 
 .k-copy[data-state="failed"] .k-copy__flag {
@@ -204,7 +204,7 @@
 .k-tab--active,
 .k-tab--active:hover {
   color: var(--kelson-text);
-  border-bottom-color: var(--kelson-green);
+  border-bottom-color: var(--kelson-accent);
 }
 
 .k-field {
@@ -236,7 +236,7 @@
 
 .k-input:focus {
   outline: none;
-  border-color: var(--kelson-green);
+  border-color: var(--kelson-accent);
 }
 
 .k-check {
@@ -301,6 +301,7 @@
   background: var(--kelson-panel);
   border: 1px solid var(--kelson-border);
   border-radius: 6px;
+  box-shadow: var(--kelson-shadow);
 }
 
 .k-env__head {
@@ -375,7 +376,7 @@
 .k-verdict__fix-label {
   font-family: var(--kelson-font-mono);
   font-size: 12px;
-  color: var(--kelson-green);
+  color: var(--kelson-accent);
 }
 
 .k-docs {

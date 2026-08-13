@@ -26,12 +26,12 @@ body {
 }
 
 a {
-  color: var(--kelson-green);
+  color: var(--kelson-accent);
   text-decoration: none;
 }
 
 a:hover {
-  color: var(--kelson-green-hover);
+  color: var(--kelson-accent-hover);
 }
 
 h1,
@@ -100,6 +100,8 @@ pre {
   background: var(--kelson-panel);
   border: 1px solid var(--kelson-border);
   border-radius: 6px;
+  /* `none` under dark, a hairline under light — see --kelson-shadow. */
+  box-shadow: var(--kelson-shadow);
 }
 
 a.k-panel,

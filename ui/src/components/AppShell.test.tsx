@@ -1,9 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
+import { act, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 import { AppShell } from "./AppShell";
 import { StatusPill } from "./StatusPill";
+import { THEME_STORAGE_KEY } from "../theme";
 
 function renderShell(at: string) {
   return render(
@@ -43,6 +44,36 @@ describe("AppShell", () => {
       "href",
       "https://github.com/dafrie/kelson/tree/main/docs",
     );
+  });
+});
+
+describe("ThemeToggle in the shell", () => {
+  afterEach(() => {
+    window.localStorage.clear();
+    document.documentElement.removeAttribute("data-theme");
+  });
+
+  it("sits in the header and cycles the theme on <html>", () => {
+    renderShell("/apps");
+    const toggle = screen.getByRole("button", { name: /^Theme:/ });
+
+    // jsdom expresses no colour-scheme preference, so the shell opens on the
+    // shipped design and the button reports that it is the system's call.
+    expect(toggle.dataset["choice"]).toBe("system");
+    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+
+    act(() => toggle.click());
+    expect(toggle.dataset["choice"]).toBe("light");
+    expect(document.documentElement.getAttribute("data-theme")).toBe("light");
+    expect(window.localStorage.getItem(THEME_STORAGE_KEY)).toBe("light");
+
+    act(() => toggle.click());
+    expect(toggle.dataset["choice"]).toBe("dark");
+    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+
+    act(() => toggle.click());
+    expect(toggle.dataset["choice"]).toBe("system");
+    expect(window.localStorage.getItem(THEME_STORAGE_KEY)).toBeNull();
   });
 });
 
