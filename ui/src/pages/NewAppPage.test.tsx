@@ -2,10 +2,13 @@ import { describe, expect, it } from "vitest";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { Code, ConnectError, createRouterTransport } from "@connectrpc/connect";
 import type { Transport } from "@connectrpc/connect";
+import { create } from "@bufbuild/protobuf";
 
 import { DryRun, ErrorSchema } from "../gen/kelson/v1alpha1/common_pb";
 import { SpecService } from "../gen/kelson/v1alpha1/spec_pb";
 import type { PutSpecRequest } from "../gen/kelson/v1alpha1/spec_pb";
+import { BuildResponseSchema, BuildService } from "../gen/kelson/v1alpha1/build_pb";
+import type { BuildRequest } from "../gen/kelson/v1alpha1/build_pb";
 import { renderAt } from "../test/render";
 import { NewAppPage } from "./NewAppPage";
 
@@ -68,6 +71,70 @@ function threeFields() {
   type("Image", "ghcr.io/acme/hello:1.4.2");
   type("Port", "8080");
 }
+
+const SOURCE_PROJECT = `apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: hello
+
+spec:
+  source:
+    git: https://github.com/acme/hello
+    ref: main
+  build:
+    strategy: dockerfile
+
+  components:
+    - name: web
+      port: 8080
+`;
+
+/** Fills the git path's three fields and switches the form into it. */
+function fromGit() {
+  fireEvent.click(screen.getByLabelText("From Git repository"));
+  type("Project name", "hello");
+  type("Git repository", "https://github.com/acme/hello");
+  type("Ref", "main");
+  type("Port", "8080");
+}
+
+const encoder = new TextEncoder();
+
+type Router = Parameters<Parameters<typeof createRouterTransport>[0]>[0];
+
+/**
+ * A SpecService that accepts what it is given and answers a RENDER preflight
+ * the way the real one does: a document that builds from source reports
+ * `image/unresolved`, because there is no image to render with yet, and one
+ * that names an image renders clean.
+ *
+ * Keying off the document rather than the test is what makes the toggle
+ * testable — switching back to an image has to stop producing the finding.
+ */
+function sourceSpecService(router: Router, requests: PutSpecRequest[]) {
+  router.service(SpecService, {
+    putSpec: (req) => {
+      requests.push(req);
+      const doc = decoder.decode(req.documents?.project);
+      if (req.dryRun !== DryRun.RENDER || !doc.includes("  source:")) {
+        return { spec: { project: "hello", version: "1", environments: ["development"] } };
+      }
+      return {
+        errors: [
+          {
+            code: "image/unresolved",
+            application: "web",
+            message:
+              "no image yet: the spec builds this component from source and no build result was supplied",
+            remediation: "pass the built reference with --image, or set spec.image on the Project",
+          },
+        ],
+      };
+    },
+  });
+}
+
+const BUILT = "ghcr.io/acme/hello@sha256:" + "a".repeat(64);
 
 describe("NewAppPage", () => {
   it("refuses a name that cannot be a metadata.name without asking the server", () => {
@@ -305,5 +372,210 @@ describe("NewAppPage", () => {
 
     type("Port", "8080");
     expect(field("Schedule")).toContain("port and schedule are mutually exclusive");
+  });
+});
+
+/**
+ * The create-from-a-git-repository path (#63): the same two PutSpec calls, then
+ * a build, then the deploy with what the build produced.
+ *
+ * The interesting difference from the image path is that the preflight comes
+ * back with `image/unresolved` and the create is *still* legitimate — storing a
+ * spec does not render it. That finding is shown rather than suppressed, and it
+ * does not block.
+ */
+describe("NewAppPage · from a Git repository", () => {
+  it("writes source and build, and creates despite the unrenderable image", async () => {
+    const requests: PutSpecRequest[] = [];
+    const transport = createRouterTransport((router) => {
+      sourceSpecService(router, requests);
+    });
+    renderNew(transport);
+
+    fromGit();
+    expect(screen.queryByLabelText("Image")).toBeNull();
+    submit();
+
+    expect(await screen.findByText("What will be stored")).toBeTruthy();
+    expect(decoder.decode(requests[0]?.documents?.project)).toBe(SOURCE_PROJECT);
+
+    // The expected finding is on screen, with its code, and it is not the
+    // rejection panel — the Create button is right there.
+    expect(
+      screen.getByText("The check could not render this yet, and that is expected"),
+    ).toBeTruthy();
+    expect(screen.getByText("image/unresolved")).toBeTruthy();
+    expect(screen.queryByText("The server would not accept this spec")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Create hello" }));
+    expect(await screen.findByText("The spec is stored")).toBeTruthy();
+
+    // No "Deploy now": there is nothing to deploy until a build produces an
+    // image, and offering it would offer a render that fails.
+    expect(screen.queryByRole("link", { name: "Deploy now" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Build hello" })).toBeTruthy();
+  });
+
+  it("streams the build and hands the pinned reference to the deploy", async () => {
+    const builds: BuildRequest[] = [];
+    const requests: PutSpecRequest[] = [];
+    const transport = createRouterTransport((router) => {
+      sourceSpecService(router, requests);
+      router.service(BuildService, {
+        build: async function* (req) {
+          builds.push(req);
+          yield create(BuildResponseSchema, {
+            event: {
+              case: "started",
+              value: {
+                strategy: "dockerfile",
+                imageRepository: "ghcr.io/acme/hello",
+                tag: "hello-hello-0123456789ab",
+                revision: "0123456789abcdef0123456789abcdef01234567",
+              },
+            },
+          });
+          yield create(BuildResponseSchema, {
+            event: { case: "log", value: { chunk: encoder.encode("#1 [internal] load ") } },
+          });
+          yield create(BuildResponseSchema, {
+            event: { case: "log", value: { chunk: encoder.encode("build definition\n") } },
+          });
+          yield create(BuildResponseSchema, {
+            event: {
+              case: "finished",
+              value: { reference: BUILT, digest: "sha256:" + "a".repeat(64) },
+            },
+          });
+        },
+      });
+    });
+    renderNew(transport);
+
+    fromGit();
+    submit();
+    fireEvent.click(await screen.findByRole("button", { name: "Create hello" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Build hello" }));
+
+    expect(await screen.findByText("The image is pushed")).toBeTruthy();
+
+    // The build named the stored spec by project — the browser does not resend
+    // the documents it just wrote — and asked for the environment it created.
+    expect(builds).toHaveLength(1);
+    expect(builds[0]?.spec?.spec.case).toBe("project");
+    expect(builds[0]?.spec?.spec.value).toBe("hello");
+    expect(builds[0]?.environment).toBe("development");
+    // The registry and the push secret are the server's, so the form sends
+    // neither (docs/build.md).
+    expect(builds[0]?.registry).toBe("");
+    expect(builds[0]?.pushSecret).toBe("");
+
+    // Started's settled facts are on screen…
+    expect(screen.getByText("hello-hello-0123456789ab")).toBeTruthy();
+    // …the chunks are one log, joined across the boundary they were split on…
+    expect(screen.getByRole("log").textContent).toBe(
+      "#1 [internal] load build definition\n",
+    );
+    // …and the deploy carries the pinned reference as the image override.
+    expect(
+      screen.getByRole("link", { name: "Deploy this image" }).getAttribute("href"),
+    ).toBe(`/apps/hello/development/deploy?image=${encodeURIComponent(BUILT)}`);
+  });
+
+  it("renders a failed build as the structured refusal it is", async () => {
+    const requests: PutSpecRequest[] = [];
+    const transport = createRouterTransport((router) => {
+      sourceSpecService(router, requests);
+      router.service(BuildService, {
+        // A build that refuses before it starts: no events at all, just the
+        // structured error, which is what BuildService does for a build/*
+        // refusal (proto/kelson/v1alpha1/build.proto).
+        build: async function* () {
+          throw new ConnectError(
+            "[build/detection-needs-source] the build strategy is `auto` and detecting it needs to read the source tree",
+            Code.InvalidArgument,
+            undefined,
+            [
+              {
+                desc: ErrorSchema,
+                value: {
+                  code: "build/detection-needs-source",
+                  message:
+                    "the build strategy is `auto` and detecting it needs to read the source tree",
+                  remediation:
+                    "set spec.build.strategy (`dockerfile` needs no detection); in-cluster detection is tracked by issue #50",
+                },
+              },
+            ],
+          );
+        },
+      });
+    });
+    renderNew(transport);
+
+    fromGit();
+    submit();
+    fireEvent.click(await screen.findByRole("button", { name: "Create hello" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Build hello" }));
+
+    const panel = (await screen.findByText("The build failed")).closest(".k-error");
+    expect(panel?.textContent).toContain("build/detection-needs-source");
+    expect(panel?.textContent).toContain("in-cluster detection is tracked by issue #50");
+    expect(screen.queryByText("The image is pushed")).toBeNull();
+  });
+
+  it("aborts the build stream when the screen goes away", async () => {
+    const requests: PutSpecRequest[] = [];
+    let aborted = false;
+    const transport = createRouterTransport((router) => {
+      sourceSpecService(router, requests);
+      router.service(BuildService, {
+        build: async function* (_req, ctx) {
+          ctx.signal.addEventListener("abort", () => {
+            aborted = true;
+          });
+          yield create(BuildResponseSchema, {
+            event: { case: "started", value: { strategy: "dockerfile" } },
+          });
+          // A build that never finishes: the only thing that ends this stream
+          // is the caller abandoning it, which is exactly what is under test.
+          await new Promise<void>((resolve) => {
+            ctx.signal.addEventListener("abort", () => resolve());
+          });
+        },
+      });
+    });
+    const { unmount } = renderNew(transport);
+
+    fromGit();
+    submit();
+    fireEvent.click(await screen.findByRole("button", { name: "Create hello" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Build hello" }));
+    await screen.findByText("dockerfile");
+
+    unmount();
+
+    await waitFor(() => expect(aborted).toBe(true));
+  });
+
+  it("returns to the image path with the git fields left behind", async () => {
+    const requests: PutSpecRequest[] = [];
+    const transport = createRouterTransport((router) => {
+      sourceSpecService(router, requests);
+    });
+    renderNew(transport);
+
+    fromGit();
+    fireEvent.click(screen.getByLabelText("From image"));
+    type("Image", "ghcr.io/acme/hello:1.4.2");
+    submit();
+
+    expect(await screen.findByText("What will be stored")).toBeTruthy();
+    // The repository the user typed is still in the form's state; it must not
+    // reach a document that says image.
+    const written = decoder.decode(requests[0]?.documents?.project);
+    expect(written).toContain("  image: ghcr.io/acme/hello:1.4.2\n");
+    expect(written).not.toContain("source:");
+    expect(written).not.toContain("build:");
   });
 });

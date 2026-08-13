@@ -7,6 +7,7 @@ import (
 	"connectrpc.com/connect"
 
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
+	"github.com/dafrie/kelson/internal/renderer"
 )
 
 // The UI's create flow (#63) builds these two documents in the browser, from a
@@ -42,6 +43,34 @@ spec:
   project: hello
 `
 )
+
+// The create flow's other source: a git repository kelson builds itself (#63).
+// These bytes are SOURCE_PROJECT in ui/src/spec/documents.test.ts, under the
+// same convention as the pair above.
+//
+// The strategy is written as `dockerfile` and is not a choice the form offers.
+// That is not taste: BuildService refuses `auto` because detecting a strategy
+// reads a source tree and a server has none (build.ReasonDetectionNeedsSource),
+// and `buildpacks` is deferred (#49) — so `dockerfile` is the only value the
+// browser can write that the server can actually run.
+// TestUISourceSpecStoresAndBuilds asserts exactly that, which is what stops the
+// form quietly offering an option the build plane would reject.
+const uiSourceProjectDoc = `apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: hello
+
+spec:
+  source:
+    git: https://github.com/acme/hello
+    ref: main
+  build:
+    strategy: dockerfile
+
+  components:
+    - name: web
+      port: 8080
+`
 
 // The UI's edit flow (#65) rewrites a stored spec from a form: environment
 // variables at both scopes, an image override, autoscaling bounds, a second
@@ -241,5 +270,73 @@ func TestUIEditedSpecValidatesAndUpdates(t *testing.T) {
 		IdempotencyKey: "ui-edit-3",
 	})); err != nil {
 		t.Fatalf("forced update: %v", err)
+	}
+}
+
+// TestUISourceSpecStoresAndBuilds is the create-from-git path's Go half.
+//
+// It asserts the three things only the Go side can:
+//
+//  1. the browser-built document validates, so PutSpec stores it — a source
+//     spec is stored, not rendered, which is why a project with no image yet
+//     can be created at all (internal/api/spec.go);
+//  2. the preflight at dry_run=RENDER reports image/unresolved and nothing
+//     else, which is the finding the UI shows as expected rather than as a
+//     blocker (splitFindings in ui/src/spec/documents.ts). If the model ever
+//     rejected these bytes for a second reason, the UI would be suppressing a
+//     real problem, and this is what catches that;
+//  3. BuildService accepts the spec and gets as far as a real build — the
+//     strategy the form writes is one the server can actually run.
+func TestUISourceSpecStoresAndBuilds(t *testing.T) {
+	store := newFakeSpecStore()
+	builder := &fakeBuilder{logs: "#1 [internal] load build definition\n"}
+	c := serve(t, Options{
+		Specs:         store,
+		Build:         buildPlaneFor(builder, &fakeRevisions{}, nil),
+		BuildDefaults: BuildDefaults{Registry: "ghcr.io/acme"},
+	})
+	ctx := context.Background()
+
+	docs := specDocuments(uiSourceProjectDoc, map[string]string{"development": uiEnvironmentDoc})
+	check, err := c.spec.PutSpec(ctx, connect.NewRequest(&kelsonv1alpha1.PutSpecRequest{
+		Documents: docs,
+		DryRun:    kelsonv1alpha1.DryRun_DRY_RUN_RENDER,
+	}))
+	if err != nil {
+		t.Fatalf("PutSpec (check): %v", err)
+	}
+	errs := check.Msg.GetErrors()
+	if len(errs) != 1 || errs[0].GetCode() != renderer.ErrImageUnresolved {
+		for _, e := range errs {
+			t.Errorf("finding: [%s] %s %s: %s", e.GetCode(), e.GetResource(), e.GetField(), e.GetMessage())
+		}
+		t.Fatalf("want exactly one %s finding, got %d; the UI would be hiding the rest",
+			renderer.ErrImageUnresolved, len(errs))
+	}
+
+	if _, err := c.spec.PutSpec(ctx, connect.NewRequest(&kelsonv1alpha1.PutSpecRequest{
+		Documents:      docs,
+		IdempotencyKey: "ui-create-source-1",
+	})); err != nil {
+		t.Fatalf("a spec that cannot render yet must still store: %v", err)
+	}
+
+	// The stored spec is what the build screen names, by project — the browser
+	// does not re-send the documents it just stored.
+	got, err := collectBuild(t, c, &kelsonv1alpha1.BuildRequest{
+		Spec:        &kelsonv1alpha1.SpecRef{Spec: &kelsonv1alpha1.SpecRef_Project{Project: "hello"}},
+		Environment: "development",
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if got.started.GetStrategy() != "dockerfile" {
+		t.Errorf("strategy = %q, want the one the form writes", got.started.GetStrategy())
+	}
+	if got.finished.GetReference() == "" {
+		t.Error("the build produced no reference for the deploy handoff")
+	}
+	if req := builder.lastRequest(t); req.SourceGit != "https://github.com/acme/hello" {
+		t.Errorf("the builder got source %q", req.SourceGit)
 	}
 }

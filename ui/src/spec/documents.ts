@@ -30,6 +30,28 @@ export interface EnvVar {
 }
 
 /**
+ * Where the component's image comes from: a reference someone else built, or a
+ * git repository kelson builds itself (#63, docs/build.md).
+ */
+export type SourceMode = "image" | "git";
+
+/**
+ * The only build strategy this form writes, and the reason it is the only one.
+ *
+ * ADR-0010's default is `auto`: look at the source tree and decide. A server
+ * has no source tree to look at — the tree exists inside the build pod, after
+ * the clone — so BuildService refuses `auto` outright with
+ * `build/detection-needs-source` (proto/kelson/v1alpha1/build.proto). Offering
+ * it here would be offering a choice whose only outcome is a refusal, and
+ * offering `buildpacks` would be offering one that is deferred (#49). That
+ * leaves exactly one strategy the browser can write and the server can run, so
+ * the form writes it rather than asking a question with one answer. When
+ * in-cluster detection lands (#50), `auto` becomes a real option and this
+ * constant becomes a control.
+ */
+export const BUILD_STRATEGY = "dockerfile";
+
+/**
  * Everything the create form can say. Every field is the raw text of an input,
  * including the numeric ones: the form owns strings, the builder owns the
  * document, and "the user has not typed a port yet" and "the user typed 0" are
@@ -37,7 +59,11 @@ export interface EnvVar {
  */
 export interface NewAppForm {
   project: string;
+  /** Which of `image` and `git`/`ref` the document is written from. */
+  sourceMode: SourceMode;
   image: string;
+  git: string;
+  ref: string;
   port: string;
   environment: string;
   namespace: string;
@@ -50,7 +76,10 @@ export interface NewAppForm {
 
 export const EMPTY_FORM: NewAppForm = {
   project: "",
+  sourceMode: "image",
   image: "",
+  git: "",
+  ref: "",
   port: "",
   environment: "development",
   namespace: "",
@@ -114,11 +143,16 @@ export interface SpecText {
   environmentName: string;
   project: string;
   environment: string;
+  /** True when the Project names a source repository instead of an image. */
+  buildsFromSource: boolean;
 }
 
 interface Normal {
   project: string;
+  sourceMode: SourceMode;
   image: string;
+  git: string;
+  ref: string;
   port: string;
   environment: string;
   namespace: string;
@@ -133,7 +167,10 @@ interface Normal {
 function normalize(form: NewAppForm): Normal {
   return {
     project: form.project.trim(),
+    sourceMode: form.sourceMode,
     image: form.image.trim(),
+    git: form.git.trim(),
+    ref: form.ref.trim(),
     port: form.port.trim(),
     // Blank means "the default", not "no environment": the field ships filled
     // in and its placeholder repeats the default, so clearing it is an edit
@@ -158,6 +195,7 @@ export function buildDocuments(form: NewAppForm): SpecText {
     environmentName: f.environment,
     project: projectDocument(f),
     environment: environmentDocument(f),
+    buildsFromSource: f.sourceMode === "git",
   };
 }
 
@@ -165,6 +203,11 @@ export function buildDocuments(form: NewAppForm): SpecText {
  * The Project document, in examples/hello-single's shape: a blank line between
  * each top-level section of `spec`, and nothing under `components` that the
  * component's derived kind does not use.
+ *
+ * The two source modes write the two shapes the examples use. A pre-built image
+ * is one `image:` line; a git source is the `source:`/`build:` pair of
+ * examples/three-environments, adjacent with no blank line between them,
+ * because they are one statement about where the image comes from.
  */
 function projectDocument(f: Normal): string {
   const lines = [
@@ -174,8 +217,18 @@ function projectDocument(f: Normal): string {
     `  name: ${yamlScalar(f.project)}`,
     "",
     "spec:",
-    `  image: ${yamlScalar(f.image)}`,
   ];
+
+  if (f.sourceMode === "git") {
+    lines.push("  source:", `    git: ${yamlScalar(f.git)}`);
+    // No ref means the repository's default branch, which is what leaving the
+    // key out says. Writing `ref: main` for someone whose default branch is
+    // `master` would be a guess with a failure mode.
+    if (f.ref !== "") lines.push(`    ref: ${yamlScalar(f.ref)}`);
+    lines.push("  build:", `    strategy: ${BUILD_STRATEGY}`);
+  } else {
+    lines.push(`  image: ${yamlScalar(f.image)}`);
+  }
 
   // Project-level env is the shared-configuration idiom (rule P1): it already
   // reads correctly when a second component joins this one.
@@ -279,6 +332,8 @@ const TIMESTAMP = /^\d{4}-\d{1,2}-\d{1,2}/;
 export type FieldKey =
   | "project"
   | "image"
+  | "git"
+  | "ref"
   | "port"
   | "environment"
   | "namespace"
@@ -323,6 +378,17 @@ export function formProblems(form: NewAppForm): FieldProblem[] {
 
   const name = dnsLabelProblem(form.project.trim(), "a project name");
   if (name !== undefined) out.push({ field: "project", message: name });
+
+  // The document needs one source or the other. Beyond "there is something
+  // here" the server owns the judgement: it holds the URL rules and the image
+  // reference grammar, and a second copy of either in TypeScript would drift.
+  if (form.sourceMode === "git" && form.git.trim() === "") {
+    out.push({
+      field: "git",
+      message:
+        "a repository URL is required — kelson clones it in the cluster to build the image",
+    });
+  }
 
   const environment = form.environment.trim();
   if (environment !== "") {
@@ -390,7 +456,7 @@ export type ComponentField =
  * its code, its remediation and its line number intact.
  */
 export type ErrorTarget =
-  | { doc: "project"; on: "name" | "image" }
+  | { doc: "project"; on: "name" | "image" | "git" | "ref" | "build" }
   | { doc: "project"; on: "env"; name: string }
   | { doc: "project"; on: "component"; index: number; field: ComponentField }
   | { doc: "project"; on: "component-env"; index: number; name: string }
@@ -413,6 +479,12 @@ export function errorTarget(error: WireError): ErrorTarget | undefined {
 
   if (path === "$.metadata.name") return { doc: "project", on: "name" };
   if (path === "$.spec.image") return { doc: "project", on: "image" };
+  if (path === "$.spec.source.git") return { doc: "project", on: "git" };
+  if (path === "$.spec.source.ref") return { doc: "project", on: "ref" };
+  // The build stanza has no input of its own — the form writes one strategy and
+  // does not ask (BUILD_STRATEGY) — so anything about it is named rather than
+  // pointed at, and lands in the general panel with its code intact.
+  if (path.startsWith("$.spec.build")) return { doc: "project", on: "build" };
 
   const env = /^\$\.spec\.env\.([^.]+)/.exec(path);
   if (env?.[1] !== undefined) {
@@ -465,6 +537,12 @@ export function fieldForError(error: WireError): FieldKey | undefined {
       return "project";
     case "image":
       return "image";
+    case "git":
+      return "git";
+    case "ref":
+      return "ref";
+    case "build":
+      return undefined;
     case "env":
       return `env:${target.name}`;
     case "component-env":
@@ -486,6 +564,49 @@ export interface MappedErrors {
   byField: Map<FieldKey, WireError[]>;
   /** Everything else, for the panel above the button. */
   general: WireError[];
+}
+
+/**
+ * The renderer's code for "this component has no image yet". It is the one
+ * finding a source-built project is *expected* to report before its first
+ * build.
+ */
+export const IMAGE_UNRESOLVED = "image/unresolved";
+
+export interface Findings {
+  /** Findings that mean the document is wrong. */
+  blocking: WireError[];
+  /** Findings that are true, expected, and not a reason to stop. */
+  expected: WireError[];
+}
+
+/**
+ * Splitting the preflight's findings for a project that builds from source.
+ *
+ * `PutSpec` at `dry_run=RENDER` validates *and renders*, and a project whose
+ * image comes from a build has no image to render with — so it always comes
+ * back with `image/unresolved` (internal/api/spec.go's renderEveryEnvironment).
+ * That finding is correct and the create is still legitimate: storing a spec
+ * does not render it, so the write succeeds and the image arrives when a build
+ * produces one (#136).
+ *
+ * Suppressing it would be lying about what the server said; treating it as a
+ * blocker would make the git path impossible. So it is separated and shown as
+ * what it is — with its code, because that is what a reader can look up — while
+ * every other finding still stops the create. Nothing is filtered for a project
+ * that names an image: there, `image/unresolved` would be a real problem.
+ */
+export function splitFindings(
+  errors: readonly WireError[],
+  buildsFromSource: boolean,
+): Findings {
+  if (!buildsFromSource) return { blocking: [...errors], expected: [] };
+  const blocking: WireError[] = [];
+  const expected: WireError[] = [];
+  for (const error of errors) {
+    (error.code === IMAGE_UNRESOLVED ? expected : blocking).push(error);
+  }
+  return { blocking, expected };
 }
 
 export function mapErrors(errors: readonly WireError[]): MappedErrors {

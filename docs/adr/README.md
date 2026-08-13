@@ -17,6 +17,7 @@ wrong, open an issue — it is far cheaper to reverse a decision now than after 
 | [0010](0010-build-strategy.md) | Dockerfile when present, Cloud Native Buildpacks otherwise | Accepted |
 | [0011](0011-build-cache.md) | Build cache is a registry cache, scoped per application | Deferred |
 | [0012](0012-flux-only-gitops.md) | Flux is the only GitOps delivery mode; Argo CD deferred | Accepted |
+| [0013](0013-server-state-and-api-v0.md) | Server state lives in the cluster; API v0 shape | Proposed |
 | [0014](0014-components.md) | One `components` list, per-component identity (amends 0006) | Proposed |
 
 *Process note (2026-08-12):* ADR-0003 and ADR-0005 were revised in place before the immutability rule

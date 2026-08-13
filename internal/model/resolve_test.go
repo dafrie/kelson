@@ -331,6 +331,35 @@ spec:
 	}
 }
 
+// TestResolveSourceOnlyProjectYieldsImageUnresolved covers issue #170: a
+// Project with spec.source and no spec.build is built from source under
+// ADR-0010's auto default, the same as one with an explicit `build: {strategy:
+// auto}`. It must validate and resolve with ImageUnresolved, not fail.
+func TestResolveSourceOnlyProjectYieldsImageUnresolved(t *testing.T) {
+	p, e := loadPair(t, `
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata: {name: hello}
+spec:
+  source: {git: https://github.com/acme/hello}
+  components:
+    - {name: web, port: 8080}
+`, `
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata: {name: dev}
+spec:
+  project: hello
+`)
+	r, errs := Resolve(p, e)
+	if len(errs) != 0 {
+		t.Fatalf("resolve: %v", errs)
+	}
+	if got := r.Components[0].Image; got != ImageUnresolved {
+		t.Errorf("image = %q, want %q (built from source, awaiting build)", got, ImageUnresolved)
+	}
+}
+
 func TestResolveRejectsInvalid(t *testing.T) {
 	p, e := loadPair(t, `
 apiVersion: kelson.dev/v1alpha1

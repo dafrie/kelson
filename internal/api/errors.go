@@ -7,15 +7,16 @@ import (
 	"connectrpc.com/connect"
 
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
+	"github.com/dafrie/kelson/internal/build"
 	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/model"
 	"github.com/dafrie/kelson/internal/renderer"
 	"github.com/dafrie/kelson/internal/serverstate"
 )
 
-// One wire error shape, four plane vocabularies (ADR-0013 §2). model.Error,
-// renderer.Error, delivery.Error and serverstate.Error each fill the subset of
-// kelson.v1alpha1.Error they know. Codes pass through verbatim — an agent
+// One wire error shape, five plane vocabularies (ADR-0013 §2). model.Error,
+// renderer.Error, delivery.Error, serverstate.Error and build.Error each fill
+// the subset of kelson.v1alpha1.Error they know. Codes pass through verbatim — an agent
 // branching on "schema/not-implemented" or "store/version-conflict" sees the
 // same string here that the owning Go package defines, and the wire must not
 // invent a second taxonomy.
@@ -63,6 +64,11 @@ func wireErrors(err error) []*kelsonv1alpha1.Error {
 	var storeErr serverstate.Error
 	if errors.As(err, &storeErr) {
 		return []*kelsonv1alpha1.Error{fromStore(storeErr)}
+	}
+
+	var buildErr build.Error
+	if errors.As(err, &buildErr) {
+		return []*kelsonv1alpha1.Error{fromBuild(buildErr)}
 	}
 	return nil
 }
@@ -117,6 +123,18 @@ func fromDelivery(e delivery.Error) *kelsonv1alpha1.Error {
 		Remediation: e.Remediation,
 		DocsUrl:     e.DocsURL,
 		Cause:       e.Cause,
+	}
+}
+
+// fromBuild carries a build-plane refusal onto the wire. It has no resource and
+// no field: build/no-source and its siblings are statements about the whole
+// request — this Project cannot be built, and here is what to change — rather
+// than findings against one line of one document.
+func fromBuild(e build.Error) *kelsonv1alpha1.Error {
+	return &kelsonv1alpha1.Error{
+		Code:        e.Reason,
+		Message:     e.Message,
+		Remediation: e.Remediation,
 	}
 }
 

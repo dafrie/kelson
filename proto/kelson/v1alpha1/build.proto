@@ -1,0 +1,127 @@
+// BuildService: the build plane over the API (issues #48, #54, ADR-0010).
+//
+// `kelson build` already turns a Project's source into a digest-pinned image
+// with an in-cluster BuildKit Job (docs/build.md). This service is that same
+// pipeline reached over the schema, so a UI or an agent can build without a
+// kubeconfig and without the CLI — which is what the browser create-from-git
+// path (#63) needs, since a browser has neither.
+//
+// # What the server decides and what it does not
+//
+// The split is the CLI's, unchanged (ADR-0010): *how* to build comes from the
+// spec, *where* the image goes is infrastructure configuration. The request may
+// override the destination because a caller may legitimately push somewhere
+// else; it may not override the strategy, because that would put build
+// configuration in the caller's hands rather than in the spec's, which is
+// exactly what ADR-0010 forbids. There is deliberately no strategy field here.
+syntax = "proto3";
+
+package kelson.v1alpha1;
+
+import "kelson/v1alpha1/render.proto";
+
+option go_package = "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1;kelsonv1alpha1";
+
+message BuildRequest {
+  SpecRef spec = 1;
+  string environment = 2; // optional when the spec holds exactly one
+
+  // Destination prefix, e.g. ghcr.io/acme. Empty means the server's own
+  // default (kelson-server --registry / KELSON_REGISTRY). The repository is
+  // <registry>/<project>: one repository per Project, because the source is
+  // project-level and so is the build (docs/build.md).
+  string registry = 3;
+  // Name of an existing kubernetes.io/dockerconfigjson Secret in the build
+  // namespace that authenticates the push. Empty means the server's default
+  // (--push-secret); a server with neither pushes unauthenticated, which is
+  // correct for a cluster-internal registry and fails at push time otherwise.
+  // It is a reference, never a value (ADR-0009).
+  string push_secret = 4;
+  // Git branch, tag or commit to build. Empty means the Project's
+  // spec.source.ref, and empty again means the repository's default branch.
+  // Whatever it names is resolved to a commit once, before the build starts,
+  // so the tag, the recorded revision and the tree the build pod checks out
+  // are the same string.
+  string ref = 5;
+
+  // There is no strategy override: ADR-0010 makes the strategy the spec's
+  // (an explicit spec.build.strategy wins, else a Dockerfile decides), and a
+  // per-request override would move build configuration into the caller.
+  //
+  // There is no idempotency_key either, and that is not an oversight. The
+  // other mutating RPCs carry one because they write state a replay would
+  // duplicate; a build writes an image whose name is derived from the resolved
+  // commit, so a rebuild of the same commit pushes the same content to the
+  // same tag and resolves to the same digest. Re-running is already a replay.
+  // The executor reinforces it: a build Job's name is a function of its
+  // Request, so a concurrent identical build adopts the running Job rather
+  // than starting a second one.
+}
+
+// BuildResponse streams the build as it happens: the plan, then the raw build
+// output, then the pinned result.
+//
+// Failures are ConnectRPC errors carrying kelson.v1alpha1.Error details, not
+// events — a build that fails produced no image, so there is no result message
+// that could honestly describe it. The build plane's codes (build/no-source,
+// build/nothing-to-build, build/strategy-not-implemented,
+// build/detection-needs-source) pass through verbatim, like every other plane's
+// (ADR-0013 §2).
+message BuildResponse {
+  oneof event {
+    Started started = 1;  // first event, exactly one: what is about to be built
+    Log log = 2;          // build output, as it is produced
+    Finished finished = 3; // terminal event, exactly one, last
+  }
+
+  // Started is sent after the strategy is resolved and the ref is resolved to
+  // a commit, so everything it carries is settled fact rather than intent.
+  message Started {
+    string strategy = 1;         // "dockerfile"; the resolved ADR-0010 strategy
+    string image_repository = 2; // <registry>/<project>, no tag, no digest
+    string tag = 3;              // the human-readable tag pushed alongside the digest
+    string revision = 4;         // the 40-hex commit the build clones
+  }
+
+  // Log is raw build output — the bytes BuildKit and the clone container wrote,
+  // not lines. The stream chunks them for transport and preserves nothing else:
+  // a chunk boundary is not a line boundary, so a client that wants lines
+  // splits the concatenation itself.
+  message Log {
+    bytes chunk = 1;
+  }
+
+  message Finished {
+    // Fully-qualified and always digest-pinned, e.g. ghcr.io/acme/shop@sha256:…
+    // A mutable reference is refused rather than returned: deploying by digest
+    // is the guarantee the build exists to provide (#51).
+    string reference = 1;
+    string digest = 2; // sha256:…
+  }
+}
+
+// BuildService builds a Project's source into an image, in the cluster.
+service BuildService {
+  // Build streams one build to completion.
+  //
+  // # Cancellation leaves the Job running
+  //
+  // Cancelling the RPC stops the server watching, and that is all it stops.
+  // The executor's Wait returns as soon as the context is done, before it
+  // reaches the branch that deletes the Job (internal/delivery/kube's
+  // BuildExecutor), so the build Job keeps running in the cluster, finishes or
+  // hits its activeDeadlineSeconds, and is left behind for an operator to see.
+  // That is deliberate — a half-finished push is worse than a completed one
+  // nobody waited for — but it does mean an abandoned build is not a cancelled
+  // build, and `kubectl -n <build namespace> get jobs` is where it went.
+  //
+  // # `auto` needs a source tree the server does not have
+  //
+  // Strategy detection reads the source tree, and a server has no local
+  // checkout — the tree exists only inside the build pod, after the clone. The
+  // CLI answers this with -C pointing at a checkout; there is no server-side
+  // equivalent, so a spec whose strategy resolves to `auto` fails here with
+  // build/detection-needs-source and says to set spec.build.strategy instead.
+  // In-cluster detection before choosing a driver is issue #50.
+  rpc Build(BuildRequest) returns (stream BuildResponse);
+}

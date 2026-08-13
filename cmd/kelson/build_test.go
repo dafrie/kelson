@@ -364,7 +364,7 @@ func TestBuildAutoWithoutACheckoutIsAClearRefusal(t *testing.T) {
 	if code != exitErr {
 		t.Fatalf("exit %d, want %d", code, exitErr)
 	}
-	for _, want := range []string{reasonDetectionNeedsCheckout, "-C", "spec.build.strategy", "#50"} {
+	for _, want := range []string{build.ReasonDetectionNeedsSource, "-C", "spec.build.strategy", "#50"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("the refusal should mention %q, got: %s", want, msg)
 		}
@@ -406,7 +406,7 @@ func TestBuildBuildpacksIsDeferred(t *testing.T) {
 			if code != exitErr {
 				t.Fatalf("exit %d, want %d", code, exitErr)
 			}
-			for _, want := range []string{reasonStrategyDeferred, "buildpacks", "#49", "Dockerfile"} {
+			for _, want := range []string{build.ReasonStrategyNotImplemented, "buildpacks", "#49", "Dockerfile"} {
 				if !strings.Contains(msg, want) {
 					t.Errorf("the refusal should mention %q, got: %s", want, msg)
 				}
@@ -427,8 +427,8 @@ func TestBuildStrategyNoneIsNothingToBuild(t *testing.T) {
 	if code != exitErr {
 		t.Fatalf("exit %d, want %d", code, exitErr)
 	}
-	if !strings.Contains(msg, reasonNothingToBuild) {
-		t.Errorf("want the %s reason, got: %s", reasonNothingToBuild, msg)
+	if !strings.Contains(msg, build.ReasonNothingToBuild) {
+		t.Errorf("want the %s reason, got: %s", build.ReasonNothingToBuild, msg)
 	}
 	if builder.calls() != 0 {
 		t.Error("build.strategy: none must not submit a build")
@@ -444,8 +444,8 @@ func TestBuildWithoutASourceIsRefused(t *testing.T) {
 	if code != exitErr {
 		t.Fatalf("exit %d, want %d", code, exitErr)
 	}
-	if !strings.Contains(msg, reasonNoSource) {
-		t.Errorf("want the %s reason, got: %s", reasonNoSource, msg)
+	if !strings.Contains(msg, build.ReasonNoSource) {
+		t.Errorf("want the %s reason, got: %s", build.ReasonNoSource, msg)
 	}
 }
 

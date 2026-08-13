@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 
 import { useAsync, useClients } from "../api/data";
 import { useRun } from "../api/stream";
@@ -39,6 +39,20 @@ import { decodeDiff, type Diff } from "../diff/parse";
  * answer, not a transport failure). So a settled error is rendered as the
  * result of the deploy, in the same panel as a successful one, and not as a
  * broken connection.
+ *
+ * # ?image=
+ *
+ * A stored spec that builds from source has no image until a build produces
+ * one, and rendering it without one fails with `image/unresolved` (#136). The
+ * CLI answers that with `kelson deploy --image "$(kelson build ... | tail -1)"`;
+ * `DeployRequest.image` is the same field, and this screen takes it from the
+ * query string so the build screen can hand a reference over by navigating.
+ *
+ * It is a query parameter rather than router state on purpose: the resulting
+ * URL is the whole request, so it survives a reload, and it is the thing a
+ * person pastes to someone else. It is shown on screen for the same reason a
+ * `--image` is echoed — deploying something other than what the spec says is a
+ * fact the reader must not have to infer.
  */
 
 interface Live {
@@ -57,6 +71,8 @@ const EMPTY: Live = {
 
 export function DeployPage() {
   const { project = "", env = "" } = useParams();
+  const [params] = useSearchParams();
+  const image = params.get("image") ?? "";
   const clients = useClients();
   const preview = useAsync(async (signal) => {
     let proposed: DeployResponse_Proposed | undefined;
@@ -64,6 +80,7 @@ export function DeployPage() {
       {
         spec: { spec: { case: "project", value: project } },
         environment: env,
+        image,
         dryRun: DryRun.RENDER,
       },
       { signal },
@@ -71,7 +88,7 @@ export function DeployPage() {
       if (res.event.case === "proposed") proposed = res.event.value;
     }
     return proposed;
-  }, [clients, project, env]);
+  }, [clients, project, env, image]);
 
   const [live, setLive] = useState<Live>(EMPTY);
   const apply = useRun();
@@ -83,6 +100,7 @@ export function DeployPage() {
         {
           spec: { spec: { case: "project", value: project } },
           environment: env,
+          image,
           dryRun: DryRun.NONE,
         },
         { signal },
@@ -104,7 +122,7 @@ export function DeployPage() {
         });
       }
     });
-  }, [apply, clients, project, env]);
+  }, [apply, clients, project, env, image]);
 
   const proposed = preview.data;
   const started = apply.running || live.proposed !== undefined || live.settled !== undefined;
@@ -119,6 +137,20 @@ export function DeployPage() {
         <span>·</span>
         <span className="k-chip k-mono">{env}</span>
       </div>
+
+      {image !== "" ? (
+        <div className="k-panel k-deploy__image">
+          <span className="k-eyebrow">Image override</span>
+          <span className="k-mono">
+            <Copyable value={image} />
+          </span>
+          <span className="k-mono k-deploy__note">
+            this deploy renders with the image above instead of the spec's —
+            it is what a build produced, and it is why a project that builds
+            from source can be deployed at all
+          </span>
+        </div>
+      ) : null}
 
       <section className="k-section">
         <div className="k-eyebrow">Step 1 · Preview (dry run: render)</div>

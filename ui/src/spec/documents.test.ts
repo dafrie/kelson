@@ -7,6 +7,8 @@ import {
   EMPTY_FORM,
   fieldForError,
   formProblems,
+  IMAGE_UNRESOLVED,
+  splitFindings,
   workloadKind,
   yamlScalar,
   type NewAppForm,
@@ -46,9 +48,42 @@ spec:
   project: hello
 `;
 
+/**
+ * The git-source case, byte for byte, and also a Go-side fixture
+ * (uiSourceProjectDoc in internal/api/uispec_test.go). Same contract as the
+ * pair above: only Go can assert that the model accepts these bytes, and only
+ * this file can assert that the builder produces them.
+ *
+ * `strategy: dockerfile` is written rather than chosen — see BUILD_STRATEGY.
+ */
+const SOURCE_PROJECT = `apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: hello
+
+spec:
+  source:
+    git: https://github.com/acme/hello
+    ref: main
+  build:
+    strategy: dockerfile
+
+  components:
+    - name: web
+      port: 8080
+`;
+
 const THREE_FIELDS = form({
   project: "hello",
   image: "ghcr.io/acme/hello:1.4.2",
+  port: "8080",
+});
+
+const FROM_GIT = form({
+  project: "hello",
+  sourceMode: "git",
+  git: "https://github.com/acme/hello",
+  ref: "main",
   port: "8080",
 });
 
@@ -164,6 +199,85 @@ spec:
     expect(built.environment).toContain("  name: staging\n");
     // The Project document stays environment-agnostic (docs/model.md).
     expect(built.project).toBe(MINIMAL_PROJECT);
+  });
+});
+
+describe("building from a git repository", () => {
+  it("writes source and build instead of image", () => {
+    const built = buildDocuments(FROM_GIT);
+
+    expect(built.project).toBe(SOURCE_PROJECT);
+    expect(built.environment).toBe(MINIMAL_ENVIRONMENT);
+    expect(built.buildsFromSource).toBe(true);
+    // The two sources are exclusive in the document: a Project that names both
+    // would have its image win over the build it also asked for (rule P3).
+    expect(built.project).not.toContain("  image:");
+  });
+
+  it("leaves the ref out when it is blank, which means the default branch", () => {
+    const built = buildDocuments(form({ ...FROM_GIT, ref: "  " }));
+
+    expect(built.project).toBe(SOURCE_PROJECT.replace("    ref: main\n", ""));
+    expect(built.project).not.toContain("ref:");
+  });
+
+  it("keeps writing image when the mode is switched back", () => {
+    // The git fields survive the toggle in the form's state, and must not leak
+    // into a document that says image.
+    const built = buildDocuments(
+      form({ ...FROM_GIT, sourceMode: "image", image: "ghcr.io/acme/hello:1.4.2" }),
+    );
+
+    expect(built.project).toBe(MINIMAL_PROJECT);
+    expect(built.buildsFromSource).toBe(false);
+  });
+
+  it("requires a repository, and only that", () => {
+    expect(formProblems(form({ ...FROM_GIT, git: "   " }))).toEqual([
+      {
+        field: "git",
+        message:
+          "a repository URL is required — kelson clones it in the cluster to build the image",
+      },
+    ]);
+    // An empty image is not a problem in git mode, and a blank ref never is.
+    expect(formProblems(form({ ...FROM_GIT, ref: "", image: "" }))).toEqual([]);
+  });
+
+  it("points the source findings at the fields that wrote them", () => {
+    const wire = (field: string) =>
+      create(ErrorSchema, { resource: "Project/hello", field, code: "schema/invalid" });
+
+    expect(fieldForError(wire("$.spec.source.git"))).toBe("git");
+    expect(fieldForError(wire("$.spec.source.ref"))).toBe("ref");
+    // The strategy is written, not asked for, so it has no input to point at.
+    expect(fieldForError(wire("$.spec.build.strategy"))).toBeUndefined();
+  });
+});
+
+describe("splitFindings", () => {
+  const unresolved = create(ErrorSchema, {
+    code: IMAGE_UNRESOLVED,
+    message: "no image yet: the spec builds this component from source",
+  });
+  const real = create(ErrorSchema, {
+    code: "schema/unknown-field",
+    resource: "Project/hello",
+    field: "$.spec.components[0].portt",
+  });
+
+  it("separates the expected no-image-yet finding for a source build", () => {
+    const { blocking, expected } = splitFindings([unresolved, real], true);
+
+    expect(expected).toEqual([unresolved]);
+    expect(blocking).toEqual([real]);
+  });
+
+  it("treats it as a blocker for a project that named an image", () => {
+    const { blocking, expected } = splitFindings([unresolved], false);
+
+    expect(blocking).toEqual([unresolved]);
+    expect(expected).toEqual([]);
   });
 });
 

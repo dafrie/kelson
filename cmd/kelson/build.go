@@ -142,8 +142,8 @@ func buildImage(cmd *cobra.Command, opts *buildOptions) (build.Result, error) {
 
 	source := project.Spec.Source
 	if source == nil || strings.TrimSpace(source.Git) == "" {
-		return build.Result{}, buildError{
-			Reason:      reasonNoSource,
+		return build.Result{}, build.Error{
+			Reason:      build.ReasonNoSource,
 			Message:     fmt.Sprintf("Project %s has no spec.source.git, so there is nothing to build from", project.Metadata.Name),
 			Remediation: "add spec.source.git to the Project, or deploy a pre-built image with `kelson deploy --image`",
 		}
@@ -188,9 +188,9 @@ func buildImage(cmd *cobra.Command, opts *buildOptions) (build.Result, error) {
 		// would put a false label on the Job and on the image.
 		SourceGit:  source.Git,
 		SourceRef:  revision,
-		Dockerfile: dockerfilePath(project.Spec.Build),
+		Dockerfile: build.DockerfilePath(project.Spec.Build),
 		Image:      image,
-		Tag:        destinationTag(project.Metadata.Name, revision),
+		Tag:        build.DestinationTag(project.Metadata.Name, revision),
 		Revision:   revision,
 	}
 
@@ -220,38 +220,6 @@ func buildImage(cmd *cobra.Command, opts *buildOptions) (build.Result, error) {
 		return build.Result{}, fmt.Errorf("the build returned %s, which is not pinned by digest", res.Reference)
 	}
 	return res, nil
-}
-
-// destinationTag names the human-readable tag pushed alongside the digest.
-//
-// registry.Tag's convention is <project>-<application>-<revision>, but a
-// kelson build is per-Project, not per-Application: the source is project-level
-// and model rule P3 gives every application without its own image: the
-// Project's image, so one build feeds all of them. There is no single
-// application to name. The project name is passed for that slot — redundant
-// with the first component, but true; naming the first application instead
-// would read as "this image belongs to web", which is exactly what it does not
-// mean. Reproducibility comes from the digest either way; this tag is for
-// humans reading a registry listing.
-func destinationTag(project, revision string) string {
-	return registry.Tag(project, project, shortRevision(revision))
-}
-
-// shortRevision keeps the tag readable. The full commit stays in
-// Request.Revision and in the Job's kelson.dev/revision annotation, so nothing
-// is lost by shortening what humans read.
-func shortRevision(revision string) string {
-	if len(revision) > 12 {
-		return revision[:12]
-	}
-	return revision
-}
-
-func dockerfilePath(b *model.Build) string {
-	if b == nil {
-		return ""
-	}
-	return b.Dockerfile
 }
 
 func registryPrefix(opts *buildOptions) string {
@@ -292,61 +260,20 @@ func loadBuildSpec(opts *buildOptions) (*model.Project, *model.Environment, erro
 
 // --- strategy resolution ----------------------------------------------------
 
-// resolveBuildStrategy applies ADR-0010's precedence and reports what the
-// build plane can actually run today.
+// resolveBuildStrategy is the CLI's half of strategy resolution: open the
+// checkout -C names, then apply ADR-0010's precedence, which is
+// build.ResolveStrategy and shared with the API server (internal/build/plan.go).
 //
-// The honest limitation is detection: detect.Detect reads the source tree, and
-// for a remote repository the CLI has no tree to read — the tree only exists
-// inside the build pod, after the clone. So `auto` needs either a local
-// checkout (-C) or an explicit strategy in the spec. Detecting inside the
-// cluster, before choosing a driver, is future work; guessing "probably
-// Dockerfile" here would be the kind of magic ADR-0010 exists to avoid.
+// Only the opening is the CLI's own, and only because only the CLI has a local
+// filesystem to open. Everything the user is told — which strategy, and which
+// of the three refusals — comes from the shared function, so `kelson build` and
+// BuildService cannot disagree about what a spec selects.
 func resolveBuildStrategy(spec *model.Build, sourceDir string) (detect.Detection, error) {
 	tree, err := sourceTree(sourceDir)
 	if err != nil {
 		return detect.Detection{}, err
 	}
-
-	strategy := model.BuildAuto
-	if spec != nil && spec.Strategy != "" {
-		strategy = spec.Strategy
-	}
-	if strategy == model.BuildAuto && tree == nil {
-		return detect.Detection{}, buildError{
-			Reason: reasonDetectionNeedsCheckout,
-			Message: "the build strategy is `auto` and detecting it needs to read the source tree, " +
-				"which is not available for a remote repository before the build pod clones it",
-			Remediation: "pass -C <dir> pointing at a local checkout of the source, or set spec.build.strategy " +
-				"(`dockerfile` needs no detection); in-cluster detection is tracked by issue #50",
-		}
-	}
-
-	detection, err := detect.Detect(spec, tree)
-	if err != nil {
-		return detect.Detection{}, fmt.Errorf("detecting the build strategy in %s: %w", sourceDir, err)
-	}
-
-	switch detection.Strategy {
-	case detect.StrategyDockerfile:
-		return detection, nil
-
-	case detect.StrategyBuildpacks:
-		return detection, buildError{
-			Reason: reasonStrategyDeferred,
-			Message: fmt.Sprintf("%s, but the buildpacks strategy is not implemented in this release",
-				detection.Message),
-			Remediation: "add a Dockerfile to the source (it takes precedence, ADR-0010) or set " +
-				"spec.build.strategy: dockerfile; buildpacks is deferred out of the v0.1 cut and tracked " +
-				"by issue #49, and ADR-0010 still makes it the eventual default",
-		}
-
-	default: // detect.StrategyNone
-		return detection, buildError{
-			Reason:      reasonNothingToBuild,
-			Message:     "the spec sets build.strategy: none, which means build nothing and deploy spec.image",
-			Remediation: "remove build.strategy: none to build from source, or deploy the pre-built image directly",
-		}
-	}
+	return build.ResolveStrategy(spec, tree)
 }
 
 // sourceTree opens the local checkout -C names, if any. A missing or
@@ -369,9 +296,6 @@ func sourceTree(dir string) (fs.FS, error) {
 
 // --- revision resolution ----------------------------------------------------
 
-// commitLength is the length of a full git object id in hex.
-const commitLength = 40
-
 // resolveRevision turns whatever --ref (or spec.source.ref) says into the
 // commit that was actually built.
 //
@@ -380,27 +304,13 @@ const commitLength = 40
 // commit the build pod checks out all name the same thing — a branch resolved
 // separately by each of them would let them disagree.
 func resolveRevision(ctx context.Context, resolver revisionResolver, repo, ref string) (string, error) {
-	if isCommit(ref) {
-		return strings.ToLower(ref), nil
+	if build.IsCommit(ref) {
+		return build.NormalizeCommit(ref), nil
 	}
 	if resolver == nil {
 		return "", fmt.Errorf("git revision resolution is unavailable in this build; pass --ref with a full 40-character commit")
 	}
 	return resolver.Resolve(ctx, repo, ref)
-}
-
-func isCommit(ref string) bool {
-	if len(ref) != commitLength {
-		return false
-	}
-	for i := 0; i < len(ref); i++ {
-		c := ref[i]
-		hex := c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F'
-		if !hex {
-			return false
-		}
-	}
-	return true
 }
 
 // --- the build plane seam ---------------------------------------------------
@@ -481,29 +391,4 @@ func connectBuildPlane(opts *buildOptions, namespace string) (*buildPlane, error
 		return nil, fmt.Errorf("the build plane is unavailable in this build")
 	}
 	return plane, nil
-}
-
-// --- structured errors ------------------------------------------------------
-
-// Reason codes for the build command's own refusals. They are stable strings
-// so an agent branches on the reason instead of matching prose, the same
-// contract model.Code and delivery.Code make for their planes.
-const (
-	reasonNoSource               = "build/no-source"
-	reasonNothingToBuild         = "build/nothing-to-build"
-	reasonStrategyDeferred       = "build/strategy-not-implemented"
-	reasonDetectionNeedsCheckout = "build/detection-needs-source"
-)
-
-// buildError is a refusal by the build command itself, as opposed to a failure
-// reported by the build plane. It carries the same shape the model and
-// delivery taxonomies use: a code, what happened, and the action that fixes it.
-type buildError struct {
-	Reason      string
-	Message     string
-	Remediation string
-}
-
-func (e buildError) Error() string {
-	return fmt.Sprintf("[%s] %s: %s", e.Reason, e.Message, e.Remediation)
 }
