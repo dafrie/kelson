@@ -243,6 +243,33 @@ func (f *fakeAdapter) Rollback(_ context.Context, _ delivery.ManifestSet, to del
 	return res, nil
 }
 
+// fakeRecorded is a rollback.Source over recorded manifest sets, the seam the
+// rollback preview and the from_revision diff (#162) both read their prior
+// state through. Revision returns the recorded bytes verbatim; a revision it
+// does not hold fails the way the cluster-backed history store does
+// (serverstate.NotFound), so the handler's mapping of that error is exercised
+// rather than assumed.
+type fakeRecorded struct {
+	current   []delivery.Manifest
+	revisions map[string][]delivery.Manifest
+}
+
+var _ rollback.Source = (*fakeRecorded)(nil)
+
+func (f *fakeRecorded) Current(context.Context) ([]delivery.Manifest, error) {
+	return f.current, nil
+}
+
+func (f *fakeRecorded) Revision(_ context.Context, revision string) ([]delivery.Manifest, error) {
+	ms, ok := f.revisions[revision]
+	if !ok {
+		return nil, serverstate.NotFound("history/"+revision,
+			fmt.Sprintf("revision %q is not in the retained history", revision),
+			"list the history for the revisions that still exist")
+	}
+	return ms, nil
+}
+
 // connectorFor returns a DeliveryConnector serving one adapter, recording the
 // targets it was asked for.
 func connectorFor(adapter *fakeAdapter, recorded rollback.Source, health observation.Evaluator) (DeliveryConnector, *[]Target) {

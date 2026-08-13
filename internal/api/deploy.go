@@ -423,12 +423,20 @@ func rollbackTarget(entries []delivery.Entry, to string) (delivery.Entry, error)
 		}
 		return entries[1], nil
 	}
-	for _, e := range entries {
-		if e.Revision == to {
-			return e, nil
-		}
+	if e, ok := findRevision(entries, to); ok {
+		return e, nil
 	}
 	return delivery.Entry{}, fmt.Errorf("api: revision %q is not in the retained history", to)
+}
+
+// findRevision looks one revision up in a history listing.
+func findRevision(entries []delivery.Entry, revision string) (delivery.Entry, bool) {
+	for _, e := range entries {
+		if e.Revision == revision {
+			return e, true
+		}
+	}
+	return delivery.Entry{}, false
 }
 
 // History returns the recorded revisions for an environment.
