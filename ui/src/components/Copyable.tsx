@@ -39,8 +39,14 @@ export function Copyable({
       type="button"
       className={className ? `k-copy ${className}` : "k-copy"}
       onClick={copy}
-      title={state === "failed" ? "the browser refused clipboard access" : `copy ${value}`}
-      aria-label={`copy ${value}`}
+      title={
+        state === "failed"
+          ? "the browser refused clipboard access"
+          : (label ?? `copy ${value}`)
+      }
+      // A label is given when the value is too long to be its own name — a
+      // whole spec document, say — and then the label is the accessible name.
+      aria-label={label ?? `copy ${value}`}
       data-state={state}
     >
       <span className="k-copy__value">{label ?? value}</span>

@@ -61,6 +61,25 @@ export function toFailure(err: unknown): Failure {
   };
 }
 
+/**
+ * True when the store refused a write because the spec is not what the writer
+ * thought it was.
+ *
+ * One shape, two meanings, and the caller supplies which: on a create it can
+ * only mean the name is taken, because a create carries no version and
+ * internal/serverstate refuses an empty expected version against an existing
+ * object; on an update it means someone else wrote in between. The connect code
+ * is checked as well as the detail, because a store error that arrives without
+ * its details is still a failed precondition.
+ */
+export function isVersionConflict(err: unknown): boolean {
+  const failure = toFailure(err);
+  return (
+    failure.wire.some((e) => e.code === "store/version-conflict") ||
+    failure.code === "failed_precondition"
+  );
+}
+
 /** True when we aborted the request ourselves, which is not a failure. */
 export function isAbort(err: unknown): boolean {
   if (err instanceof ConnectError) return err.code === Code.Canceled;

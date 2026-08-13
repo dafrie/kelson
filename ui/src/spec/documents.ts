@@ -355,53 +355,123 @@ export function formProblems(form: NewAppForm): FieldProblem[] {
 
 /* ------------------------------------------------------- server error paths */
 
+/** An application subfield a structured error can be about. */
+export type AppField =
+  | "whole"
+  | "image"
+  | "port"
+  | "health"
+  | "schedule"
+  | "domains"
+  | "replicas";
+
 /**
- * Which form field a structured error belongs to, by the JSONPath the server
- * put in `field`.
+ * Where in the two documents a structured error points, decoded from the
+ * JSONPath the server put in `field` and the document `resource` names.
  *
- * This map is the inverse of what [buildDocuments] writes, which is why it
- * lives beside it: the builder decides that the port ends up at
+ * This is the inverse of what the builders write, which is why it lives beside
+ * them: the builder decides that a port ends up at
  * `$.spec.applications[0].port` and env at `$.spec.env.NAME`, so it is the
- * builder that knows how to get back. `resource` disambiguates the two
- * documents, which share paths — `$.metadata.name` is the project's name on
- * one and the environment's on the other.
+ * builder side that knows how to get back. `resource` disambiguates the two
+ * documents, which share paths — `$.metadata.name` is the project's name on one
+ * and the environment's on the other.
  *
- * An error whose path this does not recognise returns undefined and is
- * rendered whole in the general panel. That is deliberate: a validation rule
- * this form does not model must still reach the reader, with its code, its
- * remediation and its line number intact.
+ * It stops at the document's own vocabulary and says nothing about forms: the
+ * create form (#63) has one application and no per-application env, the edit
+ * form (#65) has both, and each projects this onto its own inputs. A path
+ * neither recognises still reaches the reader whole in the general panel, with
+ * its code, its remediation and its line number intact.
  */
-export function fieldForError(error: WireError): FieldKey | undefined {
-  const kind = error.resource.split("/")[0];
+export type ErrorTarget =
+  | { doc: "project"; on: "name" | "image" }
+  | { doc: "project"; on: "env"; name: string }
+  | { doc: "project"; on: "app"; index: number; field: AppField }
+  | { doc: "project"; on: "app-env"; index: number; name: string }
+  | { doc: "environment"; on: "name" | "namespace"; environment: string };
+
+export function errorTarget(error: WireError): ErrorTarget | undefined {
+  const [kind, name = ""] = error.resource.split("/");
   const path = error.field;
 
   if (kind === "Environment") {
-    if (path === "$.metadata.name") return "environment";
-    if (path === "$.spec.namespace") return "namespace";
+    if (path === "$.metadata.name") {
+      return { doc: "environment", on: "name", environment: name };
+    }
+    if (path === "$.spec.namespace") {
+      return { doc: "environment", on: "namespace", environment: name };
+    }
     return undefined;
   }
   if (kind !== "Project") return undefined;
 
-  if (path === "$.metadata.name") return "project";
-  if (path === "$.spec.image") return "image";
-  // The application-level errors that carry no subfield are about the
-  // application as a whole; only one of them is about something the form owns.
-  if (path === "$.spec.applications[0]") {
-    return error.code === "semantic/no-image-source" ? "image" : undefined;
-  }
+  if (path === "$.metadata.name") return { doc: "project", on: "name" };
+  if (path === "$.spec.image") return { doc: "project", on: "image" };
 
   const env = /^\$\.spec\.env\.([^.]+)/.exec(path);
-  if (env?.[1] !== undefined) return `env:${env[1]}`;
+  if (env?.[1] !== undefined) {
+    return { doc: "project", on: "env", name: env[1] };
+  }
 
-  const app = /^\$\.spec\.applications\[0\]\.(.+)$/.exec(path);
-  const rest = app?.[1];
-  if (rest === undefined) return undefined;
+  const app = /^\$\.spec\.applications\[(\d+)\](?:\.(.+))?$/.exec(path);
+  if (app?.[1] === undefined) return undefined;
+  const index = Number(app[1]);
+  const rest = app[2];
+  // An application-level error with no subfield is about the application as a
+  // whole — `semantic/no-image-source` is the one this project's forms answer.
+  if (rest === undefined) return { doc: "project", on: "app", index, field: "whole" };
+
+  const appEnv = /^env\.([^.]+)/.exec(rest);
+  if (appEnv?.[1] !== undefined) {
+    return { doc: "project", on: "app-env", index, name: appEnv[1] };
+  }
+
+  const field = appField(rest);
+  return field === undefined
+    ? undefined
+    : { doc: "project", on: "app", index, field };
+}
+
+function appField(rest: string): AppField | undefined {
+  if (rest === "image") return "image";
   if (rest === "port") return "port";
   if (rest === "health") return "health";
   if (rest === "schedule") return "schedule";
   if (rest.startsWith("domains")) return "domains";
   if (rest.startsWith("replicas")) return "replicas";
   return undefined;
+}
+
+/**
+ * Which create-form field a structured error belongs to.
+ *
+ * The create form writes one application and no per-application env, so those
+ * targets have no input to point at here and go to the general panel.
+ */
+export function fieldForError(error: WireError): FieldKey | undefined {
+  const target = errorTarget(error);
+  if (target === undefined) return undefined;
+  if (target.doc === "environment") {
+    return target.on === "name" ? "environment" : "namespace";
+  }
+  switch (target.on) {
+    case "name":
+      return "project";
+    case "image":
+      return "image";
+    case "env":
+      return `env:${target.name}`;
+    case "app-env":
+      return undefined;
+    case "app": {
+      if (target.index !== 0) return undefined;
+      if (target.field === "whole") {
+        return error.code === "semantic/no-image-source" ? "image" : undefined;
+      }
+      // The create form shares the project image across the one application it
+      // writes, so a per-application image override has no input of its own.
+      return target.field === "image" ? undefined : target.field;
+    }
+  }
 }
 
 export interface MappedErrors {

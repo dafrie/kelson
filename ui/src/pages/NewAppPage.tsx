@@ -2,7 +2,7 @@ import { useCallback, useId, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 
 import { useClients } from "../api/data";
-import { toFailure } from "../api/errors";
+import { isVersionConflict } from "../api/errors";
 import { useRun } from "../api/stream";
 import { DryRun } from "../gen/kelson/v1alpha1/common_pb";
 import type { Error as WireError } from "../gen/kelson/v1alpha1/common_pb";
@@ -369,11 +369,7 @@ function specDocuments(built: SpecText) {
  * against an existing object is refused rather than treated as an overwrite).
  */
 function isNameTaken(err: unknown): boolean {
-  const failure = toFailure(err);
-  return (
-    failure.wire.some((e) => e.code === "store/version-conflict") ||
-    failure.code === "failed_precondition"
-  );
+  return isVersionConflict(err);
 }
 
 function Field({

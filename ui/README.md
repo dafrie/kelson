@@ -45,6 +45,7 @@ a deploy or a log tail is a link that keeps working.
 | `/apps` | One card per (project, environment): phase pill, revision, cause, live/degraded counts | `ListSpecs`, then one `DeployService.Status` per card |
 | `/apps/new` | Create an application: three fields, a rendered preview, then the store | `PutSpec` at `RENDER`, then with an idempotency key |
 | `/apps/:project` | Environment tabs with status, workload verdicts and the stored documents; buttons into the four flows | `GetSpec`, `Status` |
+| `/apps/:project/edit` | Edit the stored spec: a form tab and a raw YAML tab, a diff before saving, an optimistic-concurrency save | `GetSpec`, `PutSpec` at `RENDER` then for real, `Diff` |
 | `/apps/:project/:env/deploy` | Preview (render dry-run) then a confirm that streams the deployment live | `Deploy` at `RENDER`, then at `NONE`; optional `Diff` at `SERVER` |
 | `/apps/:project/:env/diff` | The live cluster's own dry-run verdict, rendered from `diff_json` | `Diff` at `SERVER` |
 | `/apps/:project/:env/logs` | Bounded Query and unbounded Follow, with a dropped-lines banner | `QueryLogs`, `FollowLogs` |
@@ -113,7 +114,63 @@ The agreement with Go is a fixture kept on both sides: the minimal three-field
 document pair in `src/spec/documents.test.ts` is byte-identical to the one in
 `internal/api/uispec_test.go`, where the real model validates and renders it
 through `PutSpec` at `RENDER`. Neither side can prove the other's half; changing
-the builder without changing both fails the Go test.
+the builder without changing both fails the Go test. `src/spec/edit.ts` keeps a
+second pair under the same rule (`EDITED_PROJECT` /`uiEditedProjectDoc`), for the
+richer document the editor can write.
+
+## Editing a stored spec
+
+`/apps/:project/edit` (#65) is the other half: `documents.ts` writes a document
+nobody has an opinion about yet, and `src/spec/edit.ts` reads one back that
+somebody might. Those are different problems, because the store is byte-faithful
+and the spec is the user's file.
+
+Three tabs' worth of design sit on one decision — **the form is offered only for
+a document the UI can rebuild byte-identically**:
+
+1. Parse the stored document into edit state.
+2. Rebuild a document from that state.
+3. Byte-identical? The UI wrote this file and nobody has hand-edited it, so the
+   form may edit it by rebuilding, and nothing can be lost.
+4. Otherwise the form is read-only with a notice, and the YAML tab — which is
+   always present, always complete, and opens first in this case — is where that
+   document gets edited.
+
+Step 3 is a **total** guard, not a heuristic, and that is what makes so simple a
+strategy honest: anything the parser fails to capture — a comment, a key order,
+a `services:` block, an anchor — is missing from the rebuild and shows up as a
+byte difference. There is no path where the module drops something *and* still
+claims the document is editable. The reader is never asked to trust the parser;
+they are shown its output compared against their own bytes.
+
+The parser is small and strict on purpose. It reads the grammar the builders
+emit — two-space indentation, block mappings and sequences, one flow mapping for
+`replicas`, plain and double-quoted scalars — and gives up on everything else. It
+is not a YAML implementation and must not become one: a document it cannot read
+costs the reader the form tab, which is the right outcome.
+
+Two more things the flow is deliberate about:
+
+- **A diff before every save, for every environment.** `RenderService.Diff` with
+  `from` = the currently stored documents and the edited ones supplied inline
+  says what the change actually does. Every environment gets its own diff rather
+  than the selected one, because a Project edit reaches all of them and a
+  destructive change hidden behind an unselected tab is exactly what the preview
+  exists to prevent.
+- **A version conflict is a state, not an error panel.** The save carries the
+  `version` from `GetSpec`, so a spec someone else wrote in the meantime is
+  refused (`store/version-conflict`) rather than overwritten. No merge is
+  offered — reapplying form edits onto bytes that moved underneath them is a
+  three-way merge, and a wrong one produces a document nobody wrote. The two
+  honest actions are: reload (fresh bytes, edits discarded and said to be) and
+  force (labelled destructive, `force=true`). The edited text is one click from
+  the clipboard in both, because "discarded" must never mean "gone".
+
+Unsaved changes are guarded twice, because one guard cannot see both exits:
+`useBlocker` catches client-side navigation and `beforeunload` catches a reload
+or a closed tab. `useBlocker` exists only under a data router, which is why
+`src/App.tsx` exports routes and `main.tsx` mounts them with
+`createBrowserRouter`; nothing else in the app uses a loader or an action.
 
 `src/diff/parse.ts` decodes `diff_json` against the Go types in
 `internal/diff/diff.go`. Its fixture, `src/diff/testdata/server-diff.json`, is

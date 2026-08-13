@@ -87,7 +87,7 @@ export function AppDetailPage() {
       ) : null}
 
       {spec.data?.spec?.documents ? (
-        <Documents documents={spec.data.spec.documents} />
+        <Documents project={project} documents={spec.data.spec.documents} />
       ) : null}
     </>
   );
@@ -258,13 +258,30 @@ function Verdict({ verdict }: { verdict: WorkloadVerdict }) {
   );
 }
 
-function Documents({ documents }: { documents: SpecDocuments }) {
+function Documents({
+  project,
+  documents,
+}: {
+  project: string;
+  documents: SpecDocuments;
+}) {
   const envs = Object.entries(documents.environments).sort(([a], [b]) =>
     a.localeCompare(b),
   );
   return (
     <section className="k-section">
-      <div className="k-eyebrow">Spec documents ({1 + envs.length})</div>
+      <div className="k-env__head">
+        <div className="k-eyebrow">Spec documents ({1 + envs.length})</div>
+        {/* Editing is a write to the store and nothing else: it changes what
+            would be deployed, never what is running. The Deploy button above is
+            the separate act (#65). */}
+        <Link
+          className="k-button"
+          to={`/apps/${encodeURIComponent(project)}/edit`}
+        >
+          Edit configuration
+        </Link>
+      </div>
       <div className="k-section__body k-docs">
         <Disclosure summary="Project" meta={`${documents.project.length} bytes`}>
           <YamlBlock bytes={documents.project} />
