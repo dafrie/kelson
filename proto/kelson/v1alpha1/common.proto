@@ -24,7 +24,7 @@ message Error {
   // Resource the error is about, e.g. "Project/checkout" or
   // "Deployment/checkout-production/web".
   string resource = 2;
-  // JSONPath-like field locator, e.g. "$.spec.applications[2].port".
+  // JSONPath-like field locator, e.g. "$.spec.components[2].port".
   string field = 3;
   // Application whose spec is at fault (renderer errors).
   string application = 4;

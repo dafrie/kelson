@@ -48,7 +48,7 @@ export type Error = Message<"kelson.v1alpha1.Error"> & {
   resource: string;
 
   /**
-   * JSONPath-like field locator, e.g. "$.spec.applications[2].port".
+   * JSONPath-like field locator, e.g. "$.spec.components[2].port".
    *
    * @generated from field: string field = 3;
    */

@@ -96,7 +96,7 @@ type Error struct {
 	// Resource the error is about, e.g. "Project/checkout" or
 	// "Deployment/checkout-production/web".
 	Resource string `protobuf:"bytes,2,opt,name=resource,proto3" json:"resource,omitempty"`
-	// JSONPath-like field locator, e.g. "$.spec.applications[2].port".
+	// JSONPath-like field locator, e.g. "$.spec.components[2].port".
 	Field string `protobuf:"bytes,3,opt,name=field,proto3" json:"field,omitempty"`
 	// Application whose spec is at fault (renderer errors).
 	Application string `protobuf:"bytes,4,opt,name=application,proto3" json:"application,omitempty"`
