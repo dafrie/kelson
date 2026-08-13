@@ -2,10 +2,12 @@ package api
 
 import (
 	"context"
+	"fmt"
 
 	"connectrpc.com/connect"
 
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
+	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/diff"
 	"github.com/dafrie/kelson/internal/renderer"
 )
@@ -39,12 +41,16 @@ func (s *Server) Render(ctx context.Context, req *connect.Request[kelsonv1alpha1
 	return connect.NewResponse(&kelsonv1alpha1.RenderResponse{Manifests: manifests}), nil
 }
 
-// Diff previews what would change, at the fidelity dry_run selects: RENDER is
-// offline and compares against the `from` documents rendered the same way,
-// SERVER asks the live API server for its own verdict through the dry-run
-// engine — the same two levels `kelson diff` offers (issue #46).
+// Diff previews what would change, at the fidelity the request selects: RENDER
+// is offline and compares against the `from` documents rendered the same way or
+// against the manifests a recorded revision actually rendered (`from_revision`,
+// #162), SERVER asks the live API server for its own verdict through the
+// dry-run engine — the same levels `kelson diff` offers (issue #46).
 func (s *Server) Diff(ctx context.Context, req *connect.Request[kelsonv1alpha1.DiffRequest]) (*connect.Response[kelsonv1alpha1.DiffResponse], error) {
 	msg := req.Msg
+	if err := checkDiffBefore(msg); err != nil {
+		return nil, fail(connect.CodeInvalidArgument, err)
+	}
 	cur, err := s.renderSpec(ctx, msg.GetSpec(), msg.GetEnvironment(), msg.GetImage(), msg.GetProfile())
 	if err != nil {
 		if wire := specFindings(err); len(wire) > 0 {
@@ -54,9 +60,12 @@ func (s *Server) Diff(ctx context.Context, req *connect.Request[kelsonv1alpha1.D
 	}
 
 	var d *diff.Diff
-	if msg.GetDryRun() == kelsonv1alpha1.DryRun_DRY_RUN_SERVER {
+	switch {
+	case msg.GetFromRevision() != "":
+		d, err = s.revisionDiff(ctx, msg.GetFromRevision(), cur)
+	case msg.GetDryRun() == kelsonv1alpha1.DryRun_DRY_RUN_SERVER:
 		d, err = s.serverDiff(ctx, cur)
-	} else {
+	default:
 		d, err = s.renderedDiff(ctx, msg, cur)
 	}
 	if err != nil {
@@ -91,6 +100,90 @@ func (s *Server) renderedDiff(ctx context.Context, msg *kelsonv1alpha1.DiffReque
 		prev = before.manifests
 	}
 	return diff.Between(cur.project.Metadata.Name, cur.environment.Metadata.Name, prev, cur.manifests, nil)
+}
+
+// checkDiffBefore enforces that a request names at most one prior state, and
+// that a revision is only ever compared at the rendered level.
+//
+// `from` and `from_revision` are two answers to the same question and a request
+// carrying both has no defensible reading — silently preferring one would make
+// the verdict depend on a precedence rule nobody wrote down. dry_run=SERVER is
+// refused with `from_revision` for a sharper reason: an L2 preview is the live
+// cluster's verdict on the current set, so it has no "before" side a revision
+// could occupy, and answering it anyway would report a comparison the caller
+// did not ask for.
+func checkDiffBefore(msg *kelsonv1alpha1.DiffRequest) error {
+	if msg.GetFromRevision() == "" {
+		return nil
+	}
+	if msg.GetFrom() != nil {
+		return fmt.Errorf("api: from and from_revision both name the state to compare against; set one (from_revision reads what revision %q actually rendered, from re-renders documents you supply)",
+			msg.GetFromRevision())
+	}
+	if msg.GetDryRun() == kelsonv1alpha1.DryRun_DRY_RUN_SERVER {
+		return fmt.Errorf("api: from_revision is a rendered-level comparison and dry_run=SERVER is the live cluster's verdict on the current set; ask for one or the other")
+	}
+	return nil
+}
+
+// revisionDiff computes the rendered diff against what a recorded revision
+// actually rendered: the before side is the manifests the delivery history kept
+// for that revision, the after side is today's render of the spec.
+//
+// It reads the before side through the same seam the rollback preview uses
+// (Plane.Recorded, a rollback.Source) and for the same reason (#38): the
+// recorded bytes are what was applied, and re-rendering the old spec would
+// report what that spec produces under today's renderer and ClusterProfile —
+// a different question. rollback.PreviewRevision is not reused because its
+// before side is the recorded *current* state rather than the spec being
+// diffed, and because its irreversibility annotation is a rollback verdict, not
+// a property of a diff. What is reused is the comparison underneath it,
+// diff.BetweenDocuments, which is also the only entry point that takes recorded
+// bytes on one side: diff.Between wants renderer.Manifest on both, and a
+// recorded revision has none to offer.
+func (s *Server) revisionDiff(ctx context.Context, revision string, cur *rendered) (*diff.Diff, error) {
+	set, err := manifestSet(cur)
+	if err != nil {
+		return nil, err
+	}
+	adapter, plane, err := s.selectAdapter(ctx, target(cur, ""))
+	if err != nil {
+		return nil, err
+	}
+	if plane.Recorded == nil {
+		return nil, fmt.Errorf("api: delivery mode %q keeps no rendered history kelson can read, so there is no revision to compare against; diff against the live cluster with dry_run=SERVER instead", adapter.Name())
+	}
+
+	// The revision is checked against the adapter's history first so "no such
+	// revision" is the same answer in every mode. A rollback.Source reports a
+	// missing revision differently depending on which store backs it, and a
+	// caller branching on the code must not be reading which store the server
+	// was started with.
+	entries, err := adapter.History(ctx, delivery.ManifestSet{Project: set.Project, Environment: set.Environment})
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := findRevision(entries, revision); !ok {
+		return nil, fail(connect.CodeNotFound,
+			fmt.Errorf("api: revision %q is not in the recorded history for %s/%s; call History for the revisions that still exist, older ones are pruned by the retention policy",
+				revision, set.Project, set.Environment))
+	}
+
+	prev, err := plane.Recorded.Revision(ctx, revision)
+	if err != nil {
+		return nil, err
+	}
+	return diff.BetweenDocuments(set.Project, set.Environment, recordedDocuments(prev), recordedDocuments(set.Manifests), nil)
+}
+
+// recordedDocuments extracts the rendered bytes of a manifest list, preserving
+// apply order.
+func recordedDocuments(ms []delivery.Manifest) [][]byte {
+	out := make([][]byte, 0, len(ms))
+	for _, m := range ms {
+		out = append(out, m.YAML)
+	}
+	return out
 }
 
 // serverDiff drives the L2 engine. It never falls back to a rendered diff on

@@ -87,6 +87,12 @@ message StatusResponse {
   string cause = 3;
   map<string, string> detail = 4; // adapter detail: resources/live/degraded, ...
   repeated WorkloadVerdict verdicts = 5;
+  // The resolved environment's namespace. Resolving a spec is the server's job
+  // and no other RPC exposes the answer, so a client that needs to address the
+  // environment's workloads — the UI's log selector — had to guess it from the
+  // model's `<project>-<environment>` default and get a spec.namespace override
+  // wrong (#161).
+  string namespace = 6;
 }
 
 // WorkloadVerdict mirrors observation's classification (the same predicate

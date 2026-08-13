@@ -52,6 +52,13 @@ message DiffRequest {
   // dry_run = DRY_RUN_SERVER to preview against the live cluster.
   SpecDocuments from = 5;
   DryRun dry_run = 6; // RENDER (default) or SERVER
+  // Rendered-level diff against the manifests revision N actually rendered,
+  // read from the delivery history. It is the stored-spec answer to `--from`:
+  // a store keeps the current documents, not the previous ones, so the only
+  // prior state the server can name is what it recorded when it deployed
+  // (#162). Mutually exclusive with `from`, and with dry_run = DRY_RUN_SERVER —
+  // a server dry-run is a verdict about the live cluster, not about a revision.
+  string from_revision = 7;
 }
 
 // Wire projection of internal/diff's Diff: resources, ops, risk, origin,

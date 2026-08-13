@@ -11,6 +11,7 @@ import (
 
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
 	"github.com/dafrie/kelson/internal/clusterprofile"
+	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/diff"
 	"github.com/dafrie/kelson/internal/serverstate"
 )
@@ -299,6 +300,169 @@ func TestDiffNoFrom(t *testing.T) {
 	}
 	if !strings.Contains(string(res.Msg.GetDiffJson()), `"op": "added"`) {
 		t.Errorf("expected additions in the diff:\n%s", res.Msg.GetDiffJson())
+	}
+}
+
+// recordAs renders a spec through the API and returns the manifests as a
+// recorded revision would hold them. A recorded revision IS a past render's
+// bytes (#38), so building the fixture this way keeps the before side of a
+// from_revision diff the shape the delivery history actually stores.
+func recordAs(t *testing.T, c clients, project string) []delivery.Manifest {
+	t.Helper()
+	res, err := c.render.Render(context.Background(), connect.NewRequest(&kelsonv1alpha1.RenderRequest{
+		Spec:        inlineSpec(project, map[string]string{"development": developmentDoc}),
+		Environment: "development",
+		Profile:     profileRef(),
+	}))
+	if err != nil {
+		t.Fatalf("Render (building the recorded fixture): %v", err)
+	}
+	out := make([]delivery.Manifest, 0, len(res.Msg.GetManifests()))
+	for _, m := range res.Msg.GetManifests() {
+		out = append(out, delivery.Manifest{
+			APIVersion: m.GetApiVersion(),
+			Kind:       m.GetKind(),
+			Name:       m.GetName(),
+			Namespace:  m.GetNamespace(),
+			YAML:       m.GetYaml(),
+		})
+	}
+	return out
+}
+
+// TestDiffAgainstDeployedRevision is #162: the stored-spec answer to `--from`.
+// The before side is what revision N actually rendered, read from the delivery
+// history, and the after side is today's render — so the single image change
+// between the two shows up as a modified Deployment and nothing is reported as
+// an addition.
+func TestDiffAgainstDeployedRevision(t *testing.T) {
+	adapter := newFakeAdapter("direct")
+	adapter.history = []delivery.Entry{{Revision: "rev-00000001", SpecHash: "sha256:a"}}
+	recorded := &fakeRecorded{revisions: map[string][]delivery.Manifest{}}
+	connector, _ := connectorFor(adapter, recorded, nil)
+	c := serve(t, Options{Delivery: connector})
+	recorded.revisions["rev-00000001"] = recordAs(t, c, projectDoc)
+
+	res, err := c.render.Diff(context.Background(), connect.NewRequest(&kelsonv1alpha1.DiffRequest{
+		Spec:         inlineSpec(projectDocV2, map[string]string{"development": developmentDoc}),
+		Environment:  "development",
+		Profile:      profileRef(),
+		FromRevision: "rev-00000001",
+	}))
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	if got := res.Msg.GetExitSemantics(); got != exitSemanticsDiff {
+		t.Errorf("exit_semantics = %d, want %d (differences present)", got, exitSemanticsDiff)
+	}
+
+	var decoded struct {
+		Resources []struct {
+			Kind string `json:"kind"`
+			Op   string `json:"op"`
+		} `json:"resources"`
+	}
+	if err := json.Unmarshal(res.Msg.GetDiffJson(), &decoded); err != nil {
+		t.Fatalf("diff_json is not the canonical encoding: %v", err)
+	}
+	if len(decoded.Resources) != 1 {
+		t.Fatalf("resources = %+v, want only the changed Deployment: a recorded revision is prior state, not an empty one", decoded.Resources)
+	}
+	if decoded.Resources[0].Kind != "Deployment" || decoded.Resources[0].Op != "modified" {
+		t.Errorf("resource = %+v, want a modified Deployment", decoded.Resources[0])
+	}
+}
+
+// TestDiffFromAndFromRevisionRejected: two answers to "compare against what",
+// and no written-down precedence between them. The request is refused rather
+// than silently resolved.
+func TestDiffFromAndFromRevisionRejected(t *testing.T) {
+	adapter := newFakeAdapter("direct")
+	connector, _ := connectorFor(adapter, &fakeRecorded{}, nil)
+	c := serve(t, Options{Delivery: connector})
+
+	_, err := c.render.Diff(context.Background(), connect.NewRequest(&kelsonv1alpha1.DiffRequest{
+		Spec:         inlineSpec(projectDocV2, map[string]string{"development": developmentDoc}),
+		Environment:  "development",
+		Profile:      profileRef(),
+		From:         specDocuments(projectDoc, map[string]string{"development": developmentDoc}),
+		FromRevision: "rev-00000001",
+	}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("code = %v, want InvalidArgument (err %v)", connect.CodeOf(err), err)
+	}
+	for _, call := range adapter.callLog() {
+		t.Fatalf("a rejected request reached the adapter: %v", call)
+	}
+}
+
+// TestDiffFromRevisionServerRejected: a server dry-run is the live cluster's
+// verdict on the current set. It has no before side a revision could occupy, so
+// asking for both is refused rather than answered with the one it can do.
+func TestDiffFromRevisionServerRejected(t *testing.T) {
+	preview := &fakePreview{diff: &diff.Diff{Level: diff.LevelServer}}
+	connector, _ := connectorFor(newFakeAdapter("direct"), &fakeRecorded{}, nil)
+	c := serve(t, Options{Delivery: connector, Preview: previewConnector(preview)})
+
+	_, err := c.render.Diff(context.Background(), connect.NewRequest(&kelsonv1alpha1.DiffRequest{
+		Spec:         inlineSpec(projectDoc, map[string]string{"development": developmentDoc}),
+		Environment:  "development",
+		Profile:      profileRef(),
+		FromRevision: "rev-00000001",
+		DryRun:       kelsonv1alpha1.DryRun_DRY_RUN_SERVER,
+	}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("code = %v, want InvalidArgument (err %v)", connect.CodeOf(err), err)
+	}
+	if len(preview.sets) != 0 {
+		t.Errorf("the dry-run engine was called %d times for a refused request", len(preview.sets))
+	}
+}
+
+// TestDiffFromRevisionUnknown: a revision that is not in the recorded history
+// is not-found, and the answer says so in every mode — the revision is checked
+// against the adapter's history before the source is read, so the code does not
+// depend on which store the server was started with.
+func TestDiffFromRevisionUnknown(t *testing.T) {
+	adapter := newFakeAdapter("direct")
+	adapter.history = []delivery.Entry{{Revision: "rev-00000002"}}
+	connector, _ := connectorFor(adapter, &fakeRecorded{revisions: map[string][]delivery.Manifest{}}, nil)
+	c := serve(t, Options{Delivery: connector})
+
+	_, err := c.render.Diff(context.Background(), connect.NewRequest(&kelsonv1alpha1.DiffRequest{
+		Spec:         inlineSpec(projectDoc, map[string]string{"development": developmentDoc}),
+		Environment:  "development",
+		Profile:      profileRef(),
+		FromRevision: "rev-00000404",
+	}))
+	if connect.CodeOf(err) != connect.CodeNotFound {
+		t.Fatalf("code = %v, want NotFound (err %v)", connect.CodeOf(err), err)
+	}
+	if !strings.Contains(err.Error(), "rev-00000404") {
+		t.Errorf("error does not name the revision asked for: %v", err)
+	}
+}
+
+// TestDiffFromRevisionWithoutRecordedHistory: a mode whose rendered history
+// kelson cannot read has no revision to compare against, and the refusal names
+// the rung that still works rather than downgrading to one silently.
+func TestDiffFromRevisionWithoutRecordedHistory(t *testing.T) {
+	adapter := newFakeAdapter("direct")
+	adapter.history = []delivery.Entry{{Revision: "rev-00000001"}}
+	connector, _ := connectorFor(adapter, nil, nil)
+	c := serve(t, Options{Delivery: connector})
+
+	_, err := c.render.Diff(context.Background(), connect.NewRequest(&kelsonv1alpha1.DiffRequest{
+		Spec:         inlineSpec(projectDoc, map[string]string{"development": developmentDoc}),
+		Environment:  "development",
+		Profile:      profileRef(),
+		FromRevision: "rev-00000001",
+	}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("code = %v, want InvalidArgument (err %v)", connect.CodeOf(err), err)
+	}
+	if !strings.Contains(err.Error(), "dry_run=SERVER") {
+		t.Errorf("the refusal does not name the rung that still works: %v", err)
 	}
 }
 

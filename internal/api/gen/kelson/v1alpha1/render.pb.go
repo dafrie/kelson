@@ -324,8 +324,15 @@ type DiffRequest struct {
 	// Rendered-level diff: compare against these previous documents
 	// (the CLI's --from). Server-level diff: leave unset and set
 	// dry_run = DRY_RUN_SERVER to preview against the live cluster.
-	From          *SpecDocuments `protobuf:"bytes,5,opt,name=from,proto3" json:"from,omitempty"`
-	DryRun        DryRun         `protobuf:"varint,6,opt,name=dry_run,json=dryRun,proto3,enum=kelson.v1alpha1.DryRun" json:"dry_run,omitempty"` // RENDER (default) or SERVER
+	From   *SpecDocuments `protobuf:"bytes,5,opt,name=from,proto3" json:"from,omitempty"`
+	DryRun DryRun         `protobuf:"varint,6,opt,name=dry_run,json=dryRun,proto3,enum=kelson.v1alpha1.DryRun" json:"dry_run,omitempty"` // RENDER (default) or SERVER
+	// Rendered-level diff against the manifests revision N actually rendered,
+	// read from the delivery history. It is the stored-spec answer to `--from`:
+	// a store keeps the current documents, not the previous ones, so the only
+	// prior state the server can name is what it recorded when it deployed
+	// (#162). Mutually exclusive with `from`, and with dry_run = DRY_RUN_SERVER —
+	// a server dry-run is a verdict about the live cluster, not about a revision.
+	FromRevision  string `protobuf:"bytes,7,opt,name=from_revision,json=fromRevision,proto3" json:"from_revision,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -400,6 +407,13 @@ func (x *DiffRequest) GetDryRun() DryRun {
 		return x.DryRun
 	}
 	return DryRun_DRY_RUN_UNSPECIFIED
+}
+
+func (x *DiffRequest) GetFromRevision() string {
+	if x != nil {
+		return x.FromRevision
+	}
+	return ""
 }
 
 // Wire projection of internal/diff's Diff: resources, ops, risk, origin,
@@ -486,14 +500,15 @@ const file_kelson_v1alpha1_render_proto_rawDesc = "" +
 	"\x05image\x18\x04 \x01(\tR\x05image\"y\n" +
 	"\x0eRenderResponse\x127\n" +
 	"\tmanifests\x18\x01 \x03(\v2\x19.kelson.v1alpha1.ManifestR\tmanifests\x12.\n" +
-	"\x06errors\x18\x02 \x03(\v2\x16.kelson.v1alpha1.ErrorR\x06errors\"\x90\x02\n" +
+	"\x06errors\x18\x02 \x03(\v2\x16.kelson.v1alpha1.ErrorR\x06errors\"\xb5\x02\n" +
 	"\vDiffRequest\x12,\n" +
 	"\x04spec\x18\x01 \x01(\v2\x18.kelson.v1alpha1.SpecRefR\x04spec\x12 \n" +
 	"\venvironment\x18\x02 \x01(\tR\venvironment\x125\n" +
 	"\aprofile\x18\x03 \x01(\v2\x1b.kelson.v1alpha1.ProfileRefR\aprofile\x12\x14\n" +
 	"\x05image\x18\x04 \x01(\tR\x05image\x122\n" +
 	"\x04from\x18\x05 \x01(\v2\x1e.kelson.v1alpha1.SpecDocumentsR\x04from\x120\n" +
-	"\adry_run\x18\x06 \x01(\x0e2\x17.kelson.v1alpha1.DryRunR\x06dryRun\"\x82\x01\n" +
+	"\adry_run\x18\x06 \x01(\x0e2\x17.kelson.v1alpha1.DryRunR\x06dryRun\x12#\n" +
+	"\rfrom_revision\x18\a \x01(\tR\ffromRevision\"\x82\x01\n" +
 	"\fDiffResponse\x12\x1b\n" +
 	"\tdiff_json\x18\x01 \x01(\fR\bdiffJson\x12%\n" +
 	"\x0eexit_semantics\x18\x02 \x01(\x05R\rexitSemantics\x12.\n" +
