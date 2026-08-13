@@ -16,9 +16,36 @@
 // to list ClusterIssuers and reports CertManager as nil, the renderer emits a
 // route with no Certificate and the manifest looks intentional. Recording the
 // gap instead lets the caller refuse to render, or render and say what it
-// could not see. It is the same rule the preview engine follows for policy
-// (internal/diff.Unvalidated): "we checked and it is absent" and "we could not
-// check" must never collapse into one answer.
+// could not see: "we checked and it is absent" and "we could not check" must
+// never collapse into one answer.
+//
+// # The tri-state discipline, stated once
+//
+// That rule is not local to detection. Every judgement kelson makes about a
+// cluster — is this version supported, can this storage snapshot, does this
+// resource pass admission — has three answers, and the third one is the point:
+// yes, no, and we could not tell. This package is where that discipline is
+// written down, and the codebase spells it one way (issue #144):
+//
+//   - [Outcome] is the answer. One type, one set of constants, for every
+//     "can/does/is" judgement about a cluster, with [OutcomeUnknown] as its
+//     zero value so an unmade judgement can never read as a confident yes.
+//     Its users today are internal/clusterprofile/support (version skew) and
+//     internal/clusterprofile/storage (snapshot capability).
+//   - [Gap] is the reason behind an Unknown, and [ClusterProfile.Incomplete]
+//     is the list of them detection produces. An Outcome says which of the
+//     three answers applies; the Gap says why the third one does.
+//     [ClusterProfile.GapFor] is how a judgement finds it, so every Unknown
+//     can name the permission that would resolve it instead of shrugging.
+//
+// One judgement deliberately keeps its own shape: internal/diff.Unvalidated,
+// the preview's record of a resource the API server never got to evaluate. It
+// follows the same discipline — an unvalidated resource is neither a violation
+// nor a pass — but it is a per-resource record on a serialized contract that
+// the UI and agents parse (diff_json), not a three-valued field, and its
+// "which resource, which missing prerequisite, in this batch or not" payload
+// does not fit an enum. Sharing the vocabulary there would mean changing a
+// wire format to make two internal types look alike, which is the wrong trade.
 package clusterprofile
 
 // ClusterProfile records what a cluster already provides, so the renderer can
@@ -180,7 +207,9 @@ type Prometheus struct {
 	PodMonitor     bool   `yaml:"podMonitor,omitempty" json:"podMonitor,omitempty"`
 }
 
-// Gap is one thing detection could not determine.
+// Gap is one thing detection could not determine: the reason record behind an
+// [OutcomeUnknown]. Judgements find the one that applies with
+// [ClusterProfile.GapFor].
 type Gap struct {
 	// Field is the profile field left unknown, in YAML path form:
 	// "certManager.clusterIssuers", "storageClasses".

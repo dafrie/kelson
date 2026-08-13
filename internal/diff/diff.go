@@ -79,6 +79,15 @@ type Diff struct {
 // the question was never asked. Reporting it as a policy finding would make an
 // agent branching on Violations see a policy that does not exist, and reporting
 // nothing at all would let a resource slip through the preview unchecked.
+//
+// It is the preview's instance of the tri-state discipline documented once in
+// internal/clusterprofile: checked-and-passing, checked-and-failing, and
+// could-not-check are three answers, never two. It keeps its own shape rather
+// than the shared clusterprofile.Outcome because it is not a three-valued
+// field — it is a per-resource record naming the missing prerequisite, on a
+// serialized contract the CLI, the UI (ui/src/diff/parse.ts) and agents parse.
+// Folding it into the enum would move a wire format to make two internal types
+// look alike (issue #144).
 type Unvalidated struct {
 	// Resource is apiVersion/Kind/namespace/name.
 	Resource string `json:"resource"`

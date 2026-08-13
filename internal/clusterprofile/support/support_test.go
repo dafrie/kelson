@@ -15,7 +15,7 @@ func TestCertManagerTooOld(t *testing.T) {
 		CertManager: &clusterprofile.CertManager{Version: "v1.12.1"},
 	}
 	rep := Check(p)
-	res := findOutcome(t, rep, "cert-manager", Unsupported)
+	res := findOutcome(t, rep, "cert-manager", clusterprofile.OutcomeNo)
 
 	if !strings.Contains(res.Message, "cert-manager") {
 		t.Errorf("message %q does not name the component", res.Message)
@@ -29,24 +29,24 @@ func TestCertManagerTooOld(t *testing.T) {
 }
 
 // TestOutcomesAreThree guards the central contract: a version at or above the
-// floor is Supported, one below is Unsupported, and a version we cannot judge
-// is a third thing, Unknown — never silently fine and never a failure.
+// floor answers yes, one below answers no, and a version we cannot judge is a
+// third thing, unknown — never silently fine and never a failure.
 func TestOutcomesAreThree(t *testing.T) {
 	cases := []struct {
 		name string
 		ver  string
-		want Outcome
+		want clusterprofile.Outcome
 	}{
-		{"supported", "v1.14.0", Supported},
-		{"supported-newer", "v1.31.2+k3s1", Supported},
-		{"unsupported", "v1.12.1", Unsupported},
-		{"empty-unknown", "", Unknown},
-		{"unparseable-unknown", "vendor-custom", Unknown},
+		{"supported", "v1.14.0", clusterprofile.OutcomeYes},
+		{"supported-newer", "v1.31.2+k3s1", clusterprofile.OutcomeYes},
+		{"unsupported", "v1.12.1", clusterprofile.OutcomeNo},
+		{"empty-unknown", "", clusterprofile.OutcomeUnknown},
+		{"unparseable-unknown", "vendor-custom", clusterprofile.OutcomeUnknown},
 	}
 	for _, c := range cases {
 		p := clusterprofile.ClusterProfile{CertManager: &clusterprofile.CertManager{Version: c.ver}}
 		res := findOutcome(t, Check(p), "cert-manager", c.want)
-		if c.want == Unsupported {
+		if c.want == clusterprofile.OutcomeNo {
 			if res.Degrade != DegradeRefuse {
 				t.Errorf("cert-manager too old: degrade = %q, want refuse", res.Degrade)
 			}
@@ -74,7 +74,7 @@ func TestGapIsUnknown(t *testing.T) {
 			{Field: "certManager.clusterIssuers", Reason: "rbac: get clusterissuers.cert-manager.io"},
 		},
 	}
-	res := findOutcome(t, Check(p), "cert-manager", Unknown)
+	res := findOutcome(t, Check(p), "cert-manager", clusterprofile.OutcomeUnknown)
 	if !strings.Contains(res.Message, "cert-manager version unknown") {
 		t.Errorf("gap message = %q, want an unknown-version framing", res.Message)
 	}
@@ -104,7 +104,7 @@ func TestPolicyEngineTrackedByName(t *testing.T) {
 	if got := len(rep.Results); got != 1 {
 		t.Fatalf("got %d results, want 1 (untracked engine skipped)", got)
 	}
-	if res := rep.Results[0]; res.Component != "kyverno" || res.Outcome != Unsupported {
+	if res := rep.Results[0]; res.Component != "kyverno" || res.Outcome != clusterprofile.OutcomeNo {
 		t.Fatalf("kyverno result = %+v, want unsupported", res)
 	}
 }
@@ -129,7 +129,7 @@ func TestReportFiltering(t *testing.T) {
 	}
 }
 
-func findOutcome(t *testing.T, rep Report, name string, want Outcome) Result {
+func findOutcome(t *testing.T, rep Report, name string, want clusterprofile.Outcome) Result {
 	t.Helper()
 	for _, r := range rep.Results {
 		if r.Component == name {
