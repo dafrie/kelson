@@ -1,0 +1,205 @@
+package api
+
+import (
+	"errors"
+	"fmt"
+
+	"connectrpc.com/connect"
+
+	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
+	"github.com/dafrie/kelson/internal/delivery"
+	"github.com/dafrie/kelson/internal/model"
+	"github.com/dafrie/kelson/internal/renderer"
+	"github.com/dafrie/kelson/internal/serverstate"
+)
+
+// One wire error shape, four plane vocabularies (ADR-0013 §2). model.Error,
+// renderer.Error, delivery.Error and serverstate.Error each fill the subset of
+// kelson.v1alpha1.Error they know. Codes pass through verbatim — an agent
+// branching on "schema/not-implemented" or "store/version-conflict" sees the
+// same string here that the owning Go package defines, and the wire must not
+// invent a second taxonomy.
+
+// wireErrors projects a plane error onto the API's structured error list. It
+// returns nil for an error that carries no plane taxonomy, which is how the
+// callers distinguish "the request was answered with findings" from "the server
+// failed".
+func wireErrors(err error) []*kelsonv1alpha1.Error {
+	if err == nil {
+		return nil
+	}
+
+	var modelErrs model.Errors
+	if errors.As(err, &modelErrs) {
+		out := make([]*kelsonv1alpha1.Error, 0, len(modelErrs))
+		for _, e := range modelErrs {
+			out = append(out, fromModel(e))
+		}
+		return out
+	}
+	var modelErr model.Error
+	if errors.As(err, &modelErr) {
+		return []*kelsonv1alpha1.Error{fromModel(modelErr)}
+	}
+
+	var renderErrs renderer.Errors
+	if errors.As(err, &renderErrs) {
+		out := make([]*kelsonv1alpha1.Error, 0, len(renderErrs))
+		for _, e := range renderErrs {
+			out = append(out, fromRenderer(e))
+		}
+		return out
+	}
+	var renderErr renderer.Error
+	if errors.As(err, &renderErr) {
+		return []*kelsonv1alpha1.Error{fromRenderer(renderErr)}
+	}
+
+	var deliveryErr delivery.Error
+	if errors.As(err, &deliveryErr) {
+		return []*kelsonv1alpha1.Error{fromDelivery(deliveryErr)}
+	}
+
+	var storeErr serverstate.Error
+	if errors.As(err, &storeErr) {
+		return []*kelsonv1alpha1.Error{fromStore(storeErr)}
+	}
+	return nil
+}
+
+// specFindings is the subset of [wireErrors] a call may report inline: the
+// spec's own model and renderer errors. A store failure or a delivery failure
+// is never a finding about the spec — inlining one would tell a client its spec
+// was rejected when the truth is that the server could not read it — so those
+// keep travelling as ConnectRPC errors.
+func specFindings(err error) []*kelsonv1alpha1.Error {
+	var modelErrs model.Errors
+	var modelErr model.Error
+	var renderErrs renderer.Errors
+	var renderErr renderer.Error
+	if errors.As(err, &modelErrs) || errors.As(err, &modelErr) ||
+		errors.As(err, &renderErrs) || errors.As(err, &renderErr) {
+		return wireErrors(err)
+	}
+	return nil
+}
+
+func fromModel(e model.Error) *kelsonv1alpha1.Error {
+	return &kelsonv1alpha1.Error{
+		Code:        string(e.Code),
+		Resource:    e.Resource,
+		Field:       e.Field,
+		Message:     e.Message,
+		Remediation: e.Remediation,
+		DocsUrl:     e.DocsURL,
+		Line:        int32(e.Line),   //nolint:gosec // YAML positions are small by construction
+		Column:      int32(e.Column), //nolint:gosec // YAML positions are small by construction
+	}
+}
+
+func fromRenderer(e renderer.Error) *kelsonv1alpha1.Error {
+	return &kelsonv1alpha1.Error{
+		Code:        e.Code,
+		Application: e.Application,
+		Overlay:     e.Overlay,
+		Target:      e.Target,
+		Message:     e.Message,
+		Remediation: e.Remediation,
+	}
+}
+
+func fromDelivery(e delivery.Error) *kelsonv1alpha1.Error {
+	return &kelsonv1alpha1.Error{
+		Code:        string(e.Code),
+		Resource:    e.Resource,
+		Field:       e.Field,
+		Message:     e.Message,
+		Remediation: e.Remediation,
+		DocsUrl:     e.DocsURL,
+		Cause:       e.Cause,
+	}
+}
+
+func fromStore(e serverstate.Error) *kelsonv1alpha1.Error {
+	return &kelsonv1alpha1.Error{
+		Code:        string(e.Code),
+		Resource:    e.Resource,
+		Message:     e.Message,
+		Remediation: e.Remediation,
+		DocsUrl:     e.DocsURL,
+		Cause:       e.Cause,
+	}
+}
+
+// fail wraps err as a ConnectRPC error, attaching every structured error it
+// carries as an error detail. A client that speaks the taxonomy reads the
+// details; one that does not still gets the message.
+func fail(code connect.Code, err error) *connect.Error {
+	cerr := connect.NewError(code, err)
+	for _, wire := range wireErrors(err) {
+		detail, derr := connect.NewErrorDetail(wire)
+		if derr != nil {
+			// A detail that cannot be marshalled must not lose the error it
+			// was describing; the message already carries it.
+			continue
+		}
+		cerr.AddDetail(detail)
+	}
+	return cerr
+}
+
+// failStore maps a state-plane error onto its ConnectRPC code (ADR-0013 §2).
+// The three store codes are the whole vocabulary: a version conflict is a
+// failed precondition (the caller's expectation about the stored state was
+// wrong), missing state is not-found, and an over-budget payload is exhausted
+// resources.
+func failStore(err error) error {
+	switch {
+	case serverstate.AsVersionConflict(err):
+		return fail(connect.CodeFailedPrecondition, err)
+	case serverstate.AsNotFound(err):
+		return fail(connect.CodeNotFound, err)
+	case serverstate.AsTooLarge(err):
+		return fail(connect.CodeResourceExhausted, err)
+	default:
+		return nil
+	}
+}
+
+// unavailableError marks a failure of the server's own dependencies — an
+// unreachable cluster, an adapter that could not be built — as opposed to a
+// request the caller got wrong. The distinction is what stops a broken cluster
+// connection being reported to an agent as an invalid argument it could fix by
+// editing its request.
+type unavailableError struct{ err error }
+
+func (e unavailableError) Error() string { return e.err.Error() }
+func (e unavailableError) Unwrap() error { return e.err }
+
+func unavailable(format string, a ...any) error {
+	return unavailableError{err: fmt.Errorf(format, a...)}
+}
+
+// unimplemented reports a seam this build was not wired with.
+func unimplemented(what string) error {
+	return connect.NewError(connect.CodeUnimplemented,
+		fmt.Errorf("%s is not available in this server: it was started without the backing seam", what))
+}
+
+// failRequest is the single boundary translation: state-plane errors keep their
+// own codes, a dependency failure is Unavailable, and everything else is the
+// caller's request being wrong.
+func failRequest(err error) error {
+	if cerr := failStore(err); cerr != nil {
+		return cerr
+	}
+	var cerr *connect.Error
+	if errors.As(err, &cerr) {
+		return cerr
+	}
+	var unavail unavailableError
+	if errors.As(err, &unavail) {
+		return fail(connect.CodeUnavailable, err)
+	}
+	return fail(connect.CodeInvalidArgument, err)
+}

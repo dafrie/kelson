@@ -1,6 +1,12 @@
 # Code generation for the kelson API (ADR-0013 §4). Generated output is
-# committed and drift-tested, like schema/*.json and docs/reference/*.
-# Regenerate with `make proto` (buf generate).
+# committed, like schema/*.json and docs/reference/*. Regenerate with
+# `make proto` (buf generate) after any change under proto/.
+#
+# Unlike those, it is NOT drift-tested yet: the schema generators are Go
+# programs this module already depends on, but buf itself is not, and a drift
+# test that shells out to a tool CI does not install would fail for the wrong
+# reason. Until buf joins CI, `make proto` in the same commit as the .proto
+# change is the discipline that keeps internal/api/gen honest.
 version: v2
 plugins:
   - local: protoc-gen-go
