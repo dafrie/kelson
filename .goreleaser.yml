@@ -47,9 +47,29 @@ builds:
       - -X github.com/dafrie/kelson/internal/version.Version={{.Version}}
       - -X github.com/dafrie/kelson/internal/version.Commit={{.ShortCommit}}
 
+  # kelson-mcp is a stdio sidecar: an MCP client launches it as a child process
+  # and talks to it over stdin/stdout (docs/mcp.md, ADR-0008). It has no
+  # listener, so there is deliberately no docker image for it below — a
+  # container with nothing on stdin would have nothing to do.
+  - id: kelson-mcp
+    main: ./cmd/kelson-mcp
+    binary: kelson-mcp
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/dafrie/kelson/internal/version.Version={{.Version}}
+      - -X github.com/dafrie/kelson/internal/version.Commit={{.ShortCommit}}
+
 archives:
   - id: kelson
-    ids: [kelson, kelson-server]
+    ids: [kelson, kelson-server, kelson-mcp]
     formats: [tar.gz]
     name_template: >-
       {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}

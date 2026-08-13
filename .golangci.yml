@@ -52,7 +52,9 @@ linters:
             - "!**/internal/clusterprofile/detect/**"
             - "!**/internal/serverstate/**"
             - "!**/internal/api/**"
+            - "!**/internal/mcp/**"
             - "!**/cmd/kelson-server/**"
+            - "!**/cmd/kelson-mcp/**"
           allow:
             - $gostd
             - github.com/dafrie/kelson
@@ -88,13 +90,23 @@ linters:
         # else — the cluster clients stay behind the store interfaces in
         # internal/serverstate, so a handler cannot reach for a client-go call
         # instead of going through the store.
+        # The api plane and its clients. internal/mcp and cmd/kelson-mcp are
+        # here rather than in a rule of their own because they are the same
+        # fence seen from the other side: the MCP surface is a composition of
+        # ConnectRPC calls against this schema (ADR-0008), so it gets the
+        # transport, the generated code and the MCP SDK — and no cluster client,
+        # which is what keeps a tool from reaching past the API it claims to
+        # compose (issue #73).
         api:
           files:
             - "**/internal/api/**"
+            - "**/internal/mcp/**"
             - "**/cmd/kelson-server/**"
+            - "**/cmd/kelson-mcp/**"
           allow:
             - $gostd
             - github.com/dafrie/kelson
             - connectrpc.com/connect
             - google.golang.org/protobuf
+            - github.com/modelcontextprotocol/go-sdk
 

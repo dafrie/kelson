@@ -267,7 +267,8 @@ capability the API lacks, which is what stops it becoming a privileged backdoor 
 *shape* is deliberately different: tools are task-shaped rather than resource-shaped, because a
 sixty-endpoint API mapped one-to-one gives sixty tools and makes "why is checkout broken" cost eight round
 trips. One `diagnose_application` that composes status, events, a bounded log window and the recent
-revision is the same capability in a form an agent can actually use.
+revision is the same capability in a form an agent can actually use. That surface ships as `kelson-mcp`
+— seven tools over stdio, unauthenticated like the server beneath it ([the MCP server](mcp.md)).
 
 The test: *if MCP needs a **capability** the API lacks, the API is wrong. If it needs a different
 **shape**, that is the point.*
