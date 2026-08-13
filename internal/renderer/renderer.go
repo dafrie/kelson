@@ -67,8 +67,24 @@ func Render(resolved *model.Resolved, profile clusterprofile.ClusterProfile, res
 		return nil, err
 	}
 	out := []Manifest{ns}
+
+	// Data services come before the workloads that bind to them: a Deployment
+	// applied ahead of the Cluster whose credentials it references would start
+	// by failing to find a Secret. Nothing waits for readiness — ordering is
+	// the only sequencing a rendered set can express (issue #89).
+	services := map[string]boundService{}
+	for i := range resolved.Services {
+		svc := &resolved.Services[i]
+		ms, bound, err := serviceManifests(resolved, svc, profile)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, ms...)
+		services[svc.Name] = bound
+	}
+
 	for i := range resolved.Applications {
-		ms, err := appManifests(resolved, &resolved.Applications[i], profile)
+		ms, err := appManifests(resolved, &resolved.Applications[i], profile, services)
 		if err != nil {
 			return nil, err
 		}

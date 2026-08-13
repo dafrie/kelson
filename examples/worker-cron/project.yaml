@@ -9,8 +9,8 @@ spec:
   image: registry.acme.run/mailroom:2.0.7
 
   # A valkey queue service and the QUEUE_URL/QUEUE_PASSWORD bindings onto it
-  # return with M9; kelson rejects unimplemented fields rather than ignoring
-  # them (#141).
+  # belong here. Postgres services render since #89; valkey does not, and kelson
+  # refuses it loudly rather than rendering nothing (#98).
 
   applications:
     - name: worker            # no port, no schedule → worker (Deployment)

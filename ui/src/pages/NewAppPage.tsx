@@ -32,10 +32,10 @@ import {
  * behind one disclosure and nothing more. The named failure mode is Coolify's:
  * a first screen that asks forty questions to deploy one container.
  *
- * Two things are deliberately not offered at all: data services, secret
- * backends, deployment policy and multi-cluster targeting, because #141 has
- * kelson reject those fields rather than render nothing for them — a form that
- * collected them would be building a document the server refuses; and a
+ * Two things are deliberately not offered at all: secret backends, deployment
+ * policy and multi-cluster targeting, because #141 has kelson reject those
+ * fields rather than render nothing for them — a form that collected them
+ * would be building a document the server refuses; and a
  * "deploy on create" shortcut, because storing a spec and applying it to a
  * cluster are different acts with different blast radii, and the deploy screen
  * already exists to show the second one happening.
@@ -309,10 +309,12 @@ export function NewAppPage() {
             />
 
             <p className="k-new__gate k-mono">
-              Data services, secret backends, deployment policy and cluster
-              targeting are not offered here: kelson validates those fields and
-              renders nothing for them, so it rejects them outright (#141). They
-              arrive with the milestones that implement them.
+              Secret backends, deployment policy and cluster targeting are not
+              offered here: kelson validates those fields and renders nothing
+              for them, so it rejects them outright (#141). They arrive with the
+              milestones that implement them. Data services do render now (#89);
+              declare them in the spec editor until this form grows a control
+              for them.
             </p>
           </div>
         </details>

@@ -11,11 +11,14 @@ import (
 // P2 (replicas/resources), P3 (image), P4 (delivery/policy/secrets chain),
 // P5 (service presets), P6 (overlays).
 //
-// It deliberately keeps the fields issue #141 gates — services, bindings and a
-// policy default. Precedence over them is still real behaviour the resolver
-// implements, and M7/M8/M9 land by deleting a gate row, not by rebuilding
+// It deliberately keeps the fields issue #141 still gates — a policy default
+// and a secret backend. Precedence over them is real behaviour the resolver
+// implements, and M7/M8 land by deleting a gate row, not by rebuilding
 // resolution. So these cases load through loadPairUnvalidated and call the
-// unexported resolve; the gate itself is covered in coverage_test.go.
+// unexported resolve; the gate itself is covered in coverage_test.go. The
+// services and bindings here no longer need that treatment — they validate
+// since #89 — but they stay in the same document because P5 is exercised
+// alongside every other rule.
 const precedenceProject = `
 apiVersion: kelson.dev/v1alpha1
 kind: Project

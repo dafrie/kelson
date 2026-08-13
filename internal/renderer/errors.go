@@ -27,6 +27,31 @@ const (
 	// is a capability gap the caller must see rather than an Ingress rendered
 	// behind their back.
 	ErrGatewayAPIMissing = "render/gateway-api-missing"
+	// ErrPostgresUnsupported: the ClusterProfile says this cluster cannot host
+	// the requested preset — no CloudNativePG, a version below the capability's
+	// floor, or a CRD the API server does not serve. Only a definite No lands
+	// here; an Unknown verdict renders (docs/data-services.md, issue #144).
+	ErrPostgresUnsupported = "render/postgres-unsupported"
+	// ErrServiceNotImplemented: a service the model accepts and the renderer
+	// does not render yet — `type: valkey` (#98), `preset: branch` (#99). The
+	// error names the issue rather than rendering something else quietly
+	// (issue #141).
+	ErrServiceNotImplemented = "render/service-not-implemented"
+	// ErrServiceName: <project>-<environment>-<service> is too long for the
+	// object names CloudNativePG derives from it.
+	ErrServiceName = "render/service-name-too-long"
+	// ErrBindingUnknownService: an env binding names a service the resolved
+	// spec does not declare. Model validation catches this for authored specs;
+	// the renderer is also fed a Resolved directly by the API plane.
+	ErrBindingUnknownService = "render/binding-unknown-service"
+	// ErrBindingUnknownKey: an env binding names a key kelson does not map to
+	// a key of the credential Secret the operator generates.
+	ErrBindingUnknownKey = "render/binding-unknown-key"
+	// ErrBindingUnavailable: the service renders, but nothing yet produces a
+	// Secret this workload could reference — the `shared` preset, whose
+	// credentials live in the shared cluster's namespace (issue #93). Emitting
+	// a secretKeyRef to a Secret nothing creates is what issue #141 forbids.
+	ErrBindingUnavailable = "render/binding-unavailable"
 	// ErrInternal: an invariant failed inside the renderer itself.
 	ErrInternal = "render/internal"
 )

@@ -19,15 +19,20 @@ milestone that will implement the field.
 
 | Field | Rejected until |
 |---|---|
-| `Project.spec.services` and every `{from: {service, key}}` binding | M9 · Data services ([#10](https://github.com/dafrie/kelson/issues/10)) |
-| `Environment.spec.services` | M9 · Data services |
 | `Project.spec.defaults.secrets`, `Environment.spec.secrets` | M8 · Secrets |
 | `Project.spec.defaults.policy`, `Environment.spec.policy` | M7 · Agent surface & MCP |
 | `Environment.spec.cluster` | M10 · Environments & promotion |
 
 The gate lives in validation only: `internal/model/notimplemented.go` holds the table, and
 `internal/model/coverage_test.go` fails the build if a new spec field is neither consumed nor gated.
-Resolution and rendering of these fields already work, so a milestone lands by deleting a table row.
+Resolution of these fields already works, so a milestone lands by deleting a table row —
+`spec.services` and the `from:` bindings left the table exactly that way with
+[#89](https://github.com/dafrie/kelson/issues/89).
+
+Not every refusal is a gate. A field can be consumed and still have values kelson will not render:
+`type: valkey`, `preset: branch`, and a preset the target cluster's CloudNativePG cannot host are
+structured *render* errors, because the check needs a ClusterProfile and validation deliberately has
+none. See [docs/data-services.md](data-services.md).
 
 ## Documents
 
@@ -167,10 +172,12 @@ carry distinct suffixes so defaults never collide.
 
 ## Services and bindings
 
-> Not implemented yet. `services:` and `from:` bindings are rejected with `schema/not-implemented`
-> until M9 · Data services lands ([#141](https://github.com/dafrie/kelson/issues/141)): nothing
-> provisions the credential Secret a binding names, so rendering one would produce a workload that
-> never starts.
+> Implemented for `type: postgres` since [#89](https://github.com/dafrie/kelson/issues/89). What each
+> preset renders, the sizing defaults and the capability rules are in
+> [docs/data-services.md](data-services.md). Still refused, loudly and by the *renderer* rather than by
+> validation: `type: valkey` ([#98](https://github.com/dafrie/kelson/issues/98)), `preset: branch`
+> ([#99](https://github.com/dafrie/kelson/issues/99)), and any preset the target cluster's
+> CloudNativePG cannot host.
 
 ```yaml
 spec:
@@ -183,9 +190,11 @@ spec:
       from: { service: db, key: uri }
 ```
 
-A binding is **never** a value. The value lives in the credential Secret the data layer provisions for
-service `db` — named `<project>-<service>-credentials` in the target namespace — and the renderer emits a
-`secretKeyRef` against it. Well-known keys per service type:
+A binding is **never** a value. The value lives in the Secret the service's operator generates — for a
+dedicated postgres preset that is CloudNativePG's `<cluster>-app`, where `<cluster>` is
+`<project>-<environment>-<service>` — and the renderer emits a `secretKeyRef` against it. kelson's key
+names are the spec's contract and are mapped onto the operator's own (`database` is CNPG's `dbname`).
+Well-known keys per service type:
 
 | Type | Keys |
 |---|---|
@@ -195,6 +204,11 @@ service `db` — named `<project>-<service>-credentials` in the target namespace
 Unknown service names and keys are validation errors (`ref/unknown-service`, `ref/unknown-service-key`)
 with the list of valid keys in the remediation. Both the renderer and agents therefore reason about
 bindings from the schema alone.
+
+A binding to a `shared`-preset service is a render error, not a `secretKeyRef`: the shared cluster's
+credentials live in the shared cluster's namespace and a pod cannot reference a Secret across one. The
+database is still created; distributing its credentials is
+[#93](https://github.com/dafrie/kelson/issues/93). See [docs/data-services.md](data-services.md).
 
 ## Secrets: references, never literals
 
@@ -206,10 +220,11 @@ see the failure before render:
   - it parses as a URL containing a password (`postgres://user:pass@host/db`), or
   - the variable name matches a secret pattern (`PASSWORD`, `SECRET`, `TOKEN`, `_KEY`, `PRIVATE`,
     `CREDENTIAL`, `AUTH`) and the value is non-empty.
-- The error names the field and a fix that exists today. There is no `kelson secret set` command
-  ([#142](https://github.com/dafrie/kelson/issues/142)) and `from:` bindings are themselves gated
-  ([#141](https://github.com/dafrie/kelson/issues/141)), so the remediation points at an overlay patch
-  referencing a Secret you manage, until M8 · Secrets lands.
+- The error names the field and a fix that exists today. For a database URL that is a `from:` binding
+  against a declared service, which renders end to end since
+  [#89](https://github.com/dafrie/kelson/issues/89). For anything else there is still no
+  `kelson secret set` command ([#142](https://github.com/dafrie/kelson/issues/142)), so the remediation
+  points at an overlay patch referencing a Secret you manage, until M8 · Secrets lands.
 
 The heuristic deliberately errs toward rejection on secret-shaped variables; the fix is cheap and correct
 in both directions. The Environment is designed to pick the backend (`cluster` built-in default,
@@ -252,7 +267,7 @@ spec:
         limits:   { memory: 1Gi }
       env:
         LOG_LEVEL: warning
-  services:                          # whole block rejected until M9 (#141)
+  services:                          # P5: per-environment topology override
     - name: db
       preset: ha-small
 ```

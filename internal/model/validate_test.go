@@ -152,29 +152,29 @@ spec:
 			}
 			// The remediation may only name things that work today. It used to
 			// send authors to a `kelson secret set` that does not exist (#142),
-			// then to a service binding, which #141 now rejects. What is left
-			// is the overlay escape hatch, which is implemented.
+			// and while #141 gated bindings it could only offer the overlay
+			// escape hatch. A binding renders end to end since #89, so both are
+			// now legitimate answers and both must be named.
 			if strings.Contains(secret.Remediation, "kelson secret set") {
 				t.Errorf("remediation references the nonexistent `kelson secret set` command, got %q", secret.Remediation)
 			}
 			if !strings.Contains(secret.Remediation, "overlay") {
 				t.Errorf("remediation should name a fix that works today, got %q", secret.Remediation)
 			}
-			// Prescribing a binding would send the author into a gated field.
-			if strings.Contains(secret.Remediation, "{from:") {
-				t.Errorf("remediation prescribes a service binding, which is gated until M9 (#141): %q", secret.Remediation)
+			if !strings.Contains(secret.Remediation, "{from:") {
+				t.Errorf("remediation should name the service binding now that it renders, got %q", secret.Remediation)
 			}
 		})
 	}
 }
 
-// TestSecretReferenceGatedNotSecretViolation: the same variable through from:
-// is well-formed under ADR-0009 — it carries a reference, not a value — so it
-// must not be reported as a secret literal. It is rejected anyway, because
-// nothing provisions the Secret the binding names until M9 (issue #141). The
-// distinction matters: the author is told the feature is missing, not that
-// they wrote a credential into the spec.
-func TestSecretReferenceGatedNotSecretViolation(t *testing.T) {
+// TestSecretReferenceIsNotASecretViolation: the same variable through from: is
+// well-formed under ADR-0009 — it carries a reference, not a value — and since
+// #89 it also renders, so it is simply valid. While #141 gated bindings this
+// test asserted the opposite (a not-implemented error, deliberately *not* a
+// secret/literal one); what survives is the part that always mattered: a
+// reference is never mistaken for a credential written into the spec.
+func TestSecretReferenceIsNotASecretViolation(t *testing.T) {
 	_, errs := DecodeDocuments([]byte(`
 apiVersion: kelson.dev/v1alpha1
 kind: Project
@@ -193,19 +193,8 @@ spec:
 	if slices.Contains(errs.Codes(), ErrSecretLiteral) {
 		t.Errorf("a binding carries a reference, not a value: it must never be a secret/literal, got:\n%v", errs)
 	}
-	var binding *Error
-	for i := range errs {
-		if errs[i].Code == ErrNotImplemented && errs[i].Field == "$.spec.env.DATABASE_URL.from" {
-			binding = &errs[i]
-		}
-	}
-	if binding == nil {
-		t.Fatalf("the binding must be gated as %s, got:\n%v", ErrNotImplemented, errs)
-	}
-	for _, code := range errs.Codes() {
-		if code != ErrNotImplemented {
-			t.Errorf("the only complaint should be the gate, got %s in:\n%v", code, errs)
-		}
+	if len(errs) > 0 {
+		t.Fatalf("a declared service and a binding to it are valid since #89, got:\n%v", errs)
 	}
 }
 
@@ -367,9 +356,9 @@ spec:
 	if !slices.Contains(errs.Codes(), ErrInvalidEnum) {
 		t.Fatalf("delivery mode github must be caught at decode, got:\n%v", errs)
 	}
-	// Decode is otherwise clean: the gated services and binding (issue #141)
-	// are expected, everything else would be a shape complaint this document
-	// should not produce.
+	// Decode is otherwise clean: any remaining gate (issue #141) is expected,
+	// everything else would be a shape complaint this document should not
+	// produce.
 	for _, e := range errs {
 		if e.Code != ErrInvalidEnum && e.Code != ErrNotImplemented {
 			t.Fatalf("decode must be otherwise clean, got:\n%v", errs)

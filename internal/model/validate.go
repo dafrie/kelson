@@ -65,11 +65,10 @@ func (v *validator) domain(field, s string) {
 	}
 }
 
-// envMap validates one env map. canonical is the map's path with indices and
-// keys collapsed ("$.spec.applications[].env"), used to look up the #141 gate
-// rows; passing "" suppresses gating for a re-validation pass that would
-// otherwise report the same gated field twice.
-func (v *validator) envMap(field, canonical string, env map[string]EnvValue, services map[string]Service) {
+// envMap validates one env map: variable names, secret literals (ADR-0009) and
+// service bindings. Passing services nil checks a binding's shape only, for the
+// Environment pass whose targets are re-checked against the Project later.
+func (v *validator) envMap(field string, env map[string]EnvValue, services map[string]Service) {
 	keys := make([]string, 0, len(env))
 	for k := range env {
 		keys = append(keys, k)
@@ -84,9 +83,6 @@ func (v *validator) envMap(field, canonical string, env map[string]EnvValue, ser
 				"use letters, digits and underscores, not starting with a digit")
 		}
 		if ev.From != nil {
-			if canonical != "" {
-				v.gate(canonical+".*.from", f+".from")
-			}
 			if services != nil {
 				v.serviceRef(f, ev.From, services)
 			} else if ev.From.Service == "" || ev.From.Key == "" {
@@ -129,14 +125,16 @@ func (v *validator) serviceRef(field string, b *ServiceBinding, services map[str
 // embedding passwords, and literals for secret-shaped variable names.
 //
 // The remediation names only what kelson can actually do today. It used to
-// send authors to a `kelson secret set` that does not exist (issue #142), then
-// to a service binding — which issue #141 gates until M9. What is left, and
-// what is genuinely implemented, is an overlay patch against a Secret the user
-// manages themselves.
-const secretRemediation = "the spec carries references, never values (ADR-0009). kelson cannot hold a secret value yet: " +
-	"there is no command to set one (milestone M8 · Secrets) and service bindings are rejected until they render " +
-	"end to end (milestone M9 · Data services, issue #141). Remove this variable, and until then inject it with an " +
-	"overlay patch (spec.overlays) that references a Secret you manage."
+// send authors to a `kelson secret set` that does not exist (issue #142), and
+// then — while issue #141 gated bindings — to an overlay only. A binding to a
+// managed service now renders end to end (issue #89), so it is named first: it
+// is the answer for the credential this check catches most often, a database
+// URL. Everything else is still an overlay against a Secret the user manages.
+const secretRemediation = "the spec carries references, never values (ADR-0009). For a managed service, declare it " +
+	"under spec.services and bind: {from: {service: <name>, key: uri}} — kelson renders a secretKeyRef against the " +
+	"credentials the operator generates. For anything else kelson cannot hold the value yet (there is no command to " +
+	"set one, milestone M8 · Secrets): remove this variable and inject it with an overlay patch (spec.overlays) that " +
+	"references a Secret you manage."
 
 func (v *validator) secretLiteral(field, name, literal string) {
 	if literal == "" {
@@ -396,7 +394,7 @@ func (v *validator) delivery(field string, d *Delivery) {
 	}
 }
 
-func (v *validator) applications(field, canonical string, apps []Application, services map[string]Service, projectImage string) {
+func (v *validator) applications(field string, apps []Application, services map[string]Service, projectImage string) {
 	seen := map[string]int{}
 	for i, a := range apps {
 		f := fmt.Sprintf("%s[%d]", field, i)
@@ -436,7 +434,7 @@ func (v *validator) applications(field, canonical string, apps []Application, se
 		}
 		v.replicas(f+".replicas", a.Replicas)
 		v.resources(f+".resources", a.Resources)
-		v.envMap(f+".env", canonical+".env", a.Env, services)
+		v.envMap(f+".env", a.Env, services)
 
 		hasImage := a.Image != "" || projectImage != ""
 		if !hasImage {
@@ -455,10 +453,6 @@ func validateProject(p *Project, v *validator) {
 		v.err(ErrMissingRequired, "$.spec.applications",
 			"a Project declares at least one application",
 			"add spec.applications with at least one entry; a cron or worker counts")
-	}
-
-	if len(s.Services) > 0 {
-		v.gate("$.spec.services", "$.spec.services")
 	}
 
 	services := map[string]Service{}
@@ -510,8 +504,8 @@ func validateProject(p *Project, v *validator) {
 		projectImage = "(built from source)"
 	}
 
-	v.envMap("$.spec.env", "$.spec.env", s.Env, services)
-	v.applications("$.spec.applications", "$.spec.applications[]", s.Applications, services, projectImage)
+	v.envMap("$.spec.env", s.Env, services)
+	v.applications("$.spec.applications", s.Applications, services, projectImage)
 
 	if d := s.Defaults; d != nil {
 		switch d.DeliveryMode {
@@ -583,11 +577,7 @@ func validateEnvironmentShape(e *Environment, v *validator) {
 		seen[ov.Name] = i
 		v.replicas(f+".replicas", ov.Replicas)
 		v.resources(f+".resources", ov.Resources)
-		v.envMap(f+".env", "$.spec.applications[].env", ov.Env, nil) // binding targets re-checked against the Project in ValidateEnvironment
-	}
-
-	if len(s.Services) > 0 {
-		v.gate("$.spec.services", "$.spec.services")
+		v.envMap(f+".env", ov.Env, nil) // binding targets re-checked against the Project in ValidateEnvironment
 	}
 
 	seenSvc := map[string]int{}
@@ -620,7 +610,7 @@ func validateServiceRefs(e *Environment, services map[string]Service, v *validat
 	for i, ov := range e.Spec.Applications {
 		// No canonical path: this is a second pass over env maps the shape
 		// check already walked, and the #141 gate fired there.
-		v.envMap(fmt.Sprintf("$.spec.applications[%d].env", i), "", ov.Env, services)
+		v.envMap(fmt.Sprintf("$.spec.applications[%d].env", i), ov.Env, services)
 	}
 }
 

@@ -16,12 +16,19 @@ import (
 // that renders nothing is now an error that says so and says where the work is
 // tracked.
 //
-// The gate is validation-level only, deliberately. The types stay, the
-// resolver keeps resolving these fields, and the renderer keeps its service
-// binding support: landing M7/M8/M9 means deleting a row from the table below
-// and its call site, not rebuilding the feature. Because resolution is
-// unchanged, the precedence rules (P4, P5) stay under test through the
-// unexported resolve, which skips validation.
+// The gate is validation-level only, deliberately. The types stay and the
+// resolver keeps resolving these fields, so landing a milestone means deleting
+// a row from the table below and its call site, not rebuilding the feature.
+// M9 · Data services is the first proof of that: `$.spec.services` and the
+// `from:` bindings left this table when the renderer began emitting
+// CloudNativePG resources for them (issue #89), and nothing else had to move.
+//
+// What replaced their rows is *not* silence. A service the renderer cannot
+// emit — `type: valkey`, `preset: branch` — is a structured render error naming
+// its issue, and so is a preset the ClusterProfile says the cluster cannot
+// host. That check needs a cluster profile, which validation deliberately does
+// not have (ADR-0001), so it lives in the renderer; every surface that can
+// reach a cluster goes through it (docs/data-services.md).
 
 // notImplemented is one gated field: where it lives in the schema and where
 // the work that would make it real is tracked.
@@ -52,24 +59,6 @@ type notImplemented struct {
 var notImplementedFields = []notImplemented{
 	{
 		Kind:      KindProject,
-		Path:      "$.spec.services",
-		What:      "data services",
-		TrackedBy: "milestone M9 · Data services (epic #10)",
-	},
-	{
-		Kind:      KindProject,
-		Path:      "$.spec.env.*.from",
-		What:      "service bindings",
-		TrackedBy: "milestone M9 · Data services (epic #10)",
-	},
-	{
-		Kind:      KindProject,
-		Path:      "$.spec.applications[].env.*.from",
-		What:      "service bindings",
-		TrackedBy: "milestone M9 · Data services (epic #10)",
-	},
-	{
-		Kind:      KindProject,
 		Path:      "$.spec.defaults.policy",
 		What:      "deployment policy",
 		TrackedBy: "milestone M7 · Agent surface & MCP",
@@ -97,18 +86,6 @@ var notImplementedFields = []notImplemented{
 		Path:      "$.spec.secrets",
 		What:      "secret backends",
 		TrackedBy: "milestone M8 · Secrets",
-	},
-	{
-		Kind:      KindEnvironment,
-		Path:      "$.spec.services",
-		What:      "data services",
-		TrackedBy: "milestone M9 · Data services (epic #10)",
-	},
-	{
-		Kind:      KindEnvironment,
-		Path:      "$.spec.applications[].env.*.from",
-		What:      "service bindings",
-		TrackedBy: "milestone M9 · Data services (epic #10)",
 	},
 }
 

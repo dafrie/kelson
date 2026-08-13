@@ -33,8 +33,7 @@ func resolvedFixture() *model.Resolved {
 				Domains:  []string{"checkout.acme.com"},
 				Replicas: model.Replicas{Min: 2, Max: 5},
 				Env: map[string]model.EnvValue{
-					"LOG_LEVEL":    {Literal: "info"},
-					"DATABASE_URL": {From: &model.ServiceBinding{Service: "db", Key: "uri"}},
+					"LOG_LEVEL": {Literal: "info"},
 				},
 			},
 			{
@@ -61,6 +60,30 @@ func gatewayProfile() clusterprofile.ClusterProfile {
 		CertManager: &clusterprofile.CertManager{ClusterIssuers: []string{"letsencrypt-prod"}},
 		Prometheus:  &clusterprofile.Prometheus{ServiceMonitor: true},
 	}
+}
+
+// cnpgProfile is gatewayProfile plus a CloudNativePG new enough for every
+// preset, with the CRDs the API server serves spelled out — the shape a real
+// detection produces (issue #90).
+func cnpgProfile() clusterprofile.ClusterProfile {
+	p := gatewayProfile()
+	p.CloudNativePG = &clusterprofile.CloudNativePG{
+		Version:   "1.30.0",
+		Namespace: "cnpg-system",
+		CRDs:      []string{"clusters", "databases"},
+	}
+	return p
+}
+
+// boundFixture is the standard fixture with one postgres service at the given
+// preset and the web application bound to it.
+func boundFixture(preset model.ServicePreset) *model.Resolved {
+	r := resolvedFixture()
+	r.Services = []model.ResolvedService{{Name: "db", Type: "postgres", Preset: preset}}
+	r.Applications[0].Env["DATABASE_URL"] = model.EnvValue{
+		From: &model.ServiceBinding{Service: "db", Key: "uri"},
+	}
+	return r
 }
 
 func kinds(ms []Manifest) []string {
@@ -125,17 +148,14 @@ func TestRenderResourceSet(t *testing.T) {
 	}
 }
 
-// TestRenderEnvSecretKeyRef: bindings become secretKeyRefs against the
-// service credential Secret, and no Secret resource is ever emitted
-// (ADR-0009).
+// TestRenderEnvSecretKeyRef: bindings become secretKeyRefs against the Secret
+// CloudNativePG generates for the cluster's application owner, and no Secret
+// resource is ever emitted (ADR-0009).
 //
-// This is now the only place binding rendering is exercised. Issue #141 gates
-// `services:` and `from:` in validation until M9, and every golden fixture
-// goes through full validation, so the fixtures lost their bindings. The
-// renderer's support for them did not: it is reached here by building the
-// Resolved directly, which is the seam M9 will use.
+// The secret name is CNPG's convention, <cluster>-app, not one kelson invents:
+// the renderer's job is to point at what the operator will produce (#89).
 func TestRenderEnvSecretKeyRef(t *testing.T) {
-	ms, err := Render(resolvedFixture(), gatewayProfile(), nil)
+	ms, err := Render(boundFixture(model.PresetSmall), cnpgProfile(), nil)
 	if err != nil {
 		t.Fatalf("Render failed: %v", err)
 	}
@@ -149,8 +169,8 @@ func TestRenderEnvSecretKeyRef(t *testing.T) {
 		t.Fatalf("Encode failed: %v", err)
 	}
 	if !strings.Contains(string(out), "secretKeyRef") ||
-		!strings.Contains(string(out), "name: checkout-db-credentials") {
-		t.Fatalf("expected secretKeyRef to checkout-db-credentials, got:\n%s", out)
+		!strings.Contains(string(out), "name: checkout-production-db-app") {
+		t.Fatalf("expected secretKeyRef to checkout-production-db-app, got:\n%s", out)
 	}
 	if strings.Contains(string(out), "DATABASE_URL\n      value:") {
 		t.Fatalf("binding was rendered as a literal value:\n%s", out)
