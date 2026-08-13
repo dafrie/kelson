@@ -43,6 +43,7 @@ a deploy or a log tail is a link that keeps working.
 | Route | What it does | RPCs |
 | --- | --- | --- |
 | `/apps` | One card per (project, environment): phase pill, revision, cause, live/degraded counts | `ListSpecs`, then one `DeployService.Status` per card |
+| `/apps/new` | Create an application: three fields, a rendered preview, then the store | `PutSpec` at `RENDER`, then with an idempotency key |
 | `/apps/:project` | Environment tabs with status, workload verdicts and the stored documents; buttons into the four flows | `GetSpec`, `Status` |
 | `/apps/:project/:env/deploy` | Preview (render dry-run) then a confirm that streams the deployment live | `Deploy` at `RENDER`, then at `NONE`; optional `Diff` at `SERVER` |
 | `/apps/:project/:env/diff` | The live cluster's own dry-run verdict, rendered from `diff_json` | `Diff` at `SERVER` |
@@ -54,7 +55,7 @@ There is **no history screen**: [#67](https://github.com/dafrie/kelson/issues/67
 defers it. Rollback calls the History RPC to offer target revisions, which is a
 picker for an action and not a screen about the past.
 
-Four things the screens are deliberate about:
+Five things the screens are deliberate about:
 
 - **A status that could not be read is never rendered as green.** Each card's
   `Status` call is its own, so one unreachable cluster degrades one card to
@@ -75,6 +76,44 @@ Four things the screens are deliberate about:
   remediation as a `fix:` line and `docs_url` as a link. Codes are never
   re-mapped; `delivery/unsupported` reaches the screen as the string the owning
   Go package defines.
+- **Creating an app asks three questions.** `/apps/new` shows a name, an image
+  and a port, and nothing else; an empty port is a worker, because the model
+  derives the workload kind from the shape rather than asking for a type. Every
+  other field the model can express sits behind one "More options" disclosure —
+  progressive disclosure is the whole design (docs/model.md's own target
+  shape), and the named failure mode is a first screen that asks forty
+  questions to deploy one container.
+
+## Building spec documents in the browser
+
+`src/spec/documents.ts` writes the Project and Environment documents `/apps/new`
+stores. Three things about it are load-bearing:
+
+- **It emits only what was filled in.** The store keeps the authored bytes
+  (ADR-0013 §1) — this is the file the user now owns, so a builder that wrote
+  `health: ""` because the schema has the field would be handing them something
+  to prune. The output is the shape of `examples/hello-single`.
+- **It is a string builder, and `yamlScalar` is the whole risk.** The document
+  is a fixed skeleton with scalars poured into it, so the only hard part is
+  quoting, and quoting is where guessing wrong is *silent*: `PORT: 3000`
+  decodes as an integer and `model.EnvValue` refuses it, and `DEBUG: on`
+  resolves to a boolean. The rule is an allow-list of characters that can only
+  be a string, with `JSON.stringify` as the escape function (a JSON string
+  literal is a valid YAML double-quoted scalar), and `documents.test.ts` pins
+  the cases.
+- **It owns the map back from JSONPaths to inputs.** `PutSpec` at `RENDER`
+  answers with `kelson.v1alpha1.Error`s carrying `field` paths, and the builder
+  is what decided the port lands at `$.spec.applications[0].port`, so
+  `fieldForError` lives beside it. `resource` separates the two documents,
+  which share paths. Anything unrecognised goes to `ErrorPanel` whole — a rule
+  the form does not model still has to reach the reader with its code, its
+  remediation and its line number.
+
+The agreement with Go is a fixture kept on both sides: the minimal three-field
+document pair in `src/spec/documents.test.ts` is byte-identical to the one in
+`internal/api/uispec_test.go`, where the real model validates and renders it
+through `PutSpec` at `RENDER`. Neither side can prove the other's half; changing
+the builder without changing both fails the Go test.
 
 `src/diff/parse.ts` decodes `diff_json` against the Go types in
 `internal/diff/diff.go`. Its fixture, `src/diff/testdata/server-diff.json`, is

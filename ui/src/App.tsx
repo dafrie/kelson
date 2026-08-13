@@ -7,6 +7,7 @@ import { ClusterPage } from "./pages/ClusterPage";
 import { DeployPage } from "./pages/DeployPage";
 import { DiffPage } from "./pages/DiffPage";
 import { LogsPage } from "./pages/LogsPage";
+import { NewAppPage } from "./pages/NewAppPage";
 import { RollbackPage } from "./pages/RollbackPage";
 import { EmptyState } from "./components/States";
 import "./pages/pages.css";
@@ -28,6 +29,10 @@ export function App() {
       <Route element={<AppShell />}>
         <Route index element={<Navigate to="/apps" replace />} />
         <Route path="apps" element={<AppsPage />} />
+        {/* Static before dynamic: /apps/new is the create flow, not a project
+            called "new". React Router ranks it first either way; the order here
+            says so to the reader too. */}
+        <Route path="apps/new" element={<NewAppPage />} />
         <Route path="apps/:project" element={<AppDetailPage />} />
         <Route path="apps/:project/:env/deploy" element={<DeployPage />} />
         <Route path="apps/:project/:env/diff" element={<DiffPage />} />

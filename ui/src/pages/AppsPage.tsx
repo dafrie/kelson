@@ -55,6 +55,12 @@ export function AppsPage() {
     <>
       <div className="k-page-head">
         <h1>Apps</h1>
+        {/* The mockup's one accent-outlined mono action, in the place it puts
+            it. This is the only way into the create flow, so it stays visible
+            whether the grid is full or empty. */}
+        <Link className="k-button k-button--primary" to="/apps/new">
+          New app
+        </Link>
       </div>
 
       <div className="k-page-sub">
@@ -78,7 +84,8 @@ export function AppsPage() {
 
       {specs.data !== undefined && projects === 0 ? (
         <EmptyState title="No projects stored yet — kelson-server's spec store is empty">
-          Put one with `kelson` or SpecService.PutSpec, and it appears here.
+          Create one with “New app” above, or put one with `kelson` or
+          SpecService.PutSpec, and it appears here.
         </EmptyState>
       ) : null}
 

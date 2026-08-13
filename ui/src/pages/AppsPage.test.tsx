@@ -77,6 +77,10 @@ describe("AppsPage", () => {
     expect(links[0]?.getAttribute("href")).toBe("/apps/checkout");
     expect(screen.getByText("2 projects")).toBeTruthy();
     expect(screen.getByText("3 environments")).toBeTruthy();
+    // The one way into the create flow (#63).
+    expect(
+      screen.getByRole("link", { name: "New app" }).getAttribute("href"),
+    ).toBe("/apps/new");
   });
 
   it("maps phases onto pills and shows revision, counts and cause", async () => {
