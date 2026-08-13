@@ -1,0 +1,54 @@
+# The spec the kind harness deploys (issue #86).
+#
+# Deliberately the smallest thing that still exercises the whole delivery
+# spine: one service component, one port, no routing, no data services, no
+# build. Everything it needs must exist on a stock single-node kind cluster.
+#
+#   - registry.k8s.io/pause is a few hundred kilobytes, is served without
+#     authentication and without Docker Hub's anonymous rate limit, and is
+#     already present in the kind node image's containerd store for the
+#     cluster's own sandboxes — so the pull is usually a cache hit.
+#   - No `health:` path, because pause serves no HTTP. The renderer emits
+#     liveness/readiness probes only when a component has BOTH port and health
+#     (internal/renderer/workload.go), so omitting it leaves the pod ready as
+#     soon as the container runs. That makes "healthy" a fact about the
+#     delivery spine rather than about a probe endpoint's timing.
+#   - No `domains:`, because Gateway API CRDs are absent on stock kind and
+#     kelson renders Gateway API only (#140): declaring one would be a
+#     render-time capability gap, not a route.
+#
+# The image tag is what the mutate/diff/rollback scenario changes, so it is the
+# one value here that the harness rewrites — see imageMutated in e2e_test.go.
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: kelson-e2e
+
+spec:
+  image: registry.k8s.io/pause:3.10
+
+  components:
+    - name: web
+      port: 8080
+---
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: e2e
+
+spec:
+  project: kelson-e2e
+  # Explicit rather than the derived "<project>-<environment>" default, so the
+  # harness and the cluster cannot disagree about where to look.
+  namespace: kelson-e2e
+---
+# A second environment so the additivity scenario, which deletes what it
+# deployed, can never race the lifecycle scenario's namespace.
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: additivity
+
+spec:
+  project: kelson-e2e
+  namespace: kelson-e2e-additivity

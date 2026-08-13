@@ -1,0 +1,143 @@
+# End-to-end tests against a real kind cluster (issue #86).
+#
+# Separate from ci.yml on purpose. This job provisions a cluster, pulls images
+# and waits on rollouts, so it is both the slowest and the flakiest thing in
+# the repository — keeping it out of ci.yml means a red e2e never blocks the
+# fast lint/test/build feedback while it stabilises.
+#
+# NOT A REQUIRED CHECK YET. Required status checks are configured in repository
+# settings and this workflow is deliberately not among them; promote it once it
+# has run green for a while. Until then it is signal, not a gate.
+#
+# What it proves lives in test/e2e/ (a Go package behind the `e2e` build tag);
+# the cluster itself comes from hack/e2e/up.sh, which installs a pinned,
+# checksum-verified kind and a digest-pinned node image. That script is used
+# rather than a third-party action so CI and a laptop create the same cluster
+# from the same pin.
+
+name: E2E
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    name: Detect changed files
+    runs-on: ubuntu-latest
+    outputs:
+      e2e: ${{ steps.classify.outputs.e2e }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Native git change detection, mirroring ci.yml's `changes` job rather
+      # than introducing a third-party action for the same question.
+      - name: Classify changed paths
+        id: classify
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            MERGE_BASE="$(git merge-base "$BASE_REF" "$GITHUB_SHA")"
+            CHANGED="$(git diff --name-only "$MERGE_BASE" "$GITHUB_SHA")"
+          else
+            CHANGED="$(git diff --name-only "${BEFORE:-HEAD~1}" "$GITHUB_SHA")"
+          fi
+
+          e2e="false"
+          for f in $CHANGED; do
+            case "$f" in
+              *.go|go.mod|go.sum|Makefile|examples/*|test/e2e/*|hack/e2e/*|.github/workflows/e2e.yml)
+                e2e="true"
+                ;;
+            esac
+          done
+
+          echo "e2e=$e2e" >> "$GITHUB_OUTPUT"
+          echo "e2e=$e2e"
+
+  e2e:
+    name: kind end-to-end (not required)
+    needs: changes
+    if: ${{ needs.changes.outputs.e2e == 'true' }}
+    runs-on: ubuntu-latest
+    # The suite's own budget is 15m (`go test -timeout`); this leaves room for
+    # the cluster to come up and for the failure dump to be collected.
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # Built once here rather than by the suite, so a compile error is
+      # reported as a build failure instead of as a mysterious test failure.
+      - name: Build the kelson CLI
+        run: |
+          set -euo pipefail
+          mkdir -p hack/bin
+          go build -o hack/bin/kelson ./cmd/kelson
+          hack/bin/kelson --version
+
+      # Installs the pinned kind (checksum-verified) and creates the cluster,
+      # writing hack/bin/e2e.kubeconfig. Docker and kubectl are preinstalled on
+      # the GitHub-hosted runner image.
+      - name: Create the kind cluster
+        run: hack/e2e/up.sh
+
+      - name: Record the cluster shape
+        run: |
+          set -euo pipefail
+          export KUBECONFIG="$GITHUB_WORKSPACE/hack/bin/e2e.kubeconfig"
+          kubectl version
+          kubectl get nodes -o wide
+          kubectl get pods -A
+
+      - name: Run the end-to-end suite
+        env:
+          KELSON_E2E: "1"
+          KELSON_E2E_BIN: ${{ github.workspace }}/hack/bin/kelson
+          KUBECONFIG: ${{ github.workspace }}/hack/bin/e2e.kubeconfig
+        run: go test -tags e2e -v -timeout 15m ./test/e2e/...
+
+      # Nobody is watching this run, so a failure has to explain itself from
+      # the artifact alone. `|| true` throughout: a diagnostic that fails must
+      # not replace the failure it was collected to explain.
+      - name: Collect cluster diagnostics
+        if: failure()
+        run: |
+          set -uo pipefail
+          export KUBECONFIG="$GITHUB_WORKSPACE/hack/bin/e2e.kubeconfig"
+          mkdir -p /tmp/e2e-diagnostics
+          kubectl cluster-info dump --all-namespaces \
+            --output-directory=/tmp/e2e-diagnostics/cluster-info || true
+          kubectl get all -A -o wide > /tmp/e2e-diagnostics/all-resources.txt 2>&1 || true
+          kubectl get events -A --sort-by=.lastTimestamp > /tmp/e2e-diagnostics/events.txt 2>&1 || true
+          kubectl describe pods -A > /tmp/e2e-diagnostics/describe-pods.txt 2>&1 || true
+          hack/bin/kind export logs /tmp/e2e-diagnostics/kind --name kelson-e2e || true
+
+      - name: Upload cluster diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-cluster-diagnostics
+          path: /tmp/e2e-diagnostics
+          retention-days: 7
+          if-no-files-found: warn

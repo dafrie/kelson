@@ -5,6 +5,19 @@ local [kind](https://kind.sigs.k8s.io/) cluster — the delivery adapters, statu
 rollback exercised against a real API server, not a fake client. Golden files cover the renderer
 (issue #2); this harness covers what golden files cannot.
 
+There are two harnesses over the same cluster, and they divide by audience:
+
+| | `hack/e2e/run.sh` (`make e2e`) | `test/e2e/` (`make test-e2e`) |
+|---|---|---|
+| Shape | bash script | Go package behind the `e2e` build tag |
+| Spec | `examples/hello-e2e` | `test/e2e/testdata/minimal.yaml` |
+| Covers | deploy → induced `CrashLoopBackOff` → status → rollback | deploy → status → diff → redeploy → rollback, plus the label-selector additivity check |
+| Runs in CI | no | yes — `.github/workflows/e2e.yml`, not a required check yet |
+
+The Go suite is the one CI runs and the one to extend; the script keeps the failure-path scenario the
+Go suite does not have yet. Both create the same cluster through `hack/e2e/up.sh`. See
+`test/e2e/README.md` for the Go suite's scenarios, environment variables and flake posture.
+
 ## Prerequisites
 
 - Docker Desktop (or another reachable Docker daemon) — the scripts check for this and fail with a
