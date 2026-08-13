@@ -104,6 +104,7 @@ func TestProbeFullCluster(t *testing.T) {
 		resourceList("templates.gatekeeper.sh/v1"),
 		resourceList("postgresql.cnpg.io/v1"),
 		resourceList("source.toolkit.fluxcd.io/v1"),
+		resourceList("fluxcd.controlplane.io/v1"),
 		resourceList("argoproj.io/v1alpha1"),
 		resourceList("metrics.k8s.io/v1beta1"),
 		resourceList("monitoring.coreos.com/v1", "servicemonitors", "podmonitors"),
@@ -168,6 +169,9 @@ func TestProbeFullCluster(t *testing.T) {
 	if prof.CloudNativePG == nil || prof.Flux == nil || prof.ArgoCD == nil || prof.MetricsServer == nil {
 		t.Fatalf("expected cnpg/flux/argocd/metrics present, got %+v", prof)
 	}
+	if prof.FluxOperator == nil {
+		t.Fatalf("expected flux-operator present, got %+v", prof.FluxOperator)
+	}
 	if prof.Prometheus == nil || !prof.Prometheus.ServiceMonitor || !prof.Prometheus.PodMonitor {
 		t.Fatalf("prometheus = %+v", prof.Prometheus)
 	}
@@ -192,6 +196,26 @@ func TestProbeEmptyCluster(t *testing.T) {
 	}
 	if len(prof.IngressClasses) != 0 || len(prof.PolicyEngines) != 0 || len(prof.StorageClasses) != 0 {
 		t.Fatalf("expected empty lists on an empty cluster: %+v", prof)
+	}
+}
+
+// TestProbeFluxWithoutOperator is the distinction issue #157 exists for: the
+// majority of Flux installs have no flux-operator, and a probe that saw the
+// Flux source group must not imply the operator's FluxReport is there to read.
+func TestProbeFluxWithoutOperator(t *testing.T) {
+	f := newFakeProber(t, []*metav1.APIResourceList{resourceList("source.toolkit.fluxcd.io/v1")})
+	prof, err := f.probe(context.Background())
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	if prof.Flux == nil {
+		t.Fatal("Flux must be present when its source group is registered")
+	}
+	if prof.FluxOperator != nil {
+		t.Fatalf("flux-operator must stay absent without its own group: %+v", prof.FluxOperator)
+	}
+	if len(prof.Incomplete) != 0 {
+		t.Fatalf("a readable cluster without flux-operator is a finding, not a gap: %+v", prof.Incomplete)
 	}
 }
 
@@ -260,7 +284,7 @@ func TestProbeForbiddenAPIsGapsEverything(t *testing.T) {
 	if prof.CertManager != nil || prof.GatewayAPI != nil || prof.Prometheus != nil {
 		t.Fatalf("no component may claim presence when /apis is forbidden: %+v", prof)
 	}
-	for _, want := range []string{"gatewayAPI", "certManager", "externalSecrets", "cnpg", "flux", "argocd", "metricsServer", "prometheus", "policyEngines"} {
+	for _, want := range []string{"gatewayAPI", "certManager", "externalSecrets", "cnpg", "flux", "fluxOperator", "argocd", "metricsServer", "prometheus", "policyEngines"} {
 		if !hasGap(prof.Incomplete, want) {
 			t.Fatalf("expected a gap on %q, got %+v", want, prof.Incomplete)
 		}

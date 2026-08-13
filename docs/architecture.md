@@ -127,6 +127,7 @@ certManager:     { clusterIssuers: [letsencrypt-prod] }
 externalSecrets: { clusterSecretStores: [vault-backend] }
 prometheus:      { serviceMonitor: true, podMonitor: true }
 flux:            { version: v2.4.0 }
+fluxOperator:    {}
 policyEngines:   [{ name: kyverno, version: v1.13.0 }]
 metricsServer:   {}
 incomplete:
@@ -217,7 +218,10 @@ Four cluster shapes, one install path:
 
 1. **Existing Flux** — adopt. kelson installs nothing, writes rendered manifests to a path an existing
    `Kustomization` already watches (a path nothing watches is a hard `not-watched` error), and reads
-   status back from Kustomization conditions and `FluxReport` where available.
+   status back from Kustomization conditions and `FluxReport` where available. "Where available" is a
+   detection answer: `ClusterProfile.fluxOperator` records the operator's API group, so the adapter is
+   told which source to read rather than discovering it by trying one
+   ([#157](https://github.com/dafrie/kelson/issues/157)).
 2. **No GitOps** — direct mode; or, opting in, kelson installs flux-operator, creates a `FluxInstance`
    and per-environment `GitRepository`/`Kustomization`, then behaves exactly like shape 1.
 3. **Bare VPS bootstrap** — k3s, then flux-operator, then the same additive installer as shape 2.

@@ -92,6 +92,13 @@ var Components = []Component{
 		GapField: "flux",
 		Note:     "flux v2's GitRepository/Kustomization API is what kelson commits against in GitOps mode.",
 	},
+	// flux-operator is deliberately not a row. Detection records it (issue
+	// #157) so the delivery plane can prefer its FluxReport, but every row here
+	// declares a version floor whose too-old behaviour is refuse or
+	// render-older, and kelson does neither: an old or missing operator makes
+	// the health readback fall back to aggregating the Flux controller
+	// Deployments (internal/delivery/flux/dynamic.go). A floor here would
+	// document a refusal that never happens.
 	{
 		Name:     "argo-cd",
 		Minimum:  "2.9.0",

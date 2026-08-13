@@ -54,8 +54,23 @@ type ClusterProfile struct {
 	// time rather than a surprise at branch time.
 	StorageClasses []StorageClass `yaml:"storageClasses,omitempty" json:"storageClasses,omitempty"`
 
-	CloudNativePG *Component  `yaml:"cnpg,omitempty" json:"cnpg,omitempty"`
-	Flux          *Component  `yaml:"flux,omitempty" json:"flux,omitempty"`
+	CloudNativePG *Component `yaml:"cnpg,omitempty" json:"cnpg,omitempty"`
+	Flux          *Component `yaml:"flux,omitempty" json:"flux,omitempty"`
+
+	// FluxOperator is flux-operator, which is a separate finding from Flux:
+	// it manages the Flux installation and publishes a FluxReport the delivery
+	// plane prefers over aggregating controller Deployments itself (issue
+	// #137). Recording it here is what keeps that preference a *finding* —
+	// before #157 the adapter established availability by attempting the read
+	// and falling back, which inverts the detection model (ADR-0003:
+	// detection tells the planes what exists).
+	//
+	// LICENSE: flux-operator is AGPL-3.0 and kelson is MIT, so knowing it is
+	// installed may only ever come from unstructured reads of its API group —
+	// no Go module of theirs is imported anywhere in this repository
+	// (docs/architecture.md, "Living with flux-operator").
+	FluxOperator *Component `yaml:"fluxOperator,omitempty" json:"fluxOperator,omitempty"`
+
 	ArgoCD        *Component  `yaml:"argocd,omitempty" json:"argocd,omitempty"`
 	MetricsServer *Component  `yaml:"metricsServer,omitempty" json:"metricsServer,omitempty"`
 	Prometheus    *Prometheus `yaml:"prometheus,omitempty" json:"prometheus,omitempty"`

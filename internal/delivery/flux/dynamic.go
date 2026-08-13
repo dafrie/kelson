@@ -50,6 +50,18 @@ type DynamicStatusReader struct {
 	// Namespace limits the query; empty means all namespaces, which is the
 	// right default because a Kustomization may live anywhere.
 	Namespace string
+	// FluxOperator is the ClusterProfile's finding about flux-operator, when a
+	// profile was captured at all (clusterprofile.ClusterProfile.FluxOperator,
+	// issue #157). true reads the FluxReport, false goes straight to the
+	// Deployment aggregate and spends no round trip on a CRD the cluster does
+	// not serve.
+	//
+	// Nil means nobody looked — no profile, or a probe that could not see the
+	// group — and the reader then probes and falls back, because absence in a
+	// profile that was never captured is not a finding. Health is advisory in
+	// every case: this field only changes which source is asked first, never
+	// the phase a caller ends up with.
+	FluxOperator *bool
 }
 
 var (
@@ -167,10 +179,23 @@ func (r DynamicStatusReader) HelmReleases(ctx context.Context) ([]HelmRelease, e
 // kelson guessing at an answer another component publishes (docs/roadmap.md,
 // "Delegate to flux-operator"). The Deployment aggregate stays as the fallback
 // for the majority of clusters that run Flux without the operator.
+//
+// Which source is tried first is a detection answer where one exists
+// (FluxOperator, issue #157) rather than something this reader establishes by
+// attempting the read: probing to find out what a ClusterProfile already
+// records inverts the detection model (ADR-0003). Where no profile was
+// captured the probe-and-fallback remains, so a caller that never asked for
+// detection still gets an answer.
 func (r DynamicStatusReader) Health(ctx context.Context) (Health, error) {
-	h, reportErr := r.fluxReport(ctx)
-	if reportErr == nil {
-		return h, nil
+	var reportErr error
+	if r.FluxOperator == nil || *r.FluxOperator {
+		h, err := r.fluxReport(ctx)
+		if err == nil {
+			return h, nil
+		}
+		// A profile that says the operator is there and a read that fails
+		// anyway is still not a health failure: the fallback answers.
+		reportErr = err
 	}
 	h, err := r.controllerHealth(ctx)
 	if err != nil {
