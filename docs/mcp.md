@@ -30,7 +30,7 @@ The *shape* is deliberately not the API's:
   asserts it never gains one.
 - **Described for models.** Every tool states its preconditions, whether it mutates, what it costs
   and when to prefer a neighbouring tool.
-- **Seven tools.** The count is a design decision: every tool added costs tool-selection accuracy for
+- **Eight tools.** The count is a design decision: every tool added costs tool-selection accuracy for
   the ones already there.
 
 ## The tools
@@ -42,6 +42,7 @@ The *shape* is deliberately not the API's:
 | `logs_window` | no | A bounded log window (≤ 200 lines) for one application, optionally the lines before a container terminated, optionally filtered. Never follows. |
 | `deploy` | **yes**, unless `dry_run` (default `render`) | Renders, server-side dry-runs or deploys. With `dry_run="none"` it consumes the deploy stream to the settled outcome and returns that — never a stream. |
 | `rollback` | **yes**, when `execute=true` | Previews what a rollback cannot revert (unrecoverable findings flagged) plus the change counts; applies it on request. |
+| `promote_application` | **yes** (the *spec*, not the cluster), when `execute=true` | Pins one environment to the images another environment's latest deployed revision runs, and returns the resulting diff. Writes the spec store; deploys nothing. |
 | `put_spec` | **yes**, when `dry_run=false` | Validates a spec and returns structured errors (code, field, line, remediation); stores it on request, with optimistic concurrency on `version`. |
 | `wait_for_outcome` | no | Consumes the event stream and returns on the first terminal signal — Healthy, Rejected, a workload turning unhealthy, or the timeout. This is what makes "deploy, then react" cheap. |
 
@@ -138,8 +139,8 @@ because both are part of issue #73 and neither is implemented:
   ergonomic filter that would not be enforcing anything.
 
 What does exist today is the guardrail that matters most for an agent: every mutating tool defaults
-to a preview (`deploy` to `dry_run="render"`, `rollback` to `execute=false`, `put_spec` to
-`dry_run=true`), carries an idempotency key so a retry is not a second deployment, and reports
+to a preview (`deploy` to `dry_run="render"`, `rollback` and `promote_application` to
+`execute=false`, `put_spec` to `dry_run=true`), carries an idempotency key so a retry is not a second deployment, and reports
 failures as structured errors with a code an agent can branch on and a remediation it can act on.
 
 ## Where the code lives

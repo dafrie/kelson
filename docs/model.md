@@ -245,8 +245,45 @@ Three consequences worth stating before they surprise anyone:
   "production may only receive what staging ran", and no automatic promotion. The gate is wherever spec
   edits are already gated: pull request review in Flux mode, and `policy` when M7 lands.
 
-A `kelson promote` command, an API affordance and a UI action are porcelain over this field and are not
-implemented yet.
+### The porcelain
+
+Writing the pin by hand stays supported and is still the whole mechanism. `kelson promote` and the
+`Promote` RPC are the affordance over it, and they add no concept — they read, they write, they show
+the diff, and they stop before deploying.
+
+```sh
+kelson promote -f project.yaml -f staging.yaml -f production.yaml --from staging --to production
+```
+
+It prints what would be pinned and the rendered diff of the target environment, asks for confirmation
+(`--yes` skips the question, never the preview), writes the pins into the Environment document on disk
+and prints the follow-up: `kelson deploy … --env production`. `--dry-run` stops after the preview and
+`--component web` restricts the promotion to one component (repeatable). The write is byte-faithful:
+the document comes back with one image line changed per component and comments, blank lines and key
+order untouched.
+
+**The digest comes from the delivery history, not from the source environment's spec.** The images are
+read out of the manifests the source environment's *latest deployed revision* recorded — the deployed
+truth. Promoting the spec would move production to an image staging has not proven. Three consequences
+follow: promoting from an environment with nothing deployed is refused (`promote/nothing-deployed`), a
+component whose image the recorded revision does not carry is **skipped with a reason** and never
+guessed, and a component already pinned to what the source runs is reported as a no-op rather than
+rewritten.
+
+The server-side equivalent is `DeployService.Promote` — same decision, the cluster-backed history on
+one side and the spec store on the other, with `dry_run` and `idempotency_key` from the standard
+ladder and optimistic concurrency on the spec `version`. It returns the pins it wrote, the source
+revision they came from, and the resulting diff with the same `exit_semantics` `Diff` reports, so a
+caller needs no second call to find out what the promotion changes. Agents reach the same operation
+through the `promote_application` MCP tool ([docs/mcp.md](mcp.md)), which previews by default.
+
+Two refusals worth knowing before you meet them. Promotion reads a delivery mode's *rendered history*,
+so it works where that history exists — direct mode today — and says so plainly where it does not
+rather than falling back to a re-render. And an Environment document written in a shape the pin cannot
+be spliced into (a flow-style `components:` list) is refused with `promote/document-unwritable` rather
+than reformatted: rewriting the document would be a bigger change than the promotion.
+
+A UI action over the same RPC is not implemented yet.
 
 ## Identity: one ServiceAccount per component
 

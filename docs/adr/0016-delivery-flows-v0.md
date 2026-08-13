@@ -187,3 +187,15 @@ metrics available, instead of twice.
   porcelain over the pin and are deliberately out of this ADR's scope. If porcelain turns out to need
   state — an approval, an ordering, a record of who promoted what — that is a new decision, and it
   meets [Kargo](https://github.com/akuity/kargo) interop (#11) before it meets a new kelson object.
+
+  **Answered, and it needed no state.** `kelson promote`, `DeployService.Promote` and the
+  `promote_application` MCP tool landed as pure porcelain: they read the source environment's latest
+  revision from the delivery history, splice the pin into the target Environment document, show the
+  diff and stop. No promotion object, no approval, no provenance record — this decision's "promotion
+  keeps no record of its own" survives the verb intact. Two things the porcelain had to decide that
+  this ADR did not: the digest comes from the *recorded manifests* of the source's latest revision
+  rather than from its spec (promoting an intention would defeat the point), and a component the
+  revision does not carry is skipped with a reason rather than guessed. The write is a byte splice,
+  not a re-serialization, because [ADR-0013](0013-server-state-and-api-v0.md) §1's byte fidelity is a
+  promise about the user's document and a promotion may change one line of it. See
+  [docs/model.md](../model.md) "Promotion".
