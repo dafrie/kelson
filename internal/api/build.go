@@ -11,6 +11,7 @@ import (
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
 	"github.com/dafrie/kelson/internal/build"
 	"github.com/dafrie/kelson/internal/build/registry"
+	"github.com/dafrie/kelson/internal/redact"
 )
 
 // DefaultBuildTimeout is the budget one build gets, matching the CLI's
@@ -204,7 +205,22 @@ func runBuild(ctx context.Context, cancel context.CancelFunc, builder build.Buil
 
 	go func() {
 		defer close(chunks)
-		res, err := builder.Build(ctx, req, &chunkWriter{ctx: ctx, out: chunks})
+		// The scrub is here, on the server's side of the seam, so the guarantee
+		// holds for every build.Builder rather than for the one that remembers
+		// (issue #117). It wraps the chunker, not the stream, so a credential
+		// split across two of the executor's writes is still caught; a scrubber
+		// with nothing registered — the normal case under ADR-0009 — returns the
+		// chunker unchanged and costs nothing.
+		sink := &chunkWriter{ctx: ctx, out: chunks}
+		logs := redact.Registered().Writer(sink)
+		res, err := builder.Build(ctx, req, logs)
+		if flusher, ok := logs.(*redact.ScrubWriter); ok {
+			// The withheld tail is still owed to the client; a build's last line
+			// is often the one that says what went wrong.
+			if ferr := flusher.Flush(); ferr != nil && err == nil {
+				err = ferr
+			}
+		}
 		done <- outcome{res: res, err: err}
 	}()
 

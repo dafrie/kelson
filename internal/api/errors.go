@@ -10,6 +10,7 @@ import (
 	"github.com/dafrie/kelson/internal/build"
 	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/model"
+	"github.com/dafrie/kelson/internal/redact"
 	"github.com/dafrie/kelson/internal/renderer"
 	"github.com/dafrie/kelson/internal/serverstate"
 )
@@ -25,7 +26,37 @@ import (
 // returns nil for an error that carries no plane taxonomy, which is how the
 // callers distinguish "the request was answered with findings" from "the server
 // failed".
+//
+// Every structured error this package emits — inline findings, Settled events,
+// and the details ConnectRPC errors carry — is built here, which is why the
+// known-value scrub (issue #117) is applied at this one point rather than at
+// each of the several dozen call sites of fail/failRequest/specFindings. A
+// credential kelson has resolved is registered with internal/redact when it is
+// learned; from then on it cannot reach an error message, whichever plane
+// produced it. Per ADR-0009 kelson resolves almost nothing, so the scrub is
+// normally a no-op — it is the guarantee that matters, not the frequency.
 func wireErrors(err error) []*kelsonv1alpha1.Error {
+	return scrubErrors(planeErrors(err))
+}
+
+// scrubErrors runs the free-text fields of a structured error through the
+// process-wide known-value scrubber. Code, resource, field and docs URL are
+// left alone: they are vocabulary, and an agent branches on them.
+func scrubErrors(errs []*kelsonv1alpha1.Error) []*kelsonv1alpha1.Error {
+	for _, e := range errs {
+		if e == nil {
+			continue
+		}
+		e.Message = redact.Scrub(e.Message)
+		e.Remediation = redact.Scrub(e.Remediation)
+		e.Cause = redact.Scrub(e.Cause)
+	}
+	return errs
+}
+
+// planeErrors is the taxonomy projection itself: which plane owns this error,
+// and which subset of the wire Error it fills.
+func planeErrors(err error) []*kelsonv1alpha1.Error {
 	if err == nil {
 		return nil
 	}
@@ -153,7 +184,7 @@ func fromStore(e serverstate.Error) *kelsonv1alpha1.Error {
 // carries as an error detail. A client that speaks the taxonomy reads the
 // details; one that does not still gets the message.
 func fail(code connect.Code, err error) *connect.Error {
-	cerr := connect.NewError(code, err)
+	cerr := connect.NewError(code, scrubbed{err: err})
 	for _, wire := range wireErrors(err) {
 		detail, derr := connect.NewErrorDetail(wire)
 		if derr != nil {
@@ -183,6 +214,16 @@ func failStore(err error) error {
 		return nil
 	}
 }
+
+// scrubbed is the free-text half of a ConnectRPC error passing through the
+// known-value scrubber on its way to the client (issue #117). It wraps rather
+// than replaces so errors.As still reaches the plane error underneath — the
+// taxonomy travels in the details, and losing the chain to protect the prose
+// would trade one contract for another.
+type scrubbed struct{ err error }
+
+func (e scrubbed) Error() string { return redact.Scrub(e.err.Error()) }
+func (e scrubbed) Unwrap() error { return e.err }
 
 // unavailableError marks a failure of the server's own dependencies — an
 // unreachable cluster, an adapter that could not be built — as opposed to a
