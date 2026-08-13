@@ -1,4 +1,12 @@
-import { useCallback, useId, useMemo, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { Link } from "react-router-dom";
 
 import { useClients } from "../api/data";
@@ -6,6 +14,11 @@ import { isVersionConflict } from "../api/errors";
 import { useRun } from "../api/stream";
 import { DryRun } from "../gen/kelson/v1alpha1/common_pb";
 import type { Error as WireError } from "../gen/kelson/v1alpha1/common_pb";
+import type {
+  BuildResponse_Finished,
+  BuildResponse_Started,
+} from "../gen/kelson/v1alpha1/build_pb";
+import { Copyable } from "../components/Copyable";
 import { Disclosure, YamlBlock } from "../components/Disclosure";
 import { ErrorPanel } from "../components/ErrorPanel";
 import { StatusPill } from "../components/StatusPill";
@@ -15,14 +28,33 @@ import {
   EMPTY_FORM,
   formProblems,
   mapErrors,
+  splitFindings,
   workloadKind,
   type FieldKey,
   type NewAppForm,
+  type SourceMode,
   type SpecText,
 } from "../spec/documents";
 
 /**
  * Creating a component: three fields, then a preview, then a store.
+ *
+ * # Two sources, one form
+ *
+ * A component's image either exists already or has to be built (#63). "From
+ * image" is three fields and stays the default because it is the shorter path
+ * to something running. "From Git repository" writes `source:` and `build:`
+ * instead of `image:`, and unlocks a build step after the create.
+ *
+ * The registry and the push credential are *not* asked for. They are the
+ * server's configuration (`kelson-server --registry`, `--push-secret`,
+ * docs/build.md) for the reason ADR-0010 gives: where an image is pushed is
+ * infrastructure, and the same Project must build against a team's ghcr.io and
+ * a kind cluster's localhost:5000. Asking each creator would put an operator's
+ * decision on a developer's first screen.
+ *
+ * The build strategy is not asked for either, and that one is a limitation
+ * rather than a principle — see BUILD_STRATEGY in ../spec/documents.
  *
  * The bar this screen is held to (#63) is that a developer who has never seen
  * kelson deploys something without reading anything. So what is *present* is a
@@ -60,11 +92,17 @@ interface Checked {
   documents: SpecText;
   /** Minted once per checked document set, so pressing Create twice replays. */
   idempotencyKey: string;
+  /**
+   * Findings that are true and expected rather than wrong — for a source-built
+   * project, `image/unresolved` (see splitFindings). Shown, never hidden.
+   */
+  expected: readonly WireError[];
 }
 
 interface Created {
   project: string;
   environment: string;
+  buildsFromSource: boolean;
 }
 
 export function NewAppPage() {
@@ -121,10 +159,14 @@ export function NewAppPage() {
         { documents: specDocuments(documents), dryRun: DryRun.RENDER },
         { signal },
       );
-      setWire(res.errors);
+      const { blocking, expected } = splitFindings(
+        res.errors,
+        documents.buildsFromSource,
+      );
+      setWire(blocking);
       setChecked(
-        res.errors.length === 0
-          ? { documents, idempotencyKey: crypto.randomUUID() }
+        blocking.length === 0
+          ? { documents, idempotencyKey: crypto.randomUUID(), expected }
           : undefined,
       );
     });
@@ -143,6 +185,7 @@ export function NewAppPage() {
       setCreated({
         project: checked.documents.projectName,
         environment: checked.documents.environmentName,
+        buildsFromSource: checked.documents.buildsFromSource,
       });
     });
   }, [checked, clients, store]);
@@ -161,7 +204,11 @@ export function NewAppPage() {
       <div className="k-page-sub">
         <Link to="/apps">← all apps</Link>
         <span>·</span>
-        <span>a name, an image, a port</span>
+        <span>
+          {form.sourceMode === "git"
+            ? "a name, a repository, a port"
+            : "a name, an image, a port"}
+        </span>
       </div>
 
       <form
@@ -171,6 +218,11 @@ export function NewAppPage() {
           validate();
         }}
       >
+        <SourceToggle
+          mode={form.sourceMode}
+          onChange={(mode) => update("sourceMode", mode)}
+        />
+
         <div className="k-panel k-new__row">
           <Field
             label="Project name"
@@ -192,15 +244,39 @@ export function NewAppPage() {
             ) : null}
           </Field>
 
-          <Field
-            label="Image"
-            value={form.image}
-            onChange={(v) => update("image", v, "image")}
-            placeholder="ghcr.io/acme/hello:1.4.2"
-            problem={problemFor("image")}
-            errors={errorsFor("image")}
-            note="a pre-built image reference; building from source is not wired yet"
-          />
+          {form.sourceMode === "image" ? (
+            <Field
+              label="Image"
+              value={form.image}
+              onChange={(v) => update("image", v, "image")}
+              placeholder="ghcr.io/acme/hello:1.4.2"
+              problem={problemFor("image")}
+              errors={errorsFor("image")}
+              note="a pre-built image reference — a tag works, a digest is reproducible"
+            />
+          ) : (
+            <>
+              <Field
+                label="Git repository"
+                value={form.git}
+                onChange={(v) => update("git", v, "git")}
+                placeholder="https://github.com/acme/hello"
+                problem={problemFor("git")}
+                errors={errorsFor("git")}
+                note="cloned inside the cluster at build time; a private repository needs the server's git credential"
+              />
+              <Field
+                label="Ref"
+                narrow
+                value={form.ref}
+                onChange={(v) => update("ref", v, "ref")}
+                placeholder="main"
+                problem={problemFor("ref")}
+                errors={errorsFor("ref")}
+                note="branch, tag or commit — empty leaves it out, which means the repository's default branch"
+              />
+            </>
+          )}
 
           <Field
             label="Port"
@@ -355,6 +431,7 @@ export function NewAppPage() {
       {checked !== undefined ? (
         <Preview
           documents={checked.documents}
+          expected={checked.expected}
           running={store.running}
           onCreate={createIt}
           error={taken ? undefined : store.error}
@@ -596,13 +673,60 @@ function EnvRows({
  * normalized re-serialisation of it, and this screen is where the user first
  * meets the file they now own.
  */
+/**
+ * The source of the image, as a choice rather than a mode nobody can see.
+ *
+ * Radios and not a segmented control or a select: there are two options, both
+ * fit on the line, and which one is active decides which fields exist below —
+ * that is exactly the case a radio group already communicates to a screen
+ * reader without any help.
+ */
+function SourceToggle({
+  mode,
+  onChange,
+}: {
+  mode: SourceMode;
+  onChange: (mode: SourceMode) => void;
+}) {
+  return (
+    <fieldset className="k-panel k-new__source">
+      <legend className="k-eyebrow">Where the image comes from</legend>
+      <label className="k-check k-mono">
+        <input
+          type="radio"
+          name="source-mode"
+          checked={mode === "image"}
+          onChange={() => onChange("image")}
+        />
+        From image
+      </label>
+      <label className="k-check k-mono">
+        <input
+          type="radio"
+          name="source-mode"
+          checked={mode === "git"}
+          onChange={() => onChange("git")}
+        />
+        From Git repository
+      </label>
+      <span className="k-field__note k-mono">
+        {mode === "git"
+          ? "kelson builds it in the cluster with rootless BuildKit and pushes to the server's registry — the strategy is `dockerfile`, so the repository needs a Dockerfile at its root"
+          : "an image someone or something else already built and pushed"}
+      </span>
+    </fieldset>
+  );
+}
+
 function Preview({
   documents,
+  expected,
   running,
   onCreate,
   error,
 }: {
   documents: SpecText;
+  expected: readonly WireError[];
   running: boolean;
   onCreate: () => void;
   error: unknown;
@@ -624,6 +748,24 @@ function Preview({
         >
           <YamlBlock bytes={documents.environment} />
         </Disclosure>
+
+        {expected.length > 0 ? (
+          <div className="k-new__expected" role="note">
+            <span className="k-new__expected-title">
+              The check could not render this yet, and that is expected
+            </span>
+            {expected.map((e, i) => (
+              <span className="k-mono" key={`${e.code}:${i}`}>
+                <code className="k-field__code">{e.code}</code> {e.message}
+              </span>
+            ))}
+            <span className="k-mono">
+              storing a spec does not render it, so this create succeeds — the
+              image arrives when a build produces one, which is the next step
+              after Create.
+            </span>
+          </div>
+        ) : null}
 
         {error !== undefined ? (
           <ErrorPanel title="Could not store the spec" error={error} />
@@ -650,6 +792,7 @@ function Preview({
 
 function Stored({ created }: { created: Created }) {
   const base = `/apps/${encodeURIComponent(created.project)}`;
+  const deploy = `${base}/${encodeURIComponent(created.environment)}/deploy`;
   return (
     <>
       <div className="k-page-head">
@@ -667,21 +810,180 @@ function Stored({ created }: { created: Created }) {
           <span className="k-settled__title">The spec is stored</span>
         </div>
         <span className="k-mono">
-          nothing has been applied to a cluster yet — deploying is the next,
-          separate step
+          {created.buildsFromSource
+            ? "nothing has been built and nothing has been applied to a cluster — building comes first, because this project has no image until a build produces one"
+            : "nothing has been applied to a cluster yet — deploying is the next, separate step"}
         </span>
         <div className="k-actions">
-          <Link
-            className="k-button k-button--primary"
-            to={`${base}/${encodeURIComponent(created.environment)}/deploy`}
-          >
-            Deploy now
-          </Link>
+          {created.buildsFromSource ? null : (
+            <Link className="k-button k-button--primary" to={deploy}>
+              Deploy now
+            </Link>
+          )}
           <Link className="k-button" to={base}>
             View app
           </Link>
         </div>
       </div>
+
+      {created.buildsFromSource ? (
+        <BuildAndDeploy created={created} deployPath={deploy} />
+      ) : null}
     </>
+  );
+}
+
+/**
+ * The build, watched.
+ *
+ * BuildService.Build streams `Started` (the resolved strategy, the destination
+ * and the commit — all settled facts by the time it is sent), then the build's
+ * own output as raw byte chunks, then `Finished` with a digest-pinned
+ * reference. A failure is a ConnectRPC error rather than an event, because a
+ * failed build produced no image; it renders in the same error panel every
+ * other structured failure does, so the `build/*` code reaches the reader.
+ *
+ * Finishing does not navigate on its own. It offers the deploy with the built
+ * reference attached, which is the same separation the create step makes:
+ * building an image and applying it to a cluster are different acts with
+ * different blast radii, and auto-navigating would also throw away the log
+ * someone may be reading.
+ */
+function BuildAndDeploy({
+  created,
+  deployPath,
+}: {
+  created: Created;
+  deployPath: string;
+}) {
+  const clients = useClients();
+  const run = useRun();
+  const [started, setStarted] = useState<BuildResponse_Started | undefined>(undefined);
+  const [finished, setFinished] = useState<BuildResponse_Finished | undefined>(undefined);
+  const [log, setLog] = useState("");
+  const [pinned, setPinned] = useState(true);
+  const box = useRef<HTMLDivElement | null>(null);
+
+  // Auto-scroll only while the reader is at the bottom, exactly as the log
+  // screen does: scrolling up is how someone reads a line that went past, and
+  // yanking them back down on the next chunk makes a live tail unreadable.
+  useEffect(() => {
+    const el = box.current;
+    if (el && pinned) el.scrollTop = el.scrollHeight;
+  }, [log, pinned]);
+
+  const onScroll = useCallback(() => {
+    const el = box.current;
+    if (!el) return;
+    setPinned(el.scrollHeight - el.scrollTop - el.clientHeight < 24);
+  }, []);
+
+  const build = useCallback(() => {
+    setStarted(undefined);
+    setFinished(undefined);
+    setLog("");
+    setPinned(true);
+    run.start(async (signal) => {
+      // One decoder for the whole stream: a chunk boundary is a transport
+      // boundary and may fall inside a multi-byte character, which is what
+      // `stream: true` carries across calls. Decoding each chunk on its own
+      // would put replacement characters in the log.
+      const decoder = new TextDecoder();
+      for await (const res of clients.build.build(
+        {
+          spec: { spec: { case: "project", value: created.project } },
+          environment: created.environment,
+        },
+        { signal },
+      )) {
+        const event = res.event;
+        switch (event.case) {
+          case "started":
+            setStarted(event.value);
+            break;
+          case "log":
+            setLog((prev) => prev + decoder.decode(event.value.chunk, { stream: true }));
+            break;
+          case "finished":
+            setFinished(event.value);
+            break;
+        }
+      }
+    });
+  }, [run, clients, created]);
+
+  return (
+    <section className="k-section">
+      <div className="k-eyebrow">Build the image</div>
+      <div className="k-section__body">
+        <div className="k-deploy__confirm">
+          <button
+            type="button"
+            className="k-button k-button--primary k-button--wide"
+            onClick={build}
+            disabled={run.running}
+          >
+            {run.running ? "Building…" : `Build ${created.project}`}
+          </button>
+          {run.running ? (
+            <button type="button" className="k-button" onClick={run.stop}>
+              Stop watching
+            </button>
+          ) : null}
+          <span className="k-mono k-deploy__note">
+            a rootless BuildKit Job in the cluster · the registry and the push
+            credential are the server's configuration, not this form's · stopping
+            stops the watching, not the Job
+          </span>
+        </div>
+
+        {started !== undefined ? (
+          <div className="k-panel k-kv">
+            <span className="k-kv__key">strategy</span>
+            <span className="k-mono">{started.strategy}</span>
+            <span className="k-kv__key">repository</span>
+            <span className="k-mono">{started.imageRepository}</span>
+            <span className="k-kv__key">tag</span>
+            <span className="k-mono">{started.tag}</span>
+            <span className="k-kv__key">revision</span>
+            <span className="k-mono">{started.revision}</span>
+          </div>
+        ) : null}
+
+        {log !== "" ? (
+          <div className="k-build__box" ref={box} onScroll={onScroll} role="log">
+            <pre className="k-build__log">{log}</pre>
+          </div>
+        ) : null}
+
+        {run.error !== undefined ? (
+          <ErrorPanel title="The build failed" error={run.error} />
+        ) : null}
+
+        {finished !== undefined ? (
+          <div className="k-settled" role="status">
+            <div className="k-settled__head">
+              <StatusPill status="synced" label="built" />
+              <span className="k-settled__title">The image is pushed</span>
+            </div>
+            <span className="k-mono">
+              <Copyable value={finished.reference} />
+            </span>
+            <span className="k-mono">
+              pinned by digest, so the deploy below and any repeat of it get the
+              same bytes
+            </span>
+            <div className="k-actions">
+              <Link
+                className="k-button k-button--primary"
+                to={`${deployPath}?image=${encodeURIComponent(finished.reference)}`}
+              >
+                Deploy this image
+              </Link>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </section>
   );
 }

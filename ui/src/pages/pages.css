@@ -424,6 +424,17 @@
   max-width: 62ch;
 }
 
+/* The ?image= override, stated before the deploy rather than inside it: the
+   reader must not have to infer that this renders something other than what
+   the stored spec says. */
+.k-deploy__image {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 18px;
+  overflow-wrap: anywhere;
+}
+
 .k-stream {
   display: flex;
   flex-direction: column;
@@ -578,6 +589,73 @@
   margin: 0;
   max-width: 72ch;
   color: var(--kelson-muted-deep);
+}
+
+/* The source-mode choice: two radios and the sentence explaining the one that
+   is selected. No fieldset chrome — the panel already is the box. */
+.k-new__source {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 18px;
+  border: 1px solid var(--kelson-border);
+  margin-bottom: 18px;
+}
+
+.k-new__source legend {
+  padding: 0;
+}
+
+.k-new__source .k-field__note {
+  flex-basis: 100%;
+  max-width: 78ch;
+}
+
+/* A finding that is true and expected rather than wrong (image/unresolved on a
+   project that has not been built yet). Deliberately not the failure colour:
+   it is information, and colouring it red would teach the reader to distrust
+   the colour when something really is broken. */
+.k-new__expected {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 18px;
+  border: 1px solid var(--kelson-border);
+  border-radius: 6px;
+  background: var(--kelson-panel-dim);
+  color: var(--kelson-muted-2);
+}
+
+.k-new__expected-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--kelson-text-2);
+}
+
+/* The build log's box. It is a near-twin of the log screen's .k-logs__box and
+   deliberately not a reuse of it: that one belongs to LogsPage.css, which this
+   page does not import, and borrowing a class across a stylesheet boundary is
+   how a rule disappears the day someone lazy-loads the other screen. */
+.k-build__box {
+  max-height: 420px;
+  overflow: auto;
+  margin-bottom: 18px;
+  padding: 14px 16px;
+  background: var(--kelson-panel-dim);
+  border: 1px solid var(--kelson-border);
+  border-radius: 6px;
+  font-family: var(--kelson-font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* Build output is bytes, not lines: it keeps its own newlines and wraps rather
+   than scrolling sideways. */
+.k-build__log {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--kelson-code);
 }
 
 /* A problem the reader must act on, in the colour failures already use. */

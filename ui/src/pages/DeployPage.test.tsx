@@ -8,6 +8,7 @@ import {
   DeployResponseSchema,
   DeployService,
 } from "../gen/kelson/v1alpha1/deploy_pb";
+import type { DeployRequest } from "../gen/kelson/v1alpha1/deploy_pb";
 import { renderAt } from "../test/render";
 import { DeployPage } from "./DeployPage";
 
@@ -23,10 +24,11 @@ import { DeployPage } from "./DeployPage";
 
 const yaml = (text: string) => new TextEncoder().encode(text);
 
-function transportFor(events: () => AsyncIterable<unknown>) {
+function transportFor(events: () => AsyncIterable<unknown>, seen?: DeployRequest[]) {
   return createRouterTransport((router) => {
     router.service(DeployService, {
       deploy: async function* (req) {
+        seen?.push(req);
         if (req.dryRun === DryRun.RENDER) {
           yield create(DeployResponseSchema, {
             event: {
@@ -104,10 +106,13 @@ async function* unhealthyDeploy() {
   });
 }
 
-function renderDeploy(events: () => AsyncIterable<unknown>) {
+function renderDeploy(
+  events: () => AsyncIterable<unknown>,
+  opts: { search?: string; seen?: DeployRequest[] } = {},
+) {
   return renderAt(
-    transportFor(events),
-    "/apps/checkout/production/deploy",
+    transportFor(events, opts.seen),
+    "/apps/checkout/production/deploy" + (opts.search ?? ""),
     "/apps/:project/:env/deploy",
     <DeployPage />,
   );
@@ -185,5 +190,39 @@ describe("DeployPage", () => {
     expect(await screen.findByText("Deployment settled")).toBeTruthy();
     expect(screen.getByText("healthy", { selector: ".k-pill" })).toBeTruthy();
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  // ?image= is how the build screen hands a freshly built reference over
+  // (#63). It is DeployRequest.image — the same field the CLI's --image fills —
+  // and it is what lets a project that builds from source be deployed at all.
+  it("carries an image override into both the preview and the deploy", async () => {
+    const image = "ghcr.io/acme/checkout@sha256:" + "b".repeat(64);
+    const seen: DeployRequest[] = [];
+    renderDeploy(
+      async function* () {
+        yield create(DeployResponseSchema, {
+          event: { case: "committed", value: { revision: "rev-11", adapter: "direct" } },
+        });
+        yield create(DeployResponseSchema, {
+          event: { case: "settled", value: { final: { phase: "Healthy", answer: "live" } } },
+        });
+      },
+      { search: `?image=${encodeURIComponent(image)}`, seen },
+    );
+
+    // Shown, because deploying something other than what the spec says is not
+    // a fact the reader should have to infer.
+    expect(await screen.findByText("Image override")).toBeTruthy();
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Apply 2 resources to checkout/production",
+      }),
+    );
+    await screen.findByText("Deployment settled");
+
+    // Both calls carry it: a preview that rendered a different image would be
+    // a preview of something else.
+    expect(seen.map((req) => req.image)).toEqual([image, image]);
   });
 });
