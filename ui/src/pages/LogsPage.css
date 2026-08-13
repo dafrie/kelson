@@ -33,12 +33,142 @@
   flex: none;
 }
 
+/* Replica identity. The colour is derived from the pod's name (src/logs/filter
+   .ts, podTone) so the same replica is the same colour from one glance to the
+   next; the name is still printed, because eight tones over an arbitrary number
+   of pods collide and a colour alone would then be a lie. */
 .k-logline__pod {
   color: var(--kelson-muted-2);
 }
 
+.k-logline__pod[data-tone="1"],
+.k-logs__pod[data-tone="1"] {
+  color: var(--kelson-pod-1);
+}
+
+.k-logline__pod[data-tone="2"],
+.k-logs__pod[data-tone="2"] {
+  color: var(--kelson-pod-2);
+}
+
+.k-logline__pod[data-tone="3"],
+.k-logs__pod[data-tone="3"] {
+  color: var(--kelson-pod-3);
+}
+
+.k-logline__pod[data-tone="4"],
+.k-logs__pod[data-tone="4"] {
+  color: var(--kelson-pod-4);
+}
+
+.k-logline__pod[data-tone="5"],
+.k-logs__pod[data-tone="5"] {
+  color: var(--kelson-pod-5);
+}
+
+.k-logline__pod[data-tone="6"],
+.k-logs__pod[data-tone="6"] {
+  color: var(--kelson-pod-6);
+}
+
+.k-logline__pod[data-tone="7"],
+.k-logs__pod[data-tone="7"] {
+  color: var(--kelson-pod-7);
+}
+
+.k-logline__pod[data-tone="8"],
+.k-logs__pod[data-tone="8"] {
+  color: var(--kelson-pod-8);
+}
+
 .k-logline__message {
   color: var(--kelson-code);
+}
+
+/* A search hit. `mark` carries the browser's own yellow, which belongs to
+   neither theme, so both halves of it are token-driven here. */
+.k-logs__hit {
+  background: var(--kelson-hit-fill);
+  color: var(--kelson-hit-text);
+  border-radius: 2px;
+}
+
+.k-logs__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.k-logs__pods,
+.k-logs__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* A pod filter is a toggle, so it looks like one: unpressed is an outline,
+   pressed is filled. Nothing here says "selected" with colour alone. */
+.k-logs__pod {
+  padding: 3px 9px;
+  font-size: 11.5px;
+  background: none;
+  border: 1px solid var(--kelson-border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.k-logs__pod:hover {
+  border-color: var(--kelson-border-hover);
+}
+
+.k-logs__pod[aria-pressed="true"] {
+  background: var(--kelson-inset);
+  border-color: var(--kelson-border-hover);
+}
+
+.k-logs__pod[aria-pressed="true"]::before {
+  content: "✓ ";
+}
+
+.k-logs__pod--all {
+  color: var(--kelson-muted);
+}
+
+.k-logs__note {
+  margin: 0 0 10px;
+  font-size: 11.5px;
+  color: var(--kelson-muted-deep);
+}
+
+.k-logs__invalid {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: var(--kelson-failed);
+}
+
+/* The resume pill. It is the one control that reports a number, so it is a
+   button rather than a banner with a button in it: the count and the action
+   are the same thing. */
+.k-logs__resume {
+  display: block;
+  width: 100%;
+  margin-bottom: 8px;
+  padding: 9px 14px;
+  background: var(--kelson-reconciling-fill);
+  border: 1px solid var(--kelson-reconciling-border);
+  border-radius: 6px;
+  font-family: var(--kelson-font-mono);
+  font-size: 12px;
+  color: var(--kelson-reconciling);
+  cursor: pointer;
+}
+
+.k-logs__resume:hover {
+  border-color: var(--kelson-reconciling);
 }
 
 .k-logs__dropped {

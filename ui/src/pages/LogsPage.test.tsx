@@ -70,34 +70,91 @@ function routes(router: Parameters<Parameters<typeof createRouterTransport>[0]>[
   });
 
   router.service(LogService, {
+    // A stream that ends is a server that went away, so the screen reconnects
+    // and asks for the gap. Every follow fixture here needs an answer to that.
+    queryLogs: () => ({ lines: [] }),
     followLogs: async function* () {
-      yield create(FollowLogsResponseSchema, {
-        event: {
-          case: "line",
-          value: {
-            timestampUnixMs: 1_700_000_000_000n,
-            pod: "web-6c9",
-            container: "web",
-            message: "listening on :8080",
-          },
-        },
-      });
+      yield lineEvent(1_700_000_000_000n, "listening on :8080");
       yield create(FollowLogsResponseSchema, {
         event: { case: "dropped", value: 12n },
       });
-      yield create(FollowLogsResponseSchema, {
-        event: {
-          case: "line",
-          value: {
-            timestampUnixMs: 0n,
-            pod: "web-6c9",
-            container: "web",
-            message: "a line the engine could not timestamp",
-          },
-        },
-      });
+      yield lineEvent(0n, "a line the engine could not timestamp");
     },
   });
+}
+
+function lineEvent(timestampUnixMs: bigint, message: string, pod = "web-6c9") {
+  return create(FollowLogsResponseSchema, {
+    event: {
+      case: "line",
+      value: { timestampUnixMs, pod, container: "web", message },
+    },
+  });
+}
+
+/** A follow whose second half is released by the test, not by the clock. */
+function gatedTransport() {
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const transport = createRouterTransport((router) => {
+    router.service(DeployService, {
+      status: () => ({ phase: "healthy", namespace: "checkout-production" }),
+    });
+    routes(router);
+    router.service(LogService, {
+      queryLogs: () => ({ lines: [] }),
+      followLogs: async function* () {
+        yield lineEvent(1_000n, "before the pause");
+        await held;
+        yield lineEvent(2_000n, "while paused");
+        // Stay open: pausing must not be a reason for the stream to end, and a
+        // stream that ended would send the screen into its reconnect loop.
+        await new Promise<void>(() => {});
+      },
+    });
+  });
+  return { transport, release: () => release() };
+}
+
+/**
+ * A follow that drops after one line, and a Query that answers the gap with
+ * that line plus the ones missed. The second follow replays from the resume
+ * point too — both overlaps are the reconnect's real shape.
+ */
+function droppingTransport() {
+  const queries: { tail: number; since: bigint }[] = [];
+  let follows = 0;
+  const transport = createRouterTransport((router) => {
+    router.service(DeployService, {
+      status: () => ({ phase: "healthy", namespace: "checkout-production" }),
+    });
+    routes(router);
+    router.service(LogService, {
+      queryLogs: (req) => {
+        queries.push({ tail: req.tail, since: req.sinceUnixMs });
+        return {
+          lines: [
+            { timestampUnixMs: 1_000n, pod: "web-6c9", container: "web", message: "one" },
+            { timestampUnixMs: 2_000n, pod: "web-6c9", container: "web", message: "two" },
+          ],
+        };
+      },
+      followLogs: async function* () {
+        follows += 1;
+        if (follows === 1) {
+          yield lineEvent(1_000n, "one");
+          throw new ConnectError("connection reset", Code.Unavailable);
+        }
+        yield lineEvent(1_000n, "one");
+        yield lineEvent(2_000n, "two");
+        yield lineEvent(3_000n, "three");
+        await new Promise<void>(() => {});
+      },
+    });
+  });
+  return { transport, queries };
 }
 
 function renderLogs(t: Transport = transport) {
@@ -198,5 +255,97 @@ describe("LogsPage", () => {
     expect(
       screen.getByText(/this gap is loss, not\s+silence/),
     ).toBeTruthy();
+  });
+
+  it("filters the retained lines as you type, and marks the hits", async () => {
+    renderLogs();
+    fireEvent.click(screen.getByRole("button", { name: "Follow" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start following" }));
+    expect(await screen.findByText("listening on :8080")).toBeTruthy();
+    expect(
+      await screen.findByText("a line the engine could not timestamp"),
+    ).toBeTruthy();
+
+    // Client-side and instant: the query is not sent upstream, so it applies to
+    // lines that already arrived and clearing it brings them back.
+    fireEvent.change(screen.getByLabelText("Find in the retained lines"), {
+      target: { value: "listening" },
+    });
+    await waitFor(() =>
+      expect(screen.queryByText("a line the engine could not timestamp")).toBeNull(),
+    );
+    expect(screen.getByText("listening").tagName).toBe("MARK");
+    expect(screen.getByText(/1 of 2 retained lines shown/)).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText("Find in the retained lines"), {
+      target: { value: "" },
+    });
+    expect(
+      await screen.findByText("a line the engine could not timestamp"),
+    ).toBeTruthy();
+  });
+
+  // Pause buffers. It does not drop the lines and it does not close the stream:
+  // both would make "pause" mean "lose what happens while you read".
+  it("holds new lines while paused and releases them on resume", async () => {
+    const { transport: t, release } = gatedTransport();
+    renderLogs(t);
+    fireEvent.click(screen.getByRole("button", { name: "Follow" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start following" }));
+    expect(await screen.findByText("before the pause")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Pause" }));
+    release();
+
+    const pill = await screen.findByRole("button", { name: /1 new line/ });
+    expect(screen.queryByText("while paused")).toBeNull();
+    // The line is held, not lost — and the stream was never torn down, so
+    // stopping is still the only thing that ends it.
+    expect(screen.getByRole("button", { name: "Stop following" })).toBeTruthy();
+
+    fireEvent.click(pill);
+    expect(await screen.findByText("while paused")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /new line/ })).toBeNull();
+  });
+
+  it("reconnects, backfills the gap and shows nothing twice", async () => {
+    const { transport: t, queries } = droppingTransport();
+    renderLogs(t);
+    fireEvent.click(screen.getByRole("button", { name: "Follow" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start following" }));
+    expect(await screen.findByText("one")).toBeTruthy();
+
+    // The backoff is a second, so this waits for a real one.
+    expect(await screen.findByText("three", undefined, { timeout: 5_000 })).toBeTruthy();
+
+    // The gap was asked for as a bounded query from the last instant seen…
+    expect(queries).toHaveLength(1);
+    expect(queries[0]?.since).toBe(1_000n);
+    expect(queries[0]?.tail).toBeGreaterThan(0);
+    // …and neither the query's overlap nor the new follow's replay doubled.
+    expect(screen.getAllByText("one")).toHaveLength(1);
+    expect(screen.getAllByText("two")).toHaveLength(1);
+    expect(screen.getByText(/3 lines retained/)).toBeTruthy();
+  }, 10_000);
+
+  it("stops rather than retrying when the server cannot follow at all", async () => {
+    const t = createRouterTransport((router) => {
+      router.service(DeployService, {
+        status: () => ({ phase: "healthy", namespace: "checkout-production" }),
+      });
+      routes(router);
+      router.service(LogService, {
+        followLogs: async function* () {
+          throw new ConnectError("log following", Code.Unimplemented);
+        },
+      });
+    });
+    renderLogs(t);
+    fireEvent.click(screen.getByRole("button", { name: "Follow" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start following" }));
+
+    expect(await screen.findByText("The log stream failed")).toBeTruthy();
+    // The reason replaces the stream, rather than a spinner hiding it.
+    expect(screen.getByRole("button", { name: "Start following" })).toBeTruthy();
   });
 });

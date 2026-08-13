@@ -75,7 +75,7 @@ a deploy or a log tail is a link that keeps working.
 | `/apps/:project/edit` | Edit the stored spec: a form tab and a raw YAML tab, a diff before saving, an optimistic-concurrency save | `GetSpec`, `PutSpec` at `RENDER` then for real, `Diff` |
 | `/apps/:project/:env/deploy` | Preview (render dry-run) then a confirm that streams the deployment live | `Deploy` at `RENDER`, then at `NONE`; optional `Diff` at `SERVER` |
 | `/apps/:project/:env/diff` | The live cluster's own dry-run verdict, rendered from `diff_json` | `Diff` at `SERVER` |
-| `/apps/:project/:env/logs` | Bounded Query and unbounded Follow, with a dropped-lines banner | `QueryLogs`, `FollowLogs` |
+| `/apps/:project/:env/logs` | Bounded Query, and a live tail that pauses, filters, reconnects and saves | `QueryLogs`, `FollowLogs` |
 | `/apps/:project/:env/rollback` | Revision picker, irreversibility preview, then the apply | `History`, `Rollback` at `RENDER` then `NONE` |
 | `/cluster` | Server build and the detected ClusterProfile | `/healthz`, `GetProfile` |
 
@@ -111,6 +111,53 @@ Five things the screens are deliberate about:
   progressive disclosure is the whole design (docs/model.md's own target
   shape), and the named failure mode is a first screen that asks forty
   questions to deploy one container.
+
+## The live log tail
+
+`src/logs/` is the machinery behind Follow mode ([#64](https://github.com/dafrie/kelson/issues/64)),
+kept out of the component so the parts that are only logic can be tested as
+logic. Five decisions:
+
+- **The tail is a capped window, and it says so.** `LogBuffer` retains ten
+  thousand lines in constant memory; past that the oldest are evicted and the
+  count of what left is on screen, because a view that silently forgets is a
+  view that lies. A second, smaller cap bounds what is in the *DOM* — ten
+  thousand log rows is a layout cost no amount of batching makes free, and
+  "remains responsive at high volume" is the issue's acceptance criterion. Copy,
+  download and the filter read the buffer, not the DOM.
+- **Lines are batched into frames.** Every event lands in a queue that one
+  `requestAnimationFrame` drains, so a thousand lines a second is still one
+  re-render per frame. The buffers are refs; a version counter is what tells
+  React something changed. Making them state would copy the whole window on
+  every batch, which is the cost the cap exists to avoid.
+- **Pause buffers. It does not drop, and it does not close the stream.**
+  Closing would make "pause" mean "lose whatever happens while you read the line
+  you paused for"; dropping would mean the same thing while looking like it
+  didn't. The arriving lines go to a second capped buffer and the pill says how
+  many are waiting.
+- **A dropped stream reconnects and fills its own gap.** The screen remembers
+  the newest timestamp it saw, backfills with a bounded `QueryLogs` from that
+  instant, then re-follows from it, with capped exponential backoff. Both ends
+  replay the boundary instant — `since` is inclusive, and excluding it would
+  lose every line sharing the last millisecond — so `GapGate` suppresses the
+  overlap as a multiset of the keys already retained. A `LogLine` has no ID, so
+  the key is the whole of it (timestamp, pod, container, message) and the two
+  honest limits are written down where it is defined. Only the answers a second
+  identical request cannot change (`Unimplemented`, `InvalidArgument`, a missing
+  namespace, an expired session) stop the loop; those become the error panel
+  instead of a permanent "reconnecting…".
+- **The find box is client-side, unlike Query's.** A `LogMatch` sent upstream
+  restarts the stream and discards non-matching lines permanently, so clearing
+  the box later shows a gap rather than the lines that were always there.
+  Filtering the retained buffer is instant, reversible, and applies to what has
+  already arrived. It is therefore a find-in-page and case-insensitive; the
+  case-sensitive contract is the server's, and bounded Query still sends it.
+
+Pod attribution comes from `LogLine.pod`, which the merged stream fills in per
+replica. The label's colour is hashed from the pod name into eight tokens
+(`--kelson-pod-1` … `-8`, both themes) so a replica keeps its colour between
+glances, and the name is always printed beside it — eight tones over an
+arbitrary number of pods collide, and a colour alone would then be a lie.
 
 ## Building spec documents in the browser
 

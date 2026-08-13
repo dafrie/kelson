@@ -121,6 +121,27 @@
   --kelson-suspended-fill: #151b22;
   --kelson-suspended-border: #232d38;
 
+  /* A search hit inside a log line. Its own pair rather than a borrowed status
+     one: "this is what you typed" is not "this is degraded", and a reader
+     scanning a tail for amber pills must not find them inside the text. */
+  --kelson-hit-fill: #3b2f10;
+  --kelson-hit-text: #f3d089;
+
+  /* Pod tones. Multi-replica log merging needs replicas to be distinguishable
+     at a glance, so a pod's name is hashed into one of eight (src/logs/filter
+     .ts, podTone). Eight because a workload's replica count is small and a
+     wider wheel only adds hues that read as the same colour. Each is a text
+     colour on --kelson-panel-dim; the light block holds the same eight hues
+     dropped in lightness, the way the status ramp is built. */
+  --kelson-pod-1: #4ea3ff;
+  --kelson-pod-2: #3ed49b;
+  --kelson-pod-3: #e0a944;
+  --kelson-pod-4: #ef7a63;
+  --kelson-pod-5: #b48ce8;
+  --kelson-pod-6: #43c8d4;
+  --kelson-pod-7: #e88bc0;
+  --kelson-pod-8: #9db4c4;
+
   /* Elevation. Dark separates surfaces with borders and needs no shadow; the
      token exists so the light theme can add a whisper of one without any
      component learning about themes. */
@@ -186,6 +207,22 @@
   --kelson-failed-border: #facbc1;
   --kelson-suspended-fill: #f0f3f5;
   --kelson-suspended-border: #d7dbe0;
+
+  /* The search hit, inverted: a pale wash with the darkest step of the same
+     hue on it, which is the paper equivalent of a highlighter. */
+  --kelson-hit-fill: #fdf0c2;
+  --kelson-hit-text: #4a3505;
+
+  /* Pod tones: the dark eight, same hues, dropped in lightness until each
+     clears AA against --kelson-panel-dim the way the status colours do. */
+  --kelson-pod-1: #0563b5;
+  --kelson-pod-2: #0b724b;
+  --kelson-pod-3: #8d5f00;
+  --kelson-pod-4: #af2d16;
+  --kelson-pod-5: #6b3fbb;
+  --kelson-pod-6: #05687a;
+  --kelson-pod-7: #a5286f;
+  --kelson-pod-8: #4a5560;
 
   /* One hairline of elevation on cards, because a white panel on near-white
      paper needs more than a 1px border to read as raised. Deliberately almost

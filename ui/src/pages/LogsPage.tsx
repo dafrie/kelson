@@ -2,9 +2,28 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { useAsync, useClients } from "../api/data";
+import { isAbort } from "../api/errors";
 import { useRun } from "../api/stream";
+import type { WatchState } from "../api/watch";
+import {
+  backoffMs,
+  GapGate,
+  isTerminal,
+  lastSeenUnixMs,
+  LogBuffer,
+} from "../logs/buffer";
+import {
+  compileFilter,
+  podsOf,
+  podTone,
+  segments,
+  visibleLines,
+  type VisibleLine,
+} from "../logs/filter";
+import { logFileName, saveText, stamp, toText } from "../logs/text";
 import type { LogLine } from "../gen/kelson/v1alpha1/logs_pb";
 import { ErrorPanel } from "../components/ErrorPanel";
+import { LiveIndicator } from "../components/LiveIndicator";
 import "./LogsPage.css";
 
 /**
@@ -300,13 +319,69 @@ function QueryLogs({
             no lines matched — the bounds held, nothing inside them said anything
           </div>
         ) : (
-          <LogLines lines={lines} />
+          // A bounded result is already the window the reader asked for, and
+          // the match went to the server, so there is nothing left to narrow.
+          <LogLines
+            rows={lines.map((line, index) => ({ line, ranges: [], index }))}
+            keyBase={0}
+          />
         )
       ) : null}
     </>
   );
 }
 
+
+/**
+ * The retained tail. Ten thousand lines is minutes of a chatty workload and a
+ * few megabytes; past it the oldest go, and the count of what went is on
+ * screen. A live tail is a window on something unbounded, and the only
+ * dishonest window is one that pretends otherwise.
+ */
+const RETAINED_LINES = 10_000;
+
+/**
+ * How much of the tail is in the DOM.
+ *
+ * The cap bounds memory; this bounds *layout*, which is the thing that actually
+ * freezes a tab (#64's acceptance criterion). Ten thousand log rows is tens of
+ * thousands of elements to style and reflow on every batch, and no amount of
+ * batching makes that free. The buffer above is what copy, download and the
+ * filter read; this is what the browser draws.
+ */
+const RENDERED_LINES = 2_000;
+
+/** The bounded Query that fills a reconnect gap. */
+const BACKFILL_TAIL = 1_000;
+
+/**
+ * A live tail that survives volume, a paused reader and a dropped connection.
+ *
+ * Four decisions worth knowing before reading the code:
+ *
+ *   - **Pause buffers; it does not drop, and it does not close the stream.**
+ *     Closing would make "pause" mean "lose whatever happens while you read the
+ *     line you paused for", which is the opposite of why anyone pauses; and
+ *     dropping would make it mean the same thing while looking like it didn't.
+ *     So the stream stays up, the arriving lines go into a second capped
+ *     buffer, and the pill says how many are waiting. Resuming appends them and
+ *     returns to the tail.
+ *   - **Lines arrive faster than a screen can be painted, so they are batched.**
+ *     Every event lands in a queue and one `requestAnimationFrame` drains it —
+ *     one re-render per frame no matter how many lines that was. The buffers
+ *     are refs, not state: making them state would copy the whole window on
+ *     every batch, which is the cost the cap exists to avoid. A version counter
+ *     is what tells React something changed.
+ *   - **A dropped stream is reconnected, and the gap is filled.** The screen
+ *     remembers the newest timestamp it has seen, backfills the gap with a
+ *     bounded Query from that instant, then re-follows from it. Both ends
+ *     replay the boundary instant, and `GapGate` (src/logs/buffer.ts) is what
+ *     stops the replay from doubling on screen.
+ *   - **The find box is client-side.** See the note in src/logs/filter.ts: a
+ *     match sent upstream restarts the stream and discards non-matching lines
+ *     permanently, so a live tail filters what it has retained instead. The
+ *     server-side `LogMatch` is still what the bounded Query mode sends.
+ */
 function FollowLogs({
   namespace,
   application,
@@ -315,61 +390,292 @@ function FollowLogs({
   application: string;
 }) {
   const clients = useClients();
-  const run = useRun();
-  const [lines, setLines] = useState<LogLine[]>([]);
+
+  // Three capped buffers: what is on screen, what arrived while paused, and
+  // what has arrived since the last frame. All three are bounded, so a tab left
+  // open on a screaming workload — or backgrounded, where the browser stops
+  // firing frames altogether — holds a fixed amount of memory rather than
+  // however much the workload felt like producing.
+  const retained = useRef(new LogBuffer(RETAINED_LINES));
+  const held = useRef(new LogBuffer(RETAINED_LINES));
+  const pending = useRef(new LogBuffer(RETAINED_LINES));
+  // Lines forgotten by the queue and the paused buffer. The retained tail keeps
+  // its own count; these two reset when they drain, so they are summed here.
+  const forgotten = useRef(0);
+  const frame = useRef<number | undefined>(undefined);
+  const [version, setVersion] = useState(0);
+  const bump = useCallback(() => setVersion((v) => v + 1), []);
+
+  // 0 is "not following". Incrementing it starts a stream; the effect below is
+  // keyed on it, so a restart is one state change rather than a lifecycle.
+  const [session, setSession] = useState(0);
+  const [phase, setPhase] = useState<WatchState>("off");
+  const [error, setError] = useState<unknown>(undefined);
   const [dropped, setDropped] = useState(0);
-  const [match, setMatch] = useState("");
+  const [paused, setPaused] = useState(false);
+  const pausedNow = useRef(false);
+  const [query, setQuery] = useState("");
   const [isRegex, setIsRegex] = useState(false);
+  const [podFilter, setPodFilter] = useState<ReadonlySet<string>>(new Set());
   const [pinned, setPinned] = useState(true);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "blocked">(
+    "idle",
+  );
   const box = useRef<HTMLDivElement | null>(null);
 
-  // Auto-scroll, but only while the reader is at the bottom. Scrolling up is
-  // how a person reads a line that just went past, and yanking them back down
-  // on the next line makes a live tail unreadable.
+  // The stream reads these at connect time, not at render time: a reconnect
+  // must not pick up a namespace someone is halfway through typing, and a
+  // parent re-render must not tear the stream down.
+  const target = useRef({ namespace, application });
+  target.current = { namespace, application };
+
+  const flush = useCallback(() => {
+    frame.current = undefined;
+    const queue = pending.current;
+    if (queue.length === 0) return;
+    forgotten.current += queue.evicted;
+    const batch = queue.drain();
+    if (pausedNow.current) forgotten.current += held.current.append(batch);
+    else retained.current.append(batch);
+    bump();
+  }, [bump]);
+
+  const schedule = useCallback(() => {
+    if (frame.current !== undefined) return;
+    frame.current = requestAnimationFrame(flush);
+  }, [flush]);
+
+  /** Straight into the buffer: history, not a live batch, and never per line. */
+  const accept = useCallback(
+    (lines: readonly LogLine[]) => {
+      if (lines.length === 0) return;
+      if (pausedNow.current) forgotten.current += held.current.append(lines);
+      else retained.current.append(lines);
+      bump();
+    },
+    [bump],
+  );
+
+  useEffect(
+    () => () => {
+      if (frame.current !== undefined) cancelAnimationFrame(frame.current);
+    },
+    [],
+  );
+
   useEffect(() => {
-    const el = box.current;
-    if (el && pinned) el.scrollTop = el.scrollHeight;
-  }, [lines, pinned]);
+    if (session === 0) return;
+    const controller = new AbortController();
+    let stopped = false;
+    let attempt = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
-  const onScroll = useCallback(() => {
-    const el = box.current;
-    if (!el) return;
-    setPinned(el.scrollHeight - el.scrollTop - el.clientHeight < 24);
-  }, []);
+    // Everything the reader has, in arrival order — the paused buffer is part
+    // of the position, or pausing across a reconnect would refetch what is
+    // already waiting behind the pill.
+    const history = () => [...retained.current.lines, ...held.current.lines];
 
-  const follow = useCallback(() => {
-    setLines([]);
-    setDropped(0);
-    setPinned(true);
-    run.start(async (signal) => {
+    const read = async () => {
+      // Anything still queued is part of the position too.
+      if (frame.current !== undefined) cancelAnimationFrame(frame.current);
+      flush();
+
+      const since = lastSeenUnixMs(history());
+      if (since > 0n) {
+        // The gap has two ends, so it is a bounded Query and not a follow.
+        const backfill = await clients.log.queryLogs(
+          {
+            selector: { ...target.current },
+            tail: BACKFILL_TAIL,
+            sinceUnixMs: since,
+          },
+          { signal: controller.signal },
+        );
+        accept(new GapGate(history(), since).admitAll(backfill.lines));
+      }
+      // `since` is inclusive server-side, so the new Follow replays the
+      // boundary instant — including whatever the backfill just added, which is
+      // why this gate is built after it rather than reused from it.
+      const gate = since > 0n ? new GapGate(history(), since) : undefined;
+
+      setPhase("live");
       for await (const res of clients.log.followLogs(
-        {
-          selector: { namespace, application },
-          match: isRegex ? { regex: match } : { substring: match },
-        },
-        { signal },
+        { selector: { ...target.current }, sinceUnixMs: since },
+        { signal: controller.signal },
       )) {
+        attempt = 0;
+        setPhase("live");
         const event = res.event;
         if (event.case === "line") {
-          const line = event.value;
-          setLines((prev) => [...prev, line]);
+          if (gate === undefined || gate.admit(event.value)) {
+            pending.current.push(event.value);
+            schedule();
+          }
         } else if (event.case === "dropped") {
           setDropped(Number(event.value));
         }
       }
+    };
+
+    const retry = () => {
+      if (stopped) return;
+      setPhase("reconnecting");
+      timer = setTimeout(run, backoffMs(attempt));
+      attempt += 1;
+    };
+
+    const run = () => {
+      read()
+        // A stream that ended cleanly is a server that went away — the same
+        // event as a failed one, and answered the same way.
+        .then(retry)
+        .catch((err: unknown) => {
+          if (stopped || controller.signal.aborted || isAbort(err)) return;
+          if (isTerminal(err)) {
+            // A rejected selector, a build with no delivery plane, a session
+            // that expired: none of these change on a second identical
+            // request, and retrying would replace the reason with a spinner.
+            stopped = true;
+            setError(err);
+            setPhase("off");
+            setSession(0);
+            return;
+          }
+          retry();
+        });
+    };
+    run();
+
+    return () => {
+      stopped = true;
+      if (timer !== undefined) clearTimeout(timer);
+      controller.abort();
+    };
+  }, [clients, session, accept, flush, schedule]);
+
+  const start = useCallback(() => {
+    retained.current.clear();
+    held.current.clear();
+    pending.current.clear();
+    forgotten.current = 0;
+    pausedNow.current = false;
+    setPaused(false);
+    setPinned(true);
+    setDropped(0);
+    setError(undefined);
+    setPodFilter(new Set());
+    setSession((s) => s + 1);
+    bump();
+  }, [bump]);
+
+  // Stopping keeps the buffer. The lines are still the answer to whatever
+  // question they were opened for, and searching, copying and saving them are
+  // all things a reader does *after* deciding they have seen enough.
+  const stop = useCallback(() => {
+    setSession(0);
+    setPhase("off");
+  }, []);
+
+  const togglePause = useCallback(() => {
+    if (pausedNow.current) {
+      pausedNow.current = false;
+      setPaused(false);
+      retained.current.append(held.current.drain());
+      setPinned(true);
+    } else {
+      pausedNow.current = true;
+      setPaused(true);
+    }
+    bump();
+  }, [bump]);
+
+  const onScroll = useCallback(() => {
+    const el = box.current;
+    if (!el) return;
+    // Auto-scroll, but only while the reader is at the bottom. Scrolling up is
+    // how a person reads a line that just went past, and yanking them back down
+    // on the next line makes a live tail unreadable.
+    setPinned(el.scrollHeight - el.scrollTop - el.clientHeight < 24);
+  }, []);
+
+  const filtering = useMemo(() => compileFilter(query, isRegex), [query, isRegex]);
+  const lines = retained.current.lines;
+  const pods = useMemo(() => podsOf(lines), [lines, version]);
+  const visible = useMemo(
+    () => visibleLines(lines, filtering, podFilter),
+    [lines, version, filtering, podFilter],
+  );
+  const rows =
+    visible.length > RENDERED_LINES ? visible.slice(-RENDERED_LINES) : visible;
+  const waiting = held.current.length;
+  const missing = forgotten.current + retained.current.evicted;
+
+  useEffect(() => {
+    const el = box.current;
+    if (el && pinned && !paused) el.scrollTop = el.scrollHeight;
+  }, [version, pinned, paused]);
+
+  const togglePod = useCallback((pod: string) => {
+    setPodFilter((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(pod)) next.add(pod);
+      return next;
     });
-  }, [run, clients, namespace, application, match, isRegex]);
+  }, []);
+
+  const copyVisible = useCallback(() => {
+    const clipboard = navigator.clipboard;
+    if (!clipboard) {
+      setCopyState("blocked");
+      return;
+    }
+    clipboard.writeText(toText(visible.map((row) => row.line))).then(
+      () => {
+        setCopyState("copied");
+        setTimeout(() => setCopyState("idle"), 1200);
+      },
+      () => setCopyState("blocked"),
+    );
+  }, [visible]);
+
+  const download = useCallback(() => {
+    const { namespace: ns, application: app } = target.current;
+    saveText(logFileName(ns, app, new Date()), toText(retained.current.lines));
+  }, []);
 
   return (
     <>
       <div className="k-panel k-logs__controls">
+        {session === 0 ? (
+          <button
+            type="button"
+            className="k-button k-button--primary"
+            onClick={start}
+          >
+            Start following
+          </button>
+        ) : (
+          <button type="button" className="k-button" onClick={stop}>
+            Stop following
+          </button>
+        )}
+        <button
+          type="button"
+          className="k-button"
+          onClick={togglePause}
+          disabled={session === 0}
+          aria-pressed={paused}
+        >
+          {paused ? "Resume" : "Pause"}
+        </button>
         <label className="k-field">
-          <span className="k-eyebrow">Match</span>
+          <span className="k-eyebrow">Find</span>
           <input
             className="k-input k-mono"
-            value={match}
-            onChange={(e) => setMatch(e.target.value)}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
             placeholder={isRegex ? "^ERROR" : "timeout"}
+            aria-label="Find in the retained lines"
           />
         </label>
         <label className="k-check k-mono">
@@ -380,30 +686,86 @@ function FollowLogs({
           />
           regex
         </label>
-        {run.running ? (
-          <button type="button" className="k-button" onClick={run.stop}>
-            Stop following
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="k-button k-button--primary"
-            onClick={follow}
-          >
-            Start following
-          </button>
-        )}
-        <span className="k-mono k-field__note">
-          {run.running
-            ? pinned
-              ? "streaming · following the tail"
-              : "streaming · scrolled up, auto-scroll paused"
-            : "unbounded stream — it runs until you stop it or leave"}
-        </span>
+        <LiveIndicator state={phase} />
       </div>
 
-      {run.error !== undefined ? (
-        <ErrorPanel title="The log stream failed" error={run.error} />
+      {filtering.kind === "invalid" ? (
+        <p className="k-logs__invalid k-mono">
+          not a regular expression: {filtering.message}
+        </p>
+      ) : null}
+
+      <div className="k-logs__toolbar">
+        {pods.length > 1 ? (
+          <div className="k-logs__pods" role="group" aria-label="Filter by pod">
+            {pods.map((pod) => (
+              <button
+                key={pod}
+                type="button"
+                className="k-logs__pod k-mono"
+                data-tone={podTone(pod)}
+                aria-pressed={podFilter.has(pod)}
+                onClick={() => togglePod(pod)}
+              >
+                {pod}
+              </button>
+            ))}
+            {podFilter.size > 0 ? (
+              <button
+                type="button"
+                className="k-logs__pod k-logs__pod--all k-mono"
+                onClick={() => setPodFilter(new Set())}
+              >
+                every pod
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
+        <div className="k-logs__actions">
+          <button
+            type="button"
+            className="k-button"
+            onClick={copyVisible}
+            disabled={visible.length === 0}
+          >
+            {copyState === "copied"
+              ? "Copied"
+              : copyState === "blocked"
+                ? "Clipboard blocked"
+                : `Copy ${visible.length === lines.length ? "all" : "matching"}`}
+          </button>
+          <button
+            type="button"
+            className="k-button"
+            onClick={download}
+            disabled={lines.length === 0}
+          >
+            Download .txt
+          </button>
+        </div>
+      </div>
+
+      <p className="k-logs__note k-mono">
+        {session === 0 && lines.length === 0 ? (
+          `an unbounded stream — it runs until you stop it or leave, and the last ${RETAINED_LINES} lines are kept`
+        ) : (
+          <>
+            {visible.length === lines.length
+              ? `${lines.length} ${lines.length === 1 ? "line" : "lines"} retained`
+              : `${visible.length} of ${lines.length} retained lines shown`}
+            {rows.length < visible.length
+              ? ` · the last ${RENDERED_LINES} are drawn`
+              : ""}
+            {missing > 0
+              ? ` · ${missing} older ${missing === 1 ? "line has" : "lines have"} left the ${RETAINED_LINES}-line window`
+              : ""}
+          </>
+        )}
+      </p>
+
+      {error !== undefined ? (
+        <ErrorPanel title="The log stream failed" error={error} />
       ) : null}
 
       {dropped > 0 ? (
@@ -418,19 +780,39 @@ function FollowLogs({
         </div>
       ) : null}
 
-      {lines.length > 0 || run.running ? (
-        <LogLines lines={lines} boxRef={box} onScroll={onScroll} />
+      {paused ? (
+        <button type="button" className="k-logs__resume" onClick={togglePause}>
+          {waiting > 0
+            ? `${waiting} new ${waiting === 1 ? "line" : "lines"} · resume`
+            : "paused · resume"}
+        </button>
+      ) : null}
+
+      {lines.length > 0 || session > 0 ? (
+        <LogLines
+          rows={rows}
+          keyBase={retained.current.evicted}
+          boxRef={box}
+          onScroll={onScroll}
+        />
       ) : null}
     </>
   );
 }
 
 function LogLines({
-  lines,
+  rows,
+  keyBase,
   boxRef,
   onScroll,
 }: {
-  lines: readonly LogLine[];
+  rows: readonly VisibleLine[];
+  /**
+   * How many lines the buffer has already evicted. Added to a row's index it
+   * gives every line an identity that survives eviction, filtering and
+   * scrolling, so React reuses rows instead of rebuilding the list per frame.
+   */
+  keyBase: number;
   boxRef?: React.RefObject<HTMLDivElement | null>;
   onScroll?: () => void;
 }) {
@@ -441,21 +823,28 @@ function LogLines({
       onScroll={onScroll}
       role="log"
     >
-      {lines.map((line, i) => (
-        <div className="k-logline" key={`${line.pod}:${i}`}>
+      {rows.map(({ line, ranges, index }) => (
+        <div className="k-logline" key={keyBase + index}>
           <span className="k-logline__time">{stamp(line.timestampUnixMs)}</span>
-          <span className="k-logline__pod">{line.pod}</span>
+          <span className="k-logline__pod" data-tone={podTone(line.pod)}>
+            {line.pod}
+          </span>
           <span className="k-logline__container">{line.container}</span>
-          <span className="k-logline__message">{line.message}</span>
+          <span className="k-logline__message">
+            {ranges.length === 0
+              ? line.message
+              : segments(line.message, ranges).map((part, at) =>
+                  part.hit ? (
+                    <mark className="k-logs__hit" key={at}>
+                      {part.text}
+                    </mark>
+                  ) : (
+                    <span key={at}>{part.text}</span>
+                  ),
+                )}
+          </span>
         </div>
       ))}
     </div>
   );
-}
-
-/** 0 means the line carried no timestamp the engine could parse, not 1970. */
-function stamp(unixMs: bigint): string {
-  const ms = Number(unixMs);
-  if (!ms) return "--:--:--";
-  return new Date(ms).toISOString().slice(11, 19);
 }
