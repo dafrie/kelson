@@ -3,8 +3,11 @@
 kelson is pre-alpha. The renderer, the spec model, the delivery adapters (direct and Flux), the
 `kelson` CLI, `kelson-server` — which serves the v1alpha1 schema over ConnectRPC — and `kelson-mcp`,
 the agent surface over that API ([docs/mcp.md](docs/mcp.md)), exist and are tested. The UI and the
-install path do not exist yet, and the server has no authentication in v0
-([ADR-0013](docs/adr/0013-server-state-and-api-v0.md)), so it binds loopback only.
+install path do not exist yet. The server's authentication is an interim single shared password
+([ADR-0013](docs/adr/0013-server-state-and-api-v0.md) §3, amended 2026-08-13,
+[docs/server.md](docs/server.md)): without one it binds loopback only, with one it may bind wider
+behind a TLS-terminating proxy. The real design is
+[#84](https://github.com/dafrie/kelson/issues/84).
 The [ADRs](docs/adr/) record the load-bearing decisions, and the
 [milestones](https://github.com/dafrie/kelson/milestones) are the current state of the project.
 

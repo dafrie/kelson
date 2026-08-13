@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -54,12 +55,53 @@ func (c *clients) fail(op rpc, err error) error {
 	switch connect.CodeOf(err) {
 	case connect.CodeUnavailable, connect.CodeUnknown:
 		r.addf("kelson-server at %s did not answer. Start it and point --server (or KELSON_SERVER) at its address. "+
-			"v0 has no authentication and no TLS: the server binds loopback only (ADR-0013 §3) and this MCP server "+
-			"holds and sends no credential, so the address must be one this process can reach directly. "+
-			"Agent identities are issue #74.", c.addr)
+			"The address must be one this process can reach directly — there is no proxy and no discovery here.", c.addr)
+	case connect.CodeUnauthenticated:
+		r.addf("kelson-server at %s requires its shared password. Set --password (or KELSON_PASSWORD) to the value "+
+			"the server was started with; it is sent as an Authorization: Bearer header. The password is a shared "+
+			"secret, not an agent identity — those are issue #74.", c.addr)
 	default:
 	}
 	return errors.New(r.String())
+}
+
+// bearerOptions carries the shared password on every call, or nothing at all.
+//
+// It is a client option rather than a header set at each call site so that a
+// tool added later cannot forget it, and it covers streaming as well as unary
+// because Watch and the deploy stream are exactly the calls a half-applied
+// credential would break last and most confusingly (#84's interim cut).
+func bearerOptions(password string) []connect.ClientOption {
+	if password == "" {
+		return nil
+	}
+	return []connect.ClientOption{connect.WithInterceptors(bearer(password))}
+}
+
+// bearer is the interceptor that sets Authorization on outbound requests.
+type bearer string
+
+var _ connect.Interceptor = bearer("")
+
+func (b bearer) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
+	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
+		req.Header().Set("Authorization", "Bearer "+string(b))
+		return next(ctx, req)
+	}
+}
+
+func (b bearer) WrapStreamingClient(next connect.StreamingClientFunc) connect.StreamingClientFunc {
+	return func(ctx context.Context, spec connect.Spec) connect.StreamingClientConn {
+		conn := next(ctx, spec)
+		conn.RequestHeader().Set("Authorization", "Bearer "+string(b))
+		return conn
+	}
+}
+
+// WrapStreamingHandler is the server half of the interface and is never used:
+// this package is a client.
+func (b bearer) WrapStreamingHandler(next connect.StreamingHandlerFunc) connect.StreamingHandlerFunc {
+	return next
 }
 
 // connectMessage is the failure without connect's own code prefix duplicated.
