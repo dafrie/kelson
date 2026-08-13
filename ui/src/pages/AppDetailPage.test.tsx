@@ -77,6 +77,10 @@ describe("AppDetailPage", () => {
     expect(await screen.findByText(/kind: Project/)).toBeTruthy();
     expect(screen.getByText(/kind: Environment/)).toBeTruthy();
     expect(screen.getByText("Spec documents (2)")).toBeTruthy();
+    // Editing is reached from the documents, next to the bytes it changes.
+    expect(
+      screen.getByRole("link", { name: "Edit configuration" }).getAttribute("href"),
+    ).toBe("/apps/checkout/edit");
   });
 
   it("disables rollback with the server's own reason when there is no delivery plane", async () => {

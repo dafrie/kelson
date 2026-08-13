@@ -1,0 +1,410 @@
+import { describe, expect, it } from "vitest";
+import { create } from "@bufbuild/protobuf";
+
+import { ErrorSchema } from "../gen/kelson/v1alpha1/common_pb";
+import { buildDocuments, EMPTY_FORM } from "./documents";
+import {
+  buildProjectDocument,
+  editFieldForError,
+  isRebuildable,
+  mapEditErrors,
+  parseProjectDocument,
+  readSpec,
+  writeSpec,
+  type ProjectEdit,
+  type SpecTextSet,
+} from "./edit";
+
+/**
+ * The create form's own output is the input to the editor.
+ *
+ * These are the #63 fixture bytes — the same pair pinned in
+ * internal/api/uispec_test.go — and the whole edit strategy rests on a document
+ * the UI wrote coming back through the parser and the builder unchanged.
+ */
+const MINIMAL_PROJECT = `apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: hello
+
+spec:
+  image: ghcr.io/acme/hello:1.4.2
+
+  applications:
+    - name: web
+      port: 8080
+`;
+
+const MINIMAL_ENVIRONMENT = `apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: development
+
+spec:
+  project: hello
+`;
+
+const MINIMAL: SpecTextSet = {
+  project: MINIMAL_PROJECT,
+  environments: { development: MINIMAL_ENVIRONMENT },
+};
+
+/**
+ * The document the edit form writes once it has been used: project-level and
+ * per-application env, an image override, autoscaling bounds, a second
+ * application.
+ *
+ * These exact bytes are the second half of the cross-side fixture convention
+ * #63 established — internal/api/uispec_test.go holds them byte-identically and
+ * asserts the real model validates and renders them. Nothing in TypeScript can
+ * prove that a document this builder writes is a document kelson accepts.
+ *
+ * It declares no domains for the same reason the create fixture does not: the
+ * Go test renders against the zero profile, which has no Gateway API, and a
+ * declared domain is render/gateway-api-missing there. Domains are covered by
+ * the round trip below, which needs no model.
+ */
+const EDITED_PROJECT = `apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: hello
+
+spec:
+  image: ghcr.io/acme/hello:1.4.2
+
+  env:
+    LOG_LEVEL: info
+    PORT: "3000"
+
+  applications:
+    - name: web
+      port: 8080
+      health: /healthz
+      replicas: { min: 2, max: 10 }
+      env:
+        ROLE: web
+
+    - name: worker
+      image: ghcr.io/acme/hello-worker:1.4.2
+      replicas: { min: 1 }
+`;
+
+const EDITED_ENVIRONMENT = `apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: development
+
+spec:
+  project: hello
+  namespace: hello-sandbox
+`;
+
+/** The same document with the one field the Go fixture cannot carry. */
+const RICH_PROJECT = EDITED_PROJECT.replace(
+  "      health: /healthz\n",
+  "      health: /healthz\n      domains:\n        - hello.dev.acme.run\n",
+);
+
+const RICH_ENVIRONMENT = EDITED_ENVIRONMENT;
+
+describe("round trip", () => {
+  it("parses a document the create form built and rebuilds it byte-identically", () => {
+    const built = buildDocuments({
+      ...EMPTY_FORM,
+      project: "hello",
+      image: "ghcr.io/acme/hello:1.4.2",
+      port: "8080",
+    });
+    // The fixture is the create form's own output, not a hand-copied lookalike.
+    expect(built.project).toBe(MINIMAL_PROJECT);
+    expect(built.environment).toBe(MINIMAL_ENVIRONMENT);
+
+    const edit = readSpec(MINIMAL);
+    expect(edit).toBeDefined();
+    expect(edit?.project.name).toBe("hello");
+    expect(edit?.project.image).toBe("ghcr.io/acme/hello:1.4.2");
+    expect(edit?.project.applications).toHaveLength(1);
+    expect(edit?.project.applications[0]?.port).toBe("8080");
+    expect(edit?.environments).toEqual([
+      { name: "development", project: "hello", namespace: "" },
+    ]);
+
+    expect(writeSpec(edit!)).toEqual(MINIMAL);
+    expect(isRebuildable(MINIMAL)).toBe(true);
+  });
+
+  it("round-trips every shape the edit form can write", () => {
+    const rich: SpecTextSet = {
+      project: RICH_PROJECT,
+      environments: { development: RICH_ENVIRONMENT },
+    };
+    const edit = readSpec(rich);
+    expect(edit).toBeDefined();
+
+    const web = edit?.project.applications[0];
+    expect(web?.name).toBe("web");
+    expect(web?.health).toBe("/healthz");
+    expect(web?.domains).toEqual(["hello.dev.acme.run"]);
+    expect(web?.replicasMin).toBe("2");
+    expect(web?.replicasMax).toBe("10");
+    expect(web?.env).toEqual([{ key: "ROLE", value: "web" }]);
+
+    const worker = edit?.project.applications[1];
+    expect(worker?.name).toBe("worker");
+    expect(worker?.image).toBe("ghcr.io/acme/hello-worker:1.4.2");
+    expect(worker?.replicasMin).toBe("1");
+    expect(worker?.replicasMax).toBe("");
+
+    // A quoted env value survives as its string: `PORT: "3000"` is the value
+    // model.EnvValue accepts, and rewriting it as an integer would break it.
+    expect(edit?.project.env).toEqual([
+      { key: "LOG_LEVEL", value: "info" },
+      { key: "PORT", value: "3000" },
+    ]);
+
+    expect(writeSpec(edit!)).toEqual(rich);
+    expect(isRebuildable(rich)).toBe(true);
+  });
+
+  it("round-trips the document the Go side validates, byte for byte", () => {
+    const edited: SpecTextSet = {
+      project: EDITED_PROJECT,
+      environments: { development: EDITED_ENVIRONMENT },
+    };
+    const edit = readSpec(edited);
+    expect(edit).toBeDefined();
+    expect(writeSpec(edit!)).toEqual(edited);
+    expect(isRebuildable(edited)).toBe(true);
+  });
+
+  it("preserves the order of environment variables rather than sorting them", () => {
+    const edit = readSpec({
+      project: RICH_PROJECT.replace(
+        "    LOG_LEVEL: info\n    PORT: \"3000\"",
+        "    ZEBRA: last\n    ALPHA: first",
+      ),
+      environments: { development: RICH_ENVIRONMENT },
+    });
+    expect(edit?.project.env.map((e) => e.key)).toEqual(["ZEBRA", "ALPHA"]);
+  });
+});
+
+describe("hand-edited detection", () => {
+  const cases: { name: string; project: string }[] = [
+    {
+      name: "a comment",
+      project: MINIMAL_PROJECT.replace(
+        "spec:",
+        "# the thing that serves traffic\nspec:",
+      ),
+    },
+    {
+      name: "a different key order",
+      project: `apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: hello
+
+spec:
+  applications:
+    - name: web
+      port: 8080
+
+  image: ghcr.io/acme/hello:1.4.2
+`,
+    },
+    {
+      name: "a key this module does not model",
+      project: MINIMAL_PROJECT.replace(
+        "  applications:",
+        "  services:\n    - name: db\n      type: postgres\n\n  applications:",
+      ),
+    },
+    {
+      name: "a flow sequence",
+      project: MINIMAL_PROJECT.replace(
+        "      port: 8080\n",
+        "      port: 8080\n      domains: [hello.acme.run]\n",
+      ),
+    },
+    {
+      name: "four-space indentation",
+      project: MINIMAL_PROJECT.replace("  name: hello", "    name: hello"),
+    },
+  ];
+
+  for (const { name, project } of cases) {
+    it(`refuses the form for ${name}`, () => {
+      expect(isRebuildable({ ...MINIMAL, project })).toBe(false);
+    });
+  }
+
+  it("refuses when an environment document is hand-edited, not only the project", () => {
+    expect(
+      isRebuildable({
+        ...MINIMAL,
+        environments: {
+          development: `# staging is a copy of this\n${MINIMAL_ENVIRONMENT}`,
+        },
+      }),
+    ).toBe(false);
+  });
+
+  it("refuses when the document's own name disagrees with the store's key", () => {
+    // The store keys an environment document by name; a document whose
+    // metadata.name says otherwise cannot be rewritten without moving it.
+    expect(
+      isRebuildable({ ...MINIMAL, environments: { staging: MINIMAL_ENVIRONMENT } }),
+    ).toBe(false);
+  });
+
+  it("still fills the form from a commented document, read-only", () => {
+    // A comment is skipped, not refused: the reader gets to see their own
+    // configuration in the form. What they do not get is to edit it there,
+    // because the rebuild would not carry the comment — and the byte guard,
+    // not a special case for comments, is what says so.
+    const handEdited = MINIMAL_PROJECT.replace("spec:", "# hand-written\nspec:");
+    expect(parseProjectDocument(handEdited)?.image).toBe("ghcr.io/acme/hello:1.4.2");
+    expect(isRebuildable({ ...MINIMAL, project: handEdited })).toBe(false);
+  });
+
+  it("refuses outright what it cannot represent at all", () => {
+    // A flow sequence is not a formatting difference the byte guard can catch
+    // later — `domains: [a]` is not a list this reader can hold — so there is
+    // no form to be read-only, and the YAML tab is the whole answer.
+    expect(
+      parseProjectDocument(
+        MINIMAL_PROJECT.replace(
+          "      port: 8080\n",
+          "      port: 8080\n      domains: [hello.acme.run]\n",
+        ),
+      ),
+    ).toBeUndefined();
+  });
+});
+
+describe("environment variables through the form", () => {
+  const base = (): ProjectEdit => {
+    const edit = readSpec(MINIMAL);
+    if (edit === undefined) throw new Error("the fixture must parse");
+    return edit.project;
+  };
+
+  it("adds a project-level variable under spec.env, shared by every application", () => {
+    const project = base();
+    project.env = [{ key: "LOG_LEVEL", value: "info" }];
+
+    expect(buildProjectDocument(project)).toBe(`apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: hello
+
+spec:
+  image: ghcr.io/acme/hello:1.4.2
+
+  env:
+    LOG_LEVEL: info
+
+  applications:
+    - name: web
+      port: 8080
+`);
+  });
+
+  it("adds a per-application variable under the application, not the project", () => {
+    const project = base();
+    const web = project.applications[0];
+    if (web === undefined) throw new Error("the fixture must have an application");
+    web.env = [{ key: "ROLE", value: "web" }];
+
+    const doc = buildProjectDocument(project);
+    expect(doc).toContain("    - name: web\n      port: 8080\n      env:\n        ROLE: web\n");
+    // Nothing landed at project level: the two scopes are different rules (P1).
+    expect(doc).not.toContain("\n  env:\n");
+  });
+
+  it("quotes a value YAML would resolve as something other than a string", () => {
+    const project = base();
+    project.env = [
+      { key: "PORT", value: "3000" },
+      { key: "DEBUG", value: "on" },
+    ];
+    const doc = buildProjectDocument(project);
+    expect(doc).toContain('    PORT: "3000"\n');
+    expect(doc).toContain('    DEBUG: "on"\n');
+    // …and it comes back as the string that was typed.
+    expect(parseProjectDocument(doc)?.env).toEqual(project.env);
+  });
+
+  it("changes and removes variables in place", () => {
+    const project = base();
+    project.env = [
+      { key: "LOG_LEVEL", value: "info" },
+      { key: "REGION", value: "eu" },
+    ];
+    const changed = parseProjectDocument(buildProjectDocument(project));
+    expect(changed?.env).toEqual(project.env);
+
+    project.env = [{ key: "LOG_LEVEL", value: "debug" }];
+    const after = parseProjectDocument(buildProjectDocument(project));
+    expect(after?.env).toEqual([{ key: "LOG_LEVEL", value: "debug" }]);
+
+    project.env = [];
+    expect(buildProjectDocument(project)).toBe(MINIMAL_PROJECT);
+  });
+});
+
+describe("editFieldForError", () => {
+  const wire = (resource: string, field: string, code = "schema/invalid-format") =>
+    create(ErrorSchema, { resource, field, code });
+
+  it("reaches applications beyond the first", () => {
+    expect(editFieldForError(wire("Project/hello", "$.spec.applications[1].port"))).toBe(
+      "app.1.port",
+    );
+    expect(
+      editFieldForError(wire("Project/hello", "$.spec.applications[1].replicas.max")),
+    ).toBe("app.1.replicas");
+    expect(
+      editFieldForError(wire("Project/hello", "$.spec.applications[2].domains[0]")),
+    ).toBe("app.2.domains");
+    expect(editFieldForError(wire("Project/hello", "$.spec.applications[0].health"))).toBe(
+      "app.0.health",
+    );
+  });
+
+  it("keeps project env and per-application env apart", () => {
+    expect(
+      editFieldForError(wire("Project/hello", "$.spec.env.DB_PASSWORD", "secret/literal")),
+    ).toBe("project.env.DB_PASSWORD");
+    expect(
+      editFieldForError(
+        wire("Project/hello", "$.spec.applications[1].env.DB_PASSWORD", "secret/literal"),
+      ),
+    ).toBe("app.1.env.DB_PASSWORD");
+  });
+
+  it("names the environment a namespace error belongs to", () => {
+    expect(editFieldForError(wire("Environment/staging", "$.spec.namespace"))).toBe(
+      "environment.staging.namespace",
+    );
+  });
+
+  it("sends a path no input owns to the general panel", () => {
+    const mapped = mapEditErrors([
+      wire("Project/hello", "$.spec.applications[0].name"),
+      wire("Project/hello", "$.spec.overlays[0].patch"),
+      wire("Project/hello", "$.spec.applications[1].port"),
+    ]);
+    expect(mapped.general).toHaveLength(2);
+    expect([...mapped.byField.keys()]).toEqual(["app.1.port"]);
+  });
+
+  it("points a missing image source at the application that has none", () => {
+    expect(
+      editFieldForError(
+        wire("Project/hello", "$.spec.applications[1]", "semantic/no-image-source"),
+      ),
+    ).toBe("app.1.image");
+  });
+});

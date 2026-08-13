@@ -1,6 +1,6 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { BrowserRouter } from "react-router-dom";
+import { createBrowserRouter, RouterProvider } from "react-router-dom";
 
 // Fonts are self-hosted. The mockups load Space Grotesk and IBM Plex Mono from
 // the Google Fonts CDN; an app that ships inside a cluster — possibly an
@@ -14,7 +14,7 @@ import "@fontsource/ibm-plex-mono/500.css";
 
 import "./styles/tokens.css";
 import "./styles/base.css";
-import { App } from "./App";
+import { routes } from "./App";
 
 const root = document.getElementById("root");
 if (!root) {
@@ -23,8 +23,6 @@ if (!root) {
 
 createRoot(root).render(
   <StrictMode>
-    <BrowserRouter>
-      <App />
-    </BrowserRouter>
+    <RouterProvider router={createBrowserRouter(routes)} />
   </StrictMode>,
 );

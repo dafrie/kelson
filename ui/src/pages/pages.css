@@ -138,6 +138,18 @@
   color: var(--kelson-accent-hover);
 }
 
+/* Destructive, and it has to look it: force-saving over someone else's write
+   is the one action in this UI that loses another person's work. */
+.k-button--danger {
+  border-color: var(--kelson-failed-border);
+  color: var(--kelson-failed);
+}
+
+.k-button--danger:hover:not(:disabled) {
+  border-color: var(--kelson-failed);
+  background: var(--kelson-failed-fill);
+}
+
 .k-button--wide {
   padding: 10px 20px;
   font-size: 13px;
@@ -633,4 +645,103 @@
 .k-gaps__reason {
   font-size: 13px;
   color: var(--kelson-text-2);
+}
+
+/* ---------------------------------------------------------------- edit flow */
+
+.k-edit__form {
+  gap: 0;
+}
+
+.k-edit__group {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.k-edit__kind {
+  margin-left: 8px;
+}
+
+.k-edit__actions {
+  margin-top: 24px;
+}
+
+/* The form for a document the UI cannot rebuild. It is a notice, not an error:
+   nothing is wrong with the document — the form is what cannot hold it. */
+.k-edit__readonly {
+  margin-top: 16px;
+  border-left: 2px solid var(--kelson-degraded);
+  padding-left: 12px;
+}
+
+.k-textarea {
+  display: block;
+  width: 100%;
+  min-height: 420px;
+  padding: 12px 14px;
+  background: var(--kelson-inset);
+  border: 1px solid var(--kelson-inset-border);
+  border-radius: 4px;
+  color: var(--kelson-text);
+  font-size: 12.5px;
+  line-height: 1.7;
+  tab-size: 2;
+  resize: vertical;
+}
+
+.k-textarea:focus {
+  outline: none;
+  border-color: var(--kelson-accent);
+}
+
+.k-edit__diffs {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.k-edit__diff {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Unsaved changes, on the way out. It answers a navigation that is already in
+   flight, so it sits above the editor rather than inside it. */
+.k-edit__guard {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 20px;
+  padding: 16px 18px;
+  background: var(--kelson-degraded-fill);
+  border: 1px solid var(--kelson-degraded-border);
+  border-radius: 6px;
+}
+
+.k-edit__guard-title {
+  font-weight: 500;
+  color: var(--kelson-text);
+}
+
+.k-edit__conflict {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 24px;
+  padding: 18px 20px;
+  background: var(--kelson-degraded-fill);
+  border: 1px solid var(--kelson-degraded-border);
+  border-radius: 6px;
+}
+
+.k-edit__conflict-body {
+  margin: 0;
+  max-width: 76ch;
+  color: var(--kelson-text-2);
+}
+
+.k-edit__conflict-actions {
+  margin-top: 4px;
 }
