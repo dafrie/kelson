@@ -125,6 +125,11 @@ const sidebars: SidebarsConfig = {
           id: 'adr/0015-valkey-operator',
           label: '0015 — Valkey operator',
         },
+        {
+          type: 'doc',
+          id: 'adr/0016-delivery-flows-v0',
+          label: '0016 — Delivery flows v0',
+        },
       ],
     },
   ],
