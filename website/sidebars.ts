@@ -56,6 +56,11 @@ const sidebars: SidebarsConfig = {
           id: 'research/score-as-input-format',
           label: 'Score as an input format',
         },
+        {
+          type: 'doc',
+          id: 'research/hierarchy-prior-art',
+          label: 'Hierarchy prior art',
+        },
       ],
     },
     {
@@ -103,6 +108,11 @@ const sidebars: SidebarsConfig = {
           type: 'doc',
           id: 'adr/0012-flux-only-gitops',
           label: '0012 — Flux-only GitOps',
+        },
+        {
+          type: 'doc',
+          id: 'adr/0013-server-state-and-api-v0',
+          label: '0013 — Server state and API v0',
         },
         {
           type: 'doc',
