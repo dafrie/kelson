@@ -1,7 +1,6 @@
 package flux
 
 import (
-	"context"
 	"testing"
 
 	"github.com/dafrie/kelson/internal/delivery"
@@ -128,36 +127,6 @@ func TestRevisionMatches(t *testing.T) {
 		if got := revisionMatches(tc.flux, tc.sha); got != tc.want {
 			t.Fatalf("revisionMatches(%q, %q) = %v, want %v", tc.flux, tc.sha, got, tc.want)
 		}
-	}
-}
-
-func TestCLIStatusReaderParsesOutput(t *testing.T) {
-	r := CLIStatusReader{Bin: "kubectl", Run: func(_ context.Context, name string, args ...string) ([]byte, error) {
-		resource := args[1]
-		switch resource {
-		case "kustomizations.kustomize.toolkit.fluxcd.io":
-			return []byte(`{"items":[{"metadata":{"name":"web","namespace":"apps"},
-				"spec":{"path":"./apps/web","sourceRef":{"kind":"GitRepository","name":"deploy"}},
-				"status":{"lastAppliedRevision":"main@sha1:abc123def",
-					"conditions":[{"type":"Ready","status":"True","reason":"ReconciliationSucceeded","message":"ok"}]}}]}`), nil
-		case "gitrepositories.source.toolkit.fluxcd.io":
-			return []byte(`{"items":[{"metadata":{"name":"deploy","namespace":"apps"},"spec":{"url":"https://github.com/acme/deploy.git","ref":{"branch":"main"}}}]}`), nil
-		}
-		return nil, nil
-	}}
-	ks, err := r.Kustomizations(context.Background())
-	if err != nil {
-		t.Fatalf("kustomizations: %v", err)
-	}
-	if len(ks) != 1 {
-		t.Fatalf("got %d kustomizations", len(ks))
-	}
-	k := ks[0]
-	if k.Name != "web" || k.Namespace != "apps" || k.Path != "./apps/web" || k.Ready != ConditionTrue {
-		t.Fatalf("k = %+v", k)
-	}
-	if k.SourceURL != "https://github.com/acme/deploy.git" {
-		t.Fatalf("source url = %q", k.SourceURL)
 	}
 }
 

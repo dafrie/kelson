@@ -314,8 +314,13 @@ func connectDelivery(t deliveryTarget) (*deliveryPlane, error) {
 				Identity: git.IdentityFromEnv(nil),
 				Auth:     gitAuth(),
 			},
-			Reconciler: flux.CLIReconciler{},
-			Status:     flux.CLIStatusReader{},
+			// Both halves ride the one cluster connection this function
+			// already made, rather than a kubectl/flux binary on PATH (#137).
+			// The Receiver webhook is the preferred trigger but has no flag to
+			// configure it yet, so the annotation patch — what `flux reconcile`
+			// does under the hood — is what the CLI wires today.
+			Reconciler: flux.AnnotationReconciler{Client: cluster.Dynamic},
+			Status:     flux.DynamicStatusReader{Client: cluster.Dynamic},
 		}); err != nil {
 			return nil, err
 		}

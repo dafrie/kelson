@@ -2,10 +2,7 @@ package flux
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"os/exec"
 	"strings"
 
 	"github.com/dafrie/kelson/internal/delivery"
@@ -22,8 +19,8 @@ const (
 
 // Kustomization is the slice of a Flux Kustomization kelson reads. It is a
 // plain struct, not a typed client object, so the status source stays an
-// interface: kubectl/flux today, client-go or a watch cache later, a fake in
-// tests. None of that changes the phase mapping below.
+// interface: the dynamic client today (dynamic.go), a watch cache later, a
+// fake in tests. None of that changes the phase mapping below.
 type Kustomization struct {
 	Name      string
 	Namespace string
@@ -62,11 +59,45 @@ type HelmRelease struct {
 	Message   string
 }
 
-// StatusReader reads Flux objects from the cluster. Implementations may use
-// the Kubernetes API, the flux CLI or kubectl; tests use a fake.
+// StatusReader reads Flux objects from the cluster. The production
+// implementation is DynamicStatusReader (dynamic.go); tests use a fake.
 type StatusReader interface {
 	Kustomizations(ctx context.Context) ([]Kustomization, error)
 	HelmReleases(ctx context.Context) ([]HelmRelease, error)
+}
+
+// Health is the state of the Flux control plane itself, which is a different
+// question from the state of one Kustomization: a change that Flux has not
+// observed looks identical whether Flux is merely slow or its source-controller
+// is down (issue #137).
+type Health struct {
+	// Source names where the answer came from — HealthFromReport when
+	// flux-operator publishes a FluxReport, HealthFromControllers when kelson
+	// aggregated the controller Deployments itself. Reported so a human can
+	// tell an authoritative answer from an inferred one.
+	Source string
+	// Version is the Flux distribution version when the source knows it.
+	Version string
+	Ready   bool
+	// Unready names the components that are not ready, sorted.
+	Unready []string
+	// Message is the one-line human summary.
+	Message string
+}
+
+// Health sources.
+const (
+	HealthFromReport      = "FluxReport"
+	HealthFromControllers = "controllers"
+)
+
+// HealthReader is the optional half of a StatusReader. It is an extension
+// rather than a StatusReader method because a status source that cannot see
+// the Flux namespace is still a perfectly good status source: the adapter
+// type-asserts for it and treats a missing or failing implementation as "no
+// extra explanation available", never as a status failure.
+type HealthReader interface {
+	Health(ctx context.Context) (Health, error)
 }
 
 // Flux condition reasons kelson maps onto the delivery state machine. The
@@ -239,200 +270,8 @@ func normalizeRepo(u string) string {
 	return strings.Trim(s, "/")
 }
 
-// Runner executes an external command and returns its stdout. It is the seam
-// that keeps the CLI-backed readers testable without a cluster.
-type Runner func(ctx context.Context, name string, args ...string) ([]byte, error)
-
-// ExecRunner runs commands for real.
-func ExecRunner(ctx context.Context, name string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
-	out, err := cmd.Output()
-	if err != nil {
-		// Surface stderr: "connection refused" is the useful half of a failed
-		// kubectl call and Output() hides it.
-		var ee *exec.ExitError
-		if errors.As(err, &ee) && len(ee.Stderr) > 0 {
-			return out, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(ee.Stderr)))
-		}
-		return out, err
-	}
-	return out, nil
-}
-
-// CLIStatusReader reads Flux objects with kubectl. It deliberately avoids a
-// client-go dependency in the control plane for now: the JSON shape below is
-// the Flux API and swapping in a typed client later is a change to this file
-// only (the StatusReader interface stays put).
-type CLIStatusReader struct {
-	// Bin is the kubectl binary; defaults to "kubectl".
-	Bin string
-	// Namespace limits the query; empty means all namespaces.
-	Namespace string
-	// Run defaults to ExecRunner.
-	Run Runner
-}
-
-func (c CLIStatusReader) bin() string {
-	if c.Bin != "" {
-		return c.Bin
-	}
-	return "kubectl"
-}
-
-func (c CLIStatusReader) run() Runner {
-	if c.Run != nil {
-		return c.Run
-	}
-	return ExecRunner
-}
-
-func (c CLIStatusReader) scope() []string {
-	if c.Namespace == "" {
-		return []string{"--all-namespaces"}
-	}
-	return []string{"-n", c.Namespace}
-}
-
-// fluxList is the subset of the Kustomization/HelmRelease CRD JSON kelson
-// needs.
-type fluxList struct {
-	Items []struct {
-		Metadata struct {
-			Name      string `json:"name"`
-			Namespace string `json:"namespace"`
-		} `json:"metadata"`
-		Spec struct {
-			Path      string `json:"path"`
-			Suspend   bool   `json:"suspend"`
-			SourceRef struct {
-				Kind string `json:"kind"`
-				Name string `json:"name"`
-			} `json:"sourceRef"`
-		} `json:"spec"`
-		Status struct {
-			Conditions []struct {
-				Type    string `json:"type"`
-				Status  string `json:"status"`
-				Reason  string `json:"reason"`
-				Message string `json:"message"`
-			} `json:"conditions"`
-			LastAppliedRevision   string `json:"lastAppliedRevision"`
-			LastAttemptedRevision string `json:"lastAttemptedRevision"`
-		} `json:"status"`
-	} `json:"items"`
-}
-
-// gitRepoList is the subset of GitRepository JSON used to resolve a
-// Kustomization's source URL.
-type gitRepoList struct {
-	Items []struct {
-		Metadata struct {
-			Name      string `json:"name"`
-			Namespace string `json:"namespace"`
-		} `json:"metadata"`
-		Spec struct {
-			URL string `json:"url"`
-			Ref struct {
-				Branch string `json:"branch"`
-			} `json:"ref"`
-		} `json:"spec"`
-	} `json:"items"`
-}
-
-func (c CLIStatusReader) Kustomizations(ctx context.Context) ([]Kustomization, error) {
-	args := append([]string{"get", "kustomizations.kustomize.toolkit.fluxcd.io"}, c.scope()...)
-	args = append(args, "-o", "json")
-	out, err := c.run()(ctx, c.bin(), args...)
-	if err != nil {
-		return nil, readErr("Kustomizations", err)
-	}
-	var list fluxList
-	if err := json.Unmarshal(out, &list); err != nil {
-		return nil, readErr("Kustomizations", err)
-	}
-
-	sources, err := c.gitRepositories(ctx)
-	if err != nil {
-		// Source resolution is best effort: without it kelson matches on path
-		// alone, which is still correct for single-repo installs.
-		sources = nil
-	}
-
-	ks := make([]Kustomization, 0, len(list.Items))
-	for _, it := range list.Items {
-		k := Kustomization{
-			Name:                  it.Metadata.Name,
-			Namespace:             it.Metadata.Namespace,
-			Path:                  it.Spec.Path,
-			Suspended:             it.Spec.Suspend,
-			SourceKind:            it.Spec.SourceRef.Kind,
-			SourceName:            it.Spec.SourceRef.Name,
-			LastAppliedRevision:   it.Status.LastAppliedRevision,
-			LastAttemptedRevision: it.Status.LastAttemptedRevision,
-			Ready:                 ConditionUnknown,
-		}
-		for _, cond := range it.Status.Conditions {
-			switch cond.Type {
-			case "Ready":
-				k.Ready = ConditionState(cond.Status)
-				k.Reason, k.Message = cond.Reason, cond.Message
-			case "Reconciling":
-				k.Reconciling = cond.Status == string(ConditionTrue)
-			}
-		}
-		if src, ok := sources[it.Metadata.Namespace+"/"+it.Spec.SourceRef.Name]; ok {
-			k.SourceURL, k.SourceBranch = src.url, src.branch
-		}
-		ks = append(ks, k)
-	}
-	return ks, nil
-}
-
-type gitSource struct{ url, branch string }
-
-func (c CLIStatusReader) gitRepositories(ctx context.Context) (map[string]gitSource, error) {
-	args := append([]string{"get", "gitrepositories.source.toolkit.fluxcd.io"}, c.scope()...)
-	args = append(args, "-o", "json")
-	out, err := c.run()(ctx, c.bin(), args...)
-	if err != nil {
-		return nil, err
-	}
-	var list gitRepoList
-	if err := json.Unmarshal(out, &list); err != nil {
-		return nil, err
-	}
-	m := map[string]gitSource{}
-	for _, it := range list.Items {
-		m[it.Metadata.Namespace+"/"+it.Metadata.Name] = gitSource{url: it.Spec.URL, branch: it.Spec.Ref.Branch}
-	}
-	return m, nil
-}
-
-func (c CLIStatusReader) HelmReleases(ctx context.Context) ([]HelmRelease, error) {
-	args := append([]string{"get", "helmreleases.helm.toolkit.fluxcd.io"}, c.scope()...)
-	args = append(args, "-o", "json")
-	out, err := c.run()(ctx, c.bin(), args...)
-	if err != nil {
-		return nil, readErr("HelmReleases", err)
-	}
-	var list fluxList
-	if err := json.Unmarshal(out, &list); err != nil {
-		return nil, readErr("HelmReleases", err)
-	}
-	hrs := make([]HelmRelease, 0, len(list.Items))
-	for _, it := range list.Items {
-		hr := HelmRelease{Name: it.Metadata.Name, Namespace: it.Metadata.Namespace, Ready: ConditionUnknown}
-		for _, cond := range it.Status.Conditions {
-			if cond.Type == "Ready" {
-				hr.Ready = ConditionState(cond.Status)
-				hr.Reason, hr.Message = cond.Reason, cond.Message
-			}
-		}
-		hrs = append(hrs, hr)
-	}
-	return hrs, nil
-}
-
+// readErr wraps a failed cluster read as a delivery error naming what could
+// not be read.
 func readErr(what string, err error) error {
 	e := delivery.ApplyFailed("flux/status", "",
 		"could not read Flux "+what+" from the cluster",
@@ -440,5 +279,3 @@ func readErr(what string, err error) error {
 	e.Cause = err.Error()
 	return e
 }
-
-var _ StatusReader = CLIStatusReader{}
