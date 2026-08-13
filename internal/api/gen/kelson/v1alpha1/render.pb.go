@@ -419,6 +419,17 @@ func (x *DiffRequest) GetFromRevision() string {
 // Wire projection of internal/diff's Diff: resources, ops, risk, origin,
 // policy violations and the Unvalidated tri-state. Field layout mirrors the
 // Go types; see internal/diff/diff.go for the authoritative vocabulary.
+//
+// The diff travels as diff_json, so the vocabulary grows there, not here. Two
+// additions worth naming because clients branch on them (#45):
+//   - a violation carries `code` (policy/webhook-denied,
+//     policy/admission-policy-denied, policy/validation-failed,
+//     policy/audit-finding) and a `remediation` naming the policy, constraint
+//     or webhook configuration to inspect;
+//   - an unvalidated entry carries `reason`, which separates "the apply would
+//     fail too" (missing-prerequisite, unattributed-rejection) from "the
+//     dry-run never reached this check" (dry-run-unsupported,
+//     webhook-excludes-dry-run). Only the first family sets exit_semantics 3.
 type DiffResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	DiffJson      []byte                 `protobuf:"bytes,1,opt,name=diff_json,json=diffJson,proto3" json:"diff_json,omitempty"`                 // diff.EncodeJSON output — one canonical encoding

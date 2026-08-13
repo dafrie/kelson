@@ -205,20 +205,14 @@ func (s *Server) serverDiff(ctx context.Context, cur *rendered) (*diff.Diff, err
 	return engine.Preview(ctx, set)
 }
 
-// diffExitCode maps a preview onto the CI exit contract. It is a deliberate
-// replica of cmd/kelson/diff.go's diffExitCode — the two must agree, because a
-// gate that runs `kelson diff` and a gate that calls this RPC are asserting the
-// same thing about the same preview.
+// diffExitCode maps a preview onto the CI exit contract, mirroring
+// cmd/kelson/diff.go's diffExitCode. The two must agree, because a gate that
+// runs `kelson diff` and a gate that calls this RPC are asserting the same
+// thing about the same preview — so the "is this blocked?" half lives in
+// diff.Blocked and both call it.
 func diffExitCode(d *diff.Diff) int32 {
-	for _, v := range d.Violations {
-		if v.Enforcement == diff.EnforcementEnforce {
-			return exitSemanticsBlocked
-		}
-	}
-	for _, u := range d.Unvalidated {
-		if !u.InBatch {
-			return exitSemanticsBlocked
-		}
+	if diff.Blocked(d) {
+		return exitSemanticsBlocked
 	}
 	if len(d.Resources) > 0 {
 		return exitSemanticsDiff

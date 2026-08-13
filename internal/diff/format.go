@@ -127,28 +127,42 @@ func writeViolations(b *strings.Builder, vs []PolicyViolation, color bool) {
 		if v.Message != "" {
 			fmt.Fprintf(b, "    %s\n", v.Message)
 		}
+		if v.Remediation != "" {
+			fmt.Fprintf(b, "    %s\n", v.Remediation)
+		}
 	}
 }
 
 // writeUnvalidated prints resources the preview could not evaluate, so an
-// incomplete preview never reads as a clean one (#43).
+// incomplete preview never reads as a clean one (#43). A blocker is red and
+// says the apply would fail; a coverage gap is yellow and says only that the
+// check never ran, because claiming more would be the dishonesty this section
+// exists to prevent (#45).
 func writeUnvalidated(b *strings.Builder, us []Unvalidated, color bool) {
 	for _, u := range us {
 		head := "not validated: " + u.Resource
 		if u.Requires != "" {
 			head += " (requires " + u.Requires + ")"
 		}
-		if !u.InBatch {
-			head += " — prerequisite is missing, apply would fail"
+		switch u.Reason {
+		case ReasonDryRunUnsupported, ReasonWebhookExcludesDryRun:
+			head += " — the dry-run does not reach it, so preview cannot say whether it would reject this"
+		default:
+			if !u.InBatch {
+				head += " — prerequisite is missing, apply would fail"
+			}
 		}
 		if color {
 			c := ansiYellow
-			if !u.InBatch {
+			if u.Blocking() {
 				c = ansiRed
 			}
 			head = c + head + ansiReset
 		}
 		fmt.Fprintf(b, "%s\n", head)
+		if u.Message != "" {
+			fmt.Fprintf(b, "    %s\n", u.Message)
+		}
 	}
 }
 
