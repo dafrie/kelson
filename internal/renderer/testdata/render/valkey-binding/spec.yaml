@@ -1,0 +1,47 @@
+# Fixture: bindings against a cache, alongside bindings against a database, in
+# one spec (#98, #89).
+#
+# The two kinds bind differently and both shapes are here on purpose. A postgres
+# binding is a secretKeyRef against <cluster>-app, the Secret CloudNativePG
+# generates — a credential never appears in a manifest (ADR-0009). A valkey
+# binding is a plain value, because a Service hostname and a port are not
+# credentials and wrapping them in a Secret nobody wrote would be theatre.
+#
+# The cache has no `password` key to bind: the Valkey operator generates no
+# application credential, so kelson renders no ACL user and refuses that key
+# with the reason (ADR-0015). Everything a cache *can* answer is exercised here.
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: checkout
+spec:
+  image: ghcr.io/acme/checkout:1.4.2
+
+  env:
+    LOG_LEVEL: info
+    REDIS_URL: { from: { service: cache, key: uri } }
+
+  components:
+    - name: db
+      kind: postgres
+      preset: small
+    - name: cache
+      kind: valkey
+      preset: small
+
+    - name: web
+      port: 8080
+      env:
+        DATABASE_URL: { from: { service: db, key: uri } }
+        CACHE_HOST: { from: { service: cache, key: host } }
+        CACHE_PORT: { from: { service: cache, key: port } }
+    - name: worker
+      command: ["bundle", "exec", "sidekiq"]
+---
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: staging
+spec:
+  project: checkout
+  namespace: checkout-staging

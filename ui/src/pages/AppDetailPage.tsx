@@ -16,6 +16,8 @@ import { phaseToStatus } from "../components/phase";
 import { EmptyState, LoadingState } from "../components/States";
 import { DataServices } from "../dataservices/DataServices";
 import { isDataServiceVerdict } from "../dataservices/parse";
+import { PhaseRail } from "../deploy/PhaseRail";
+import { parseCause, type RailInput } from "../deploy/rail";
 
 /**
  * One project: its environments' delivery state, its documents, its actions.
@@ -122,7 +124,13 @@ interface VerdictRow {
 
 /** What the stream has said about this environment since Status was read. */
 interface PanelLive {
-  transition?: { phase: string; revision: string; cause: string };
+  transition?: {
+    phase: string;
+    /** The phase this transition left — how the rail places a rejection. */
+    previousPhase: string;
+    revision: string;
+    cause: string;
+  };
   verdicts: Record<string, { code: string; healthy: boolean; message: string }>;
 }
 
@@ -156,8 +164,8 @@ function EnvironmentPanel({
     const payload = event.payload;
     setLive((prev) => {
       if (payload.case === "statusTransition") {
-        const { phase, revision, cause } = payload.value;
-        return { ...prev, transition: { phase, revision, cause } };
+        const { phase, previousPhase, revision, cause } = payload.value;
+        return { ...prev, transition: { phase, previousPhase, revision, cause } };
       }
       if (payload.case === "healthChange") {
         const v = payload.value;
@@ -204,6 +212,24 @@ function EnvironmentPanel({
   const workloads = useMemo(
     () => verdicts.filter((v) => !isDataServiceVerdict(v.resource)),
     [verdicts],
+  );
+  // The same rail the deploy screen draws, in compact form, off Status plus the
+  // stream's deltas — so an environment that goes stuck or degraded while this
+  // page is open says so, and says what to do, without a reload.
+  //
+  // Two things the deploy stream has are missing here and are NOT invented:
+  // StatusResponse carries no delivery mode or adapter, so the reconciler stage
+  // reads "not reported" until a failure cause names a component; and it
+  // carries no `stuck` flag, so a stuck verdict is recovered from the engine's
+  // own cause reasons (rail.ts:isStuckReason).
+  const railInput = useMemo<RailInput>(
+    () => ({
+      phase: phase ?? "",
+      cause: parseCause(cause ?? ""),
+      reachedPhase: live.transition?.previousPhase,
+      unhealthyWorkloads: workloads.filter((v) => !v.healthy).length,
+    }),
+    [phase, cause, live.transition, workloads],
   );
   const documentText = useMemo(
     () => ({
@@ -276,6 +302,14 @@ function EnvironmentPanel({
 
         {status.data !== undefined ? (
           <>
+            <PhaseRail
+              input={railInput}
+              project={project}
+              environment={environment}
+              compact
+              label={`Deployment phase for ${environment}`}
+            />
+
             <div className="k-kv">
               <span className="k-kv__key">revision</span>
               <span>

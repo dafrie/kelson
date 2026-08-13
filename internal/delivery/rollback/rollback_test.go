@@ -199,6 +199,27 @@ func TestPreviewStatefulDataOperator(t *testing.T) {
 	}
 }
 
+// TestPreviewStatefulValkeyCluster: a kelson cache renders with persistence
+// off, so recreating one loses everything in it. That is the cheap loss issue
+// #98 designs for, and still not something a preview may imply is free — a
+// warning, which is what "usually acceptable" deserves.
+func TestPreviewStatefulValkeyCluster(t *testing.T) {
+	d := &diff.Diff{
+		Level: diff.LevelRendered,
+		Resources: []diff.ResourceDiff{
+			{APIVersion: "valkey.io/v1alpha1", Kind: "ValkeyCluster", Name: "cache", Namespace: "shop", Op: diff.OpAdded, Risk: diff.RiskRestart},
+		},
+	}
+	_, findings := Preview(d)
+	stateful := findingsByCause(findings, CauseStatefulData)
+	if len(stateful) != 1 {
+		t.Fatalf("data-operator finding missing: %+v", findings)
+	}
+	if stateful[0].Never {
+		t.Errorf("a cache is a warning, not an unrecoverable loss: %+v", stateful[0])
+	}
+}
+
 // TestPreviewMigrationsCaveatAlwaysPresent: every rollback preview states that
 // migrations are not covered rather than implying it is fully safe (issue #55).
 func TestPreviewMigrationsCaveatAlwaysPresent(t *testing.T) {

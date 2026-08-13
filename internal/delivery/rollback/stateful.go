@@ -17,8 +17,8 @@ import (
 //     to hold is gone. Equally, a PVC the rollback deletes (present now, absent
 //     in the target) destroys the claim and its PersistentVolume. Both are
 //     unrecoverable.
-//   - A resource owned by a data operator (a CloudNativePG Postgres Cluster)
-//     holds data outside the manifest. Reverting the manifest leaves the data
+//   - A resource owned by a data operator (a CloudNativePG Postgres Cluster, a
+//     ValkeyCluster) holds data outside the manifest. Reverting the manifest leaves the data
 //     as it is: the rollback does not roll the database back. This is reported
 //     as stateful-not-restored, and is a warning rather than a hard Never — for
 //     a modified working resource it may be exactly what the operator wants —
@@ -73,6 +73,14 @@ func isDataOperator(r *diff.ResourceDiff) bool {
 	// CloudNativePG runs the Postgres data plane; its Cluster CRD is the
 	// declared owner of the physical database.
 	if r.Kind == "Cluster" && strings.Contains(r.APIVersion, "cnpg.io") {
+		return true
+	}
+	// The Valkey operator runs the cache data plane. A kelson cache renders
+	// with persistence off, so recreating one loses everything in it — which is
+	// the cheap loss issue #98 designs for, and still not something a preview
+	// may imply is free. The warning shape is right here: for a cache it is
+	// usually acceptable, and "usually acceptable" is exactly what a warning is.
+	if r.Kind == "ValkeyCluster" && strings.Contains(r.APIVersion, "valkey.io") {
 		return true
 	}
 	// A StatefulSet is state-bearing but the operator-owned-data rule above is

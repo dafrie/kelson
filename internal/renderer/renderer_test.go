@@ -86,6 +86,30 @@ func boundFixture(preset model.ServicePreset) *model.Resolved {
 	return r
 }
 
+// valkeyProfile is cnpgProfile plus a Valkey operator new enough for every cache
+// preset, with both served resources spelled out — the shape a real detection
+// produces (issue #98).
+func valkeyProfile() clusterprofile.ClusterProfile {
+	p := cnpgProfile()
+	p.Valkey = &clusterprofile.ValkeyOperator{
+		Version:   "0.5.0",
+		Namespace: "valkey-operator-system",
+		CRDs:      []string{"valkeyclusters", "valkeynodes"},
+	}
+	return p
+}
+
+// cacheFixture is the standard fixture with one valkey component at the given
+// preset and the web application bound to its uri.
+func cacheFixture(preset model.ServicePreset) *model.Resolved {
+	r := resolvedFixture()
+	r.DataServices = []model.ResolvedDataService{{Name: "cache", Kind: model.ComponentValkey, Preset: preset}}
+	r.Components[0].Env["REDIS_URL"] = model.EnvValue{
+		From: &model.ServiceBinding{Service: "cache", Key: "uri"},
+	}
+	return r
+}
+
 func kinds(ms []Manifest) []string {
 	out := make([]string, len(ms))
 	for i, m := range ms {

@@ -482,6 +482,116 @@ func TestProbeCNPGWithoutDatabaseCRD(t *testing.T) {
 	}
 }
 
+// --- The Valkey operator: version and served resources (issue #98) -----------
+
+// valkeyOperatorDeployment builds a controller Deployment shaped like both
+// install methods: the kustomize manifests and the project's Helm chart label
+// it app.kubernetes.io/name=valkey-operator.
+func valkeyOperatorDeployment(namespace, image string, extraLabels map[string]string) *unstructured.Unstructured {
+	labels := map[string]any{"app.kubernetes.io/name": "valkey-operator"}
+	for k, v := range extraLabels {
+		labels[k] = v
+	}
+	d := unstruct(schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"}, "valkey-operator-controller-manager", map[string]any{
+		"metadata": map[string]any{"namespace": namespace, "labels": labels},
+		"spec": map[string]any{"template": map[string]any{"spec": map[string]any{
+			"containers": []any{
+				map[string]any{"name": "manager", "image": image},
+			},
+		}}},
+	})
+	d.SetNamespace(namespace)
+	return d
+}
+
+func valkeyProber(t *testing.T) *fakeProber {
+	t.Helper()
+	return newFakeProber(t, []*metav1.APIResourceList{
+		resourceList("valkey.io/v1alpha1", "valkeyclusters", "valkeyclusters/status", "valkeynodes"),
+	})
+}
+
+// TestProbeValkeyOperator: the operator is a finding of its own, with the same
+// three facts CNPG records — version from the image tag, namespace, and the
+// resources the API server actually serves. Subresources are not CRDs a
+// manifest targets and must not appear in the served set.
+func TestProbeValkeyOperator(t *testing.T) {
+	f := valkeyProber(t)
+	f.seed(t, deploymentGVR, valkeyOperatorDeployment("valkey-operator-system", "ghcr.io/valkey-io/valkey-operator:0.5.0", nil))
+
+	prof, err := f.probe(context.Background())
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	if prof.Valkey == nil {
+		t.Fatal("the valkey.io group is registered, so the operator is present")
+	}
+	if prof.Valkey.Version != "0.5.0" || prof.Valkey.Namespace != "valkey-operator-system" {
+		t.Fatalf("valkey = %+v, want 0.5.0 in valkey-operator-system", prof.Valkey)
+	}
+	if !reflect.DeepEqual(prof.Valkey.CRDs, []string{"valkeyclusters", "valkeynodes"}) {
+		t.Fatalf("crds = %v, want valkeyclusters and valkeynodes and no subresource", prof.Valkey.CRDs)
+	}
+	if len(prof.Incomplete) != 0 {
+		t.Fatalf("a fully readable install is a finding, not a gap: %+v", prof.Incomplete)
+	}
+}
+
+// TestProbeValkeyVersionFromChartLabel: a digest-pinned image has no readable
+// tag, so the chart's version label is the fallback — and a guess is never the
+// fallback.
+func TestProbeValkeyVersionFromChartLabel(t *testing.T) {
+	f := valkeyProber(t)
+	f.seed(t, deploymentGVR, valkeyOperatorDeployment("valkey-system",
+		"ghcr.io/valkey-io/valkey-operator@sha256:abc",
+		map[string]string{"app.kubernetes.io/version": "0.5.0"}))
+
+	prof, err := f.probe(context.Background())
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	if prof.Valkey.Version != "0.5.0" || prof.Valkey.Namespace != "valkey-system" {
+		t.Fatalf("valkey = %+v, want 0.5.0 in valkey-system", prof.Valkey)
+	}
+}
+
+// TestProbeValkeyWithoutNodeCRD: a partially applied CRD set serves
+// valkeyclusters and nothing else, and the profile records exactly that — the
+// served set is what a manifest would meet, and what the judgement refuses on.
+func TestProbeValkeyWithoutNodeCRD(t *testing.T) {
+	f := newFakeProber(t, []*metav1.APIResourceList{
+		resourceList("valkey.io/v1alpha1", "valkeyclusters"),
+	})
+	f.seed(t, deploymentGVR, valkeyOperatorDeployment("valkey-operator-system", "ghcr.io/valkey-io/valkey-operator:0.5.0", nil))
+
+	prof, err := f.probe(context.Background())
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	if prof.Valkey.ServesCRD("valkeynodes") {
+		t.Fatalf("crds = %v, must not claim valkeynodes", prof.Valkey.CRDs)
+	}
+	if !prof.Valkey.ServesCRD("valkeyclusters") {
+		t.Fatalf("crds = %v, want valkeyclusters", prof.Valkey.CRDs)
+	}
+}
+
+// TestProbeValkeyAbsentIsAbsent: no registered group means no operator, and
+// that is a finding rather than a gap — the whole shape contract of detection.
+func TestProbeValkeyAbsentIsAbsent(t *testing.T) {
+	f := newFakeProber(t, nil)
+	prof, err := f.probe(context.Background())
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	if prof.Valkey != nil {
+		t.Fatalf("valkey = %+v, want absent", prof.Valkey)
+	}
+	if hasGap(prof.Incomplete, "valkey") {
+		t.Fatalf("a successful look at an operator-free cluster is not a gap: %+v", prof.Incomplete)
+	}
+}
+
 func TestImageTag(t *testing.T) {
 	cases := map[string]string{
 		"ghcr.io/cloudnative-pg/cloudnative-pg:1.26.0":       "1.26.0",
@@ -514,7 +624,7 @@ func TestProbeForbiddenAPIsGapsEverything(t *testing.T) {
 	if prof.CertManager != nil || prof.GatewayAPI != nil || prof.Prometheus != nil {
 		t.Fatalf("no component may claim presence when /apis is forbidden: %+v", prof)
 	}
-	for _, want := range []string{"gatewayAPI", "certManager", "externalSecrets", "cnpg", "flux", "fluxOperator", "argocd", "metricsServer", "prometheus", "policyEngines"} {
+	for _, want := range []string{"gatewayAPI", "certManager", "externalSecrets", "cnpg", "valkey", "flux", "fluxOperator", "argocd", "metricsServer", "prometheus", "policyEngines"} {
 		if !hasGap(prof.Incomplete, want) {
 			t.Fatalf("expected a gap on %q, got %+v", want, prof.Incomplete)
 		}

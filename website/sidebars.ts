@@ -120,6 +120,11 @@ const sidebars: SidebarsConfig = {
           id: 'adr/0014-components',
           label: '0014 — Components',
         },
+        {
+          type: 'doc',
+          id: 'adr/0015-valkey-operator',
+          label: '0015 — Valkey operator',
+        },
       ],
     },
   ],

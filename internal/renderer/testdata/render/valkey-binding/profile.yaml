@@ -1,0 +1,12 @@
+# Both data operators, because this fixture binds to both. They are independent
+# findings and independent judgements: a cluster can run one, the other, or
+# neither, and the refusals name different operators and different install
+# paths.
+cnpg:
+  version: 1.30.0
+  namespace: cnpg-system
+  crds: [clusters]
+valkey:
+  version: 0.5.0
+  namespace: valkey-operator-system
+  crds: [valkeyclusters, valkeynodes]

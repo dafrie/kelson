@@ -1,0 +1,275 @@
+/*
+ * The phase rail (issue #68).
+ *
+ * Colour carries the stage state and nothing else, and it comes entirely from
+ * the status tokens the pills already use, so a stage and its pill can never
+ * disagree about what "degraded" looks like. Both themes are covered because
+ * every value here is a --kelson-* token; there is not a literal colour in the
+ * file.
+ */
+
+.k-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.k-rail__stages {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.k-rail__stage {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  position: relative;
+  padding: 12px 14px 12px 16px;
+  background: var(--kelson-panel);
+  border: 1px solid var(--kelson-hairline);
+  border-radius: 5px;
+  min-width: 0;
+}
+
+/* The rail itself: a rule joining each stage to the next, drawn behind the
+   boxes so a wrapped row does not leave a line pointing at nothing. */
+.k-rail__stage + .k-rail__stage::before {
+  content: "";
+  position: absolute;
+  left: -11px;
+  top: 50%;
+  width: 11px;
+  border-top: 1px solid var(--kelson-border);
+}
+
+.k-rail__marker {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  border-radius: 5px 0 0 5px;
+  background: var(--kelson-inset-border);
+}
+
+.k-rail__phase {
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--kelson-text);
+  overflow-wrap: anywhere;
+}
+
+.k-rail__actor {
+  font-size: 11px;
+  color: var(--kelson-muted-2);
+  overflow-wrap: anywhere;
+}
+
+.k-rail__actor--unknown {
+  color: var(--kelson-muted-deep);
+  font-style: italic;
+}
+
+.k-rail__state {
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--kelson-muted-deep);
+}
+
+.k-rail__stage--done .k-rail__marker {
+  background: var(--kelson-synced);
+}
+
+.k-rail__stage--done .k-rail__state {
+  color: var(--kelson-synced);
+}
+
+.k-rail__stage--current {
+  border-color: var(--kelson-reconciling-border);
+  background: var(--kelson-reconciling-fill);
+}
+
+.k-rail__stage--current .k-rail__marker {
+  background: var(--kelson-reconciling);
+  animation: kelson-pulse 1.4s ease-in-out infinite;
+}
+
+.k-rail__stage--current .k-rail__state {
+  color: var(--kelson-reconciling);
+}
+
+/* Stuck is its own paint, not a dimmer red: the whole point is that a wedged
+   deployment is a different situation from a rejected one. */
+.k-rail__stage--stuck {
+  border-color: var(--kelson-degraded-border);
+  background: var(--kelson-degraded-fill);
+}
+
+.k-rail__stage--stuck .k-rail__marker {
+  background: var(--kelson-degraded);
+}
+
+.k-rail__stage--stuck .k-rail__state {
+  color: var(--kelson-degraded);
+}
+
+.k-rail__stage--failed {
+  border-color: var(--kelson-failed-border);
+  background: var(--kelson-failed-fill);
+}
+
+.k-rail__stage--failed .k-rail__marker {
+  background: var(--kelson-failed);
+}
+
+.k-rail__stage--failed .k-rail__state {
+  color: var(--kelson-failed);
+}
+
+.k-rail__stage--pending {
+  background: var(--kelson-panel-dim);
+}
+
+.k-rail__stage--pending .k-rail__phase {
+  color: var(--kelson-muted-2);
+}
+
+.k-rail__headline {
+  margin: 0;
+  font-size: 13px;
+  color: var(--kelson-text-2);
+}
+
+.k-rail__diagnosis {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 16px 18px;
+  border-radius: 6px;
+  border: 1px solid var(--kelson-border);
+  background: var(--kelson-panel);
+}
+
+.k-rail__diagnosis--not-picked-up,
+.k-rail__diagnosis--unhealthy {
+  border-color: var(--kelson-degraded-border);
+  background: var(--kelson-degraded-fill);
+}
+
+.k-rail__diagnosis--rejected {
+  border-color: var(--kelson-failed-border);
+  background: var(--kelson-failed-fill);
+}
+
+.k-rail__diagnosis-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.k-rail__diagnosis-title {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--kelson-text);
+}
+
+.k-rail__diagnosis--not-picked-up .k-rail__diagnosis-title,
+.k-rail__diagnosis--unhealthy .k-rail__diagnosis-title {
+  color: var(--kelson-degraded);
+}
+
+.k-rail__diagnosis--rejected .k-rail__diagnosis-title {
+  color: var(--kelson-failed);
+}
+
+.k-rail__diagnosis-where {
+  font-size: 11px;
+  color: var(--kelson-muted-deep);
+}
+
+.k-rail__diagnosis-detail {
+  margin: 0;
+  font-size: 13px;
+  color: var(--kelson-text-2);
+  overflow-wrap: anywhere;
+}
+
+.k-rail__next {
+  margin: 0;
+  font-size: 13px;
+  color: var(--kelson-text);
+}
+
+.k-rail__next-label {
+  font-family: var(--kelson-font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--kelson-muted-2);
+}
+
+.k-rail__action {
+  margin-top: 2px;
+}
+
+/* ------------------------------------------------------------------ compact */
+
+.k-rail--compact {
+  gap: 10px;
+}
+
+.k-rail--compact .k-rail__stages {
+  gap: 8px;
+}
+
+.k-rail--compact .k-rail__stage {
+  padding: 8px 10px 8px 12px;
+  gap: 2px;
+}
+
+.k-rail--compact .k-rail__stage + .k-rail__stage::before {
+  left: -9px;
+  width: 9px;
+}
+
+.k-rail--compact .k-rail__phase {
+  font-size: 12px;
+}
+
+.k-rail--compact .k-rail__actor {
+  font-size: 10px;
+}
+
+.k-rail--compact .k-rail__diagnosis {
+  padding: 12px 14px;
+  gap: 6px;
+}
+
+.k-rail--compact .k-rail__diagnosis-title {
+  font-size: 13.5px;
+}
+
+/* The five-across grid stops being readable well before a phone: below this the
+   stages stack, and the joining rule is dropped with them. */
+@media (max-width: 760px) {
+  .k-rail__stages {
+    grid-template-columns: 1fr;
+  }
+
+  .k-rail__stage + .k-rail__stage::before {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .k-rail__stage--current .k-rail__marker {
+    animation: none;
+  }
+}

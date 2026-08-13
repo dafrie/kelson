@@ -37,9 +37,9 @@ fields and the `from:` bindings left the table exactly that way with
 [#89](https://github.com/dafrie/kelson/issues/89).
 
 Not every refusal is a gate. A field can be consumed and still have values kelson will not render:
-`kind: valkey`, `preset: branch`, and a preset the target cluster's CloudNativePG cannot host are
-structured *render* errors, because the check needs a ClusterProfile and validation deliberately has
-none. See [docs/data-services.md](data-services.md).
+`preset: branch`, and a preset the target cluster's operator cannot host, are structured *render*
+errors, because the check needs a ClusterProfile and validation deliberately has none. See
+[docs/data-services.md](data-services.md).
 
 And not every refusal is either: a field that belongs to another kind is a plain validation error, because
 one list means one type carrying fields only some of its kinds use. `preset` on a worker, `port` on a
@@ -212,12 +212,13 @@ every running workload — the spec's vocabulary changed, the cluster's did not.
 
 ## Data components and bindings
 
-> Implemented for `kind: postgres` since [#89](https://github.com/dafrie/kelson/issues/89). What each
-> preset renders, the sizing defaults and the capability rules are in
-> [docs/data-services.md](data-services.md). Still refused, loudly and by the *renderer* rather than by
-> validation: `kind: valkey` ([#98](https://github.com/dafrie/kelson/issues/98)), `preset: branch`
-> ([#99](https://github.com/dafrie/kelson/issues/99)), and any preset the target cluster's
-> CloudNativePG cannot host.
+> Implemented for `kind: postgres` since [#89](https://github.com/dafrie/kelson/issues/89) and for
+> `kind: valkey` since [#98](https://github.com/dafrie/kelson/issues/98). What each preset renders,
+> the sizing defaults and the capability rules are in [docs/data-services.md](data-services.md).
+> Still refused, loudly and by the *renderer* rather than by validation: `preset: branch`
+> ([#99](https://github.com/dafrie/kelson/issues/99)), `preset: shared`
+> ([#93](https://github.com/dafrie/kelson/issues/93)), and any preset the target cluster's operator
+> cannot host.
 
 ```yaml
 spec:
@@ -234,10 +235,14 @@ The binding key stays `service:` after the rename: what it names is the service 
 and every other kind is unbindable. Binding to a workload is `ref/unknown-service` with the bindable names
 in the remediation.
 
-A binding is **never** a value. The value lives in the Secret the component's operator generates — for a
-dedicated postgres preset that is CloudNativePG's `<cluster>-app`, where `<cluster>` is
-`<project>-<environment>-<component>` — and the renderer emits a `secretKeyRef` against it. kelson's key
-names are the spec's contract and are mapped onto the operator's own (`database` is CNPG's `dbname`).
+A binding is **never** a secret value in the spec. A *credential* lives in the Secret the component's
+operator generates — for a dedicated postgres preset that is CloudNativePG's `<cluster>-app`, where
+`<cluster>` is `<project>-<environment>-<component>` — and the renderer emits a `secretKeyRef` against
+it. kelson's key names are the spec's contract and are mapped onto the operator's own (`database` is
+CNPG's `dbname`). A key that is *not* a credential — a cache's host, port and URI — renders as a plain
+value, because minting a Secret to hold a Service name would obey the letter of
+[ADR-0009](adr/0009-secrets.md) and make the manifest harder to read. A cache has no `password` at all;
+[docs/data-services.md](data-services.md) says why, and what that means for who can reach it.
 Well-known keys per data kind:
 
 | Kind | Keys |

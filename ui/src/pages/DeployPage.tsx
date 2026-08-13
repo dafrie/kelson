@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 
 import { useAsync, useClients } from "../api/data";
@@ -20,6 +20,8 @@ import { answerToStatus, formatInstant, phaseToStatus } from "../components/phas
 import { LoadingState } from "../components/States";
 import { DiffView } from "../diff/DiffView";
 import { decodeDiff, type Diff } from "../diff/parse";
+import { PhaseRail } from "../deploy/PhaseRail";
+import { RAIL_PHASES, type RailInput } from "../deploy/rail";
 
 /**
  * Deploy, in two steps, because the API is in two steps.
@@ -198,7 +200,14 @@ export function DeployPage() {
         </section>
       ) : null}
 
-      {started ? <Stream live={live} error={apply.error} /> : null}
+      {started ? (
+        <Stream
+          live={live}
+          error={apply.error}
+          project={project}
+          environment={env}
+        />
+      ) : null}
     </>
   );
 }
@@ -344,42 +353,120 @@ function ServerDiff({
   );
 }
 
-function Stream({ live, error }: { live: Live; error: unknown }) {
+/**
+ * The live deployment, as a rail first and a log second.
+ *
+ * The event list is still here — it is the literal thing the server sent, and
+ * for a deploy that went wrong in an interesting way it is the evidence — but
+ * it is no longer the answer. The answer is the rail: which phase we are in,
+ * who owns it, and, when something is wrong, which of the three failures this
+ * is and what to do about it. The log collapses under it.
+ */
+function Stream({
+  live,
+  error,
+  project,
+  environment,
+}: {
+  live: Live;
+  error: unknown;
+  project: string;
+  environment: string;
+}) {
+  const input = useMemo(() => railInput(live), [live]);
+  const settledError = live.settled?.error;
+
   return (
     <section className="k-section">
       <div className="k-eyebrow">Deployment</div>
-      <div className="k-section__body k-stream">
-        {live.proposed ? (
-          <div className="k-stream__row">
-            <span className="k-mono k-stream__label">proposed</span>
-            <span className="k-mono">
-              {live.proposed.resources} resources · mode{" "}
-              {live.proposed.mode || "—"}
-            </span>
-          </div>
-        ) : null}
-
-        {live.committed ? (
-          <div className="k-stream__row">
-            <span className="k-mono k-stream__label">committed</span>
-            <span className="k-mono">
-              revision <Copyable value={live.committed.revision} /> · adapter{" "}
-              {live.committed.adapter}
-            </span>
-          </div>
-        ) : null}
-
-        {live.transitions.map((t, i) => (
-          <TransitionRow key={`${t.phase}:${i}`} transition={t} />
-        ))}
-
-        {live.settled ? <Settled settled={live.settled} /> : null}
+      <div className="k-section__body k-deploy__live">
+        <PhaseRail
+          input={input}
+          project={project}
+          environment={environment}
+          errors={settledError ? [settledError] : undefined}
+        />
 
         {error !== undefined ? (
           <ErrorPanel title="The deploy stream failed" error={error} />
         ) : null}
+
+        <Disclosure
+          summary="Event log"
+          meta={`${live.transitions.length} ${live.transitions.length === 1 ? "transition" : "transitions"}`}
+        >
+          <EventLog live={live} />
+        </Disclosure>
       </div>
     </section>
+  );
+}
+
+/**
+ * The stream's events folded into one rail input.
+ *
+ * Everything the rail needs is on the wire here and none of it is inferred: the
+ * phase, answer, stuck flag and cause come from the last Transition (or the
+ * Settled event's `final`, which is the same message), the delivery mode from
+ * Proposed and the adapter that actually took the revision from Committed. The
+ * furthest phase reached is read off the transition list, which is what lets a
+ * rejection land on the stage it happened at instead of a default.
+ */
+function railInput(live: Live): RailInput {
+  const last = live.settled?.final ?? live.transitions[live.transitions.length - 1];
+  const reached = live.transitions.reduce((best, t) => {
+    const i = (RAIL_PHASES as readonly string[]).indexOf(t.phase);
+    return i > best ? i : best;
+  }, -1);
+  return {
+    // Before the first Transition the stream has still told us something: a
+    // Committed event means the revision exists, and Proposed means the render
+    // landed. Phase is what the rail draws, so it starts there and moves on.
+    phase: last?.phase ?? (live.committed ? "Committed" : "Proposed"),
+    answer: last?.answer ?? "",
+    stuck: last?.stuck ?? false,
+    cause: last?.cause
+      ? {
+          component: last.cause.component,
+          reason: last.cause.reason,
+          message: last.cause.message,
+        }
+      : undefined,
+    reachedPhase: reached >= 0 ? RAIL_PHASES[reached] : undefined,
+    mode: live.proposed?.mode ?? "",
+    adapter: live.committed?.adapter ?? "",
+  };
+}
+
+function EventLog({ live }: { live: Live }) {
+  return (
+    <div className="k-stream">
+      {live.proposed ? (
+        <div className="k-stream__row">
+          <span className="k-mono k-stream__label">proposed</span>
+          <span className="k-mono">
+            {live.proposed.resources} resources · mode{" "}
+            {live.proposed.mode || "—"}
+          </span>
+        </div>
+      ) : null}
+
+      {live.committed ? (
+        <div className="k-stream__row">
+          <span className="k-mono k-stream__label">committed</span>
+          <span className="k-mono">
+            revision <Copyable value={live.committed.revision} /> · adapter{" "}
+            {live.committed.adapter}
+          </span>
+        </div>
+      ) : null}
+
+      {live.transitions.map((t, i) => (
+        <TransitionRow key={`${t.phase}:${i}`} transition={t} />
+      ))}
+
+      {live.settled ? <Settled settled={live.settled} /> : null}
+    </div>
   );
 }
 
@@ -408,21 +495,24 @@ function TransitionRow({ transition }: { transition: DeployResponse_Transition }
   );
 }
 
+/**
+ * The terminal row of the log. The structured error a settled-unhealthy deploy
+ * carries is NOT rendered here — the rail above renders it once, next to the
+ * diagnosis that says which of the three failures it is, and printing it twice
+ * would suggest two problems.
+ */
 function Settled({ settled }: { settled: DeployResponse_Settled }) {
-  if (settled.error) {
-    return (
-      <ErrorPanel
-        title={`Settled ${settled.final?.phase.toLowerCase() ?? "unhealthy"}`}
-        errors={[settled.error]}
-      />
-    );
-  }
+  const phase = settled.final?.phase ?? "";
   return (
-    <div className="k-settled" role="status">
+    <div
+      className={phase === "Healthy" ? "k-settled" : "k-settled k-settled--other"}
+      role="status"
+      data-settled={phase}
+    >
       <div className="k-settled__head">
         <StatusPill
-          status={phaseToStatus(settled.final?.phase ?? "")}
-          label={settled.final?.phase.toLowerCase() ?? "settled"}
+          status={phaseToStatus(phase)}
+          label={phase.toLowerCase() || "settled"}
         />
         <span className="k-settled__title">Deployment settled</span>
       </div>

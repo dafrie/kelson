@@ -127,6 +127,7 @@ var componentGroups = []struct {
 	{"cert-manager.io", "certManager"},
 	{"external-secrets.io", "externalSecrets"},
 	{"postgresql.cnpg.io", "cnpg"},
+	{valkeyGroup, "valkey"},
 	{"source.toolkit.fluxcd.io", "flux"},
 	// flux-operator owns this group, and it is the same group the delivery
 	// plane reads FluxReport from (internal/delivery/flux/dynamic.go) — the two
@@ -176,6 +177,9 @@ func (p *prober) probe(ctx context.Context) (clusterprofile.ClusterProfile, erro
 	if prof.CloudNativePG != nil {
 		p.probeCloudNativePG(ctx, prof.CloudNativePG, preferredVersion(serverGroups, cnpgGroup, "v1"))
 	}
+	if prof.Valkey != nil {
+		p.probeValkeyOperator(ctx, prof.Valkey, preferredVersion(serverGroups, valkeyGroup, "v1alpha1"))
+	}
 	if prof.CertManager != nil {
 		p.probeClusterIssuers(ctx, &prof.CertManager.ClusterIssuers)
 	}
@@ -211,6 +215,8 @@ func (p *prober) applyGroupPresence(prof clusterprofile.ClusterProfile, group, f
 		prof.ExternalSecrets = &clusterprofile.ExternalSecrets{}
 	case "cnpg":
 		prof.CloudNativePG = &clusterprofile.CloudNativePG{}
+	case "valkey":
+		prof.Valkey = &clusterprofile.ValkeyOperator{}
 	case "flux":
 		prof.Flux = &clusterprofile.Component{}
 	case "fluxOperator":
@@ -376,16 +382,38 @@ func (p *prober) probeExternalSecretStores(ctx context.Context, es *clusterprofi
 // this is where they come from.
 const (
 	cnpgGroup = "postgresql.cnpg.io"
-	// cnpgOperatorSelector matches the operator Deployment in both supported
-	// install methods: the upstream release manifest and the Helm chart both
-	// label it app.kubernetes.io/name=cloudnative-pg. Selecting by label keeps
-	// the read narrow — detection wants one Deployment, not an inventory of the
-	// cluster's workloads — even though a ClusterRole cannot express that.
-	cnpgOperatorSelector = "app.kubernetes.io/name=cloudnative-pg"
-	// cnpgVersionLabel is the Helm chart's appVersion label, used when the
-	// operator image is pinned by digest and carries no readable tag.
-	cnpgVersionLabel = "app.kubernetes.io/version"
+	// operatorVersionLabel is the Helm chart's appVersion label, used when an
+	// operator image is pinned by digest and carries no readable tag. Both
+	// adopted data operators are packaged with kubebuilder conventions and label
+	// it the same way.
+	operatorVersionLabel = "app.kubernetes.io/version"
 )
+
+// cnpgOperator locates the CloudNativePG operator Deployment. The selector
+// matches both supported install methods: the upstream release manifest and the
+// Helm chart both label it app.kubernetes.io/name=cloudnative-pg. Selecting by
+// label keeps the read narrow — detection wants one Deployment, not an inventory
+// of the cluster's workloads — even though a ClusterRole cannot express that.
+var cnpgOperator = operatorDeployment{
+	selector:   "app.kubernetes.io/name=cloudnative-pg",
+	imageMatch: "cloudnative-pg",
+	gapField:   "cnpg.version",
+}
+
+// operatorDeployment is where one adopted operator's version can be read from.
+// Both data operators kelson delegates to are found the same way — a labelled
+// Deployment whose operator container's image tag is the running version — so
+// the coordinates are data and the probe is written once.
+type operatorDeployment struct {
+	// selector narrows the Deployment list to the operator's own.
+	selector string
+	// imageMatch identifies the operator container among the pod's containers by
+	// a substring of its image reference.
+	imageMatch string
+	// gapField is the ClusterProfile.Incomplete field recorded when the list is
+	// refused, e.g. "cnpg.version".
+	gapField string
+}
 
 // probeCloudNativePG fills in the operator's version, namespace and served
 // CRDs. Both reads may fail into their own Gap without demoting CNPG to absent:
@@ -393,24 +421,25 @@ const (
 // it as absent would tell a caller to install a second one — which CNPG's
 // cluster-scoped resources make actively harmful (ADR-0005).
 func (p *prober) probeCloudNativePG(ctx context.Context, c *clusterprofile.CloudNativePG, groupVersion string) {
-	p.probeCNPGOperator(ctx, c)
-	p.probeCNPGResources(c, groupVersion)
+	c.Namespace, c.Version = p.probeOperatorDeployment(ctx, cnpgOperator)
+	c.CRDs = p.probeGroupResources(cnpgGroup, groupVersion, "cnpg.crds")
 }
 
-// probeCNPGOperator reads the operator Deployment for the running version. The
-// container image tag is preferred over the chart's version label because it is
-// what actually runs: a chart can be upgraded with the image pinned, and the
-// tag is present in the plain-manifest install where the label is not.
+// probeOperatorDeployment reads an operator Deployment for the running version
+// and the namespace it runs in. The container image tag is preferred over the
+// chart's version label because it is what actually runs: a chart can be
+// upgraded with the image pinned, and the tag is present in the plain-manifest
+// install where the label is not.
 //
-// Finding no labeled Deployment is not a gap. It means the operator was
-// installed in a shape this probe does not recognise, and an empty Version
+// Finding no labelled Deployment is not a gap. It means the operator was
+// installed in a shape this probe does not recognise, and an empty version
 // already carries "installed, version unknown" (clusterprofile.go) — which the
-// judgement reports as Unknown rather than as too old.
-func (p *prober) probeCNPGOperator(ctx context.Context, c *clusterprofile.CloudNativePG) {
-	list, err := p.dyn.Resource(deploymentGVR).List(ctx, metav1.ListOptions{LabelSelector: cnpgOperatorSelector})
+// judgements report as Unknown rather than as too old.
+func (p *prober) probeOperatorDeployment(ctx context.Context, od operatorDeployment) (namespace, version string) {
+	list, err := p.dyn.Resource(deploymentGVR).List(ctx, metav1.ListOptions{LabelSelector: od.selector})
 	if err != nil {
-		p.gap("cnpg.version", p.reasonFor(err, "deployments.apps"))
-		return
+		p.gap(od.gapField, p.reasonFor(err, "deployments.apps"))
+		return "", ""
 	}
 	items := append([]unstructured.Unstructured(nil), list.Items...)
 	sort.Slice(items, func(i, j int) bool {
@@ -420,15 +449,13 @@ func (p *prober) probeCNPGOperator(ctx context.Context, c *clusterprofile.CloudN
 		return items[i].GetName() < items[j].GetName()
 	})
 	if len(items) == 0 {
-		return
+		return "", ""
 	}
 	d := &items[0]
-	c.Namespace = d.GetNamespace()
-	if v := operatorImageVersion(d); v != "" {
-		c.Version = v
-		return
+	if v := operatorImageVersion(d, od.imageMatch); v != "" {
+		return d.GetNamespace(), v
 	}
-	c.Version = d.GetLabels()[cnpgVersionLabel]
+	return d.GetNamespace(), d.GetLabels()[operatorVersionLabel]
 }
 
 // operatorImageVersion extracts the operator version from the image tag of the
@@ -436,7 +463,7 @@ func (p *prober) probeCNPGOperator(ctx context.Context, c *clusterprofile.CloudN
 // ghcr.io/cloudnative-pg/cloudnative-pg:1.26.0 -> 1.26.0. Returns "" when the
 // image is digest-pinned or the tag is not a version — guessing would be worse
 // than the Unknown an empty version produces.
-func operatorImageVersion(d *unstructured.Unstructured) string {
+func operatorImageVersion(d *unstructured.Unstructured, imageMatch string) string {
 	containers, _, _ := unstructured.NestedSlice(d.Object, "spec", "template", "spec", "containers")
 	for _, raw := range containers {
 		container, ok := raw.(map[string]any)
@@ -444,7 +471,7 @@ func operatorImageVersion(d *unstructured.Unstructured) string {
 			continue
 		}
 		image, _ := container["image"].(string)
-		if !strings.Contains(image, "cloudnative-pg") {
+		if !strings.Contains(image, imageMatch) {
 			continue
 		}
 		if tag := imageTag(image); tag != "" {
@@ -472,26 +499,59 @@ func imageTag(image string) string {
 	return tag
 }
 
-// probeCNPGResources records which resources the API server actually serves in
-// the CNPG group — clusters, databases, poolers and the rest — because that is
-// the capability a manifest meets. A cluster whose operator version says 1.26
-// but whose Database CRD was never applied would accept a Cluster and reject a
-// Database, and the served set is the half of that answer discovery can give.
-func (p *prober) probeCNPGResources(c *clusterprofile.CloudNativePG, groupVersion string) {
-	gv := cnpgGroup + "/" + groupVersion
+// Valkey operator detection coordinates (issue #98, ADR-0015).
+//
+// kelson writes a ValkeyCluster and relies on the operator materialising it
+// through ValkeyNode resources, so — as with CNPG — "present" alone cannot
+// answer whether a cache component is renderable. The judgement
+// (internal/clusterprofile/valkey) needs the version and the served resources;
+// this is where they come from.
+const valkeyGroup = "valkey.io"
+
+// valkeyOperator locates the valkey-io/valkey-operator Deployment. Both install
+// methods — the kustomize manifests and the project's Helm chart — label the
+// controller Deployment app.kubernetes.io/name=valkey-operator.
+var valkeyOperator = operatorDeployment{
+	selector:   "app.kubernetes.io/name=valkey-operator",
+	imageMatch: "valkey-operator",
+	gapField:   "valkey.version",
+}
+
+// probeValkeyOperator fills in the operator's version, namespace and served
+// resources, with the same rule as CNPG: a read that fails records its own Gap
+// and never demotes the operator to absent, because reporting an installed
+// operator as missing would tell a caller to install a second one.
+func (p *prober) probeValkeyOperator(ctx context.Context, v *clusterprofile.ValkeyOperator, groupVersion string) {
+	v.Namespace, v.Version = p.probeOperatorDeployment(ctx, valkeyOperator)
+	v.CRDs = p.probeGroupResources(valkeyGroup, groupVersion, "valkey.crds")
+}
+
+// probeGroupResources records which resources the API server actually serves in
+// an operator's group, because that is the capability a manifest meets. A
+// cluster whose CNPG version says 1.26 but whose Database CRD was never applied
+// would accept a Cluster and reject a Database; a cluster serving
+// valkeyclusters but not valkeynodes would accept a ValkeyCluster and never run
+// a pod. The served set is the half of that answer discovery can give.
+//
+// A nil return means the set could not be read, and the Gap says why — which is
+// what keeps "serves nothing" and "we could not look" apart at the call site.
+func (p *prober) probeGroupResources(group, groupVersion, gapField string) []string {
+	gv := group + "/" + groupVersion
 	res, err := p.disco.ServerResourcesForGroupVersion(gv)
 	if err != nil {
-		p.gap("cnpg.crds", p.reasonFor(err, gv))
-		return
+		p.gap(gapField, p.reasonFor(err, gv))
+		return nil
 	}
+	var out []string
 	for _, r := range res.APIResources {
 		// Subresources ("clusters/status") are not CRDs a manifest targets.
 		if strings.Contains(r.Name, "/") {
 			continue
 		}
-		c.CRDs = append(c.CRDs, r.Name)
+		out = append(out, r.Name)
 	}
-	sort.Strings(c.CRDs)
+	sort.Strings(out)
+	return out
 }
 
 // probePolicyEngines reports each admission-policy controller whose

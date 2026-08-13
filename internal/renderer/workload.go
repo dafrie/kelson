@@ -198,9 +198,12 @@ func container(app *model.ResolvedComponent, env *yaml.Node) *yaml.Node {
 
 // envList renders the merged environment (precedence rule P1 already applied
 // by resolution) with keys sorted, so output never depends on map iteration.
-// Bindings become secretKeyRefs against the Secret the service's operator
-// generates; a literal secret value can never appear here because validation
-// rejects it (ADR-0009).
+// A binding becomes a secretKeyRef against the Secret the service's operator
+// generates, or — for a connection detail that is not a credential, such as a
+// cache's host and port — the plain value it resolves to. A literal *secret*
+// value can never appear here because validation rejects it (ADR-0009), and
+// nothing in this path can produce one: bindingRef either names a Secret key or
+// returns a fact the renderer derived from names it already had.
 //
 // Every unresolvable binding is reported, not just the first: one run should
 // list all the work.
@@ -220,12 +223,12 @@ func envList(app *model.ResolvedComponent, services map[string]boundService) (*y
 		v := app.Env[k]
 		entry := []any{"name", k}
 		if v.From != nil {
-			ref, err := bindingRef(app.Name, k, v.From, services)
+			field, ref, err := bindingRef(app.Name, k, v.From, services)
 			if err != nil {
 				errs = append(errs, *err)
 				continue
 			}
-			entry = append(entry, "valueFrom", ref)
+			entry = append(entry, field, ref)
 		} else {
 			entry = append(entry, "value", v.Literal)
 		}

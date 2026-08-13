@@ -333,8 +333,12 @@ than build arguments or image layers, and no secret value is ever written to a l
 
 ## Data services
 
-Delegated to CloudNativePG and a Valkey operator, with kelson owning only the application-facing
-abstraction. Full reasoning in [ADR-0007](adr/0007-data-services.md).
+Delegated to CloudNativePG for `kind: postgres` and to
+[valkey-io/valkey-operator](https://github.com/valkey-io/valkey-operator) for `kind: valkey`, with
+kelson owning only the application-facing abstraction. Full reasoning in
+[ADR-0007](adr/0007-data-services.md) and, for the choice of Valkey operator and what it costs,
+[ADR-0015](adr/0015-valkey-operator.md). What each preset actually renders is
+[docs/data-services.md](data-services.md).
 
 **Presets determine topology** (the spec field is `preset:` — these are topology presets, not paid
 tiers; kelson has no paid anything). CNPG recommends one database

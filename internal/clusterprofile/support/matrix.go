@@ -88,6 +88,17 @@ var Components = []Component{
 			"loses the features it cannot serve and keeps the ones it can (issue #90).",
 	},
 	{
+		Name:     "valkey-operator",
+		Minimum:  "0.5.0",
+		Degrade:  DegradeRefuse,
+		GapField: "valkey",
+		Note: "the ValkeyCluster API kelson writes for cache components (ADR-0015). The floor is the " +
+			"release whose CRD shape kelson renders — spec.config for maxmemory and the eviction policy, " +
+			"spec.persistence, spec.podDisruptionBudget — and an older operator is refused rather than " +
+			"served a manifest it would silently drop fields from. The operator's API is still v1alpha1 " +
+			"and the floor is expected to move with it (issue #98).",
+	},
+	{
 		Name:     "flux",
 		Minimum:  "2.0.0",
 		Degrade:  DegradeRefuse,

@@ -2,13 +2,22 @@
 
 Implementation reference for M9 · Data services (epic
 [#10](https://github.com/dafrie/kelson/issues/10)), completing the design decisions
-[#89](https://github.com/dafrie/kelson/issues/89) left open.
+[#89](https://github.com/dafrie/kelson/issues/89) left open, and for `kind: valkey`
+([#98](https://github.com/dafrie/kelson/issues/98)).
 
 [ADR-0007](adr/0007-data-services.md) is the decision record: it settled *that* presets
 determine topology, that branching degrades rather than disappearing, and that retention is
-asymmetric. This page settles the rest — which CloudNativePG fields each preset renders, what
-the sizing defaults are and why, which preset changes are safe, and where the capability
-verdict is enforced. Where the two disagree, the ADR wins and this page is the bug.
+asymmetric. [ADR-0015](adr/0015-valkey-operator.md) settles which Valkey operator
+`kind: valkey` delegates to. This page settles the rest — which operator fields each preset
+renders, what the sizing defaults are and why, which preset changes are safe, and where the
+capability verdict is enforced. Where an ADR and this page disagree, the ADR wins and this
+page is the bug.
+
+Two kinds, two operators, one set of rules. `kind: postgres` renders CloudNativePG resources
+and `kind: valkey` renders a `ValkeyCluster`; everything below that is shared — the preset
+vocabulary, the naming rule, the provenance stamps, the render ordering, and the tri-state
+capability check. The [Valkey](#valkey) section states only what differs, and it differs more
+than the shared parts suggest.
 
 **Baseline.** kelson targets the latest CloudNativePG release (owner decision, 2026-08-13,
 recorded in `internal/clusterprofile/postgres`). The declarative surface — `Cluster
@@ -24,21 +33,23 @@ against memory. Field names that surprised us are called out where they appear.
 
 ## Preset → topology
 
-| Preset | Topology | Rendered by kelson | Instances |
-|---|---|---|---|
-| `shared` | a `Database` in a shared cluster | **deferred** ([#93](https://github.com/dafrie/kelson/issues/93)) | — |
-| `small` | dedicated cluster | `Cluster` CR | 1 |
-| `ha-small` | dedicated, synchronous | `Cluster` CR | 3 |
-| `ha-medium` | dedicated, synchronous | `Cluster` CR | 3 |
-| `branch` | dedicated, bootstrapped from a source | **nothing yet** | — |
+The preset vocabulary is shared by both data kinds, which is what makes `preset: small` mean
+the same thing whichever engine reads it. Two of its five members are not topologies a cache
+has, and those refuse for `kind: valkey` with a cache-specific reason.
+
+| Preset | `kind: postgres` | `kind: valkey` |
+|---|---|---|
+| `shared` | **deferred** ([#93](https://github.com/dafrie/kelson/issues/93)) | **deferred**, same decision |
+| `small` | dedicated `Cluster`, 1 instance | `ValkeyCluster`, 1 shard, no replica |
+| `ha-small` | dedicated `Cluster`, 3 instances, synchronous | `ValkeyCluster`, 3 shards × 1 replica |
+| `ha-medium` | dedicated `Cluster`, 3 instances, synchronous | `ValkeyCluster`, 3 shards × 1 replica, larger |
+| `branch` | **nothing yet** ([#99](https://github.com/dafrie/kelson/issues/99)) | **refused**: a cache has no durable state to branch from |
 
 `branch` validates and renders a structured not-implemented error naming
 [#99](https://github.com/dafrie/kelson/issues/99). Branching needs a source cluster, a snapshot
 mechanism chosen from the profile and a TTL; none of that exists, and rendering an ordinary
 empty `small` cluster for it would be the silent-success failure
 [#141](https://github.com/dafrie/kelson/issues/141) exists to prevent.
-
-`kind: valkey` is the same story against [#98](https://github.com/dafrie/kelson/issues/98).
 
 **`shared` is deferred (owner decision, 2026-08-13, [ADR-0007](adr/0007-data-services.md)).**
 It rendered a `Database` CR into a kelson-owned shared cluster until the owner reconsidered:
@@ -51,7 +62,7 @@ tracks any return of the preset; the rendering it used to do — the `Database` 
 `kelson-data`, the namespace convention, the credential-distribution gap — is preserved in
 git history rather than repeated here.
 
-### The dedicated presets
+### The dedicated presets (`kind: postgres`)
 
 One `postgresql.cnpg.io/v1` `Cluster` per data component, named `<project>-<environment>-<component>`
 in the environment's namespace.
@@ -183,8 +194,10 @@ so this credential gap is moot until #93 revisits the preset, not only the bindi
 
 ## Sizing defaults
 
+**`kind: postgres`.** The cache table is under [Cache sizing](#cache-sizing).
+
 The preset **is** the sizing. There is no `resources:` override on a service in v0 — see
-[Tuning](#tuning-without-leaving-the-preset-model).
+[Tuning](#tuning-without-leaving-the-preset-model). That holds for both kinds.
 
 | Preset | Instances | CPU request | Memory request | Memory limit | Storage | Sync replicas |
 |---|---|---|---|---|---|---|
@@ -239,8 +252,13 @@ preset still describes what is running.
 
 ## Safe preset transitions
 
+**`kind: postgres`.** Every cache transition is safe and none of them preserves anything: a
+kelson cache holds nothing durable, so changing a preset re-tunes it in place where only
+`maxmemory` moved, and otherwise reshards it and starts it cold. There is no table to write
+because there is no data to lose.
+
 Preset is an Environment-level override (ADR-0007, rule P5), so changing one is a two-character
-spec edit. These are not equally cheap.
+spec edit. For a database these are not equally cheap.
 
 | From → to | Verdict | What happens |
 |---|---|---|
@@ -264,6 +282,9 @@ specification it should implement.
 
 ## Backups
 
+**`kind: postgres`.** A cache has nothing durable to back up, and that is a design decision
+rather than a gap — see [Persistence is off](#persistence-is-off-and-what-a-durable-store-would-take).
+
 Deferred — "coming soon" (owner decision, 2026-08-13, [ADR-0007](adr/0007-data-services.md)).
 Nothing here renders yet: no `Backup`, no `ScheduledBackup`, no WAL archiving, no PITR.
 [#94](https://github.com/dafrie/kelson/issues/94)-[#96](https://github.com/dafrie/kelson/issues/96)
@@ -279,12 +300,177 @@ describes, is a later addition once the snapshot path is in place.
 
 ---
 
+## Valkey
+
+`kind: valkey` renders one `valkey.io/v1alpha1` `ValkeyCluster` per component, delegated to
+[valkey-io/valkey-operator](https://github.com/valkey-io/valkey-operator) —
+[ADR-0015](adr/0015-valkey-operator.md) records why that operator and not one of the four
+alternatives, and states the negatives as plainly as this page does.
+
+```yaml
+apiVersion: valkey.io/v1alpha1
+kind: ValkeyCluster
+metadata:
+  name: checkout-production-cache
+  namespace: checkout-prod
+spec:
+  shards: 1
+  replicas: 0
+  resources:
+    requests: {cpu: 250m, memory: 512Mi}
+    limits: {memory: 512Mi}
+  config:
+    maxmemory: 384mb
+    maxmemory-policy: allkeys-lru
+```
+
+That is the whole manifest. The Service, the ConfigMap, the per-pod `ValkeyNode` resources, the
+PodDisruptionBudget and the ACL file are the operator's; kelson writes the topology request and
+the two settings that decide what a full cache does.
+
+### Cache sizing
+
+| Preset | Shards | Replicas per shard | Pods | CPU request | Memory request | Memory limit | `maxmemory` |
+|---|---|---|---|---|---|---|---|
+| `small` | 1 | 0 | 1 | `250m` | `512Mi` | `512Mi` | `384mb` |
+| `ha-small` | 3 | 1 | 6 | `250m` | `512Mi` | `512Mi` | `384mb` |
+| `ha-medium` | 3 | 1 | 6 | `1` | `2Gi` | `2Gi` | `1536mb` |
+
+**`maxmemory` is 75% of the container's memory limit, and the two numbers must never be the
+same one.** `maxmemory` bounds the dataset. The process also needs room for replication
+buffers, client output buffers, the copy-on-write pages a background save touches, and
+allocator fragmentation, none of which that number counts. Setting `maxmemory` *at* the
+container limit means the pod is OOM-killed exactly when the eviction policy was supposed to
+start doing its job — the failure mode the setting exists to prevent, arriving on schedule.
+`mb` in a Valkey config is binary, so `384mb` is 384 MiB and `1536mb` is 1.5 GiB.
+
+**`maxmemory-policy: allkeys-lru`, not the default.** Valkey's default is `noeviction`: a full
+cache starts returning errors on writes, which surfaces in the application as an outage caused
+by a component whose entire promise was that losing it is cheap. `allkeys-lru` evicts the least
+recently used key instead, across the whole keyspace rather than only the keys someone
+remembered to set a TTL on. A cache that silently forgets is behaving correctly; a cache that
+refuses writes is not.
+
+Both keys are on the operator's live-settable allow-list, so a preset change re-tunes a running
+cache with `CONFIG SET` rather than rolling its pods.
+
+**Memory limit equals the request, and there is no CPU limit** — the same reasoning as the
+Postgres presets, one step milder. An OOM-killed cache node is a cold cache rather than a
+failover, but CPU throttling still turns a slow cache into slow *everything that waits on it*.
+
+### Why an HA cache is six pods
+
+This is the number that surprises people, and it is not a sizing choice.
+
+The operator always runs Valkey in cluster mode (`cluster-enabled yes`, from its own base
+config). In cluster mode a failover is decided by a **vote among primaries**. With a single
+primary there is no quorum left to hold a vote once it dies, so a one-shard cache with one
+replica would have a replica and no automatic failover — a promise kelson would be making on
+the operator's behalf and the operator would not keep. Three shards is the smallest topology
+where the vote can happen, so it is what `ha-small` and `ha-medium` render.
+
+The consequence for applications: **`ha-*` needs a cluster-aware client.** Three shards means
+the keyspace is split, and a plain client that does not follow `MOVED` redirects will fail on
+two thirds of its keys. `small` is a single shard holding all 16384 slots, so no redirect is
+ever issued and any Redis-compatible client works unchanged. Most mainstream clients
+(`ioredis`, `go-redis`, `redis-py`, Lettuce) have a cluster mode; turning it on is the cost of
+`ha-*`.
+
+### Persistence is off, and what a durable store would take
+
+**A kelson valkey component is a cache.** `spec.persistence` is not rendered at any preset, so
+the operator gives each node an `emptyDir` instead of a PersistentVolumeClaim. A pod restart, a
+node drain, a rollback, a preset change that rolls the pods — each of these starts the cache
+empty and it refills from whatever it is a cache of. [#98](https://github.com/dafrie/kelson/issues/98)
+frames that as the point rather than a limitation, and it is why the whole data-protection
+apparatus around `kind: postgres` — backups, PITR, restore drills, branching — has no
+counterpart here.
+
+**If you are using it as a durable store, say so and do not use this.** Queues, sessions,
+rate-limit counters that must survive a deploy, anything whose loss is an incident rather than
+a latency spike — none of that is covered by a component kelson renders with persistence off,
+and no amount of it working in staging changes that. The honest options are:
+
+- **`kind: postgres`.** A queue or a session table in Postgres is durable, backed up, and
+  already bound the same way. This is the right answer far more often than it looks.
+- **An overlay patch against the rendered `ValkeyCluster`** ([model.md](model.md), rule P6),
+  adding `spec.persistence` with a size and a storage class. That is visible and reviewable,
+  and it also makes it explicit that you have left the preset model — kelson still renders
+  `maxmemory-policy: allkeys-lru`, which for a store means keys are silently evicted under
+  memory pressure, so a patch that adds persistence and does not also change the eviction
+  policy has bought durability for data it is still allowed to throw away.
+
+A first-class durable Valkey type is not a flag on this one; it is a different type with a
+different ADR.
+
+### There is no password
+
+**Anything that can reach the cache's Service in its namespace can read and write it.** This is
+stated here rather than left to be assumed either way, because it is the largest consequence of
+ADR-0015 and the one most likely to matter to a reader.
+
+kelson renders no ACL user, so the operator leaves Valkey's own `default` user in place — which
+is the operator's own default and what its quickstart documents. The reason is the same
+constraint that shaped the Postgres path in the opposite direction: CloudNativePG's `initdb`
+bootstrap *generates* a credential and publishes it, so kelson can point a `secretKeyRef` at
+it; the Valkey operator *reads* application user passwords from a Secret it never creates, and
+a pure renderer has no random source to create one with
+([#20](https://github.com/dafrie/kelson/issues/20)). Rendering a password into the manifest
+instead is what [ADR-0009](adr/0009-secrets.md) exists to forbid.
+
+So the boundary around a kelson cache is the namespace, and kelson renders no NetworkPolicy —
+the namespace is the whole boundary. ADR-0015's *Revisit when* names the two things that would
+change this: the operator generating an application credential, or kelson's secrets plane (M8)
+being able to supply one. Either turns the `password` binding from a refusal into a
+`secretKeyRef` with nothing else in the renderer moving.
+
+### Cache bindings
+
+A cache answers three of the four keys `model.ServiceKeys` declares for `kind: valkey`, and
+they render as **plain env values, not `secretKeyRef`s**:
+
+| kelson key | Rendered value |
+|---|---|
+| `host` | `valkey-<cluster>.<namespace>.svc` |
+| `port` | `"6379"` |
+| `uri` | `redis://valkey-<cluster>.<namespace>.svc:6379` |
+| `password` | **structured error** — see [There is no password](#there-is-no-password) |
+
+`valkey-<cluster>` is the headless Service the operator creates. Plain values rather than a
+Secret because a Service name and a port are not credentials: ADR-0009 forbids a *secret* in a
+spec, and minting a Secret to hold a hostname would obey the letter of that while making the
+manifest harder to read.
+
+**The URI scheme is `redis://` on purpose.** Valkey is wire- and URL-compatible with Redis, and
+`redis://` is what the client library an application already has will parse. Emitting
+`valkey://` would name the product correctly and be rejected by most of them, which is the
+wrong trade for a value whose only job is to be handed to a client constructor.
+
+### Naming
+
+The same `<project>-<environment>-<component>` rule as everything else, capped at **37**
+characters rather than 53. The operator derives `internal-<cluster>-system-passwords` for its
+own system users, which is 26 characters of prefix and suffix around the name kelson chose, and
+the result still has to fit the 63-character DNS label limit. A longer name is a structured
+render error, not a manifest the API server rejects with an arithmetic complaint.
+
+---
+
 ## Validation versus capability
 
 A preset is a request; whether a cluster can serve it is a separate question with **three**
 answers, not two ([`clusterprofile.Outcome`](https://github.com/dafrie/kelson/issues/144)).
-`postgres.SupportsPreset(profile, preset)` gives the verdict and names the capability that
-decided it.
+`postgres.SupportsPreset(profile, preset)` gives the verdict for a database and names the
+capability that decided it; `valkey.SupportsPreset` is the same function against the other
+operator, and the two are independent — a cluster can host a cache and not a database, or the
+reverse, and each refusal names its own operator and its own install path.
+
+The valkey capability table has two entries where the postgres one has four, and both of them
+are a served CRD rather than a version floor: `valkeyclusters.valkey.io` is the API kelson
+writes, and `valkeynodes.valkey.io` is what the operator materialises each pod through. They
+are separate answers because a partially applied CRD set serves the first and not the second,
+which means the manifest is accepted, no error is reported, and no pod is ever created — the
+silent half-success a capability check exists to catch.
 
 ### The check runs in the renderer, not in validation
 
@@ -307,7 +493,7 @@ never honestly have done.
 | Verdict | Renderer behaviour |
 |---|---|
 | **Yes** | Render. The operator is present and meets every capability the preset needs. |
-| **No** | Refuse: `render/postgres-unsupported`, naming the blocking capability, the version floor, the detected version, and the remediation (always *upgrade the operator you have* — CNPG is cluster-scoped and a second install fights the first). |
+| **No** | Refuse: `render/postgres-unsupported` or `render/valkey-unsupported`, naming the blocking capability, the version floor, the detected version, and the remediation (always *upgrade the operator you have* — both operators are cluster-scoped and a second install fights the first). Two codes rather than one because the remediation is a different operator, and a caller switching on the code should not have to parse prose to tell which. |
 | **Unknown** | **Render.** |
 
 **Unknown renders, and that is the whole point of having three outcomes.** Unknown means the
@@ -337,8 +523,16 @@ them. Nothing rendered is hidden; nothing rendered is claimed to be verified eit
 ### Binding keys
 
 A workload component binds to a data component by key: `env: {DATABASE_URL: {from: {service: db, key: uri}}}`.
-Validation checks the key against `model.ServiceKeys`; the renderer turns it into a
-`secretKeyRef` against the Secret CloudNativePG generates, `<cluster>-app` (type `basic-auth`).
+Validation checks the key against `model.ServiceKeys`; the renderer resolves it against the
+bound service, in one of three ways. A **credential** becomes a `secretKeyRef` against a Secret
+the operator generated — for postgres, `<cluster>-app` (type `basic-auth`). A **connection
+detail that is not a credential** becomes a plain value, which is how every cache binding
+renders. A key the kind declares that the service genuinely cannot supply is
+`render/binding-unavailable-key`, with the reason rather than a list of alternatives that does
+not contain the answer — today that is exactly one key,
+[a cache's `password`](#there-is-no-password).
+
+The postgres mapping follows.
 
 CNPG's key names are not kelson's. The mapping, read from `pkg/specs/secrets.go` in
 `release-1.30`:
@@ -374,7 +568,8 @@ because ordering is the only sequencing a rendered set can express.
 
 ```
 Namespace
-  postgresql.cnpg.io/v1 Cluster    (small | ha-small | ha-medium)
+  postgresql.cnpg.io/v1 Cluster        (kind: postgres, small | ha-small | ha-medium)
+  valkey.io/v1alpha1 ValkeyCluster     (kind: valkey,   small | ha-small | ha-medium)
   ServiceAccount / Service / Deployment / … per workload component
 ```
 
@@ -385,11 +580,14 @@ Ordering is advisory rather than a guarantee — nothing waits for the cluster t
 workload whose database is still bootstrapping will crash-loop until it is. That is the same
 deal every other resource in the set gets, and it is visible in `kelson status`.
 
-Names are `<project>-<environment>-<component>`, capped at 53 characters. CloudNativePG derives
-its own object names from the cluster's — `<cluster>-app`, `<cluster>-superuser`,
-`<cluster>-rw`, `<cluster>-1` — and the longest suffix (`-superuser`, ten characters) has to
-fit inside the 63-character DNS label limit. A longer name is a structured render error rather
-than a resource the API server rejects with an arithmetic complaint.
+Names are `<project>-<environment>-<component>`, capped at 53 characters for `kind: postgres`
+and 37 for `kind: valkey`. CloudNativePG derives its own object names from the cluster's —
+`<cluster>-app`, `<cluster>-superuser`, `<cluster>-rw`, `<cluster>-1` — and the longest suffix
+(`-superuser`, ten characters) has to fit inside the 63-character DNS label limit; the Valkey
+operator's longest derivation is `internal-<cluster>-system-passwords`, which is 26. Two caps
+rather than one because the operators derive different names, not because there are two
+opinions about names. A longer name is a structured render error rather than a resource the API
+server rejects with an arithmetic complaint.
 
 Provenance is identical to every other rendered resource: `app.kubernetes.io/managed-by`,
 `kelson.dev/project`, `kelson.dev/environment`, `kelson.dev/renderer-version` and a
@@ -398,7 +596,7 @@ elsewhere in the spec does not churn the database's annotation.
 
 Data components carry no `kelson.dev/application` label and render no ServiceAccount of their own.
 They are not owned by one workload — that is what makes them bindable by several — and the identity
-their pods run under is CloudNativePG's to create, not kelson's
+their pods run under is the operator's to create, not kelson's
 ([ADR-0005](adr/0005-delegate-to-operators.md), [ADR-0014](adr/0014-components.md) decision D).
 
 ---
@@ -409,10 +607,13 @@ their pods run under is CloudNativePG's to create, not kelson's
 |---|---|
 | `small`, `ha-small`, `ha-medium` → `Cluster` | rendered |
 | bindings against a dedicated preset | rendered (`secretKeyRef` → `<cluster>-app`) |
-| `preset: shared` | **deferred, structured error**, [#93](https://github.com/dafrie/kelson/issues/93) (owner decision, 2026-08-13) |
-| `preset: branch` | **structured error**, [#99](https://github.com/dafrie/kelson/issues/99) |
-| `kind: valkey` | **structured error**, [#98](https://github.com/dafrie/kelson/issues/98) |
-| backups, WAL archiving, PITR | deferred, [#94](https://github.com/dafrie/kelson/issues/94)-[#96](https://github.com/dafrie/kelson/issues/96); see [Backups](#backups) |
+| `preset: shared` | **deferred, structured error** on both kinds, [#93](https://github.com/dafrie/kelson/issues/93) (owner decision, 2026-08-13) |
+| `preset: branch` | **structured error**, [#99](https://github.com/dafrie/kelson/issues/99); refused for `kind: valkey` as not a cache topology |
+| `kind: valkey` `small`, `ha-small`, `ha-medium` → `ValkeyCluster` | rendered ([ADR-0015](adr/0015-valkey-operator.md)) |
+| bindings against a cache | rendered as plain values (`uri`, `host`, `port`) |
+| a cache's `password` binding | **structured error**: the operator generates no credential, [ADR-0015](adr/0015-valkey-operator.md) |
+| valkey persistence, TLS, ACL users, external access | not authorable; the operator supports them, kelson renders none of them |
+| backups, WAL archiving, PITR | deferred, [#94](https://github.com/dafrie/kelson/issues/94)-[#96](https://github.com/dafrie/kelson/issues/96); see [Backups](#backups). No counterpart for `kind: valkey` — it has nothing durable to back up |
 | declarative schemas and extensions | not authorable; the capability is judged, nothing consumes it |
 | preset transitions beyond rendering | not enforced, [#105](https://github.com/dafrie/kelson/issues/105) |
 
@@ -428,3 +629,21 @@ CloudNativePG `release-1.30`, read directly rather than from memory:
 - `pkg/specs/secrets.go` — the exact `StringData` keys of the generated `<cluster>-app` Secret.
 - `docs/src/declarative_database_management.md`, `docs/src/bootstrap.md`,
   `docs/src/applications.md`, `docs/src/replication.md`.
+
+valkey-io/valkey-operator, read the same way at `main` and at tag `v0.5.0`:
+
+- `api/v1alpha1/valkeycluster_types.go` — `shards`, `replicas` ("replicas for each shard
+  group"), `resources`, `config` ("additional Valkey configuration parameters"),
+  `persistence`, `exporter`, `podDisruptionBudget`, `networking`.
+- `api/v1alpha1/persistence_types.go` — `PersistenceSpec` is a pointer, so an omitted
+  `persistence` is no PVC at all.
+- `api/v1alpha1/valkeyacls_types.go` and `internal/controller/users.go` — `PasswordSecretSpec`
+  defaults to `<cluster>-users` and is only ever *read*; the only generated Secret is
+  `internal-<cluster>-system-passwords`, for the operator's own `_`-prefixed system users.
+- `internal/controller/config.go` — `cluster-enabled yes` in the base config, and the
+  live-settable allow-list containing `maxmemory` and `maxmemory-policy`.
+- `internal/controller/valkeycluster_controller.go` — the headless `valkey-<cluster>` Service
+  on port 6379, and `getSystemPasswordSecretName`, which is where the 37-character name cap
+  comes from.
+- `docs/quickstart.md`, `docs/valkeynode-design.md`, `README.md` (the early-development
+  notice).
