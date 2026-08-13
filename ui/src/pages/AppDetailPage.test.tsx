@@ -252,4 +252,84 @@ describe("AppDetailPage live updates", () => {
       expect(screen.queryByText("fix:")).toBeNull();
     });
   });
+
+  /**
+   * The rail on this screen is fed by Status plus the stream's deltas, so it
+   * has to move when the stream says something moved — and it has to keep the
+   * two failures it can be in apart while doing it (#68).
+   */
+  it("moves the compact rail as the stream reports transitions", async () => {
+    const events = watchStub([]);
+    const live = createRouterTransport((router) => {
+      router.service(SpecService, {
+        getSpec: () => ({
+          spec: { project: "checkout", version: "7", environments: ["production"] },
+        }),
+      });
+      router.service(DeployService, {
+        status: () => ({ phase: "Committed", revision: "8f2c1ad", verdicts: [] }),
+      });
+      events.install(router);
+    });
+    const { container } = renderAt(
+      live,
+      "/apps/checkout",
+      "/apps/:project",
+      <AppDetailPage />,
+    );
+
+    // Compact, and honest about what it cannot know: StatusResponse carries no
+    // delivery mode, so the reconciler stage stays unnamed.
+    await waitFor(() => {
+      expect(container.querySelector(".k-rail--compact")).toBeTruthy();
+    });
+    const stageState = (phase: string) =>
+      container.querySelector(`[data-phase="${phase}"]`)?.getAttribute("data-state");
+    expect(stageState("Committed")).toBe("current");
+    expect(screen.getByText(/not reported/)).toBeTruthy();
+    expect(container.querySelector("[data-diagnosis]")).toBeNull();
+
+    // The engine's own stuck reason arrives inside the flattened cause string:
+    // the rail must read it as stuck-in-Committed, not as a generic failure.
+    events.push(
+      transitionEvent({
+        project: "checkout",
+        environment: "production",
+        phase: "Committed",
+        previousPhase: "Committed",
+        revision: "8f2c1ad",
+        cause:
+          "flux: NotPickedUp: revision 8f2c1ad was committed but flux has not picked it up within 5m",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(stageState("Committed")).toBe("stuck");
+    });
+    expect(
+      container.querySelector('[data-diagnosis="not-picked-up"]'),
+    ).toBeTruthy();
+    expect(screen.getByText(/Check the delivery configuration/)).toBeTruthy();
+    // The cause named a component, so the reconciler stage can be named now.
+    expect(screen.getByText("Flux (kustomize-controller)")).toBeTruthy();
+
+    // A rejection is a different failure and gets a different answer.
+    events.push(
+      transitionEvent({
+        project: "checkout",
+        environment: "production",
+        phase: "Rejected",
+        previousPhase: "Committed",
+        revision: "8f2c1ad",
+        cause: "flux: BuildFailed: kustomize build failed: missing deployment.yaml",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-diagnosis="rejected"]')).toBeTruthy();
+    });
+    expect(screen.getByText(/Fix the manifest/)).toBeTruthy();
+    expect(stageState("Committed")).toBe("failed");
+    expect(stageState("Applied")).toBe("pending");
+  });
 });

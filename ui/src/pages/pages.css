@@ -435,6 +435,13 @@
   overflow-wrap: anywhere;
 }
 
+/* The live deploy: the rail, then anything that failed, then the raw log. */
+.k-deploy__live {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
 .k-stream {
   display: flex;
   flex-direction: column;
@@ -479,6 +486,18 @@
   background: var(--kelson-synced-fill);
   border: 1px solid var(--kelson-synced-border);
   border-radius: 6px;
+}
+
+/* Settling is not the same as settling *well*: the green panel is for a deploy
+   that reached Healthy, and every other terminal phase gets the neutral one so
+   the log does not congratulate a rejection. */
+.k-settled--other {
+  background: var(--kelson-panel);
+  border-color: var(--kelson-border);
+}
+
+.k-settled--other .k-settled__title {
+  color: var(--kelson-text);
 }
 
 .k-settled__head {

@@ -157,13 +157,37 @@ describe("DeployPage", () => {
       screen.getByText("direct/rolling-out: 1 of 3 replicas updated"),
     ).toBeTruthy();
 
-    // The terminal state is the deploy's answer, structured error and all.
-    expect(await screen.findByText("Settled degraded")).toBeTruthy();
+    // The terminal state is the deploy's answer, structured error and all —
+    // and it is the rail that answers it, naming which of the three failures
+    // this is rather than settling for a red badge (#68).
+    await waitFor(() => {
+      expect(
+        container.querySelector('[data-diagnosis="unhealthy"]'),
+      ).toBeTruthy();
+    });
+    expect(screen.getByText(/Debug the workload/)).toBeTruthy();
     expect(screen.getByText("delivery/unhealthy")).toBeTruthy();
     expect(
       screen.getByText("web did not become healthy within the budget"),
     ).toBeTruthy();
     expect(screen.getByText("fix:")).toBeTruthy();
+    // The raw event log keeps the terminal row, secondary to the rail.
+    expect(screen.getByText("Deployment settled")).toBeTruthy();
+  });
+
+  it("names the reconciler on the rail from the adapter the server reported", async () => {
+    renderDeploy(unhealthyDeploy);
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Apply 2 resources to checkout/production",
+      }),
+    );
+
+    // Committed.adapter is "direct": the reconciling stage is kelson itself,
+    // and saying so is what tells a reader there is no Flux to go look at.
+    expect(await screen.findByText("kelson (direct apply)")).toBeTruthy();
+    expect(screen.queryByText(/not reported/)).toBeNull();
   });
 
   it("renders a healthy deployment as a success, not as an error", async () => {
