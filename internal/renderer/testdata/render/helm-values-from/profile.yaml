@@ -1,0 +1,12 @@
+# The same Flux cluster as helm-repository's. Nothing about a valuesFrom
+# reference is a cluster capability: the Secret and the ConfigMap are the
+# environment's, and whether they exist is helm-controller's to discover and to
+# report on the release — kelson renders the reference either way, because a
+# renderer that checked would be reading cluster state to decide output.
+flux:
+  version: 2.6.4
+  namespace: flux-system
+helmController:
+  version: 1.3.0
+  namespace: flux-system
+  crds: [helmreleases]

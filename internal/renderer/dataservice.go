@@ -174,10 +174,17 @@ func (b boundService) bindable() []string {
 	return out
 }
 
-// serviceResourceName is the name every resource kelson renders for a service
-// carries: <project>-<environment>-<service>.
-func serviceResourceName(project, environment, service string) string {
-	return project + "-" + environment + "-" + service
+// scopedResourceName is the name every resource kelson renders on a
+// component's behalf into a shared API group carries:
+// <project>-<environment>-<component>.
+//
+// Workloads do not use it — a Deployment is named after its component and
+// scoped by its namespace. These are: an operator's CRs and a HelmRelease live
+// in a group whose other tenants kelson does not know about, and colliding with
+// one of them would be a collision between two projects rather than a
+// misconfiguration inside one.
+func scopedResourceName(project, environment, component string) string {
+	return project + "-" + environment + "-" + component
 }
 
 // appSecretName is the Secret CloudNativePG generates for a cluster's
@@ -252,7 +259,7 @@ func postgresManifests(
 		}}
 	}
 
-	name := serviceResourceName(resolved.Project, resolved.Environment.Name, svc.Name)
+	name := scopedResourceName(resolved.Project, resolved.Environment.Name, svc.Name)
 	if len(name) > maxServiceResourceName {
 		return nil, boundService{}, Errors{{
 			Code: ErrServiceName,
@@ -298,7 +305,7 @@ func valkeyManifests(
 		return nil, boundService{}, err
 	}
 
-	name := serviceResourceName(resolved.Project, resolved.Environment.Name, svc.Name)
+	name := scopedResourceName(resolved.Project, resolved.Environment.Name, svc.Name)
 	if len(name) > maxValkeyResourceName {
 		return nil, boundService{}, Errors{{
 			Code: ErrServiceName,

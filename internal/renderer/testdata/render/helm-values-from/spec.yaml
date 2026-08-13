@@ -1,0 +1,47 @@
+# Fixture: valuesFrom — where a chart's secret material goes (#79, ADR-0009).
+#
+# `values` is plain configuration and appears verbatim in the HelmRelease, which
+# means it appears verbatim in every diff, in the rendered output and in the
+# delivery repository. A HelmRelease is not a Secret and nothing redacts it. So
+# the chart's credentials are named here instead, as a Secret somebody else
+# manages in the environment's namespace, and helm-controller merges them at
+# release time — kelson never sees the value and never writes it down.
+#
+# Order is meaning, not presentation: helm-controller merges valuesFrom entries
+# in the order they are listed and lets the inline `values` win over all of
+# them, which is why the rendered spec lists them in that order too.
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: checkout
+spec:
+  image: ghcr.io/acme/checkout:1.4.2
+
+  components:
+    - name: mailer
+      kind: helm
+      chart: mailer
+      chartVersion: 2.0.1
+      source:
+        repository: https://charts.acme.example
+      valuesFrom:
+        - configMapRef: mailer-defaults
+        - secretRef: mailer-smtp-credentials
+      values:
+        replicaCount: 1
+
+    - name: worker
+      command: ["bundle", "exec", "sidekiq"]
+---
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: production
+spec:
+  project: checkout
+  namespace: checkout-production
+  delivery:
+    mode: flux
+    git:
+      repo: git@github.com:acme/deploy.git
+      path: checkout/production

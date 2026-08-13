@@ -64,6 +64,13 @@ func Render(resolved *model.Resolved, profile clusterprofile.ClusterProfile, res
 	if errs := unresolvedImages(resolved); len(errs) > 0 {
 		return nil, errs
 	}
+	// The delivery-mode gate of ADR-0016: a helm component renders in Flux mode
+	// only. It is decided here, from spec data, before anything is emitted —
+	// see internal/renderer/helm.go for why the gate is the renderer's and not
+	// the delivery plane's.
+	if errs := helmRequiresFlux(resolved); len(errs) > 0 {
+		return nil, errs
+	}
 	// The Namespace leads the set: delivery.ManifestSet documents apply order as
 	// "namespaces first", and every following resource targets it (issue #150).
 	// Overlays append after the core resources, so nothing can displace it.
@@ -86,6 +93,18 @@ func Render(resolved *model.Resolved, profile clusterprofile.ClusterProfile, res
 		}
 		out = append(out, ms...)
 		services[svc.Name] = bound
+	}
+
+	// Charts follow, for the same ordering reason and one more: a chart is
+	// often the dependency a workload talks to, and kelson's own inventory ends
+	// at the HelmRelease — everything the chart installs arrives later, on
+	// helm-controller's schedule, which no apply order can express.
+	for i := range resolved.Charts {
+		ms, err := chartManifests(resolved, &resolved.Charts[i])
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, ms...)
 	}
 
 	for i := range resolved.Components {
