@@ -283,7 +283,9 @@ rather than falling back to a re-render. And an Environment document written in 
 be spliced into (a flow-style `components:` list) is refused with `promote/document-unwritable` rather
 than reformatted: rewriting the document would be a bigger change than the promotion.
 
-A UI action over the same RPC is not implemented yet.
+The UI's promote screen (`/apps/<project>/<environment>/promote`) drives the same RPC: the
+environment in the path is the target, the plan and its diff are shown before anything is
+written, and a successful promotion leads to the deploy flow rather than deploying itself.
 
 ## Identity: one ServiceAccount per component
 
