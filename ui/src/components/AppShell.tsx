@@ -1,5 +1,6 @@
 import { Link, NavLink, Outlet } from "react-router-dom";
 import { KelsonMark } from "./KelsonMark";
+import { ThemeToggle } from "./ThemeToggle";
 import "./AppShell.css";
 
 /**
@@ -61,6 +62,7 @@ export function AppShell() {
           >
             Docs
           </a>
+          <ThemeToggle />
         </div>
       </header>
 

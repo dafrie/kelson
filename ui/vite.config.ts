@@ -33,5 +33,11 @@ export default defineConfig({
     globals: false,
     setupFiles: ["src/test/setup.ts"],
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+    // Vitest stubs every CSS import to an empty module, `?raw` included, which
+    // is right for the component tests — they assert structure, not paint. The
+    // one exception is the token file: src/styles/tokens.test.ts reads it as
+    // text to check that the dark and light palettes define the same names,
+    // and a stub would make that guard pass vacuously.
+    css: { include: [/tokens\.css/] },
   },
 });

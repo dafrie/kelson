@@ -3,9 +3,43 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="dark" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#0d1218" />
     <link rel="icon" type="image/svg+xml" href="/kelson-favicon-32.svg" />
     <title>kelson</title>
+    <!--
+      Theme before first paint.
+
+      src/styles/tokens.css keys off `data-theme` on <html>, so the attribute
+      has to exist before any pixel is drawn — a module bundle cannot do that,
+      it runs after the first paint and the user would see the dark page flash
+      white (or the reverse). This blocking inline script is the only way to
+      answer the question in time, and it duplicates exactly one thing from
+      src/theme.ts: the storage key, the media query, and the two theme-color
+      values. Keep the two in step.
+    -->
+    <script>
+      (function () {
+        var stored = null;
+        try {
+          stored = localStorage.getItem("kelson-theme");
+        } catch (e) {
+          // Storage unavailable: fall through to the system preference.
+        }
+        var theme =
+          stored === "light" || stored === "dark"
+            ? stored
+            : window.matchMedia &&
+                window.matchMedia("(prefers-color-scheme: light)").matches
+              ? "light"
+              : "dark";
+        document.documentElement.setAttribute("data-theme", theme);
+        var meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) {
+          meta.setAttribute("content", theme === "light" ? "#fbfbfa" : "#0d1218");
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
