@@ -71,7 +71,7 @@ a deploy or a log tail is a link that keeps working.
 | --- | --- | --- |
 | `/apps` | One card per (project, environment): phase pill, revision, cause, live/degraded counts | `ListSpecs`, then one `DeployService.Status` per card |
 | `/apps/new` | Create a component: three fields, a rendered preview, then the store | `PutSpec` at `RENDER`, then with an idempotency key |
-| `/apps/:project` | Environment tabs with status, workload verdicts and the stored documents; buttons into the four flows | `GetSpec`, `Status` |
+| `/apps/:project` | Environment tabs with status, workload verdicts, data services and the stored documents; buttons into the four flows | `GetSpec`, `Status`, `GetProfile`, `Render` (deferred presets only) |
 | `/apps/:project/edit` | Edit the stored spec: a form tab and a raw YAML tab, a diff before saving, an optimistic-concurrency save | `GetSpec`, `PutSpec` at `RENDER` then for real, `Diff` |
 | `/apps/:project/:env/deploy` | Preview (render dry-run) then a confirm that streams the deployment live | `Deploy` at `RENDER`, then at `NONE`; optional `Diff` at `SERVER` |
 | `/apps/:project/:env/diff` | The live cluster's own dry-run verdict, rendered from `diff_json` | `Diff` at `SERVER` |
@@ -158,6 +158,53 @@ replica. The label's colour is hashed from the pod name into eight tokens
 (`--kelson-pod-1` … `-8`, both themes) so a replica keeps its colour between
 glances, and the name is always printed beside it — eight tones over an
 arbitrary number of pods collide, and a colour alone would then be a lie.
+
+## Data services
+
+`src/dataservices/` is the app detail page's third section
+([#107](https://github.com/dafrie/kelson/issues/107)): a `kind: postgres`
+component is not a workload, so it is not listed among them. Four rules shape
+it, and each is there because the alternative would mislead:
+
+- **The preset is spelled out in numbers.** `src/dataservices/presets.ts`
+  mirrors `dedicatedPresets` in `internal/renderer/dataservice.go` — instances,
+  CPU, memory, storage, synchronous replicas — and it is the *only* copy of
+  that table in the UI. The browser cannot derive those numbers; it quotes
+  them, and the file says so. Change the Go table and this one is wrong until
+  it is changed with it.
+- **Health is reused, never invented.** The section reads the same
+  `StatusResponse.verdicts` the workload list does and looks for one about the
+  component's `Cluster/<namespace>/<project>-<environment>-<component>`.
+  Observation probes Deployments today (`internal/observation/probe.go`), so
+  usually there is none — and the section says there is none. A database
+  nothing watches must not read as a healthy one.
+- **A refusal comes from the server.** `preset: shared` is deferred
+  ([#93](https://github.com/dafrie/kelson/issues/93)) and `preset: branch` is
+  not implemented ([#99](https://github.com/dafrie/kelson/issues/99)). When the
+  spec names one, the section calls `RenderService.Render` — the offline rung,
+  no profile, no cluster — and renders the structured
+  `render/service-not-implemented` error it answers with, code and remediation
+  intact, through the same `ErrorPanel` as everything else.
+- **Coming soon looks deliberate.** Backups
+  ([#94](https://github.com/dafrie/kelson/issues/94)) and branching are muted
+  badges with one sentence and a link to the issue, never disabled buttons.
+
+`CapabilityPanel` sits under them and answers the question a database raises
+about the cluster: does the storage have a snapshot driver, what does a clone
+cost, and how confidently was that decided. It reads `GetProfile`'s YAML —
+the profile travels as its canonical document, not as proto fields — and phrases
+the answer at the point of use: *"Fast branching unavailable — your storage
+class (local-path) has no snapshot driver."* The confidence is shown rather than
+hidden, because `unknown` is not `none` and a reader told "we could not tell"
+can go and look.
+
+Both parsers (`parse.ts` for the spec, `capability.ts` for the profile) sit on
+`miniyaml.ts`, which reads block mappings, block sequences and one-line flow
+mappings and nothing else. It is separate from `src/spec/edit.ts`'s parser on
+purpose: that one feeds a form whose honesty rests on a byte-identical rebuild,
+so a key it cannot write is a key it must not read. This one only describes a
+document, and a document it cannot follow yields no data components rather than
+wrong ones.
 
 ## Building spec documents in the browser
 

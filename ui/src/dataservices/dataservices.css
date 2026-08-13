@@ -1,0 +1,208 @@
+/*
+ * The data services section and the storage capability panel.
+ *
+ * Every colour is a --kelson-* token, so both themes are covered by the token
+ * file rather than by rules here (src/styles/tokens.css, whose test fails if
+ * the dark and light palettes stop defining the same names). Nothing in this
+ * file may name a colour.
+ *
+ * The "coming soon" badge is the one piece of new visual vocabulary: it is
+ * built from the inset-chip tokens the header's environment pill uses, so it
+ * reads as a quiet label rather than as a disabled control. That is deliberate
+ * — a feature that does not exist should look like a note, never like a button
+ * that failed to load.
+ */
+
+.k-data {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.k-data__list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.k-data__item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  background: var(--kelson-panel-dim);
+  border: 1px solid var(--kelson-hairline);
+  border-radius: 5px;
+}
+
+.k-data__item--soon {
+  border-style: dashed;
+}
+
+.k-data__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.k-data__name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--kelson-text);
+}
+
+.k-data__source {
+  color: var(--kelson-muted-2);
+}
+
+/* The preset, spelled out. A flat list of facts, one per line, because each is
+   a number the reader may need to quote back to someone. */
+.k-data__facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+  color: var(--kelson-text-2);
+}
+
+.k-data__facts li {
+  position: relative;
+  padding-left: 14px;
+}
+
+.k-data__facts li::before {
+  content: "·";
+  position: absolute;
+  left: 4px;
+  color: var(--kelson-muted-deep);
+}
+
+.k-data__cluster,
+.k-data__note {
+  color: var(--kelson-muted);
+}
+
+.k-data__note {
+  margin: 0;
+  font-family: var(--kelson-font-mono);
+  font-size: 12.5px;
+  max-width: 78ch;
+}
+
+.k-data__summary,
+.k-data__health {
+  margin: 0;
+  max-width: 78ch;
+  font-size: 13.5px;
+  color: var(--kelson-text-2);
+}
+
+.k-data__health {
+  color: var(--kelson-text);
+}
+
+.k-data__issue {
+  align-self: flex-start;
+  color: var(--kelson-accent);
+  text-decoration: none;
+}
+
+.k-data__issue:hover {
+  color: var(--kelson-accent-hover);
+  text-decoration: underline;
+}
+
+.k-soon {
+  padding: 3px 8px;
+  background: var(--kelson-inset);
+  border: 1px solid var(--kelson-inset-border);
+  border-radius: 3px;
+  font-family: var(--kelson-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--kelson-muted-2);
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------ storage capability */
+
+.k-cap {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  background: var(--kelson-panel-dim);
+  border: 1px solid var(--kelson-hairline);
+  border-radius: 5px;
+}
+
+.k-cap__class {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.k-cap__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.k-cap__name {
+  color: var(--kelson-text-2);
+}
+
+.k-cap__headline {
+  margin: 0;
+  max-width: 78ch;
+  font-size: 14px;
+  color: var(--kelson-text);
+}
+
+.k-cap__detail,
+.k-cap__operator {
+  margin: 0;
+  max-width: 78ch;
+  font-size: 13.5px;
+  color: var(--kelson-text-2);
+}
+
+.k-cap__driver {
+  color: var(--kelson-muted);
+}
+
+.k-cap__why {
+  margin: 0;
+  max-width: 78ch;
+  font-size: 13px;
+  color: var(--kelson-text-2);
+}
+
+.k-cap__why-label {
+  font-family: var(--kelson-font-mono);
+  font-size: 12px;
+  color: var(--kelson-accent);
+}
+
+.k-cap__gaps {
+  margin-top: 2px;
+}
+
+.k-cap__foot {
+  margin: 0;
+  max-width: 78ch;
+  font-size: 13px;
+  color: var(--kelson-muted);
+}
+
+.k-cap__foot a {
+  color: var(--kelson-accent);
+}
