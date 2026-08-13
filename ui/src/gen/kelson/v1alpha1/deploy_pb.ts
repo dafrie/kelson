@@ -9,8 +9,8 @@
 // @generated from file kelson/v1alpha1/deploy.proto (package kelson.v1alpha1, syntax proto3)
 /* eslint-disable */
 
-import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
-import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
+import type { GenEnum, GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
+import { enumDesc, fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
 import type { DryRun, Error, Manifest } from "./common_pb";
 import { file_kelson_v1alpha1_common } from "./common_pb";
 import type { ProfileRef, SpecRef } from "./render_pb";
@@ -21,7 +21,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file kelson/v1alpha1/deploy.proto.
  */
 export const file_kelson_v1alpha1_deploy: GenFile = /*@__PURE__*/
-  fileDesc("ChxrZWxzb24vdjFhbHBoYTEvZGVwbG95LnByb3RvEg9rZWxzb24udjFhbHBoYTEi8wEKDURlcGxveVJlcXVlc3QSJgoEc3BlYxgBIAEoCzIYLmtlbHNvbi52MWFscGhhMS5TcGVjUmVmEhMKC2Vudmlyb25tZW50GAIgASgJEiwKB3Byb2ZpbGUYAyABKAsyGy5rZWxzb24udjFhbHBoYTEuUHJvZmlsZVJlZhINCgVpbWFnZRgEIAEoCRIMCgRtb2RlGAUgASgJEhcKD3RpbWVvdXRfc2Vjb25kcxgGIAEoAxIoCgdkcnlfcnVuGAcgASgOMhcua2Vsc29uLnYxYWxwaGExLkRyeVJ1bhIXCg9pZGVtcG90ZW5jeV9rZXkYCCABKAkilQYKDkRlcGxveVJlc3BvbnNlEjwKCHByb3Bvc2VkGAEgASgLMigua2Vsc29uLnYxYWxwaGExLkRlcGxveVJlc3BvbnNlLlByb3Bvc2VkSAASPgoJY29tbWl0dGVkGAIgASgLMikua2Vsc29uLnYxYWxwaGExLkRlcGxveVJlc3BvbnNlLkNvbW1pdHRlZEgAEkAKCnRyYW5zaXRpb24YAyABKAsyKi5rZWxzb24udjFhbHBoYTEuRGVwbG95UmVzcG9uc2UuVHJhbnNpdGlvbkgAEjoKB3NldHRsZWQYBCABKAsyJy5rZWxzb24udjFhbHBoYTEuRGVwbG95UmVzcG9uc2UuU2V0dGxlZEgAGn8KCFByb3Bvc2VkEg8KB3Byb2plY3QYASABKAkSEwoLZW52aXJvbm1lbnQYAiABKAkSEQoJcmVzb3VyY2VzGAMgASgFEgwKBG1vZGUYBCABKAkSLAoJbWFuaWZlc3RzGAUgAygLMhkua2Vsc29uLnYxYWxwaGExLk1hbmlmZXN0Gi4KCUNvbW1pdHRlZBIQCghyZXZpc2lvbhgBIAEoCRIPCgdhZGFwdGVyGAIgASgJGqIBCgpUcmFuc2l0aW9uEg0KBXBoYXNlGAEgASgJEg4KBmFuc3dlchgCIAEoCRINCgVzdHVjaxgDIAEoCBI0CgVjYXVzZRgEIAEoCzIlLmtlbHNvbi52MWFscGhhMS5EZXBsb3lSZXNwb25zZS5DYXVzZRIZChFvYnNlcnZlZF9yZXZpc2lvbhgFIAEoCRIVCg1zaW5jZV91bml4X21zGAYgASgDGmsKB1NldHRsZWQSOQoFZmluYWwYASABKAsyKi5rZWxzb24udjFhbHBoYTEuRGVwbG95UmVzcG9uc2UuVHJhbnNpdGlvbhIlCgVlcnJvchgCIAEoCzIWLmtlbHNvbi52MWFscGhhMS5FcnJvcho7CgVDYXVzZRIRCgljb21wb25lbnQYASABKAkSDgoGcmVhc29uGAIgASgJEg8KB21lc3NhZ2UYAyABKAlCBwoFZXZlbnQilwEKDVN0YXR1c1JlcXVlc3QSJgoEc3BlYxgBIAEoCzIYLmtlbHNvbi52MWFscGhhMS5TcGVjUmVmEhMKC2Vudmlyb25tZW50GAIgASgJEiwKB3Byb2ZpbGUYAyABKAsyGy5rZWxzb24udjFhbHBoYTEuUHJvZmlsZVJlZhINCgVpbWFnZRgEIAEoCRIMCgRtb2RlGAUgASgJIvMBCg5TdGF0dXNSZXNwb25zZRINCgVwaGFzZRgBIAEoCRIQCghyZXZpc2lvbhgCIAEoCRINCgVjYXVzZRgDIAEoCRI7CgZkZXRhaWwYBCADKAsyKy5rZWxzb24udjFhbHBoYTEuU3RhdHVzUmVzcG9uc2UuRGV0YWlsRW50cnkSMgoIdmVyZGljdHMYBSADKAsyIC5rZWxzb24udjFhbHBoYTEuV29ya2xvYWRWZXJkaWN0EhEKCW5hbWVzcGFjZRgGIAEoCRotCgtEZXRhaWxFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBInoKD1dvcmtsb2FkVmVyZGljdBIQCghyZXNvdXJjZRgBIAEoCRIMCgRjb2RlGAIgASgJEg8KB2hlYWx0aHkYAyABKAgSEAoIZGVncmFkZWQYBCABKAgSDwoHbWVzc2FnZRgFIAEoCRITCgtyZW1lZGlhdGlvbhgGIAEoCSLiAQoPUm9sbGJhY2tSZXF1ZXN0EiYKBHNwZWMYASABKAsyGC5rZWxzb24udjFhbHBoYTEuU3BlY1JlZhITCgtlbnZpcm9ubWVudBgCIAEoCRIsCgdwcm9maWxlGAMgASgLMhsua2Vsc29uLnYxYWxwaGExLlByb2ZpbGVSZWYSDAoEbW9kZRgEIAEoCRITCgt0b19yZXZpc2lvbhgFIAEoCRIoCgdkcnlfcnVuGAYgASgOMhcua2Vsc29uLnYxYWxwaGExLkRyeVJ1bhIXCg9pZGVtcG90ZW5jeV9rZXkYByABKAkimgQKEFJvbGxiYWNrUmVzcG9uc2USPAoHcHJldmlldxgBIAEoCzIpLmtlbHNvbi52MWFscGhhMS5Sb2xsYmFja1Jlc3BvbnNlLlByZXZpZXdIABJACgljb21taXR0ZWQYAiABKAsyKy5rZWxzb24udjFhbHBoYTEuUm9sbGJhY2tSZXNwb25zZS5Db21taXR0ZWRIABI8CgdzZXR0bGVkGAMgASgLMikua2Vsc29uLnYxYWxwaGExLlJvbGxiYWNrUmVzcG9uc2UuU2V0dGxlZEgAGm4KB1ByZXZpZXcSEwoLdG9fcmV2aXNpb24YASABKAkSEQoJZGlmZl9qc29uGAIgASgMEjsKCGZpbmRpbmdzGAMgAygLMikua2Vsc29uLnYxYWxwaGExLlJvbGxiYWNrUmVzcG9uc2UuRmluZGluZxpgCgdGaW5kaW5nEhAKCHJlc291cmNlGAEgASgJEgwKBHBhdGgYAiABKAkSDQoFY2F1c2UYAyABKAkSDwoHbWVzc2FnZRgEIAEoCRIVCg11bnJlY292ZXJhYmxlGAUgASgIGjsKCUNvbW1pdHRlZBIZChFyZXN0b3JlZF9yZXZpc2lvbhgBIAEoCRITCgthc19yZXZpc2lvbhgCIAEoCRowCgdTZXR0bGVkEiUKBWVycm9yGAEgASgLMhYua2Vsc29uLnYxYWxwaGExLkVycm9yQgcKBWV2ZW50IlsKDkhpc3RvcnlSZXF1ZXN0EiYKBHNwZWMYASABKAsyGC5rZWxzb24udjFhbHBoYTEuU3BlY1JlZhITCgtlbnZpcm9ubWVudBgCIAEoCRIMCgRtb2RlGAMgASgJIkEKD0hpc3RvcnlSZXNwb25zZRIuCgdlbnRyaWVzGAEgAygLMh0ua2Vsc29uLnYxYWxwaGExLkhpc3RvcnlFbnRyeSJqCgxIaXN0b3J5RW50cnkSEAoIcmV2aXNpb24YASABKAkSEQoJc3BlY19oYXNoGAIgASgJEhQKDGNvbW1pdHRlZF9hdBgDIAEoCRIPCgdtZXNzYWdlGAQgASgJEg4KBmF1dGhvchgFIAEoCTLIAgoNRGVwbG95U2VydmljZRJLCgZEZXBsb3kSHi5rZWxzb24udjFhbHBoYTEuRGVwbG95UmVxdWVzdBofLmtlbHNvbi52MWFscGhhMS5EZXBsb3lSZXNwb25zZTABEkkKBlN0YXR1cxIeLmtlbHNvbi52MWFscGhhMS5TdGF0dXNSZXF1ZXN0Gh8ua2Vsc29uLnYxYWxwaGExLlN0YXR1c1Jlc3BvbnNlElEKCFJvbGxiYWNrEiAua2Vsc29uLnYxYWxwaGExLlJvbGxiYWNrUmVxdWVzdBohLmtlbHNvbi52MWFscGhhMS5Sb2xsYmFja1Jlc3BvbnNlMAESTAoHSGlzdG9yeRIfLmtlbHNvbi52MWFscGhhMS5IaXN0b3J5UmVxdWVzdBogLmtlbHNvbi52MWFscGhhMS5IaXN0b3J5UmVzcG9uc2VCSlpIZ2l0aHViLmNvbS9kYWZyaWUva2Vsc29uL2ludGVybmFsL2FwaS9nZW4va2Vsc29uL3YxYWxwaGExO2tlbHNvbnYxYWxwaGExYgZwcm90bzM", [file_kelson_v1alpha1_common, file_kelson_v1alpha1_render]);
+  fileDesc("ChxrZWxzb24vdjFhbHBoYTEvZGVwbG95LnByb3RvEg9rZWxzb24udjFhbHBoYTEi8wEKDURlcGxveVJlcXVlc3QSJgoEc3BlYxgBIAEoCzIYLmtlbHNvbi52MWFscGhhMS5TcGVjUmVmEhMKC2Vudmlyb25tZW50GAIgASgJEiwKB3Byb2ZpbGUYAyABKAsyGy5rZWxzb24udjFhbHBoYTEuUHJvZmlsZVJlZhINCgVpbWFnZRgEIAEoCRIMCgRtb2RlGAUgASgJEhcKD3RpbWVvdXRfc2Vjb25kcxgGIAEoAxIoCgdkcnlfcnVuGAcgASgOMhcua2Vsc29uLnYxYWxwaGExLkRyeVJ1bhIXCg9pZGVtcG90ZW5jeV9rZXkYCCABKAkilQYKDkRlcGxveVJlc3BvbnNlEjwKCHByb3Bvc2VkGAEgASgLMigua2Vsc29uLnYxYWxwaGExLkRlcGxveVJlc3BvbnNlLlByb3Bvc2VkSAASPgoJY29tbWl0dGVkGAIgASgLMikua2Vsc29uLnYxYWxwaGExLkRlcGxveVJlc3BvbnNlLkNvbW1pdHRlZEgAEkAKCnRyYW5zaXRpb24YAyABKAsyKi5rZWxzb24udjFhbHBoYTEuRGVwbG95UmVzcG9uc2UuVHJhbnNpdGlvbkgAEjoKB3NldHRsZWQYBCABKAsyJy5rZWxzb24udjFhbHBoYTEuRGVwbG95UmVzcG9uc2UuU2V0dGxlZEgAGn8KCFByb3Bvc2VkEg8KB3Byb2plY3QYASABKAkSEwoLZW52aXJvbm1lbnQYAiABKAkSEQoJcmVzb3VyY2VzGAMgASgFEgwKBG1vZGUYBCABKAkSLAoJbWFuaWZlc3RzGAUgAygLMhkua2Vsc29uLnYxYWxwaGExLk1hbmlmZXN0Gi4KCUNvbW1pdHRlZBIQCghyZXZpc2lvbhgBIAEoCRIPCgdhZGFwdGVyGAIgASgJGqIBCgpUcmFuc2l0aW9uEg0KBXBoYXNlGAEgASgJEg4KBmFuc3dlchgCIAEoCRINCgVzdHVjaxgDIAEoCBI0CgVjYXVzZRgEIAEoCzIlLmtlbHNvbi52MWFscGhhMS5EZXBsb3lSZXNwb25zZS5DYXVzZRIZChFvYnNlcnZlZF9yZXZpc2lvbhgFIAEoCRIVCg1zaW5jZV91bml4X21zGAYgASgDGmsKB1NldHRsZWQSOQoFZmluYWwYASABKAsyKi5rZWxzb24udjFhbHBoYTEuRGVwbG95UmVzcG9uc2UuVHJhbnNpdGlvbhIlCgVlcnJvchgCIAEoCzIWLmtlbHNvbi52MWFscGhhMS5FcnJvcho7CgVDYXVzZRIRCgljb21wb25lbnQYASABKAkSDgoGcmVhc29uGAIgASgJEg8KB21lc3NhZ2UYAyABKAlCBwoFZXZlbnQilwEKDVN0YXR1c1JlcXVlc3QSJgoEc3BlYxgBIAEoCzIYLmtlbHNvbi52MWFscGhhMS5TcGVjUmVmEhMKC2Vudmlyb25tZW50GAIgASgJEiwKB3Byb2ZpbGUYAyABKAsyGy5rZWxzb24udjFhbHBoYTEuUHJvZmlsZVJlZhINCgVpbWFnZRgEIAEoCRIMCgRtb2RlGAUgASgJIvMBCg5TdGF0dXNSZXNwb25zZRINCgVwaGFzZRgBIAEoCRIQCghyZXZpc2lvbhgCIAEoCRINCgVjYXVzZRgDIAEoCRI7CgZkZXRhaWwYBCADKAsyKy5rZWxzb24udjFhbHBoYTEuU3RhdHVzUmVzcG9uc2UuRGV0YWlsRW50cnkSMgoIdmVyZGljdHMYBSADKAsyIC5rZWxzb24udjFhbHBoYTEuV29ya2xvYWRWZXJkaWN0EhEKCW5hbWVzcGFjZRgGIAEoCRotCgtEZXRhaWxFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBInoKD1dvcmtsb2FkVmVyZGljdBIQCghyZXNvdXJjZRgBIAEoCRIMCgRjb2RlGAIgASgJEg8KB2hlYWx0aHkYAyABKAgSEAoIZGVncmFkZWQYBCABKAgSDwoHbWVzc2FnZRgFIAEoCRITCgtyZW1lZGlhdGlvbhgGIAEoCSLiAQoPUm9sbGJhY2tSZXF1ZXN0EiYKBHNwZWMYASABKAsyGC5rZWxzb24udjFhbHBoYTEuU3BlY1JlZhITCgtlbnZpcm9ubWVudBgCIAEoCRIsCgdwcm9maWxlGAMgASgLMhsua2Vsc29uLnYxYWxwaGExLlByb2ZpbGVSZWYSDAoEbW9kZRgEIAEoCRITCgt0b19yZXZpc2lvbhgFIAEoCRIoCgdkcnlfcnVuGAYgASgOMhcua2Vsc29uLnYxYWxwaGExLkRyeVJ1bhIXCg9pZGVtcG90ZW5jeV9rZXkYByABKAkimgQKEFJvbGxiYWNrUmVzcG9uc2USPAoHcHJldmlldxgBIAEoCzIpLmtlbHNvbi52MWFscGhhMS5Sb2xsYmFja1Jlc3BvbnNlLlByZXZpZXdIABJACgljb21taXR0ZWQYAiABKAsyKy5rZWxzb24udjFhbHBoYTEuUm9sbGJhY2tSZXNwb25zZS5Db21taXR0ZWRIABI8CgdzZXR0bGVkGAMgASgLMikua2Vsc29uLnYxYWxwaGExLlJvbGxiYWNrUmVzcG9uc2UuU2V0dGxlZEgAGm4KB1ByZXZpZXcSEwoLdG9fcmV2aXNpb24YASABKAkSEQoJZGlmZl9qc29uGAIgASgMEjsKCGZpbmRpbmdzGAMgAygLMikua2Vsc29uLnYxYWxwaGExLlJvbGxiYWNrUmVzcG9uc2UuRmluZGluZxpgCgdGaW5kaW5nEhAKCHJlc291cmNlGAEgASgJEgwKBHBhdGgYAiABKAkSDQoFY2F1c2UYAyABKAkSDwoHbWVzc2FnZRgEIAEoCRIVCg11bnJlY292ZXJhYmxlGAUgASgIGjsKCUNvbW1pdHRlZBIZChFyZXN0b3JlZF9yZXZpc2lvbhgBIAEoCRITCgthc19yZXZpc2lvbhgCIAEoCRowCgdTZXR0bGVkEiUKBWVycm9yGAEgASgLMhYua2Vsc29uLnYxYWxwaGExLkVycm9yQgcKBWV2ZW50IlsKDkhpc3RvcnlSZXF1ZXN0EiYKBHNwZWMYASABKAsyGC5rZWxzb24udjFhbHBoYTEuU3BlY1JlZhITCgtlbnZpcm9ubWVudBgCIAEoCRIMCgRtb2RlGAMgASgJIkEKD0hpc3RvcnlSZXNwb25zZRIuCgdlbnRyaWVzGAEgAygLMh0ua2Vsc29uLnYxYWxwaGExLkhpc3RvcnlFbnRyeSJqCgxIaXN0b3J5RW50cnkSEAoIcmV2aXNpb24YASABKAkSEQoJc3BlY19oYXNoGAIgASgJEhQKDGNvbW1pdHRlZF9hdBgDIAEoCRIPCgdtZXNzYWdlGAQgASgJEg4KBmF1dGhvchgFIAEoCSL3AQoOUHJvbW90ZVJlcXVlc3QSDwoHcHJvamVjdBgBIAEoCRIYChBmcm9tX2Vudmlyb25tZW50GAIgASgJEhYKDnRvX2Vudmlyb25tZW50GAMgASgJEhIKCmNvbXBvbmVudHMYBCADKAkSLAoHcHJvZmlsZRgFIAEoCzIbLmtlbHNvbi52MWFscGhhMS5Qcm9maWxlUmVmEgwKBG1vZGUYBiABKAkSKAoHZHJ5X3J1bhgHIAEoDjIXLmtlbHNvbi52MWFscGhhMS5EcnlSdW4SFwoPaWRlbXBvdGVuY3lfa2V5GAggASgJEg8KB3ZlcnNpb24YCSABKAkixAEKD1Byb21vdGVSZXNwb25zZRI2Cgpjb21wb25lbnRzGAEgAygLMiIua2Vsc29uLnYxYWxwaGExLlByb21vdGVkQ29tcG9uZW50EhUKDWZyb21fcmV2aXNpb24YAiABKAkSDwoHdmVyc2lvbhgDIAEoCRIRCglkaWZmX2pzb24YBCABKAwSFgoOZXhpdF9zZW1hbnRpY3MYBSABKAUSJgoGZXJyb3JzGAYgAygLMhYua2Vsc29uLnYxYWxwaGExLkVycm9yIpwBChFQcm9tb3RlZENvbXBvbmVudBIRCgljb21wb25lbnQYASABKAkSEgoKZnJvbV9pbWFnZRgCIAEoCRIQCgh0b19pbWFnZRgDIAEoCRIwCgZzdGF0dXMYBCABKA4yIC5rZWxzb24udjFhbHBoYTEuUHJvbW90aW9uU3RhdHVzEgwKBGNvZGUYBSABKAkSDgoGcmVhc29uGAYgASgJKo4BCg9Qcm9tb3Rpb25TdGF0dXMSIAocUFJPTU9USU9OX1NUQVRVU19VTlNQRUNJRklFRBAAEhsKF1BST01PVElPTl9TVEFUVVNfUElOTkVEEAESHgoaUFJPTU9USU9OX1NUQVRVU19VTkNIQU5HRUQQAhIcChhQUk9NT1RJT05fU1RBVFVTX1NLSVBQRUQQAzKWAwoNRGVwbG95U2VydmljZRJLCgZEZXBsb3kSHi5rZWxzb24udjFhbHBoYTEuRGVwbG95UmVxdWVzdBofLmtlbHNvbi52MWFscGhhMS5EZXBsb3lSZXNwb25zZTABEkkKBlN0YXR1cxIeLmtlbHNvbi52MWFscGhhMS5TdGF0dXNSZXF1ZXN0Gh8ua2Vsc29uLnYxYWxwaGExLlN0YXR1c1Jlc3BvbnNlElEKCFJvbGxiYWNrEiAua2Vsc29uLnYxYWxwaGExLlJvbGxiYWNrUmVxdWVzdBohLmtlbHNvbi52MWFscGhhMS5Sb2xsYmFja1Jlc3BvbnNlMAESTAoHSGlzdG9yeRIfLmtlbHNvbi52MWFscGhhMS5IaXN0b3J5UmVxdWVzdBogLmtlbHNvbi52MWFscGhhMS5IaXN0b3J5UmVzcG9uc2USTAoHUHJvbW90ZRIfLmtlbHNvbi52MWFscGhhMS5Qcm9tb3RlUmVxdWVzdBogLmtlbHNvbi52MWFscGhhMS5Qcm9tb3RlUmVzcG9uc2VCSlpIZ2l0aHViLmNvbS9kYWZyaWUva2Vsc29uL2ludGVybmFsL2FwaS9nZW4va2Vsc29uL3YxYWxwaGExO2tlbHNvbnYxYWxwaGExYgZwcm90bzM", [file_kelson_v1alpha1_common, file_kelson_v1alpha1_render]);
 
 /**
  * @generated from message kelson.v1alpha1.DeployRequest
@@ -718,6 +718,247 @@ export const HistoryEntrySchema: GenMessage<HistoryEntry> = /*@__PURE__*/
   messageDesc(file_kelson_v1alpha1_deploy, 9);
 
 /**
+ * Promotion (issue #11, ADR-0016 decision 2). Promoting is reading the digest
+ * the source environment deployed, writing it as the target environment's
+ * image pin, and deploying through the ordinary path. This RPC is the first
+ * two; the third is Deploy, unchanged.
+ *
+ * It lives on DeployService because its input is a delivery revision: the
+ * images promoted are extracted from the manifests the source environment's
+ * latest revision recorded, which is the same history History and Rollback
+ * read. Putting it on SpecService would have made the spec store depend on the
+ * delivery plane to answer one call.
+ *
+ * @generated from message kelson.v1alpha1.PromoteRequest
+ */
+export type PromoteRequest = Message<"kelson.v1alpha1.PromoteRequest"> & {
+  /**
+   * Project names the stored spec. Promotion writes a spec document, so there
+   * is no inline-documents form: there would be nowhere to write it back to.
+   *
+   * @generated from field: string project = 1;
+   */
+  project: string;
+
+  /**
+   * where the deployed digest is read
+   *
+   * @generated from field: string from_environment = 2;
+   */
+  fromEnvironment: string;
+
+  /**
+   * where the pin is written
+   *
+   * @generated from field: string to_environment = 3;
+   */
+  toEnvironment: string;
+
+  /**
+   * Components restricts the promotion. Empty promotes every workload
+   * component the project declares; a name the project does not declare is
+   * promote/component-unknown rather than a silent no-op.
+   *
+   * @generated from field: repeated string components = 4;
+   */
+  components: string[];
+
+  /**
+   * renders the before/after diff below
+   *
+   * @generated from field: kelson.v1alpha1.ProfileRef profile = 5;
+   */
+  profile?: ProfileRef | undefined;
+
+  /**
+   * delivery adapter override for reading the source's history
+   *
+   * @generated from field: string mode = 6;
+   */
+  mode: string;
+
+  /**
+   * RENDER: compute the pins and the diff, write nothing
+   *
+   * @generated from field: kelson.v1alpha1.DryRun dry_run = 7;
+   */
+  dryRun: DryRun;
+
+  /**
+   * @generated from field: string idempotency_key = 8;
+   */
+  idempotencyKey: string;
+
+  /**
+   * Version is the spec version the caller read before promoting; a mismatch
+   * fails with store/version-conflict, the same optimistic concurrency PutSpec
+   * carries.
+   *
+   * @generated from field: string version = 9;
+   */
+  version: string;
+};
+
+/**
+ * Describes the message kelson.v1alpha1.PromoteRequest.
+ * Use `create(PromoteRequestSchema)` to create a new message.
+ */
+export const PromoteRequestSchema: GenMessage<PromoteRequest> = /*@__PURE__*/
+  messageDesc(file_kelson_v1alpha1_deploy, 10);
+
+/**
+ * @generated from message kelson.v1alpha1.PromoteResponse
+ */
+export type PromoteResponse = Message<"kelson.v1alpha1.PromoteResponse"> & {
+  /**
+   * Components is every component the promotion considered, in the Project's
+   * own order, including the ones it did not write.
+   *
+   * @generated from field: repeated kelson.v1alpha1.PromotedComponent components = 1;
+   */
+  components: PromotedComponent[];
+
+  /**
+   * FromRevision is the source environment's revision the images were read
+   * from — the deployed truth this promotion is built on.
+   *
+   * @generated from field: string from_revision = 2;
+   */
+  fromRevision: string;
+
+  /**
+   * Version is the spec store's version after the write. Empty for a dry run,
+   * which stores nothing.
+   *
+   * @generated from field: string version = 3;
+   */
+  version: string;
+
+  /**
+   * The diff of the target environment, before and after the pins, computed
+   * server-side and encoded like DiffResponse.diff_json. The promotion returns
+   * it rather than leaving the caller to call Diff: the two document sets are
+   * already in the server's hands here, and a dry run has no stored "after"
+   * for a follow-up Diff to compare against.
+   *
+   * @generated from field: bytes diff_json = 4;
+   */
+  diffJson: Uint8Array;
+
+  /**
+   * 0 no changes, 2 changes, 3 blocked — as DiffResponse
+   *
+   * @generated from field: int32 exit_semantics = 5;
+   */
+  exitSemantics: number;
+
+  /**
+   * Validation and render findings. A non-empty list means nothing was
+   * written, the same contract PutSpec has.
+   *
+   * @generated from field: repeated kelson.v1alpha1.Error errors = 6;
+   */
+  errors: Error[];
+};
+
+/**
+ * Describes the message kelson.v1alpha1.PromoteResponse.
+ * Use `create(PromoteResponseSchema)` to create a new message.
+ */
+export const PromoteResponseSchema: GenMessage<PromoteResponse> = /*@__PURE__*/
+  messageDesc(file_kelson_v1alpha1_deploy, 11);
+
+/**
+ * @generated from message kelson.v1alpha1.PromotedComponent
+ */
+export type PromotedComponent = Message<"kelson.v1alpha1.PromotedComponent"> & {
+  /**
+   * @generated from field: string component = 1;
+   */
+  component: string;
+
+  /**
+   * FromImage is the target environment's pin before the promotion; empty
+   * means it was unpinned and following the component or project image.
+   *
+   * @generated from field: string from_image = 2;
+   */
+  fromImage: string;
+
+  /**
+   * ToImage is the image the source environment's latest revision runs.
+   *
+   * @generated from field: string to_image = 3;
+   */
+  toImage: string;
+
+  /**
+   * @generated from field: kelson.v1alpha1.PromotionStatus status = 4;
+   */
+  status: PromotionStatus;
+
+  /**
+   * promote/* code for a skip, e.g. "promote/not-in-revision"
+   *
+   * @generated from field: string code = 5;
+   */
+  code: string;
+
+  /**
+   * the skip in prose
+   *
+   * @generated from field: string reason = 6;
+   */
+  reason: string;
+};
+
+/**
+ * Describes the message kelson.v1alpha1.PromotedComponent.
+ * Use `create(PromotedComponentSchema)` to create a new message.
+ */
+export const PromotedComponentSchema: GenMessage<PromotedComponent> = /*@__PURE__*/
+  messageDesc(file_kelson_v1alpha1_deploy, 12);
+
+/**
+ * PromotionStatus is what the promotion decided for one component.
+ *
+ * @generated from enum kelson.v1alpha1.PromotionStatus
+ */
+export enum PromotionStatus {
+  /**
+   * @generated from enum value: PROMOTION_STATUS_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * the pin was (or would be) written
+   *
+   * @generated from enum value: PROMOTION_STATUS_PINNED = 1;
+   */
+  PINNED = 1,
+
+  /**
+   * already pinned to what the source runs
+   *
+   * @generated from enum value: PROMOTION_STATUS_UNCHANGED = 2;
+   */
+  UNCHANGED = 2,
+
+  /**
+   * not promoted, and `code`/`reason` say why
+   *
+   * @generated from enum value: PROMOTION_STATUS_SKIPPED = 3;
+   */
+  SKIPPED = 3,
+}
+
+/**
+ * Describes the enum kelson.v1alpha1.PromotionStatus.
+ */
+export const PromotionStatusSchema: GenEnum<PromotionStatus> = /*@__PURE__*/
+  enumDesc(file_kelson_v1alpha1_deploy, 0);
+
+/**
  * @generated from service kelson.v1alpha1.DeployService
  */
 export const DeployService: GenService<{
@@ -752,6 +993,14 @@ export const DeployService: GenService<{
     methodKind: "unary";
     input: typeof HistoryRequestSchema;
     output: typeof HistoryResponseSchema;
+  },
+  /**
+   * @generated from rpc kelson.v1alpha1.DeployService.Promote
+   */
+  promote: {
+    methodKind: "unary";
+    input: typeof PromoteRequestSchema;
+    output: typeof PromoteResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_kelson_v1alpha1_deploy, 0);
