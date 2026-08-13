@@ -526,6 +526,46 @@ spec:
 	}
 }
 
+// TestSourceOnlyProjectIsBuiltFromSource covers issue #170: validation treated
+// a Project as built-from-source only when both spec.source and spec.build
+// were present, while model.Resolve already treated a nil spec.build as the
+// `auto` strategy (ADR-0010's default). A source-only Project must validate
+// without ErrNoImageSource; TestResolveSourceOnlyProjectYieldsImageUnresolved
+// in resolve_test.go covers the matching resolve-time behaviour.
+func TestSourceOnlyProjectIsBuiltFromSource(t *testing.T) {
+	_, errs := DecodeDocuments([]byte(`
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata: {name: p}
+spec:
+  source: {git: https://github.com/a/b}
+  components:
+    - name: web
+      port: 8080
+`))
+	if len(errs) != 0 {
+		t.Fatalf("source-only project without build must be valid, got %v", errs)
+	}
+}
+
+// TestNoSourceNoImageStillFails guards the other half of #170's fix: relaxing
+// the built-from-source check must not relax semantic/no-image-source when a
+// component genuinely has neither an image nor a source to build from.
+func TestNoSourceNoImageStillFails(t *testing.T) {
+	_, errs := DecodeDocuments([]byte(`
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata: {name: p}
+spec:
+  components:
+    - name: web
+      port: 8080
+`))
+	if !slices.Contains(errs.Codes(), ErrNoImageSource) {
+		t.Errorf("no source and no image must fail, got %v", errs)
+	}
+}
+
 // TestCronFieldRanges covers issue #143: cronFieldRE only checked shape, so a
 // schedule like "99 * * * *" passed validation and failed only once applied
 // to the cluster as a CronJob. Bounds mirror what Kubernetes' CronJob accepts

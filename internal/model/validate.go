@@ -656,7 +656,7 @@ func validateProject(p *Project, v *validator) {
 		}
 	}
 	projectImage := s.Image
-	if s.Source != nil && s.Build != nil && s.Build.Strategy != BuildNone {
+	if s.Source != nil && (s.Build == nil || s.Build.Strategy != BuildNone) {
 		projectImage = "(built from source)"
 	}
 
