@@ -1,5 +1,13 @@
-import { createClient, type Transport } from "@connectrpc/connect";
+import {
+  Code,
+  ConnectError,
+  createClient,
+  type Interceptor,
+  type Transport,
+} from "@connectrpc/connect";
 import { createConnectTransport } from "@connectrpc/connect-web";
+
+import { notifyUnauthenticated } from "./auth";
 
 import { SpecService } from "../gen/kelson/v1alpha1/spec_pb";
 import { RenderService } from "../gen/kelson/v1alpha1/render_pb";
@@ -19,15 +27,47 @@ import { BuildService } from "../gen/kelson/v1alpha1/build_pb";
  */
 
 /**
+ * Report a 401 to the auth layer, then let it fall through unchanged.
+ *
+ * A server started with a password (#84's interim cut) refuses an RPC without a
+ * session as ConnectRPC `unauthenticated`, and it can start doing so at any
+ * moment — a restart mints a new signing key, so every open tab's cookie dies
+ * with the old process (docs/server.md). The screens keep receiving the error
+ * they always did; this only tells the session state that it is stale, which is
+ * what turns a mid-edit expiry into a login screen instead of an error panel.
+ *
+ * The catch is around the call rather than around the stream body because
+ * connect-web validates the response status before it hands back a stream, so a
+ * 401 on a deploy or a log follow arrives here too.
+ */
+const reportUnauthenticated: Interceptor = (next) => async (req) => {
+  try {
+    return await next(req);
+  } catch (error) {
+    if (error instanceof ConnectError && error.code === Code.Unauthenticated) {
+      notifyUnauthenticated();
+    }
+    throw error;
+  }
+};
+
+/**
  * The default transport talks to the origin the UI is served from.
  *
  * In production that is kelson-server itself. In development it is the Vite dev
- * server, whose proxy (see vite.config.ts) forwards `/kelson.v1alpha1.*` and
- * `/healthz` to 127.0.0.1:8420. Either way the request is same-origin, which is
- * what lets kelson-server ship without CORS handling.
+ * server, whose proxy (see vite.config.ts) forwards `/kelson.v1alpha1.*`,
+ * `/auth/` and `/healthz` to 127.0.0.1:8420. Either way the request is
+ * same-origin, which is what lets kelson-server ship without CORS handling —
+ * and what lets the session cookie ride along at all, since `SameSite=Lax`
+ * would not survive a cross-site call.
  */
 export const defaultTransport: Transport = createConnectTransport({
   baseUrl: "/",
+  interceptors: [reportUnauthenticated],
+  // Same-origin is fetch's default. It is stated because the session cookie is
+  // the whole mechanism and a silent change here would look like a server bug.
+  fetch: (input, init) =>
+    globalThis.fetch(input, { credentials: "same-origin", ...init }),
 });
 
 export function createClients(transport: Transport) {

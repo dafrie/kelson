@@ -33,6 +33,33 @@ npm run build      # static output into dist/
 npm run preview    # serve dist/ locally
 ```
 
+## Signing in
+
+A `kelson-server` started with `--password` requires a session; one started
+without it — the default, and what `npm run dev` talks to unless you say
+otherwise — requires nothing and the UI shows no login at all
+([the server](../docs/server.md)).
+
+`src/api/auth.tsx` is the whole of it. On boot it asks `GET /auth/session`,
+whose three answers are three different facts:
+
+| Answer | State | What the UI does |
+| --- | --- | --- |
+| `204 No Content` | authentication is disabled | nothing — today's behaviour, no login, no user chip |
+| `200 {username}` | a session exists | renders the app and the username in the header |
+| `401` | a login is required | redirects to `/login?next=…` |
+
+A 401 from *any* RPC afterwards means the session went away mid-work — a server
+restart mints a new signing key, so every open tab's cookie dies with the old
+process. The transport interceptor in `src/api/clients.ts` reports it, the
+provider flips to anonymous, and the login screen says the session expired and
+returns to where the work was. Screens are untouched by any of this: they get
+the same `unauthenticated` error they always would.
+
+Components rendered outside the `AuthBoundary` see the context's default, which
+is **disabled** rather than loading — that is what keeps the screen tests, and
+any future embedding, from having to know authentication exists.
+
 ## The screens
 
 Milestone M6 ([#7](https://github.com/dafrie/kelson/issues/7)). Every flow is
@@ -179,11 +206,11 @@ which is what makes the test an agreement with Go rather than with itself.
 
 ## Why there is a dev proxy and no CORS
 
-`kelson-server` serves ConnectRPC and `/healthz` on one mux with no CORS
-middleware and, in v0, no authentication at all (ADR-0013 §3 — which is why it
-refuses to bind beyond loopback without `--insecure-bind`). It assumes the UI is
-served from the same origin it is, which in production is true: the built assets
-ship behind the same listener.
+`kelson-server` serves ConnectRPC, `/auth/*` and `/healthz` on one mux with no
+CORS middleware. It assumes the UI is served from the same origin it is, which in
+production is true: the built assets ship behind the same listener. Same-origin
+is also what makes the session cookie work at all — it is `SameSite=Lax`, so a
+cross-site call would not carry it ([the server](../docs/server.md)).
 
 In development Vite serves on `:5173` and the API is on `:8420`, which would be
 cross-origin. Rather than add CORS handling to the Go server for the benefit of
@@ -192,6 +219,7 @@ development only, `vite.config.ts` proxies to it:
 | Path | Forwarded to |
 | --- | --- |
 | `/kelson.v1alpha1.*` | `http://127.0.0.1:8420` |
+| `/auth/*` | `http://127.0.0.1:8420` |
 | `/healthz` | `http://127.0.0.1:8420` |
 
 Connect RPC paths are `/<package>.<Service>/<Method>`, so the one
