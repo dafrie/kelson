@@ -33,6 +33,54 @@ npm run build      # static output into dist/
 npm run preview    # serve dist/ locally
 ```
 
+## The screens
+
+Milestone M6 ([#7](https://github.com/dafrie/kelson/issues/7)). Every flow is
+addressed by a project **and** an environment, because that pair is what the
+API's mutating RPCs take — a `SpecRef` plus an environment name — so a link into
+a deploy or a log tail is a link that keeps working.
+
+| Route | What it does | RPCs |
+| --- | --- | --- |
+| `/apps` | One card per (project, environment): phase pill, revision, cause, live/degraded counts | `ListSpecs`, then one `DeployService.Status` per card |
+| `/apps/:project` | Environment tabs with status, workload verdicts and the stored documents; buttons into the four flows | `GetSpec`, `Status` |
+| `/apps/:project/:env/deploy` | Preview (render dry-run) then a confirm that streams the deployment live | `Deploy` at `RENDER`, then at `NONE`; optional `Diff` at `SERVER` |
+| `/apps/:project/:env/diff` | The live cluster's own dry-run verdict, rendered from `diff_json` | `Diff` at `SERVER` |
+| `/apps/:project/:env/logs` | Bounded Query and unbounded Follow, with a dropped-lines banner | `QueryLogs`, `FollowLogs` |
+| `/apps/:project/:env/rollback` | Revision picker, irreversibility preview, then the apply | `History`, `Rollback` at `RENDER` then `NONE` |
+| `/cluster` | Server build and the detected ClusterProfile | `/healthz`, `GetProfile` |
+
+There is **no history screen**: [#67](https://github.com/dafrie/kelson/issues/67)
+defers it. Rollback calls the History RPC to offer target revisions, which is a
+picker for an action and not a screen about the past.
+
+Four things the screens are deliberate about:
+
+- **A status that could not be read is never rendered as green.** Each card's
+  `Status` call is its own, so one unreachable cluster degrades one card to
+  "status unavailable" with the server's structured reason on it, instead of
+  blocking or blanking the grid.
+- **Streams render incrementally and abort on navigation.** `Deploy`, `Rollback`
+  and `FollowLogs` are consumed with `for await`, each event painted as it
+  lands. There is no client-side timeout — the server owns the budget and
+  answers by *sending* a settled event — and `src/api/stream.ts` aborts the
+  `AbortController` on unmount.
+- **A deployment that settles unhealthy is an outcome, not a broken
+  connection.** The stream completes cleanly with the error on the `Settled`
+  event (`statemachine.Run`'s contract), and the screen renders it as the
+  deploy's answer.
+- **One error component.** `ErrorPanel` renders `kelson.v1alpha1.Error` —
+  decoded from ConnectRPC error details with `findDetails(ErrorSchema)`, or
+  taken from the inline `errors` fields — as a mono code chip, the message, the
+  remediation as a `fix:` line and `docs_url` as a link. Codes are never
+  re-mapped; `delivery/unsupported` reaches the screen as the string the owning
+  Go package defines.
+
+`src/diff/parse.ts` decodes `diff_json` against the Go types in
+`internal/diff/diff.go`. Its fixture, `src/diff/testdata/server-diff.json`, is
+real `diff.EncodeJSON` output captured from `internal/diff/format_test.go` —
+which is what makes the test an agreement with Go rather than with itself.
+
 ## Why there is a dev proxy and no CORS
 
 `kelson-server` serves ConnectRPC and `/healthz` on one mux with no CORS
@@ -98,3 +146,8 @@ and no theme toggle — one palette that is right beats two that are half-done.
 
 One animation exists: `kelson-pulse`, reserved for reconciling status dots. If
 something else starts pulsing, the signal stops meaning "work is in flight".
+
+There are no CSS frameworks and no component library: the primitives in
+`src/styles/base.css` and `src/pages/pages.css` are hand-rolled against the
+tokens, which is the house style. Adding a dependency to this package is a
+decision, not a convenience.

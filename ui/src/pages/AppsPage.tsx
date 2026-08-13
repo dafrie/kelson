@@ -1,120 +1,260 @@
-import { useEffect, useState } from "react";
-import { ConnectError } from "@connectrpc/connect";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 
-import { clients } from "../api/clients";
-import type { Spec } from "../gen/kelson/v1alpha1/spec_pb";
-import { StatusPill, STATUS_KINDS } from "../components/StatusPill";
-import { EmptyState, LoadingState, ServerUnreachableState } from "../components/States";
+import { useAsync, useClients } from "../api/data";
+import { toFailure, type Failure } from "../api/errors";
+import type { StatusResponse } from "../gen/kelson/v1alpha1/deploy_pb";
+import { Copyable } from "../components/Copyable";
+import { ErrorPanel } from "../components/ErrorPanel";
+import { StatusPill, type StatusKind } from "../components/StatusPill";
+import { phaseToStatus } from "../components/phase";
+import { EmptyState, LoadingState } from "../components/States";
 
 /**
- * Stage-1 placeholder for the apps screen.
+ * The app list: one card per (project, environment).
  *
- * It lists what the spec store actually holds and nothing else. The dashboard
- * mockup's cards carry per-app status, a commit sha, a deploy age and a request
- * sparkline; none of that is in ListSpecsResponse, which returns
- * project/version/environments only. Inventing it would make a screen that
- * looks finished and reports fiction, so the card renders the three fields the
- * API has and stage 2 adds the rest when it wires DeployService.Status.
+ * A project is not a deployable thing — an environment is (docs/model.md: the
+ * Environment carries the namespace, the delivery mode and the cluster). So the
+ * grid is keyed by the pair, which is also what the mockup's cards are shaped
+ * for: a name, a status, and mono metadata underneath.
+ *
+ * ListSpecs gives the pairs; each card then asks DeployService.Status for its
+ * own. The calls are per-card and independent on purpose. Status renders the
+ * spec and talks to a cluster, so it is the slow, failure-prone call of the
+ * two, and one environment whose adapter is unreachable must not hold up — or
+ * blank out — the other five. A card whose Status failed says exactly that and
+ * carries the server's reason; it never shows green it did not earn.
  */
 export function AppsPage() {
-  const [state, setState] = useState<
-    | { kind: "loading" }
-    | { kind: "ready"; specs: Spec[] }
-    | { kind: "error"; message: string }
-  >({ kind: "loading" });
+  const clients = useClients();
+  const specs = useAsync(
+    (signal) => clients.spec.listSpecs({}, { signal }),
+    [clients],
+  );
 
-  useEffect(() => {
-    const controller = new AbortController();
-    clients.spec
-      .listSpecs({}, { signal: controller.signal })
-      .then((res) => setState({ kind: "ready", specs: res.specs }))
-      .catch((err: unknown) => {
-        if (controller.signal.aborted) return;
-        setState({ kind: "error", message: describe(err) });
-      });
-    return () => controller.abort();
+  const pairs = useMemo(() => {
+    const out: { project: string; environment: string }[] = [];
+    for (const spec of specs.data?.specs ?? []) {
+      for (const environment of spec.environments) {
+        out.push({ project: spec.project, environment });
+      }
+    }
+    return out;
+  }, [specs.data]);
+
+  // Each card reports its own resolved pill up, so the mono line above the grid
+  // counts what is actually on screen rather than a second, guessed tally.
+  const [kinds, setKinds] = useState<Record<string, StatusKind>>({});
+  const report = useCallback((key: string, kind: StatusKind) => {
+    setKinds((prev) => (prev[key] === kind ? prev : { ...prev, [key]: kind }));
   }, []);
+
+  const projects = specs.data?.specs.length ?? 0;
 
   return (
     <>
       <div className="k-page-head">
         <h1>Apps</h1>
       </div>
+
       <div className="k-page-sub">
         <span>
-          {state.kind === "ready"
-            ? `${state.specs.length} ${state.specs.length === 1 ? "project" : "projects"}`
-            : "—"}
+          {projects} {projects === 1 ? "project" : "projects"}
         </span>
+        <span>·</span>
+        <span>
+          {pairs.length} {pairs.length === 1 ? "environment" : "environments"}
+        </span>
+        <Counts kinds={kinds} />
       </div>
 
-      {state.kind === "loading" ? <LoadingState what="projects" /> : null}
-
-      {state.kind === "error" ? (
-        <ServerUnreachableState detail={state.message} />
+      {specs.loading && specs.data === undefined ? (
+        <LoadingState what="projects" />
       ) : null}
 
-      {state.kind === "ready" && state.specs.length === 0 ? (
+      {specs.error !== undefined ? (
+        <ErrorPanel title="Cannot list projects" error={specs.error} />
+      ) : null}
+
+      {specs.data !== undefined && projects === 0 ? (
         <EmptyState title="No projects stored yet — kelson-server's spec store is empty">
           Put one with `kelson` or SpecService.PutSpec, and it appears here.
         </EmptyState>
       ) : null}
 
-      {state.kind === "ready" && state.specs.length > 0 ? (
+      {projects > 0 && pairs.length === 0 ? (
+        <EmptyState title="No environments declared">
+          Every stored project has a Project document but no Environment
+          document. An Environment is what names a namespace and a delivery
+          mode, so there is nothing to deploy yet.
+        </EmptyState>
+      ) : null}
+
+      {pairs.length > 0 ? (
         <div className="k-grid">
-          {state.specs.map((spec) => (
-            <SpecCard key={spec.project} spec={spec} />
+          {pairs.map((pair) => (
+            <AppCard
+              key={`${pair.project}/${pair.environment}`}
+              project={pair.project}
+              environment={pair.environment}
+              onStatus={report}
+            />
           ))}
         </div>
       ) : null}
-
-      <StatusPillLegend />
     </>
   );
 }
 
-function SpecCard({ spec }: { spec: Spec }) {
+const COUNTED: { kind: StatusKind; label: string }[] = [
+  { kind: "synced", label: "synced" },
+  { kind: "reconciling", label: "reconciling" },
+  { kind: "degraded", label: "degraded" },
+  { kind: "failed", label: "failed" },
+  { kind: "unknown", label: "unknown" },
+];
+
+function Counts({ kinds }: { kinds: Record<string, StatusKind> }) {
+  const tally = Object.values(kinds);
+  return (
+    <>
+      {COUNTED.map(({ kind, label }) => {
+        const n = tally.filter((k) => k === kind).length;
+        if (n === 0) return null;
+        return (
+          <span key={kind} className="k-count-group">
+            <span className={`k-count k-count--${kind}`}>{n}</span> {label}
+          </span>
+        );
+      })}
+    </>
+  );
+}
+
+function AppCard({
+  project,
+  environment,
+  onStatus,
+}: {
+  project: string;
+  environment: string;
+  onStatus: (key: string, kind: StatusKind) => void;
+}) {
+  const clients = useClients();
+  const status = useAsync(
+    (signal) =>
+      clients.deploy.status(
+        {
+          spec: { spec: { case: "project", value: project } },
+          environment,
+        },
+        { signal },
+      ),
+    [clients, project, environment],
+  );
+
+  const failure: Failure | undefined =
+    status.error === undefined ? undefined : toFailure(status.error);
+  const kind: StatusKind =
+    failure !== undefined
+      ? "unknown"
+      : status.data
+        ? phaseToStatus(status.data.phase)
+        : "unknown";
+
+  const settled = !status.loading;
+  useEffect(() => {
+    if (settled) onStatus(`${project}/${environment}`, kind);
+  }, [settled, kind, project, environment, onStatus]);
+
   return (
     <div className="k-panel k-panel--interactive k-card">
       <div className="k-card__head">
-        <span className="k-card__name">{spec.project}</span>
-        {/* The spec store knows nothing about rollout state; claiming a status
-            here would be the fiction this screen refuses to print. */}
-        <StatusPill status="unknown" label="no status yet" />
+        <div className="k-card__ident">
+          <Link
+            to={`/apps/${encodeURIComponent(project)}`}
+            className="k-card__name"
+          >
+            {project}
+          </Link>
+          <span className="k-chip k-mono">{environment}</span>
+        </div>
+        {status.loading && status.data === undefined && failure === undefined ? (
+          <StatusPill status="unknown" label="reading…" />
+        ) : failure !== undefined ? (
+          // The reason is the server's own, kept verbatim on the tooltip: an
+          // unreachable cluster and a rejected spec are different problems and
+          // the card must not blur them into one grey pill with no story.
+          <span title={statusReason(failure)}>
+            <StatusPill status="unknown" label="status unavailable" />
+          </span>
+        ) : (
+          <StatusPill
+            status={kind}
+            label={status.data?.phase.toLowerCase() || "unknown"}
+          />
+        )}
       </div>
+
       <div className="k-mono k-card__meta">
-        <span>
-          {spec.environments.length > 0
-            ? spec.environments.join(" · ")
-            : "no environments declared"}
-        </span>
-        <span>version {spec.version || "—"}</span>
+        <CardMeta status={status.data} failure={failure} />
       </div>
     </div>
   );
 }
 
-/**
- * A demo of the status pill in every state, so the primitive is visible and
- * reviewable before stage 2 has real statuses to put in it. It goes when the
- * first screen renders real ones.
- */
-function StatusPillLegend() {
+function CardMeta({
+  status,
+  failure,
+}: {
+  status: StatusResponse | undefined;
+  failure: Failure | undefined;
+}) {
+  if (failure !== undefined) {
+    return (
+      <>
+        <span className="k-card__reason">{statusReason(failure)}</span>
+        <span>no revision, no counts — nothing was read</span>
+      </>
+    );
+  }
+  if (status === undefined) return <span>—</span>;
+
+  // The adapters put resources/live/degraded here (internal/delivery/direct);
+  // a mode that reports none simply has no counts line.
+  const live = status.detail["live"];
+  const degraded = status.detail["degraded"];
+  const resources = status.detail["resources"];
+  const counts = [
+    live !== undefined && resources !== undefined
+      ? `${live}/${resources} live`
+      : undefined,
+    degraded !== undefined && degraded !== "0"
+      ? `${degraded} degraded`
+      : undefined,
+  ].filter((s): s is string => s !== undefined);
+
   return (
-    <section className="k-legend">
-      <div className="k-eyebrow">Status vocabulary</div>
-      <div className="k-legend__row">
-        {STATUS_KINDS.map((kind) => (
-          <StatusPill key={kind} status={kind} />
-        ))}
-      </div>
-    </section>
+    <>
+      <span>
+        {status.revision ? (
+          <Copyable value={status.revision} className="k-card__rev" />
+        ) : (
+          <span className="k-card__rev">no revision recorded</span>
+        )}
+      </span>
+      {counts.length > 0 ? <span>{counts.join(" · ")}</span> : null}
+      {status.cause ? (
+        <span className="k-card__reason">{status.cause}</span>
+      ) : null}
+    </>
   );
 }
 
-function describe(err: unknown): string {
-  if (err instanceof ConnectError) {
-    return `${err.code}: ${err.rawMessage}`;
+function statusReason(failure: Failure): string {
+  const first = failure.wire[0];
+  if (first) {
+    return `${first.code}: ${first.message}`;
   }
-  return err instanceof Error ? err.message : String(err);
+  return failure.code ? `${failure.code}: ${failure.message}` : failure.message;
 }

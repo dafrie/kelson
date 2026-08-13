@@ -1,0 +1,186 @@
+.k-diff {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.k-diff__blocked {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 18px 20px;
+  background: var(--kelson-failed-fill);
+  border: 1px solid var(--kelson-failed-border);
+  border-radius: 6px;
+}
+
+.k-diff__blocked-title {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--kelson-failed);
+}
+
+.k-diff__degraded {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px 20px;
+  background: var(--kelson-degraded-fill);
+  border: 1px solid var(--kelson-degraded-border);
+  border-radius: 6px;
+}
+
+.k-diff__summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.k-diff__resources,
+.k-diff__findings {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.k-diff__resource {
+  padding: 14px 18px;
+  background: var(--kelson-panel);
+  border: 1px solid var(--kelson-border);
+  border-left-width: 3px;
+  border-radius: 6px;
+}
+
+.k-diff__resource--added {
+  border-left-color: var(--kelson-synced);
+}
+
+.k-diff__resource--removed {
+  border-left-color: var(--kelson-failed);
+}
+
+.k-diff__resource--modified {
+  border-left-color: var(--kelson-degraded);
+}
+
+.k-diff__resource-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.k-diff__glyph {
+  font-family: var(--kelson-font-mono);
+  font-size: 13px;
+  font-weight: 500;
+  width: 10px;
+}
+
+.k-diff__resource--added .k-diff__glyph,
+.k-diff__resource--added .k-diff__op {
+  color: var(--kelson-synced);
+}
+
+.k-diff__resource--removed .k-diff__glyph,
+.k-diff__resource--removed .k-diff__op {
+  color: var(--kelson-failed);
+}
+
+.k-diff__resource--modified .k-diff__glyph,
+.k-diff__resource--modified .k-diff__op {
+  color: var(--kelson-degraded);
+}
+
+.k-diff__resource-name {
+  color: var(--kelson-text);
+  font-size: 13px;
+}
+
+.k-diff__resource-ns,
+.k-diff__op {
+  font-size: 12px;
+  color: var(--kelson-muted-2);
+}
+
+.k-diff__fields {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 12px 0 0;
+  padding: 0 0 0 20px;
+  list-style: none;
+}
+
+.k-diff__field {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.k-diff__field-path {
+  color: var(--kelson-text-2);
+  overflow-wrap: anywhere;
+}
+
+.k-diff__field-values {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.k-diff__before {
+  color: var(--kelson-failed);
+}
+
+.k-diff__after {
+  color: var(--kelson-synced);
+}
+
+.k-diff__arrow {
+  color: var(--kelson-muted-deep);
+}
+
+.k-diff__field-origin {
+  color: var(--kelson-muted-deep);
+}
+
+.k-diff__finding {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 18px;
+  background: var(--kelson-panel);
+  border: 1px solid var(--kelson-border);
+  border-radius: 6px;
+}
+
+.k-diff__finding--blocking {
+  border-color: var(--kelson-failed-border);
+  background: var(--kelson-failed-fill);
+}
+
+.k-diff__finding-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.k-diff__finding-message {
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--kelson-text);
+}
+
+.k-diff__finding-where {
+  font-family: var(--kelson-font-mono);
+  font-size: 12px;
+  color: var(--kelson-muted-2);
+  overflow-wrap: anywhere;
+}
