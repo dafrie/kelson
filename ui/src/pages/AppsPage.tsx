@@ -2,10 +2,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { useAsync, useClients } from "../api/data";
+import { useWatch } from "../api/watch";
 import { toFailure, type Failure } from "../api/errors";
 import type { StatusResponse } from "../gen/kelson/v1alpha1/deploy_pb";
+import type { WatchResponse_Event } from "../gen/kelson/v1alpha1/events_pb";
 import { Copyable } from "../components/Copyable";
 import { ErrorPanel } from "../components/ErrorPanel";
+import { LiveIndicator } from "../components/LiveIndicator";
 import { StatusPill, type StatusKind } from "../components/StatusPill";
 import { phaseToStatus } from "../components/phase";
 import { EmptyState, LoadingState } from "../components/States";
@@ -24,7 +27,24 @@ import { EmptyState, LoadingState } from "../components/States";
  * two, and one environment whose adapter is unreachable must not hold up — or
  * blank out — the other five. A card whose Status failed says exactly that and
  * carries the server's reason; it never shows green it did not earn.
+ *
+ * # One stream for the whole grid
+ *
+ * Once every card has an answer, the page opens a single EventService.Watch
+ * covering all of them (#76) and applies what changes in place. One stream, not
+ * one per card: the scopes are a request field precisely so a grid costs one
+ * subscription. A Resync means the server could not honour the resume point, so
+ * the grid relists — every card refetches and the live overlay is dropped,
+ * because a stale overlay would outlive the answer it was a delta of.
  */
+
+/** What the stream has said about one card since its Status was read. */
+interface CardLive {
+  transition?: { phase: string; revision: string; cause: string };
+  /** An unhealthy workload, as one line. Cleared when it recovers. */
+  health?: string;
+}
+
 export function AppsPage() {
   const clients = useClients();
   const specs = useAsync(
@@ -49,6 +69,47 @@ export function AppsPage() {
     setKinds((prev) => (prev[key] === kind ? prev : { ...prev, [key]: kind }));
   }, []);
 
+  const [live, setLive] = useState<Record<string, CardLive>>({});
+  const [generation, setGeneration] = useState(0);
+
+  const onEvent = useCallback((event: WatchResponse_Event) => {
+    const key = `${event.project}/${event.environment}`;
+    const payload = event.payload;
+    setLive((prev) => {
+      if (payload.case === "statusTransition") {
+        const { phase, revision, cause } = payload.value;
+        return { ...prev, [key]: { ...prev[key], transition: { phase, revision, cause } } };
+      }
+      if (payload.case === "healthChange") {
+        const v = payload.value;
+        const next: CardLive = { ...prev[key] };
+        // A workload that recovered leaves no note behind: the line said what
+        // was wrong, and nothing is now.
+        if (v.healthy) delete next.health;
+        else next.health = `${v.resource}: ${v.message || v.code}`;
+        return { ...prev, [key]: next };
+      }
+      return prev;
+    });
+  }, []);
+
+  const reloadSpecs = specs.reload;
+  const onResync = useCallback(() => {
+    setLive({});
+    setGeneration((n) => n + 1);
+    reloadSpecs();
+  }, [reloadSpecs]);
+
+  // The watch opens only once every card has settled: until then the deltas
+  // have nothing to be deltas of, and a transition applied before its Status
+  // landed would be overwritten by the older answer.
+  const settled = pairs.length > 0 && pairs.every((p) => kinds[`${p.project}/${p.environment}`] !== undefined);
+  const watch = useWatch({
+    scopes: settled ? pairs : [],
+    onEvent,
+    onResync,
+  });
+
   const projects = specs.data?.specs.length ?? 0;
 
   return (
@@ -72,6 +133,7 @@ export function AppsPage() {
           {pairs.length} {pairs.length === 1 ? "environment" : "environments"}
         </span>
         <Counts kinds={kinds} />
+        <LiveIndicator state={watch} />
       </div>
 
       {specs.loading && specs.data === undefined ? (
@@ -105,6 +167,8 @@ export function AppsPage() {
               project={pair.project}
               environment={pair.environment}
               onStatus={report}
+              live={live[`${pair.project}/${pair.environment}`]}
+              generation={generation}
             />
           ))}
         </div>
@@ -142,10 +206,15 @@ function AppCard({
   project,
   environment,
   onStatus,
+  live,
+  generation,
 }: {
   project: string;
   environment: string;
   onStatus: (key: string, kind: StatusKind) => void;
+  live: CardLive | undefined;
+  /** Bumped on a resync: the card refetches rather than trusting a delta. */
+  generation: number;
 }) {
   const clients = useClients();
   const status = useAsync(
@@ -157,16 +226,24 @@ function AppCard({
         },
         { signal },
       ),
-    [clients, project, environment],
+    [clients, project, environment, generation],
   );
 
   const failure: Failure | undefined =
     status.error === undefined ? undefined : toFailure(status.error);
+  // A transition is a whole replacement for the three fields it carries: the
+  // fetched revision and cause described the phase the card has just left.
+  const phase = live?.transition?.phase ?? status.data?.phase;
+  const revision = live?.transition
+    ? live.transition.revision
+    : status.data?.revision;
+  const cause = live?.transition ? live.transition.cause : status.data?.cause;
+
   const kind: StatusKind =
     failure !== undefined
       ? "unknown"
-      : status.data
-        ? phaseToStatus(status.data.phase)
+      : phase !== undefined
+        ? phaseToStatus(phase)
         : "unknown";
 
   const settled = !status.loading;
@@ -196,15 +273,18 @@ function AppCard({
             <StatusPill status="unknown" label="status unavailable" />
           </span>
         ) : (
-          <StatusPill
-            status={kind}
-            label={status.data?.phase.toLowerCase() || "unknown"}
-          />
+          <StatusPill status={kind} label={phase?.toLowerCase() || "unknown"} />
         )}
       </div>
 
       <div className="k-mono k-card__meta">
-        <CardMeta status={status.data} failure={failure} />
+        <CardMeta
+          status={status.data}
+          failure={failure}
+          revision={revision}
+          cause={cause}
+          health={live?.health}
+        />
       </div>
     </div>
   );
@@ -213,9 +293,15 @@ function AppCard({
 function CardMeta({
   status,
   failure,
+  revision,
+  cause,
+  health,
 }: {
   status: StatusResponse | undefined;
   failure: Failure | undefined;
+  revision: string | undefined;
+  cause: string | undefined;
+  health: string | undefined;
 }) {
   if (failure !== undefined) {
     return (
@@ -228,7 +314,9 @@ function CardMeta({
   if (status === undefined) return <span>—</span>;
 
   // The adapters put resources/live/degraded here (internal/delivery/direct);
-  // a mode that reports none simply has no counts line.
+  // a mode that reports none simply has no counts line. The counts are the
+  // fetched ones: no event type carries them, and inventing them from a
+  // transition would be a number nobody measured.
   const live = status.detail["live"];
   const degraded = status.detail["degraded"];
   const resources = status.detail["resources"];
@@ -244,16 +332,15 @@ function CardMeta({
   return (
     <>
       <span>
-        {status.revision ? (
-          <Copyable value={status.revision} className="k-card__rev" />
+        {revision ? (
+          <Copyable value={revision} className="k-card__rev" />
         ) : (
           <span className="k-card__rev">no revision recorded</span>
         )}
       </span>
       {counts.length > 0 ? <span>{counts.join(" · ")}</span> : null}
-      {status.cause ? (
-        <span className="k-card__reason">{status.cause}</span>
-      ) : null}
+      {cause ? <span className="k-card__reason">{cause}</span> : null}
+      {health ? <span className="k-card__reason">{health}</span> : null}
     </>
   );
 }

@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { fireEvent, screen } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { Code, ConnectError, createRouterTransport } from "@connectrpc/connect";
 
 import { DeployService } from "../gen/kelson/v1alpha1/deploy_pb";
 import { SpecService } from "../gen/kelson/v1alpha1/spec_pb";
 import { renderAt } from "../test/render";
+import { healthEvent, transitionEvent, watchStub } from "../test/watch";
 import { AppDetailPage } from "./AppDetailPage";
 
 const PROJECT_YAML = "kind: Project\nmetadata:\n  name: checkout\n";
@@ -95,5 +96,80 @@ describe("AppDetailPage", () => {
     );
     // Deploy stays available: a render dry-run needs no cluster at all.
     expect(screen.getByRole("link", { name: "Deploy" })).toBeTruthy();
+  });
+});
+
+describe("AppDetailPage live updates", () => {
+  it("updates the status block and the verdict the event names (#76)", async () => {
+    const events = watchStub([]);
+    const live = createRouterTransport((router) => {
+      router.service(SpecService, {
+        getSpec: () => ({
+          spec: {
+            project: "checkout",
+            version: "7",
+            environments: ["production"],
+          },
+        }),
+      });
+      router.service(DeployService, {
+        status: () => ({
+          phase: "Reconciling",
+          revision: "8f2c1ad",
+          verdicts: [
+            {
+              resource: "Deployment/checkout-production/web",
+              code: "progressing",
+              healthy: false,
+              degraded: false,
+              message: "web is rolling out",
+              remediation: "wait for the rollout to finish",
+            },
+          ],
+        }),
+      });
+      events.install(router);
+    });
+    renderAt(live, "/apps/checkout", "/apps/:project", <AppDetailPage />);
+
+    expect(
+      await screen.findByText("reconciling", { selector: ".k-pill" }),
+    ).toBeTruthy();
+
+    events.push(
+      transitionEvent({
+        project: "checkout",
+        environment: "production",
+        phase: "Healthy",
+        previousPhase: "Reconciling",
+        revision: "9d3f0aa",
+        cause: "3/3 replicas ready",
+      }),
+    );
+    expect(
+      await screen.findByText("healthy", { selector: ".k-pill" }),
+    ).toBeTruthy();
+    expect(screen.getByText("9d3f0aa")).toBeTruthy();
+    expect(screen.getByText("3/3 replicas ready")).toBeTruthy();
+
+    events.push(
+      healthEvent({
+        project: "checkout",
+        environment: "production",
+        resource: "Deployment/checkout-production/web",
+        code: "crash-loop-back-off",
+        previousCode: "progressing",
+        message: "web is restarting repeatedly (7 restarts)",
+      }),
+    );
+    expect(await screen.findByText("crash-loop-back-off")).toBeTruthy();
+    expect(
+      screen.getByText("web is restarting repeatedly (7 restarts)"),
+    ).toBeTruthy();
+    // The remediation belonged to the code that was replaced, so it goes with
+    // it rather than staying on screen pointing at the wrong problem.
+    await waitFor(() => {
+      expect(screen.queryByText("fix:")).toBeNull();
+    });
   });
 });
