@@ -218,9 +218,10 @@ func (c *clients) reportHistory(ctx context.Context, r *report, in diagnoseAppli
 // It is a summary and never the YAML: the documents are the user's and can be
 // arbitrarily long, and an agent diagnosing a failure needs to know which
 // components exist, what images they run and what each one is — not the
-// authored file. Images and kinds are Project-level facts (model rule P3; an
-// Environment override cannot change either), so the Project document is the
-// honest source for this.
+// authored file. Kinds are Project-level facts, but the image a component runs
+// is an environment-scoped fact since ADR-0016: an Environment can pin a
+// component's image (rule P3, the promotion primitive), so the pin for the
+// diagnosed environment is read alongside the Project document.
 func (c *clients) reportSpec(ctx context.Context, r *report, in diagnoseApplicationInput) {
 	r.section("SPEC")
 	res, err := c.spec.GetSpec(ctx, connect.NewRequest(&kelsonv1alpha1.GetSpecRequest{Project: in.Project}))
@@ -233,11 +234,40 @@ func (c *clients) reportSpec(ctx context.Context, r *report, in diagnoseApplicat
 		r.addf("  unavailable — %s", err)
 		return
 	}
+	pins := environmentImagePins(res.Msg.GetSpec().GetDocuments().GetEnvironments()[in.Environment])
 	components, dropped := limit(project.Spec.Components, maxComponents)
 	for _, c := range components {
-		r.addf("  %s %s %s", pad(c.Name, 16), pad(componentImage(project, c), 40), componentShape(c))
+		r.addf("  %s %s %s", pad(c.Name, 16), pad(componentImage(project, pins, c), 40), componentShape(c))
 	}
 	r.truncated(dropped, "components")
+}
+
+// environmentImagePins reads the diagnosed Environment's per-component image
+// pins (rule P3, ADR-0016). A missing or undecodable document yields no pins:
+// this is a summary, and the validator — not the summariser — owns rejecting a
+// broken document.
+func environmentImagePins(document []byte) map[string]string {
+	if len(document) == 0 {
+		return nil
+	}
+	documents, errs := model.DecodeDocuments(document)
+	if len(errs) > 0 {
+		return nil
+	}
+	for _, d := range documents {
+		environment, ok := d.(*model.Environment)
+		if !ok {
+			continue
+		}
+		pins := map[string]string{}
+		for _, override := range environment.Spec.Components {
+			if override.Image != "" {
+				pins[override.Name] = override.Image
+			}
+		}
+		return pins
+	}
+	return nil
 }
 
 // decodeProject reads the Project document with the authoring plane's own
@@ -258,12 +288,16 @@ func decodeProject(document []byte) (*model.Project, error) {
 	return nil, fmt.Errorf("the stored spec carries no Project document")
 }
 
-// componentImage is the image a workload component runs. A data component has
-// none: its pods are the operator's, not the spec's (ADR-0005).
-func componentImage(project *model.Project, c model.Component) string {
+// componentImage is the image a workload component runs in the diagnosed
+// environment: the environment's pin wins over the component's image, which
+// wins over the Project's (rule P3). A data component has none: its pods are
+// the operator's, not the spec's (ADR-0005).
+func componentImage(project *model.Project, pins map[string]string, c model.Component) string {
 	switch {
 	case c.EffectiveKind().IsData():
 		return "(operator-managed)"
+	case pins[c.Name] != "":
+		return pins[c.Name] + " (pinned)"
 	case c.Image != "":
 		return c.Image
 	case project.Spec.Image != "":
