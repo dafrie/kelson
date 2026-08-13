@@ -3,6 +3,11 @@
 - **Status:** Accepted (amended 2026-08-12: "plan" is renamed to "preset" — it is a topology preset, not a paid tier; rename tracked in [#146](https://github.com/dafrie/kelson/issues/146). Branching and Valkey moved to v0.2/M9b.)
 - **Date:** 2026-08-11
 
+> **Implementation reference:** [docs/data-services.md](../data-services.md) carries the decisions
+> this ADR left to implementation — the CloudNativePG fields each preset renders, the sizing
+> defaults and their rationale, the safe-transition table, and where the capability verdict is
+> enforced ([#89](https://github.com/dafrie/kelson/issues/89)). This ADR stays the decision record.
+
 ## Context
 
 Managed databases are the feature people ask about first, and the one this category serves worst.
