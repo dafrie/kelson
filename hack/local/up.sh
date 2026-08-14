@@ -124,6 +124,14 @@ if ! kubectl -n "$NAMESPACE" get secret kelson-auth >/dev/null 2>&1; then
 		--from-literal=password="$(head -c 18 /dev/urandom | base64 | tr '+/' '-_')"
 fi
 
+# rbac.createDeployClusterRole is off in the chart on purpose — it is
+# cluster-wide write and an operator has to ask for it (deploy/chart/kelson/
+# values.yaml, docs/server.md). Here it is on, because this script's whole
+# purpose is a product you can click through: the UI's create-application flow
+# deploys into a namespace that does not exist yet, and without the grant the
+# first deploy fails on `cannot patch resource "namespaces"`. The cluster it
+# widens is a throwaway kind cluster on this machine that `make kind-down`
+# deletes, which is the one place where that trade is obviously right.
 helm upgrade --install kelson "$E2E_ROOT/deploy/chart/kelson" \
 	--namespace "$NAMESPACE" \
 	--set image.repository=kelson-server \
@@ -132,6 +140,7 @@ helm upgrade --install kelson "$E2E_ROOT/deploy/chart/kelson" \
 	--set auth.existingSecret.name=kelson-auth \
 	--set server.registry="${REGISTRY_HOST}/kelson" \
 	--set "server.insecureRegistries={${REGISTRY_HOST}}" \
+	--set rbac.createDeployClusterRole=true \
 	>/dev/null
 
 # The tag is always 'dev', so a Deployment that already ran keeps its old

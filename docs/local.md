@@ -76,9 +76,16 @@ Four things, each visible with ordinary kubectl:
 4. **The Helm chart** ([install](install.md)), with the local wiring passed as
    values: `image.pullPolicy=Never` (the image is already on the node),
    `auth.existingSecret.name=kelson-auth` (generated once, printed each run),
-   `server.registry` pointing builds at the in-cluster registry, and
+   `server.registry` pointing builds at the in-cluster registry,
    `server.insecureRegistries` naming it — the build plane refuses plain HTTP
-   to any host it was not explicitly told about.
+   to any host it was not explicitly told about — and
+   `rbac.createDeployClusterRole=true`, the cluster-wide delivery grant the
+   chart leaves off by default. The UI deploys into a namespace that does not
+   exist until the first apply creates it, so without that value the first
+   deploy fails on `cannot patch resource "namespaces"`
+   ([server](server.md#the-delivery-grant-is-opt-in-and-cluster-wide)). Here it
+   is right; on a cluster you share with anything else, read that section
+   first.
 
 ## Honest limits
 
@@ -91,3 +98,8 @@ Four things, each visible with ordinary kubectl:
 - **PR previews and Git-backed environments** need more than this script sets
   up (a deployment repository, a Flux install — [delivery](delivery.md));
   the direct-apply path is what works out of the box.
+- **The server can write to every namespace of this cluster.** That is
+  `rbac.createDeployClusterRole=true` above, and it is the honest cost of
+  "click deploy and it works": anything that can reach the server with the
+  password can apply anywhere in `kelson-local`. Fine for a cluster that
+  `make kind-down` deletes; a decision to make deliberately anywhere else.

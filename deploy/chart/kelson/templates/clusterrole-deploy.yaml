@@ -1,0 +1,248 @@
+{{- include "kelson.authGate" . -}}
+{{- if .Values.rbac.createDeployClusterRole }}
+# The deploy grant: the write access kelson-server needs to apply a rendered
+# spec, plus the reads behind status, logs and managed Secrets — cluster-wide.
+#
+# OPT-IN, and off by default (values.yaml `rbac.createDeployClusterRole`). The
+# chart's default posture is still "the installer does not hand itself broad
+# write"; this template exists because the server + web UI path does not work
+# without it and cannot be made to work with namespaced Roles:
+#
+#   1. Since #150 the renderer emits the environment's Namespace, and
+#      internal/delivery/direct.stampNamespaceOwnership reads it and the apply
+#      PATCHes it. Namespaces are cluster-scoped, so no namespaced Role can
+#      ever grant that — the failure is
+#      `cannot patch resource "namespaces" in API group ""`.
+#   2. The UI's create-application flow targets a namespace that does not exist
+#      yet (`<project>-<environment>`). You cannot pre-bind a Role in a
+#      namespace nothing has created, so `rbac.targetNamespaces` cannot cover
+#      it either — and the same argument applies one step later to the reads
+#      behind the first status verdict and the first log stream.
+#
+# The honest trade is in values.yaml and docs/server.md, and it is not small:
+# this is write access to every namespace in the cluster, bounded by the
+# server's own authentication and per-environment policy (ADR-0025) rather
+# than by RBAC. Least-privilege for this path is #84's threat-model work.
+#
+# Two things this is NOT:
+#
+#   - Not a wildcard. Every apiGroup, resource and verb below is named, and
+#     deploy/chart/deploy_rbac_test.go fails the build if a `*` appears.
+#   - Not a complete list of what an arbitrary spec can apply. `spec.overlays`
+#     is a documented escape hatch that can emit ANY kind
+#     (internal/renderer/overlay.go), and a kind that is not below fails its
+#     apply with a plain `forbidden` naming the resource. Bind a ClusterRole of
+#     your own for those; the chart will not guess them.
+#
+# WHEN THE RENDERER LEARNS A NEW KIND: add it here. The list tracks
+# internal/renderer's output — every `baseManifest(...)` call site plus
+# namespace.go and workload.go's ServiceAccount — and
+# deploy/chart/deploy_rbac_test.go derives the same set from the golden files
+# under internal/renderer/testdata/render/ and fails if this ClusterRole does
+# not cover one of them.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "kelson.fullname" . }}-deploy
+  labels:
+    {{- include "kelson.labels" . | nindent 4 }}
+rules:
+  # --- the verbs, once, so the per-kind rules below need not restate them ----
+  #
+  # Every rule that writes a rendered kind grants exactly:
+  #
+  #   get     the status read-back (internal/delivery/direct.Status compares
+  #           the live object's revision and spec-hash annotations), the
+  #           re-read before every prune delete, and the release Job's poll.
+  #   list    pruning. pruneCandidates lists by provenance selector over every
+  #           (resource, namespace) pair the current or previous revision
+  #           touches, which is what catches a resource an interrupted apply
+  #           left behind.
+  #   create  server-side apply against an object that does not exist yet. SSA
+  #           is a PATCH, but the API server also requires `create` when the
+  #           patch brings the object into existence — the first deploy of
+  #           anything is exactly that case.
+  #   patch   the apply itself. Every write is a server-side apply as field
+  #           manager "kelson", never forced (ADR-0001).
+  #   delete  pruning, and the release Job's cleanup (release.go deletes with
+  #           background propagation before re-creating).
+  #
+  # NOT granted anywhere below: `update`, because nothing in the delivery plane
+  # does a read-modify-write PUT — the whole point of SSA is that it does not;
+  # `watch`, because nothing watches (the release hook and the build executor
+  # poll); and `deletecollection`, because kelson never deletes by selector, it
+  # deletes objects it re-read and re-checked one at a time.
+
+  # Namespaces, cluster-scoped, and the reason this template has to exist.
+  #
+  #   get     stampNamespaceOwnership reads the live namespace in the instant
+  #           before the apply — absent means kelson creates it, present means
+  #           kelson adopts it — because authorship is observable exactly once
+  #           and `kelson uninstall` accepts nothing else as licence to delete
+  #           a namespace (#59).
+  #   list    prune's provenance sweep addresses namespaces cluster-scoped.
+  #   create  the first deploy of an environment brings its namespace into
+  #           existence.
+  #   patch   the apply that carries the ownership annotation. This is the verb
+  #           the reported failure named.
+  #
+  # No `delete`: the direct adapter deliberately excludes namespaces from
+  # pruning (direct.isNamespace — deleting one cascades to resources kelson
+  # never created), and `kelson uninstall`, which can delete a namespace kelson
+  # created, runs from the CLI under a human's own kubeconfig. The server has
+  # no RPC that deletes a namespace, so it gets no verb that would.
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "create", "patch"]
+
+  # core/v1 workload furniture the renderer emits: the ServiceAccount every
+  # workload runs as (workload.go) and the Service in front of a `service`
+  # component. The renderer emits no ConfigMap and, by construction, no Secret
+  # (internal/renderer/secrets.go) — so neither is here as a *rendered* kind.
+  - apiGroups: [""]
+    resources: ["serviceaccounts", "services"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+
+  # apps/v1: the Deployment behind a `service` or `worker` component. `get` and
+  # `list` also serve internal/observation's status probe, which reads the
+  # Deployment behind a status verdict. No StatefulSet — the renderer emits
+  # none; stateful workloads are data components delegated to an operator
+  # (ADR-0005).
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+
+  # batch/v1: the CronJob a `cron` component renders to, and Jobs — which are
+  # two things at once. A release command renders a Job the adapter applies,
+  # waits for and cleans up (release.go, ADR-0019), and internal/delivery/kube's
+  # build executor submits, polls and deletes a build Job.
+  - apiGroups: ["batch"]
+    resources: ["cronjobs", "jobs"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+
+  # autoscaling/v2: the HorizontalPodAutoscaler rendered when a component
+  # declares a replica range rather than a fixed count.
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+
+  # gateway.networking.k8s.io/v1: the HTTPRoute an `expose:` renders to (#140 —
+  # Gateway API and nothing else).
+  #
+  # Cluster scope here also settles the read docs/server.md used to say could
+  # not be granted: a PR preview's HTTPRoutes live in the preview's own
+  # namespace, created at reconcile time, so `rbac.targetNamespaces` could
+  # never name it and PreviewService.ListPreviews degraded to reporting no
+  # hostnames. With this ClusterRole bound, it reports them.
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["httproutes"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+
+  # cert-manager.io/v1: the Certificate rendered beside an HTTPRoute when the
+  # cluster has cert-manager and the route terminates TLS (routing.go).
+  - apiGroups: ["cert-manager.io"]
+    resources: ["certificates"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+
+  # networking.k8s.io/v1: NetworkPolicy. The renderer has no function that
+  # writes one — it reaches the cluster through `spec.overlays`, which is in
+  # the golden corpus (testdata/render/overlays) and therefore in the set the
+  # drift test derives. It is granted for the same reason it is in that corpus:
+  # it is a kind kelson is known to apply. It is NOT a claim that overlays are
+  # covered in general; see the header.
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+
+  # postgresql.cnpg.io/v1: the CloudNativePG Cluster a `kind: postgres` data
+  # component renders to (ADR-0005, ADR-0007). One resource and no more — the
+  # operator owns the Service, the ConfigMap and the Secrets around it, which
+  # is why `databases` is not here: the renderer emits no CNPG Database.
+  - apiGroups: ["postgresql.cnpg.io"]
+    resources: ["clusters"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+
+  # valkey.io/v1alpha1: the ValkeyCluster a `kind: valkey` data component
+  # renders to (ADR-0015). The kind is ValkeyCluster, not Valkey — the resource
+  # name follows it.
+  - apiGroups: ["valkey.io"]
+    resources: ["valkeyclusters"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+
+  # external-secrets.io/v1: the ExternalSecret rendered per referenced Secret
+  # under the `externalSecrets` backend (ADR-0020). `get` also serves
+  # internal/observation's ExternalSecret probe, which reports a reference that
+  # never materialised instead of a pod stuck at start.
+  - apiGroups: ["external-secrets.io"]
+    resources: ["externalsecrets"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+
+  # helm.toolkit.fluxcd.io/v2 and source.toolkit.fluxcd.io: a `kind: helm`
+  # component renders a HelmRelease plus its source — a HelmRepository for a
+  # chart repository (v1) or an OCIRepository for an OCI chart (v1beta2). The
+  # two versions share one resource rule because RBAC is versionless.
+  - apiGroups: ["helm.toolkit.fluxcd.io"]
+    resources: ["helmreleases"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+  - apiGroups: ["source.toolkit.fluxcd.io"]
+    resources: ["helmrepositories", "ocirepositories"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+
+  # fluxcd.controlplane.io/v1: the PR preview lifecycle pair (ADR-0017) — the
+  # ResourceSetInputProvider that watches the forge and the ResourceSet that
+  # fans out one preview per change request. kelson applies both; flux-operator
+  # instantiates the children.
+  - apiGroups: ["fluxcd.controlplane.io"]
+    resources: ["resourcesets", "resourcesetinputproviders"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+
+  # monitoring.coreos.com/v1: the ServiceMonitor rendered for a `service`
+  # component when the profile reports a Prometheus that consumes them
+  # (workload.go, and the profile tells ServiceMonitor from PodMonitor).
+  - apiGroups: ["monitoring.coreos.com"]
+    resources: ["servicemonitors"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+
+  # --- reads and Secret writes that are not rendered kinds -------------------
+  #
+  # These duplicate the `<name>-env` Role in rbac.yaml on purpose. That Role is
+  # bound in the state namespace and in `rbac.targetNamespaces` only, and the
+  # namespace the UI's create-application flow deploys into is in neither: it
+  # does not exist when the chart is installed. Without the duplication the
+  # apply would succeed and then every status verdict, log stream and secret
+  # write in the new namespace would fail — a second wall one click after the
+  # first. Restructuring rbac.yaml to render *only* the cluster-scoped copy
+  # would change what a default install grants, which this value must not do,
+  # so both exist and RBAC unions them.
+
+  # internal/secret, ADR-0009's cluster backend, behind SecretService (#116):
+  # server-side apply (patch, plus create for a Secret that does not exist
+  # yet), get for the masked read-back, list for the label query, delete for
+  # `kelson secret delete`. internal/delivery/kube's registry resolver also
+  # reads the `--push-secret` dockerconfigjson through this rule.
+  #
+  # It is a real privilege and docs/server.md says so. What bounds it is not
+  # authorization: kelson refuses to write or delete a Secret that does not
+  # carry `kelson.dev/managed-secret`, and no RPC returns a secret value.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+
+  # internal/observation: the pod list behind a status verdict and the log
+  # streams the API and the web UI serve. internal/delivery/kube's build
+  # executor reads the same subresource to stream a build's output.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+
+  # kustomize.toolkit.fluxcd.io: read-only, and the one preview kind kelson
+  # never applies itself. The per-change-request Kustomization is instantiated
+  # by flux-operator from the ResourceSet's template, so PreviewService reads
+  # it and nothing writes it from here.
+  - apiGroups: ["kustomize.toolkit.fluxcd.io"]
+    resources: ["kustomizations"]
+    verbs: ["get", "list"]
+{{- end }}

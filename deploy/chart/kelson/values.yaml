@@ -168,6 +168,43 @@ rbac:
   # facts — they degrade, they do not break.
   createDetectClusterRole: true
 
+  # -- Create the cluster-scoped deploy ClusterRole and its binding: the write
+  # access kelson-server needs to apply a rendered spec, plus the reads behind
+  # status, logs and managed Secrets, in EVERY namespace of the cluster.
+  #
+  # **A server expected to deploy needs this.** Without it the web UI's first
+  # deploy fails with `cannot patch resource "namespaces"`: the renderer emits
+  # the environment's Namespace (#150) and the direct adapter annotates it, and
+  # a namespace is cluster-scoped, so no namespaced Role can grant that. The
+  # UI also targets a namespace that does not exist yet
+  # (`<project>-<environment>`), which is why `rbac.targetNamespaces` cannot be
+  # the answer either — you cannot pre-bind a Role in a namespace nothing has
+  # created. Same argument for the status verdict and the log stream one click
+  # later.
+  #
+  # **The trade, stated plainly, because it is not small.** This is a broad,
+  # cluster-wide write grant. Anything that can authenticate to the server can
+  # deploy into any namespace of this cluster — kelson's own namespaces, yours,
+  # and `kube-system`. What bounds it is the server's authentication and
+  # authorization, not RBAC: today's shared password, the per-identity agent
+  # scopes (#74, ADR-0024) and the per-environment agent policy (ADR-0025). The
+  # cluster sees one service account with one grant, so RBAC cannot tell one
+  # caller from another. Least-privilege for this path — what a per-project or
+  # per-environment identity would look like — is #84's threat-model work, and
+  # until it lands this value is the whole of the fence.
+  #
+  # Left `false` so the chart's default posture does not change: the installer
+  # does not hand itself broad write unless you say so. A server used only for
+  # reading status, previewing diffs, or Git-backed delivery (where Flux does
+  # the applying) does not need it.
+  #
+  # It grants named apiGroups, resources and verbs — no wildcards — and the
+  # list tracks what the renderer emits. An overlay (`spec.overlays`) can emit
+  # any kind at all and the chart does not guess those: bind a ClusterRole of
+  # your own alongside this one. See templates/clusterrole-deploy.yaml for the
+  # per-rule reasoning and docs/server.md for the posture.
+  createDeployClusterRole: false
+
   # -- Namespaces the server may serve besides the release namespace. Each one
   # gets the same environment Role: managed Secrets, build Jobs, and the reads
   # behind status and logs. Nothing here grants access to a namespace you did
