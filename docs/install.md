@@ -151,7 +151,7 @@ CloudNativePG operators whose cluster-scoped CRDs fight each other.
 
 ### What it installs, and from where
 
-kelson vendors nothing — with one stated exception, below. Each component is installed from the
+kelson vendors nothing — with two stated exceptions, below. Each component is installed from the
 manifest **its own project publishes**, at a version pinned in `internal/delivery/install/pins.go` and
 verified against a recorded SHA-256 before anything is applied. The preview prints the URL and the
 digest, so what is about to reach your cluster is checkable with `curl` and `sha256sum` before you
@@ -164,6 +164,7 @@ answer the prompt.
 | `cert-manager` | cert-manager's pinned install manifest | TLS on routed services |
 | `cnpg` | CloudNativePG's pinned install manifest | every `kind: postgres` component |
 | `envoy-gateway` | Envoy Gateway's pinned install manifest: the Gateway API CRDs and the controller, **no `GatewayClass`** | HTTP routing: the `HTTPRoute` kelson renders for every service that declares domains |
+| `registry` | a kelson-authored Deployment, Service and PersistentVolumeClaim running [CNCF Distribution](https://github.com/distribution/distribution), pinned by image digest | somewhere to push, for a cluster that has none. **Never offered by default** — see [below](#providing-a-registry-if-you-dont-have-one) |
 | `external-secrets` | *not yet* — refuses and says why | — |
 
 > **Transition ([#226](https://github.com/dafrie/kelson/issues/226)).** The `flux-aio` row, its release-
@@ -199,20 +200,102 @@ cluster-scoped RBAC and CRDs, the `InstallService` RPCs are administrative: agen
 refused outright ([ADR-0024](adr/0024-agent-identities.md) §3), exactly as `kelson uninstall
 --component` refuses them.
 
-**One sweep exception.** On a cluster that already routes through an ingress stack,
+**Two sweep exceptions.** On a cluster that already routes through an ingress stack,
 `kelson install --all-missing` declines `envoy-gateway` and says why: adding a second routing
 implementation next to the one carrying your traffic is a decision you make by name
 (`kelson install envoy-gateway`), never one a sweep makes for you. kelson renders Gateway API only
 ([ADR-0003](adr/0003-install-model.md), as amended), so until then services that declare domains fail
-to render with `render/gateway-api-missing`.
+to render with `render/gateway-api-missing`. `--all-missing` declines `registry` unconditionally, for a
+sharper reason: unlike every other row, kelson has **no detection signal for it at all** — no
+`ClusterProfile` field records whether a registry exists, because it could be anywhere: another
+cluster, a managed service, behind credentials kelson never sees. A sweep cannot tell "genuinely
+missing" from "kelson cannot see it", so it never installs one; naming it (`kelson install registry`)
+is the only way it installs, ever.
 
 **It needs network access to the upstream release host.** Without it, the install refuses, names the URL
 it could not reach, and applies nothing — there is no half-installed state. On an air-gapped cluster,
 mirror the manifest and apply it yourself; detection then finds the component and kelson adopts it,
-which is the ordinary [ADR-0003](adr/0003-install-model.md) path. The two rows whose bytes kelson ships
-itself — flux-aio and kelson's own CRDs — need no fetch at all.
+which is the ordinary [ADR-0003](adr/0003-install-model.md) path. The rows whose bytes kelson ships
+itself — flux-aio, `registry` and kelson's own CRDs — need no fetch at all.
 
-### The one exception to "nothing is vendored", stated rather than skirted
+### Providing a registry, if you don't have one
+
+**Bring-your-own is the default, and the recommendation for a team.** kelson's delivery spine pushes
+every rendered revision as an OCI artifact ([architecture](architecture.md)), and `kelson build` pushes
+application images the same way — both need somewhere to push to, and most teams already have one:
+GHCR, ECR, GAR, Harbor, whatever your organization already runs. Point kelson at it
+(`server.registry` / `--registry`, [build](build.md)) and this section does not apply to you.
+
+`kelson install registry` exists for the cluster that has none — self-contained, lightweight, the same
+k3s-and-edge audience [ADR-0030](adr/0030-flux-aio-install.md) wrote flux-aio for. It is never offered
+automatically (above), so having it is always something you asked for by name.
+
+**The spine needs zero node configuration, whichever registry you use.** Only Flux's own
+source-controller ever pulls a rendered-manifest `OCIRepository` — a pull from inside a pod that already
+has a service account and a network route, the same as any other in-cluster HTTP call. No node ever
+sees that image, so nothing about which registry the spine uses touches containerd, kubelet or any
+node-level trust configuration.
+
+**App-image pulls are the part that touches nodes, and that is Kubernetes, not kelson.** Once you deploy
+a component whose image lives in the in-cluster registry, every node scheduling that Pod has its
+container runtime pull it directly — and a plain-HTTP, unauthenticated-by-a-public-CA registry is
+exactly what every runtime refuses to trust by default. What each node needs is the same shape
+everywhere — "trust this host, and reach it here" — spelled differently per distribution:
+
+- **k3s** — one file, `/etc/rancher/k3s/registries.yaml`, on every node:
+
+  ```yaml
+  mirrors:
+    "kelson-registry.kelson-system.svc.cluster.local:5000":
+      endpoint:
+        - "http://<service-cluster-ip>:5000"
+  configs:
+    "kelson-registry.kelson-system.svc.cluster.local:5000":
+      tls:
+        insecure_skip_verify: true
+  ```
+
+  substituting the Service's actual `CLUSTER-IP` (`kubectl -n kelson-system get svc kelson-registry -o
+  jsonpath='{.spec.clusterIP}'`) — k3s's node containerd does not resolve `*.svc.cluster.local` itself,
+  but kube-proxy makes a ClusterIP routable from every node's own network stack, `mirrors.endpoint`
+  reaches it by that address, and `configs.tls.insecure_skip_verify` is the plain-HTTP admission.
+  `systemctl restart k3s` (or `k3s-agent` on agents) picks it up.
+- **kind** — the same shape `hack/local/up.sh` already sets up for local development: a
+  `hosts.toml` per node under `/etc/containerd/certs.d/<host>/`, naming an `endpoint` the node can
+  actually reach (kind nodes are containers, so a NodePort on `127.0.0.1` rather than a ClusterIP).
+  `make kind-up` ([local](local.md)) is a working, disposable copy of exactly this if you want to see it
+  running rather than transcribe it.
+- **Managed clusters (EKS, GKE, AKS, …)** — node images and node-level registry trust are the managed
+  control plane's, not something kelson or a cluster-admin Deployment can configure from inside the
+  cluster. **Bring-your-own is the recommendation here**, not the in-cluster entry: your cloud's own
+  registry (ECR, GAR, ACR) is already trusted by every node with zero extra configuration, which the
+  in-cluster registry can never be on a fleet you do not control node images for.
+
+**No registry at all is also a supported shape, for manifests only.**
+[`ExternalArtifact`](https://github.com/dafrie/kelson/issues/228) (Flux ≥2.7) is the tracked fallback
+that lets the spine reach a Flux `Kustomization` without a registry in between — an addition to the
+spine, not a replacement, and not yet built. `kelson build` still needs somewhere to push an application
+image regardless; there is no registry-less path for that half.
+
+#### Garbage collection
+
+Nothing prunes the in-cluster registry today, and R1 does not pretend otherwise: `kelson uninstall`
+[deletes no published artifact](#what-kelson-uninstall-deliberately-does-not-remove), so history grows
+until something removes old layers. CNCF Distribution ships its own offline garbage collector, run by
+hand or from a cron job you set up yourself:
+
+```sh
+kubectl -n kelson-system exec deploy/kelson-registry -- \
+  registry garbage-collect /etc/distribution/config.yml
+```
+
+There is no `kelson registry garbage-collect` command and no automatic schedule — a documented manual
+step, honestly, rather than a half-finished automation this milestone does not deliver. A `CronJob`
+running the same `kubectl exec` on a schedule is the natural next step for anyone who wants one, and is
+left to you rather than assumed for you, exactly as [`kelson-server`'s history retention is a value you
+set](server.md) rather than a default kelson silently deletes against.
+
+### The flux-aio exception to "nothing is vendored", stated rather than skirted
 
 flux-aio is published upstream **only as a timoni module**. There is no `install.yaml` release asset to
 pin a URL and a SHA-256 against, which is exactly the shape
@@ -241,6 +324,17 @@ run `kelson install flux-aio` and get a Deployment.
 
 The outcome this ADR would prefer is that flux-aio publishes a plain YAML release asset, at which point
 the script and the snapshot both disappear and the row becomes an ordinary pin.
+
+**`registry` is the second, smaller instance of the same exception**, and the same 2026-08-14 ADR-0030
+amendment records it. CNCF Distribution publishes a container image and no install manifest at all —
+not "only a timoni module" the way flux-aio is, simply nothing to pin a URL and a digest against. So the
+Deployment, Service and PersistentVolumeClaim are kelson's own, written directly in Go
+(`internal/delivery/install/registry.go`) rather than fetched, and what is pinned is the **image**:
+`ghcr.io/distribution/distribution`, the project's own registry rather than a Docker Official Images
+mirror of it, referenced only by digest — `internal/delivery/install/pins.go`'s `registry` row carries
+it, never a mutable tag, so what actually runs is exactly the bytes that digest names, whatever tag GHCR
+later moves. There is no render script and no CI step: the objects are small enough, and stable enough,
+to be code rather than a generated snapshot.
 
 ### What kelson installed, and what it merely applied over
 
@@ -390,6 +484,14 @@ says so. Removing it is your own tooling's job, exactly as before.
 per-object provenance makes the deletion correct and safe; it does not make it wise. The preview names
 what will stop reconciling, and after it nothing kelson published reaches the cluster until a Flux is
 back.
+
+**`kelson uninstall --component registry` takes the PersistentVolumeClaim with it, if kelson created
+it** — the removal sweep above is discovery-driven over every kind kelson labelled, and a PVC created by
+the install is an ordinary object in that sweep, with no special data warning the way a project
+uninstall's `DATA` section gives a CloudNativePG `Cluster` or a managed volume. The preview lists it as
+what it is — a `PersistentVolumeClaim`, about to be deleted — but nothing here calls out that deleting it
+deletes every image and every manifest artifact this registry ever held. Read the preview before
+answering `--yes`.
 
 ### The server: `helm uninstall`
 

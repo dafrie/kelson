@@ -1,6 +1,9 @@
 # ADR-0030: The install substrate is flux-aio, pre-rendered at release time and pinned
 
-- **Status:** Accepted
+- **Status:** Accepted (Amended 2026-08-14: `kelson install` may also offer a `registry` catalog entry —
+  an in-cluster OCI registry for a cluster that has none, applying this ADR's "kelson-authored, not
+  fetched" exception a second time, for a second reason: CNCF Distribution publishes no install manifest
+  at all, not even as a timoni module. See the amendment below.)
 - **Date:** 2026-08-14
 
 > Extends [ADR-0021](0021-installing-missing-components.md)'s catalog with an entry whose bytes kelson
@@ -165,6 +168,81 @@ depends on for previews.
   per-object provenance of ADR-0021 makes the deletion correct and safe; it does not make it wise, and
   the refusal path has to say what will stop reconciling.
 
+## Amendment (2026-08-14): install may also provide a registry
+
+[ADR-0028](0028-delivery-spine.md) does to registries what it did to Flux: an optional integration
+becomes a hard requirement. The delivery spine pushes every rendered revision as an OCI artifact, and
+`kelson build` already needed somewhere to push application images — a cluster with neither now has two
+missing prerequisites instead of one, and the second one has no offer. This amendment gives it one, on
+the same "offer, never assume" terms decision 1 states for Flux itself.
+
+**The decision.** `kelson install` gains a `registry` row in the catalog
+(`internal/delivery/install/pins.go`, `internal/delivery/install/registry.go`): a Deployment, a
+`kelson-registry` Service and a PersistentVolumeClaim in `kelson-system`, running
+[CNCF Distribution](https://github.com/distribution/distribution) — the project `registry:2` and
+`docker.io/library/registry` both ultimately are — pinned by **image digest**
+(`ghcr.io/distribution/distribution@sha256:…`, the project's own registry rather than a Docker Official
+Images mirror of it), never a tag. Bring-your-own remains the default and the recommendation for a team;
+this row exists for the self-contained, lightweight cluster this ADR already writes for — the k3s and
+edge audience flux-aio serves, now with the second missing prerequisite answered the same way.
+
+**Why the spine needs zero node configuration, and app images need real node work.** The two consumers
+of "a registry" in kelson are not symmetric, and the offer's node story follows that asymmetry exactly:
+
+- The delivery spine's `OCIRepository` is pulled by **one thing only** — Flux's source-controller,
+  running as an ordinary pod with a service account and a network route. A pod-to-Service pull inside
+  the cluster is not different in kind from any other in-cluster HTTP call kelson already makes; no node,
+  no containerd, no kubelet ever touches it. This is the same reason decision 1's flux-aio offer costs a
+  cluster nothing beyond one Deployment: the thing being installed only ever talks to other things
+  already inside the cluster's own network.
+- An **application image**, once a component that names one is deployed, is pulled by the **node's own
+  container runtime** scheduling the Pod — and that is Kubernetes' province, not kelson's. A plain-HTTP
+  registry with no publicly-trusted certificate is precisely what every container runtime refuses by
+  default, and making a node trust it is a node-level configuration change (a k3s `registries.yaml`
+  entry, a containerd `hosts.toml`, a kubelet flag, depending on the distribution) that no
+  cluster-scoped Deployment can reach into and make for it. `docs/install.md` carries the honest,
+  per-distribution version of that story — k3s's one-file mirror config, kind's `hosts.toml` (the same
+  shape `hack/local/up.sh` already sets up for local development), and the plain recommendation that a
+  managed cluster (EKS, GKE, AKS) should bring its own registry, because node images and node-level trust
+  on those are the control plane's to configure, not a workload's.
+
+**Why this is the same exception as decision 2, applied a second time, for a different underlying
+reason.** flux-aio is "kelson-authored, not fetched" because upstream publishes **only a timoni module** —
+there is a build artifact, just not the plain YAML release asset ADR-0021 decision 2 wants to pin.
+Distribution is a smaller case of the same problem with one fewer moving part: there is no Kubernetes
+manifest published **at all**, timoni or otherwise, because the project ships a container image and
+nothing else. So the objects are Go, not a rendered snapshot — small and stable enough that a
+`hack/*-render.sh` pipeline would be machinery this row does not need — and what carries the pin is the
+image digest rather than a manifest digest. The provenance discipline is unchanged: every object still
+gets `kelson.dev/installed-component: registry`, still gets a created-versus-adopted ownership
+annotation, and `kelson uninstall --component registry` still sweeps by that label, exactly as every
+other row.
+
+**Why this row is never offered automatically, unlike every component that came before it.** Decision 1's
+"offer, never assume" and ADR-0021's Yes/No/Unknown detection both presuppose that kelson can ask the
+cluster "is this here?" — a `ClusterProfile` finding, a Gap when the probe cannot look. A registry has no
+such finding: it could be running outside this cluster entirely, behind credentials kelson is never
+handed, so `ClusterProfile` carries no signal for it and `Component.Presence` can only ever answer No,
+never Yes or Unknown. Detection-first eligibility does not fail on a registry — it simply cannot narrow
+the offer at all, which is a different problem than the one ADR-0021's tri-state solves. The answer is
+narrower than a detection gap: `--all-missing` declines `registry` unconditionally (not the
+ingress-stack-conditional exception envoy-gateway gets), and only naming it — `kelson install registry`
+— installs one. A sweep that cannot tell "genuinely missing" from "kelson cannot see it" must not guess,
+and here it never can tell, so it never guesses.
+
+**Consequences, stated the same way the ADR above states its own.** Positive: the second missing
+prerequisite ADR-0028 created now has an answer, on the cluster shape that needed it most, with no new
+concept beyond one more catalog row. Negative: an operator who installs this and later points a node at
+plain HTTP has done a node-level trust change kelson did not do for them and cannot verify — the
+gap between "installed" and "app images actually pull" is real and `docs/install.md` names it rather
+than implying the offer closes it. Garbage collection is not part of this row: nothing prunes the
+registry's storage automatically, and `docs/install.md` documents the manual `registry garbage-collect`
+command rather than promising an R1 feature that does not exist. `kelson uninstall --component registry`
+deletes the PersistentVolumeClaim if kelson created it, and with it every image and manifest artifact the
+registry held — the same "correct and safe, not necessarily wise" trade the Consequences section above
+already accepts for `kelson uninstall --component flux-aio`, extended to data rather than only to a
+reconciler.
+
 ## Revisit when
 
 - **flux-aio publishes a plain YAML release asset.** The render script and the committed snapshot both
@@ -175,3 +253,10 @@ depends on for previews.
   others on the clusters kelson actually runs on.
 - **flux-operator ships previews-equivalent functionality in flux-aio**, or Flux upstream absorbs
   `ResourceSet`. Decision 4's split stops being necessary and the catalog loses a row.
+- **CNCF Distribution publishes a Kubernetes install manifest.** The amendment's second exception
+  disappears the same way the first one would: `registry.go`'s composed objects are replaced by a
+  fetched, digest-pinned manifest, and the row becomes an ordinary ADR-0021 pin.
+- **`ExternalArtifact` ([#228](https://github.com/dafrie/kelson/issues/228)) ships.** The spine gains a
+  registry-less path for manifests; the `registry` offer's justification narrows to what `kelson build`
+  still needs, and the amendment's framing of "two missing prerequisites" should be revisited alongside
+  it.

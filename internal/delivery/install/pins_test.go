@@ -25,8 +25,15 @@ func TestPinsAreInternallyConsistent(t *testing.T) {
 	seen := map[string]bool{}
 	for _, c := range Components {
 		t.Run(c.Name, func(t *testing.T) {
-			if c.Name == "" || c.Title == "" || c.Namespace == "" || c.ProfileField == "" || c.Provides == "" {
+			if c.Name == "" || c.Title == "" || c.Namespace == "" || c.Provides == "" {
 				t.Fatalf("row is missing a required field: %+v", c)
+			}
+			// ProfileField is required for every row except one: "registry" has
+			// no ClusterProfile signal at all, by design (pins.go's comment on
+			// the row). Any other empty ProfileField is a mistake, not a second
+			// instance of that exception.
+			if c.ProfileField == "" && c.Name != "registry" {
+				t.Fatalf("row %q has no ProfileField, and only \"registry\" is allowed to skip detection", c.Name)
 			}
 			if seen[c.Name] {
 				t.Fatalf("duplicate component name %q", c.Name)
@@ -37,6 +44,22 @@ func TestPinsAreInternallyConsistent(t *testing.T) {
 			case StatusSupported:
 				if c.FollowUp != "" {
 					t.Fatal("a supported row carries a FollowUp, which reads as a refusal it does not make")
+				}
+				if c.Authored {
+					if c.ManifestURL != "" || c.SHA256 != "" {
+						t.Fatal("an Authored row installs kelson-composed objects, not a fetched manifest, and " +
+							"carries no ManifestURL or SHA256")
+					}
+					if c.Image == "" {
+						t.Fatal("an Authored row must pin the image it deploys")
+					}
+					if !digestPattern.MatchString(c.ImageDigest) {
+						t.Fatalf("ImageDigest %q is not a lowercase hex sha256 digest", c.ImageDigest)
+					}
+					break
+				}
+				if c.Image != "" || c.ImageDigest != "" {
+					t.Fatal("a fetched row does not pin its own image; the image reference lives inside the manifest")
 				}
 				if !strings.HasPrefix(c.ManifestURL, "https://") {
 					t.Fatalf("ManifestURL %q is not https; a pinned manifest is applied with cluster-admin-shaped RBAC",
@@ -59,7 +82,7 @@ func TestPinsAreInternallyConsistent(t *testing.T) {
 				if !strings.Contains(c.FollowUp, "#60") {
 					t.Fatalf("FollowUp %q does not name the issue the follow-up hangs off", c.FollowUp)
 				}
-				if c.Version != "" || c.ManifestURL != "" || c.SHA256 != "" {
+				if c.Version != "" || c.ManifestURL != "" || c.SHA256 != "" || c.Authored {
 					t.Fatal("a deferred row carries a pin, which reads as an install it will not perform")
 				}
 			default:
@@ -83,6 +106,12 @@ func TestProfileFieldsExist(t *testing.T) {
 		}
 	}
 	for _, c := range Components {
+		if c.ProfileField == "" {
+			// "registry" only, and TestPinsAreInternallyConsistent enforces
+			// that: no ClusterProfile field can carry a detection Gap for a
+			// component the profile does not model at all.
+			continue
+		}
 		if !fields[c.ProfileField] {
 			t.Errorf("%s: ProfileField %q is not a ClusterProfile field", c.Name, c.ProfileField)
 		}
@@ -91,6 +120,11 @@ func TestProfileFieldsExist(t *testing.T) {
 
 // TestPresenceIsWiredForEveryRow: adding a row without teaching Presence about
 // it would make kelson install a component that is already there.
+//
+// A nil entry marks "registry": the one row with no ClusterProfile signal at
+// all (pins.go's comment on it explains why), so there is no mutation that
+// can turn its Presence into Yes, and no Gap it can be hidden behind — only
+// the "empty profile gives No" assertion applies to it.
 func TestPresenceIsWiredForEveryRow(t *testing.T) {
 	present := map[string]func(*clusterprofile.ClusterProfile){
 		"flux":             func(p *clusterprofile.ClusterProfile) { p.FluxOperator = &clusterprofile.Component{} },
@@ -98,6 +132,7 @@ func TestPresenceIsWiredForEveryRow(t *testing.T) {
 		"cnpg":             func(p *clusterprofile.ClusterProfile) { p.CloudNativePG = &clusterprofile.CloudNativePG{} },
 		"envoy-gateway":    func(p *clusterprofile.ClusterProfile) { p.GatewayAPI = &clusterprofile.GatewayAPI{} },
 		"external-secrets": func(p *clusterprofile.ClusterProfile) { p.ExternalSecrets = &clusterprofile.ExternalSecrets{} },
+		"registry":         nil,
 	}
 	if len(present) != len(Components) {
 		t.Fatalf("this test knows %d components and the table has %d: teach Presence about the new row",
@@ -111,6 +146,9 @@ func TestPresenceIsWiredForEveryRow(t *testing.T) {
 		var prof clusterprofile.ClusterProfile
 		if outcome, _ := c.Presence(prof); outcome != clusterprofile.OutcomeNo {
 			t.Errorf("%s: an empty profile gives %v, want no", c.Name, outcome)
+		}
+		if mutate == nil {
+			continue
 		}
 		mutate(&prof)
 		if outcome, _ := c.Presence(prof); outcome != clusterprofile.OutcomeYes {
@@ -147,8 +185,10 @@ func TestFluxPresenceCoversBothFindings(t *testing.T) {
 func TestNamesMatchTheSupportMatrix(t *testing.T) {
 	// Every supported row must have a support-matrix floor, except envoy-gateway
 	// which the matrix tracks as the API ("gateway-api") rather than as an
-	// implementation.
-	exempt := map[string]string{"envoy-gateway": "gateway-api", "external-secrets": ""}
+	// implementation, and registry: the matrix carries Kubernetes-API version
+	// floors, and a container kelson runs itself has no such floor — its pin
+	// is the image digest in pins.go, not a cluster capability.
+	exempt := map[string]string{"envoy-gateway": "gateway-api", "external-secrets": "", "registry": ""}
 	for _, c := range Components {
 		if alias, ok := exempt[c.Name]; ok {
 			if alias == "" {

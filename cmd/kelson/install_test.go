@@ -347,6 +347,70 @@ func TestInstallEnvoyGatewayBoundary(t *testing.T) {
 	}
 }
 
+// TestInstallRegistryPreviewAndBoundary: registry is the one row whose bytes
+// kelson authors rather than fetches, and the preview and the post-install
+// hint both have to say so — the digest is an image digest, not a manifest
+// digest, and "installed" must not be mistaken for "everything now pushes
+// through it".
+func TestInstallRegistryPreviewAndBoundary(t *testing.T) {
+	reg, ok := install.Lookup("registry")
+	if !ok {
+		t.Fatal("the pins table has no registry row")
+	}
+	engine := &fakeInstaller{
+		plan: &install.Plan{Items: []install.Item{{
+			Component: reg,
+			Objects: []install.Object{
+				{Ref: install.Ref{Kind: "Namespace", Name: "kelson-system"}, Authored: true},
+				{Ref: install.Ref{Kind: "Deployment", Namespace: "kelson-system", Name: "kelson-registry"}, Authored: true},
+			},
+			Digest: reg.ImageDigest,
+		}}},
+		report: &install.Report{Components: []install.ComponentReport{{
+			Component: reg,
+			Results: []install.Result{
+				{Ref: install.Ref{Kind: "Namespace", Name: "kelson-system"}, Outcome: install.OutcomeCreated},
+				{Ref: install.Ref{Kind: "Deployment", Namespace: "kelson-system", Name: "kelson-registry"}, Outcome: install.OutcomeCreated},
+			},
+			Created:   2,
+			Installed: true,
+		}}},
+	}
+	out, _, code, msg := runInstallCmd(t, engine, clusterprofile.ClusterProfile{}, "", "install", "registry", "--yes")
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, msg)
+	}
+	for _, want := range []string{reg.Image, reg.ImageDigest, "kelson-authored", install.RegistryEndpoint,
+		"insecure", "docs/install.md#garbage-collection"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output does not mention %q:\n%s", want, out)
+		}
+	}
+	// The preview must never print an empty "from" line for a row with no
+	// manifest URL to fetch.
+	if strings.Contains(out, "\n  from   \n") {
+		t.Fatalf("preview prints an empty manifest source for an Authored row:\n%s", out)
+	}
+}
+
+// TestInstallSweepDeclinesRegistry: --all-missing must not add a registry
+// behind a user's back — kelson has no signal that one is genuinely absent.
+func TestInstallSweepDeclinesRegistry(t *testing.T) {
+	engine := &fakeInstaller{plan: &install.Plan{Refusals: []install.Refusal{{
+		Name:        "registry",
+		Outcome:     clusterprofile.OutcomeNo,
+		Reason:      "kelson has no way to detect whether this cluster already has a registry",
+		Remediation: "decide by name: `kelson install registry`",
+	}}}}
+	out, _, code, msg := runInstallCmd(t, engine, clusterprofile.ClusterProfile{}, "", "install", "--all-missing", "--dry-run")
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, msg)
+	}
+	if !strings.Contains(out, "registry") || !strings.Contains(out, "kelson install registry") {
+		t.Fatalf("output does not report the registry refusal:\n%s", out)
+	}
+}
+
 // TestInstallAddressing covers the two ways the request addresses nothing.
 func TestInstallAddressing(t *testing.T) {
 	cases := []struct {

@@ -119,7 +119,10 @@ type Item struct {
 	// that need them) followed by anything kelson authors.
 	Objects []Object
 	// Digest is the verified digest of the fetched manifest, echoed into the
-	// preview so what was checked is visible rather than merely claimed.
+	// preview so what was checked is visible rather than merely claimed. For an
+	// Authored component there is no fetched manifest to check; this is the
+	// pinned container image digest instead (Component.ImageDigest), which the
+	// object below references directly rather than merely recording.
 	Digest string
 }
 
@@ -374,6 +377,24 @@ func refuse(c Component, prof clusterprofile.ClusterProfile, allMissing bool) (*
 				"note that kelson renders Gateway API only (#140)",
 		}, true
 	}
+	// registry has no detection signal at all (Presence can only ever answer
+	// No — pins.go explains why), so unlike every other row a sweep cannot
+	// tell "genuinely missing" from "already has one, kelson just cannot see
+	// it". A bring-your-own registry is the default and the recommendation;
+	// --all-missing must not add a second one behind a user's back. An
+	// explicit `kelson install registry` IS the decision that it is missing,
+	// and proceeds — the same asymmetry envoy-gateway's sweep exception draws.
+	if c.Name == "registry" && allMissing {
+		return &Refusal{
+			Name:    c.Name,
+			Outcome: clusterprofile.OutcomeNo,
+			Reason: "kelson has no way to detect whether this cluster already has a registry, and a registry " +
+				"is bring-your-own by default",
+			Remediation: "decide by name: `kelson install registry` installs one in-cluster, for a " +
+				"self-contained or lightweight cluster that has none; a team with a registry already should " +
+				"keep using it",
+		}, true
+	}
 	return nil, false
 }
 
@@ -385,18 +406,32 @@ func ingressClassList(prof clusterprofile.ClusterProfile) string {
 	return strings.Join(names, ", ")
 }
 
-// load fetches, verifies and decodes one component's manifest.
+// load builds one component's objects — fetched and decoded for an ordinary
+// row, composed in Go for an Authored one — and fills in what the preview
+// needs to know about the live cluster.
 func (i *Installer) load(ctx context.Context, c Component) (*Item, error) {
-	body, err := i.fetch.Fetch(ctx, c.ManifestURL)
-	if err != nil {
-		return nil, unreachable(c.ManifestURL, err.Error())
-	}
-	if err := verifyDigest(c, body); err != nil {
-		return nil, err
-	}
-	objects, err := i.decode(c, body)
-	if err != nil {
-		return nil, err
+	var objects []Object
+	digest := c.SHA256
+	if c.Authored {
+		built, err := i.composeAuthored(c)
+		if err != nil {
+			return nil, err
+		}
+		objects = built
+		digest = c.ImageDigest
+	} else {
+		body, err := i.fetch.Fetch(ctx, c.ManifestURL)
+		if err != nil {
+			return nil, unreachable(c.ManifestURL, err.Error())
+		}
+		if err := verifyDigest(c, body); err != nil {
+			return nil, err
+		}
+		decoded, err := i.decode(c, body)
+		if err != nil {
+			return nil, err
+		}
+		objects = decoded
 	}
 	if c.Name == "flux" {
 		obj, err := i.fluxInstance(c)
@@ -406,7 +441,38 @@ func (i *Installer) load(ctx context.Context, c Component) (*Item, error) {
 		objects = append(objects, *obj)
 	}
 	i.readExistence(ctx, objects)
-	return &Item{Component: c, Objects: objects, Digest: c.SHA256}, nil
+	return &Item{Component: c, Objects: objects, Digest: digest}, nil
+}
+
+// composeAuthored builds the objects for a row whose manifest kelson writes
+// itself rather than fetches (Component.Authored; pins.go's doc comment on
+// the row explains why). It is a lookup by name rather than a field on
+// Component carrying a function, for the reason fluxInstance is a method
+// rather than data: the composition needs the same provenance stamping
+// (Installer.object) every fetched object gets, so the seam is a name kelson
+// recognises, not an interface value the pins table would have to carry.
+func (i *Installer) composeAuthored(c Component) ([]Object, error) {
+	switch c.Name {
+	case "registry":
+		return i.authorObjects(c, registryManifest(c))
+	default:
+		return nil, fmt.Errorf("install: %q is marked Authored but no composer is registered for it", c.Name)
+	}
+}
+
+// authorObjects stamps provenance on a set of kelson-composed documents and
+// resolves each one's resource, exactly as decode does for a fetched
+// manifest's documents.
+func (i *Installer) authorObjects(c Component, docs []*unstructured.Unstructured) ([]Object, error) {
+	out := make([]Object, 0, len(docs))
+	for _, doc := range docs {
+		obj, err := i.object(c, doc, true)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *obj)
+	}
+	return out, nil
 }
 
 // decode splits the manifest into objects, stamps provenance and resolves each
