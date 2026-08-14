@@ -2,7 +2,14 @@
 
 GO      ?= go
 GOLANGCI?= golangci-lint
+NPM     ?= npm
 BIN     ?= $(CURDIR)/bin
+UI      ?= $(CURDIR)/ui
+# Where kelson-server embeds the UI from (internal/webui). Everything the copy
+# below puts here is gitignored; the two committed files are excluded from every
+# rm in this file by name.
+EMBED   ?= $(CURDIR)/internal/webui/static
+KEEP    := ! -name .gitignore ! -name placeholder.html
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "0.0.0-dev")
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
@@ -10,12 +17,17 @@ LDFLAGS := -s -w \
   -X github.com/dafrie/kelson/internal/version.Version=$(VERSION) \
   -X github.com/dafrie/kelson/internal/version.Commit=$(COMMIT)
 
-.PHONY: all build binaries proto test test-e2e lint fmt clean install release release-snapshot e2e-up e2e e2e-down
+.PHONY: all build binaries server ui ui-clean proto test test-e2e lint fmt clean install release release-snapshot e2e-up e2e e2e-down
 
 all: lint test build
 
 # Verifies the whole module compiles. The actual binaries are produced by
 # `make binaries` (with version ldflags) or by goreleaser (`make release`).
+#
+# Neither this nor `binaries` depends on `ui`, and that is deliberate: the
+# checkout must build with no Node installed (CI cross-compiles without it), so
+# the Go path stays pure and a server built this way serves the placeholder page
+# instead of the UI. `make server` is the one that builds both.
 build:
 	$(GO) build ./...
 
@@ -24,6 +36,25 @@ binaries:
 	$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN)/kelson       ./cmd/kelson
 	$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN)/kelson-server ./cmd/kelson-server
 	$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN)/kelson-mcp    ./cmd/kelson-mcp
+
+# kelson-server with the real web UI inside it — what a release ships and what
+# you want when clicking around locally. Needs Node.
+server: ui
+	$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN)/kelson-server ./cmd/kelson-server
+
+# Builds ui/ and copies the result where go:embed can reach it. The copy is a
+# build artifact and is gitignored there, so this leaves `git status` clean —
+# which goreleaser depends on, since it refuses to release from a dirty tree
+# (see internal/webui/webui.go for why the directory is shaped this way).
+ui: ui-clean
+	cd $(UI) && { [ -d node_modules ] || $(NPM) ci; } && $(NPM) run build
+	cp -R $(UI)/dist/. $(EMBED)/
+
+# Empties the embed directory back to its two committed files. `ui` runs it
+# first so a hashed asset from a previous build is never embedded beside a
+# current one — nothing removes it otherwise, since every name is new.
+ui-clean:
+	find $(EMBED) -mindepth 1 -maxdepth 1 $(KEEP) -exec rm -rf {} +
 
 # Regenerates internal/api/gen and ui/src/gen from proto/ (ADR-0013 §4). Both
 # outputs are committed, so a change to proto/ that is not followed by this
@@ -53,12 +84,15 @@ install: # install golangci-lint if missing
 release:
 	goreleaser release --clean
 
-release-snapshot:
+# `ui` first for the same reason .github/workflows/release.yml runs it before
+# goreleaser: goreleaser only compiles Go, so whatever is in the embed directory
+# when it starts is what the binaries carry.
+release-snapshot: ui
 	goreleaser release --snapshot --clean
 
-clean:
+clean: ui-clean
 	$(GO) clean ./...
-	rm -rf $(BIN) dist/
+	rm -rf $(BIN) dist/ $(UI)/dist
 
 # kind-based E2E harness (issue #86): a spec to running workloads and back on
 # a local kind cluster. e2e-up/e2e-down are idempotent and independent of
