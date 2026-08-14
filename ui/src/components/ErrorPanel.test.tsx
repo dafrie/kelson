@@ -86,7 +86,7 @@ describe("ErrorPanel", () => {
             overlay: "",
             target: "",
             message: "unknown field port",
-            remediation: "move it under an application",
+            remediation: "move it under a component",
             docsUrl: "",
             line: 12,
             column: 3,

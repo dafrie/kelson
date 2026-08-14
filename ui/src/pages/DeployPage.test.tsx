@@ -112,8 +112,8 @@ function renderDeploy(
 ) {
   return renderAt(
     transportFor(events, opts.seen),
-    "/apps/checkout/production/deploy" + (opts.search ?? ""),
-    "/apps/:project/:env/deploy",
+    "/projects/checkout/production/deploy" + (opts.search ?? ""),
+    "/projects/:project/:env/deploy",
     <DeployPage />,
   );
 }

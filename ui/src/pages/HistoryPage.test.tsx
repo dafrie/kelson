@@ -95,8 +95,8 @@ function transportFor({
 function renderHistory(stub: Stub = {}) {
   return renderAt(
     transportFor(stub),
-    "/apps/checkout/production/history",
-    "/apps/:project/:env/history",
+    "/projects/checkout/production/history",
+    "/projects/:project/:env/history",
     <HistoryPage />,
   );
 }
@@ -241,7 +241,7 @@ describe("HistoryPage", () => {
       within(item)
         .getByRole("link", { name: "Diff against current" })
         .getAttribute("href"),
-    ).toBe("/apps/checkout/production/diff?from=rev-00000001");
+    ).toBe("/projects/checkout/production/diff?from=rev-00000001");
   });
 
   it("links a rollback that carries the revision, except for the newest", async () => {
@@ -252,7 +252,7 @@ describe("HistoryPage", () => {
       within(older)
         .getByRole("link", { name: "Roll back to this" })
         .getAttribute("href"),
-    ).toBe("/apps/checkout/production/rollback?to=rev-00000002");
+    ).toBe("/projects/checkout/production/rollback?to=rev-00000002");
 
     // Restoring the newest revision is not a rollback, and the rollback screen
     // disables that target, so the link is not offered at all.
@@ -268,7 +268,7 @@ describe("HistoryPage", () => {
       name: "Promote into this environment",
     });
     expect(promote.getAttribute("href")).toBe(
-      "/apps/checkout/production/promote",
+      "/projects/checkout/production/promote",
     );
     // It reads the *source* environment's latest revision, so no row offers it:
     // a per-revision button would promise a promotion the RPC does not make.
@@ -321,8 +321,8 @@ describe("HistoryPage", () => {
     });
     renderAt(
       transport,
-      "/apps/checkout/production/history",
-      "/apps/:project/:env/history",
+      "/projects/checkout/production/history",
+      "/projects/:project/:env/history",
       <HistoryPage />,
     );
 

@@ -13,7 +13,7 @@ import {
   transitionEvent,
   watchStub,
 } from "../test/watch";
-import { AppsPage } from "./AppsPage";
+import { ProjectsPage } from "./ProjectsPage";
 
 /**
  * The list's contract: one card per (project, environment), each carrying the
@@ -67,13 +67,13 @@ const transport = createRouterTransport((router) => {
   });
 });
 
-function renderApps() {
-  return renderAt(transport, "/apps", "/apps", <AppsPage />);
+function renderProjects() {
+  return renderAt(transport, "/projects", "/projects", <ProjectsPage />);
 }
 
-describe("AppsPage", () => {
+describe("ProjectsPage", () => {
   it("renders one card per project and environment", async () => {
-    renderApps();
+    renderProjects();
 
     expect(await screen.findByText("production")).toBeTruthy();
     expect(screen.getByText("staging")).toBeTruthy();
@@ -81,17 +81,17 @@ describe("AppsPage", () => {
     // The project name links to its detail screen, twice for checkout.
     const links = screen.getAllByRole("link", { name: "checkout" });
     expect(links).toHaveLength(2);
-    expect(links[0]?.getAttribute("href")).toBe("/apps/checkout");
+    expect(links[0]?.getAttribute("href")).toBe("/projects/checkout");
     expect(screen.getByText("2 projects")).toBeTruthy();
     expect(screen.getByText("3 environments")).toBeTruthy();
     // The one way into the create flow (#63).
     expect(
-      screen.getByRole("link", { name: "New app" }).getAttribute("href"),
-    ).toBe("/apps/new");
+      screen.getByRole("link", { name: "New project" }).getAttribute("href"),
+    ).toBe("/projects/new");
   });
 
   it("maps phases onto pills and shows revision, counts and cause", async () => {
-    renderApps();
+    renderProjects();
 
     const healthy = await screen.findByText("healthy", { selector: ".k-pill" });
     expect(healthy.dataset.status).toBe("synced");
@@ -105,7 +105,7 @@ describe("AppsPage", () => {
   });
 
   it("degrades a failing status to an honest pill with the server's reason", async () => {
-    const { container } = renderApps();
+    const { container } = renderProjects();
 
     const pill = await screen.findByText("status unavailable");
     expect(pill.dataset.status).toBe("unknown");
@@ -164,7 +164,7 @@ function liveServer(events: ReturnType<typeof watchStub>) {
   return { transport, statusCalls: () => statusCalls };
 }
 
-describe("AppsPage live updates", () => {
+describe("ProjectsPage live updates", () => {
   it("applies a status transition to the matching card in place", async () => {
     const events = watchStub([
       transitionEvent({
@@ -177,7 +177,7 @@ describe("AppsPage live updates", () => {
       }),
     ]);
     const { transport, statusCalls } = liveServer(events);
-    const { container } = renderAt(transport, "/apps", "/apps", <AppsPage />);
+    const { container } = renderAt(transport, "/projects", "/projects", <ProjectsPage />);
 
     // The fetched answer first, then the streamed one over the top of it.
     expect(
@@ -210,7 +210,7 @@ describe("AppsPage live updates", () => {
       }),
     ]);
     const { transport } = liveServer(events);
-    renderAt(transport, "/apps", "/apps", <AppsPage />);
+    renderAt(transport, "/projects", "/projects", <ProjectsPage />);
 
     expect(
       await screen.findByText(
@@ -244,7 +244,7 @@ describe("AppsPage live updates", () => {
       resyncEvent("the cursor is older than the retained event window"),
     ]);
     const { transport, statusCalls } = liveServer(events);
-    renderAt(transport, "/apps", "/apps", <AppsPage />);
+    renderAt(transport, "/projects", "/projects", <ProjectsPage />);
 
     expect(
       await screen.findByText("reconciling", { selector: ".k-pill" }),
@@ -257,7 +257,7 @@ describe("AppsPage live updates", () => {
   it("shows the live indicator while the stream is connected", async () => {
     const events = watchStub([]);
     const { transport } = liveServer(events);
-    renderAt(transport, "/apps", "/apps", <AppsPage />);
+    renderAt(transport, "/projects", "/projects", <ProjectsPage />);
 
     expect(await screen.findByText("live")).toBeTruthy();
     expect(screen.getByText("live").dataset.state).toBe("live");
@@ -284,7 +284,7 @@ describe("AppsPage live updates", () => {
         },
       });
     });
-    renderAt(transport, "/apps", "/apps", <AppsPage />);
+    renderAt(transport, "/projects", "/projects", <ProjectsPage />);
 
     expect(
       await screen.findByText("healthy", { selector: ".k-pill" }),
@@ -298,7 +298,7 @@ describe("AppsPage live updates", () => {
   it("aborts the stream on unmount", async () => {
     const events = watchStub([]);
     const { transport } = liveServer(events);
-    const { unmount } = renderAt(transport, "/apps", "/apps", <AppsPage />);
+    const { unmount } = renderAt(transport, "/projects", "/projects", <ProjectsPage />);
 
     await screen.findByText("live");
     expect(events.opened()).toBe(1);

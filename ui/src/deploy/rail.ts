@@ -350,7 +350,7 @@ function stageStates({
   if (at === 4) {
     // Healthy. A live revision with a bad verdict underneath is a real and
     // important thing to see, so the health stage reports the verdicts rather
-    // than the phase (AppDetailPage makes the same point about its two halves).
+    // than the phase (ProjectDetailPage makes the same point about its two halves).
     states[4] = unhealthy > 0 ? "failed" : "done";
     return states;
   }
@@ -456,7 +456,7 @@ function diagnose({
       title: `Live, but ${workloads} are unhealthy`,
       detail: `The revision arrived — the delivery phase is ${phase}. The health verdicts below are what is failing.`,
       nextStep:
-        "Debug the workload — the delivery side is done, so this is the application's own problem.",
+        "Debug the workload — the delivery side is done, so this is the component's own problem.",
       action: { kind: "logs", label: "Open logs" },
       component: cause.component,
     };

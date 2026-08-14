@@ -39,7 +39,7 @@ import { SecretsPanel } from "../secrets/SecretsPanel";
  * in the browser would reorder keys the author chose, so the bytes go to the
  * screen untouched.
  */
-export function AppDetailPage() {
+export function ProjectDetailPage() {
   const { project = "" } = useParams();
   const clients = useClients();
   const spec = useAsync(
@@ -57,7 +57,7 @@ export function AppDetailPage() {
         <h1>{project}</h1>
       </div>
       <div className="k-page-sub">
-        <Link to="/apps">← all apps</Link>
+        <Link to="/projects">← all projects</Link>
         <span>·</span>
         <span>version {spec.data?.spec?.version || "—"}</span>
       </div>
@@ -166,7 +166,7 @@ function EnvironmentPanel({
     [clients, project, environment],
   );
 
-  // The same watch the apps list opens (#76), narrowed to this one
+  // The same watch the project list opens (#76), narrowed to this one
   // environment: the status block follows transitions, the workload list
   // follows health changes.
   const [live, setLive] = useState<PanelLive>(NO_LIVE);
@@ -254,7 +254,7 @@ function EnvironmentPanel({
   // enabled — a deploy preview is a pure render that needs no cluster, and a
   // failing diff or log query has its own honest error to show.
   const rollbackBlocked = failure?.code === "unimplemented";
-  const base = `/apps/${encodeURIComponent(project)}/${encodeURIComponent(environment)}`;
+  const base = `/projects/${encodeURIComponent(project)}/${encodeURIComponent(environment)}`;
 
   return (
     <section className="k-section">
@@ -534,7 +534,7 @@ function Documents({
             the separate act (#65). */}
         <Link
           className="k-button"
-          to={`/apps/${encodeURIComponent(project)}/edit`}
+          to={`/projects/${encodeURIComponent(project)}/edit`}
         >
           Edit configuration
         </Link>

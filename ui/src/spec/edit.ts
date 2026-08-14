@@ -204,7 +204,7 @@ export function componentWorkload(c: ComponentEdit): "service" | "worker" | "cro
 /**
  * The Project document, in examples/hello-single's shape.
  *
- * This is a superset of what documents.ts writes for a new app and produces
+ * This is a superset of what documents.ts writes for a new project and produces
  * byte-identical output for that subset — which is what makes the round-trip
  * guard usable at all: a document the create form stored yesterday is editable
  * today. Components are separated by a blank line, as examples/checkout-multi
@@ -237,26 +237,26 @@ export function buildProjectDocument(p: ProjectEdit): string {
   return lines.join("\n") + "\n";
 }
 
-function componentLines(app: ComponentEdit): string[] {
-  const kind = componentWorkload(app);
-  const domains = app.domains.filter(set);
-  const env = namedEnv(app.env);
-  const lines = [`    - name: ${yamlScalar(app.name)}`];
-  if (set(app.image)) lines.push(`      image: ${yamlScalar(app.image)}`);
+function componentLines(component: ComponentEdit): string[] {
+  const kind = componentWorkload(component);
+  const domains = component.domains.filter(set);
+  const env = namedEnv(component.env);
+  const lines = [`    - name: ${yamlScalar(component.name)}`];
+  if (set(component.image)) lines.push(`      image: ${yamlScalar(component.image)}`);
   if (kind === "service") {
-    lines.push(`      port: ${app.port}`);
-    if (set(app.health)) lines.push(`      health: ${yamlScalar(app.health)}`);
+    lines.push(`      port: ${component.port}`);
+    if (set(component.health)) lines.push(`      health: ${yamlScalar(component.health)}`);
   }
-  if (kind === "cron") lines.push(`      schedule: ${yamlScalar(app.schedule)}`);
+  if (kind === "cron") lines.push(`      schedule: ${yamlScalar(component.schedule)}`);
   if (kind === "service" && domains.length > 0) {
     lines.push("      domains:");
     for (const domain of domains) lines.push(`        - ${yamlScalar(domain)}`);
   }
-  if (set(app.replicasMin)) {
+  if (set(component.replicasMin)) {
     lines.push(
-      set(app.replicasMax)
-        ? `      replicas: { min: ${app.replicasMin}, max: ${app.replicasMax} }`
-        : `      replicas: { min: ${app.replicasMin} }`,
+      set(component.replicasMax)
+        ? `      replicas: { min: ${component.replicasMin}, max: ${component.replicasMax} }`
+        : `      replicas: { min: ${component.replicasMin} }`,
     );
   }
   if (env.length > 0) {

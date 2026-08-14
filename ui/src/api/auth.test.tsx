@@ -74,7 +74,7 @@ function renderApp(at: string) {
       <Route path="login" element={<LoginPage />} />
       <Route element={<RequireSession />}>
         <Route element={<AppShell />}>
-          <Route path="apps" element={<span>apps screen</span>} />
+          <Route path="projects" element={<span>projects screen</span>} />
           <Route path="cluster" element={<Outlet />} />
         </Route>
       </Route>
@@ -95,9 +95,9 @@ afterEach(() => {
 describe("the session tri-state", () => {
   it("skips login entirely when the server has no password", async () => {
     stubAuth({ session: [{ status: 204 }] });
-    renderApp("/apps");
+    renderApp("/projects");
 
-    expect(await screen.findByText("apps screen")).toBeTruthy();
+    expect(await screen.findByText("projects screen")).toBeTruthy();
     expect(screen.queryByLabelText("Password")).toBeNull();
     // No password means no user chip: there is nobody to name.
     expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull();
@@ -105,12 +105,12 @@ describe("the session tri-state", () => {
 
   it("sends an anonymous visitor to the login screen, keeping the return path", async () => {
     stubAuth({ session: [{ status: 401 }] });
-    const { router } = renderApp("/apps");
+    const { router } = renderApp("/projects");
 
     expect(await screen.findByLabelText("Password")).toBeTruthy();
     await waitFor(() =>
       expect(router.state.location.pathname + router.state.location.search).toBe(
-        "/login?next=%2Fapps",
+        "/login?next=%2Fprojects",
       ),
     );
     // A cold boot is not an expiry, and must not claim to be one.
@@ -119,9 +119,9 @@ describe("the session tri-state", () => {
 
   it("shows the username and a way out once a session exists", async () => {
     stubAuth({ session: [{ status: 200, body: { username: "ada" } }] });
-    renderApp("/apps");
+    renderApp("/projects");
 
-    expect(await screen.findByText("apps screen")).toBeTruthy();
+    expect(await screen.findByText("projects screen")).toBeTruthy();
     expect(screen.getByText("ada")).toBeTruthy();
     // The mockups' avatar circle, holding the initial rather than a picture.
     expect(document.querySelector(".k-user__avatar")?.textContent).toBe("a");
@@ -140,7 +140,7 @@ describe("logging in", () => {
       session: [{ status: 401 }],
       login: [{ status: 200, body: { username: "ada" } }],
     });
-    const { router } = renderApp("/apps");
+    const { router } = renderApp("/projects");
 
     const username = await screen.findByLabelText("Username");
     const password = screen.getByLabelText("Password");
@@ -153,9 +153,9 @@ describe("logging in", () => {
     });
 
     await waitFor(() =>
-      expect(router.state.location.pathname).toBe("/apps"),
+      expect(router.state.location.pathname).toBe("/projects"),
     );
-    expect(await screen.findByText("apps screen")).toBeTruthy();
+    expect(await screen.findByText("projects screen")).toBeTruthy();
     expect(calls.find((c) => c.path === "/auth/login")?.body).toEqual({
       username: "ada",
       password: "hunter2",
@@ -167,7 +167,7 @@ describe("logging in", () => {
       session: [{ status: 401 }],
       login: [{ status: 401, body: { error: "wrong password" } }],
     });
-    renderApp("/apps");
+    renderApp("/projects");
 
     const username = await screen.findByLabelText("Username");
     await act(async () => {
@@ -190,8 +190,8 @@ describe("logging in", () => {
 describe("a session that expires mid-use", () => {
   it("says so, and keeps the return path", async () => {
     stubAuth({ session: [{ status: 200, body: { username: "ada" } }] });
-    const { router } = renderApp("/apps");
-    expect(await screen.findByText("apps screen")).toBeTruthy();
+    const { router } = renderApp("/projects");
+    expect(await screen.findByText("projects screen")).toBeTruthy();
 
     // What an RPC interceptor does when the server answers `unauthenticated`
     // — the server restarted, and its per-process signing key with it.
@@ -203,18 +203,18 @@ describe("a session that expires mid-use", () => {
     await waitFor(() =>
       expect(router.state.location.search).toContain("expired=1"),
     );
-    expect(router.state.location.search).toContain("next=%2Fapps");
+    expect(router.state.location.search).toContain("next=%2Fprojects");
   });
 });
 
 describe("safeReturnPath", () => {
   it("keeps a path on this origin and drops anything else", () => {
-    expect(safeReturnPath("/apps/hello/edit")).toBe("/apps/hello/edit");
-    expect(safeReturnPath(null)).toBe("/apps");
+    expect(safeReturnPath("/projects/hello/edit")).toBe("/projects/hello/edit");
+    expect(safeReturnPath(null)).toBe("/projects");
     // A `next` a user can type is a redirect a user can be handed.
-    expect(safeReturnPath("//evil.example")).toBe("/apps");
-    expect(safeReturnPath("https://evil.example")).toBe("/apps");
-    expect(safeReturnPath("/\\evil.example")).toBe("/apps");
+    expect(safeReturnPath("//evil.example")).toBe("/projects");
+    expect(safeReturnPath("https://evil.example")).toBe("/projects");
+    expect(safeReturnPath("/\\evil.example")).toBe("/projects");
   });
 });
 

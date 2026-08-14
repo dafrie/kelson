@@ -11,9 +11,11 @@ import "./AppShell.css";
  * docs/design/README.md is explicit is reference and not a spec. Two things
  * are deliberately not copied from it:
  *
- *   - Its nav lists Apps / Agents / Sources / Events / Settings. Only Apps and
- *     Cluster are real destinations today, and a nav item that goes nowhere is
- *     a lie about what the product does. New items land when their screens do.
+ *   - Its nav lists Apps / Agents / Sources / Events / Settings. Only the first
+ *     of those is a real destination today — and it is called Projects here,
+ *     because that is what the model calls it (docs/model.md, ADR-0014) — plus
+ *     Cluster. A nav item that goes nowhere is a lie about what the product
+ *     does, so new items land when their screens do.
  *   - Its header carries an environment chip and an avatar. There is still no
  *     environment selector. The avatar arrived with the interim login (#84,
  *     docs/server.md) and holds the session's display name — one letter,
@@ -28,7 +30,7 @@ import "./AppShell.css";
 const DOCS_URL = "https://github.com/dafrie/kelson/tree/main/docs";
 
 const NAV = [
-  { to: "/apps", label: "Apps" },
+  { to: "/projects", label: "Projects" },
   { to: "/cluster", label: "Cluster" },
 ] as const;
 
@@ -62,8 +64,8 @@ export function AppShell() {
     <>
       <header className="k-header">
         {/* Link, not NavLink: the brand is a way home, not a nav item, and it
-            must not claim aria-current when /apps happens to be open. */}
-        <Link to="/apps" className="k-header__brand">
+            must not claim aria-current when /projects happens to be open. */}
+        <Link to="/projects" className="k-header__brand">
           <KelsonMark />
           <span className="k-header__wordmark">kelson</span>
         </Link>

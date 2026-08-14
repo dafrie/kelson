@@ -48,11 +48,11 @@ export function toText(lines: readonly LogLine[]): string {
 /** Filesystem-safe, and sortable: the instant goes last so names group by workload. */
 export function logFileName(
   namespace: string,
-  application: string,
+  component: string,
   at: Date,
 ): string {
   const when = at.toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
-  const parts = [namespace, application]
+  const parts = [namespace, component]
     .map((part) => part.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-|-$/g, ""))
     .filter((part) => part !== "");
   return ["kelson-logs", ...parts, when].join("-") + ".txt";

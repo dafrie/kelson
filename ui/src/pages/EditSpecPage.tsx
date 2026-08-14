@@ -90,7 +90,7 @@ export function EditSpecPage() {
         <h1>{project}</h1>
       </div>
       <div className="k-page-sub">
-        <Link to={`/apps/${encodeURIComponent(project)}`}>← {project}</Link>
+        <Link to={`/projects/${encodeURIComponent(project)}`}>← {project}</Link>
         <span>·</span>
         <span>edit configuration</span>
         <span>·</span>
@@ -777,7 +777,7 @@ function PreviewsFields({
 }
 
 function ComponentForm({
-  component: app,
+  component,
   index,
   project,
   readOnly,
@@ -791,18 +791,18 @@ function ComponentForm({
   onChange: (patch: Partial<ComponentEdit>) => void;
   errorsFor: (field: EditFieldKey) => WireError[];
 }) {
-  const kind = componentWorkload(app);
+  const kind = componentWorkload(component);
   return (
     <section className="k-section">
       <div className="k-eyebrow">
-        Component · <span className="k-mono">{app.name}</span>
+        Component · <span className="k-mono">{component.name}</span>
         <span className="k-chip k-mono k-edit__kind">{kind}</span>
       </div>
       <div className="k-section__body k-edit__group">
         <div className="k-new__row">
           <EditField
             label="Image override"
-            value={app.image}
+            value={component.image}
             onChange={(v) => onChange({ image: v })}
             readOnly={readOnly}
             placeholder="inherits the project image"
@@ -812,7 +812,7 @@ function ComponentForm({
           {kind === "cron" ? (
             <EditField
               label="Schedule"
-              value={app.schedule}
+              value={component.schedule}
               onChange={(v) => onChange({ schedule: v })}
               readOnly={readOnly}
               placeholder="0 3 * * *"
@@ -823,7 +823,7 @@ function ComponentForm({
             <EditField
               label="Port"
               narrow
-              value={app.port}
+              value={component.port}
               onChange={(v) => onChange({ port: v })}
               readOnly={readOnly}
               placeholder="8080"
@@ -841,7 +841,7 @@ function ComponentForm({
           {kind === "service" ? (
             <EditField
               label="Health path"
-              value={app.health}
+              value={component.health}
               onChange={(v) => onChange({ health: v })}
               readOnly={readOnly}
               placeholder="/healthz"
@@ -852,7 +852,7 @@ function ComponentForm({
           <EditField
             label="Replicas (min)"
             narrow
-            value={app.replicasMin}
+            value={component.replicasMin}
             onChange={(v) => onChange({ replicasMin: v })}
             readOnly={readOnly}
             placeholder="1"
@@ -862,7 +862,7 @@ function ComponentForm({
           <EditField
             label="Replicas (max)"
             narrow
-            value={app.replicasMax}
+            value={component.replicasMax}
             onChange={(v) => onChange({ replicasMax: v })}
             readOnly={readOnly}
             placeholder="—"
@@ -875,7 +875,7 @@ function ComponentForm({
           <ListRows
             label="Domains"
             addLabel="Add domain"
-            values={app.domains}
+            values={component.domains}
             readOnly={readOnly}
             placeholder="hello.dev.acme.run"
             errors={errorsFor(`component.${index}.domains`)}
@@ -886,7 +886,7 @@ function ComponentForm({
 
         <EnvRows
           label="Environment variables"
-          env={app.env}
+          env={component.env}
           project={project}
           readOnly={readOnly}
           onChange={(env) => onChange({ env })}
@@ -1042,11 +1042,11 @@ function EnvRows({
       <span className="k-field__note k-mono">{note}</span>
       {/* Where a credential actually goes, one link away. A reference names a
           Secret in this environment's namespace and the panel that writes it is
-          on the app page (#116). */}
+          on the project page (#116). */}
       <span className="k-field__note k-mono">
         a reference carries no value — write the Secret itself in the{" "}
-        <Link to={`/apps/${encodeURIComponent(project)}`}>Secrets panel</Link> on
-        this app's page, or with `kelson secret set`
+        <Link to={`/projects/${encodeURIComponent(project)}`}>Secrets panel</Link> on
+        this project's page, or with `kelson secret set`
       </span>
     </div>
   );
@@ -1328,7 +1328,7 @@ function ConflictState({
 }
 
 function Saved({ project }: { project: string }) {
-  const base = `/apps/${encodeURIComponent(project)}`;
+  const base = `/projects/${encodeURIComponent(project)}`;
   return (
     <div className="k-settled" role="status">
       <div className="k-settled__head">
@@ -1341,7 +1341,7 @@ function Saved({ project }: { project: string }) {
       </span>
       <div className="k-actions">
         <Link className="k-button k-button--primary" to={base}>
-          View app
+          View project
         </Link>
       </div>
     </div>

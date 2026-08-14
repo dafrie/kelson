@@ -30,14 +30,19 @@ import "./LogsPage.css";
  * Logs for one environment, in the engine's two shapes: a bounded Query and an
  * unbounded Follow (proto/kelson/v1alpha1/logs.proto).
  *
- * LogSelector wants a namespace and an application. The namespace is the
- * server's answer: StatusResponse carries the resolved one (#161), so the input
- * prefills from Status and a spec that sets `spec.namespace` is right without
- * anyone correcting it. Status needs a delivery plane, and a build started
- * without one answers Unimplemented — so the model's documented default
+ * LogSelector wants a namespace and a component. The namespace is the server's
+ * answer: StatusResponse carries the resolved one (#161), so the input prefills
+ * from Status and a spec that sets `spec.namespace` is right without anyone
+ * correcting it. Status needs a delivery plane, and a build started without one
+ * answers Unimplemented — so the model's documented default
  * `<project>-<environment>` (docs/model.md) stays as the fallback for exactly
- * that case, and the field stays an editable input either way. The application
+ * that case, and the field stays an editable input either way. The component
  * list is read out of the stored Project document.
+ *
+ * The selector's wire field is still `application`, and so is the label its
+ * pods carry: ADR-0014 renamed the authoring word and deliberately left
+ * `kelson.dev/application` alone (docs/model.md), so the request that goes out
+ * spells it the way the cluster does while the screen says what the model says.
  *
  * The bounds rules are the engine's and are not duplicated here: a query must
  * carry tail, since or around, and around and tail are mutually exclusive. The
@@ -73,7 +78,7 @@ export function LogsPage() {
   const fallbackNamespace = `${project}-${env}`;
   const [namespace, setNamespace] = useState(fallbackNamespace);
   const [resolved, setResolved] = useState(false);
-  const [application, setApplication] = useState("");
+  const [component, setComponent] = useState("");
   const [mode, setMode] = useState<"query" | "follow">("query");
 
   // The server's answer replaces the guess once, and only once: after that the
@@ -90,8 +95,8 @@ export function LogsPage() {
   // input either way: a parse that found nothing must not lock the screen.
   useEffect(() => {
     const first = components[0];
-    if (application === "" && first !== undefined) setApplication(first);
-  }, [components, application]);
+    if (component === "" && first !== undefined) setComponent(first);
+  }, [components, component]);
 
   return (
     <>
@@ -99,7 +104,7 @@ export function LogsPage() {
         <h1>Logs</h1>
       </div>
       <div className="k-page-sub">
-        <Link to={`/apps/${encodeURIComponent(project)}`}>← {project}</Link>
+        <Link to={`/projects/${encodeURIComponent(project)}`}>← {project}</Link>
         <span>·</span>
         <span className="k-chip k-mono">{env}</span>
       </div>
@@ -121,11 +126,11 @@ export function LogsPage() {
         </label>
 
         <label className="k-field">
-          <span className="k-eyebrow">Application</span>
+          <span className="k-eyebrow">Component</span>
           <input
             className="k-input k-mono"
-            value={application}
-            onChange={(e) => setApplication(e.target.value)}
+            value={component}
+            onChange={(e) => setComponent(e.target.value)}
             list="k-components"
             placeholder="web"
           />
@@ -166,9 +171,9 @@ export function LogsPage() {
       </nav>
 
       {mode === "query" ? (
-        <QueryLogs namespace={namespace} application={application} />
+        <QueryLogs namespace={namespace} component={component} />
       ) : (
-        <FollowLogs namespace={namespace} application={application} />
+        <FollowLogs namespace={namespace} component={component} />
       )}
     </>
   );
@@ -227,10 +232,10 @@ export function componentNames(yaml: string): string[] {
 
 function QueryLogs({
   namespace,
-  application,
+  component,
 }: {
   namespace: string;
-  application: string;
+  component: string;
 }) {
   const clients = useClients();
   const run = useRun();
@@ -246,7 +251,7 @@ function QueryLogs({
       const minutes = Number(sinceMinutes);
       const res = await clients.log.queryLogs(
         {
-          selector: { namespace, application },
+          selector: { namespace, application: component },
           tail: Number(tail) || 0,
           sinceUnixMs:
             sinceMinutes !== "" && Number.isFinite(minutes) && minutes > 0
@@ -258,7 +263,7 @@ function QueryLogs({
       );
       setLines(res.lines);
     });
-  }, [run, clients, namespace, application, tail, sinceMinutes, match, isRegex]);
+  }, [run, clients, namespace, component, tail, sinceMinutes, match, isRegex]);
 
   return (
     <>
@@ -384,10 +389,10 @@ const BACKFILL_TAIL = 1_000;
  */
 function FollowLogs({
   namespace,
-  application,
+  component,
 }: {
   namespace: string;
-  application: string;
+  component: string;
 }) {
   const clients = useClients();
 
@@ -426,8 +431,8 @@ function FollowLogs({
   // The stream reads these at connect time, not at render time: a reconnect
   // must not pick up a namespace someone is halfway through typing, and a
   // parent re-render must not tear the stream down.
-  const target = useRef({ namespace, application });
-  target.current = { namespace, application };
+  const target = useRef({ namespace, application: component });
+  target.current = { namespace, application: component };
 
   const flush = useCallback(() => {
     frame.current = undefined;
@@ -639,8 +644,8 @@ function FollowLogs({
   }, [visible]);
 
   const download = useCallback(() => {
-    const { namespace: ns, application: app } = target.current;
-    saveText(logFileName(ns, app, new Date()), toText(retained.current.lines));
+    const { namespace: ns, application: name } = target.current;
+    saveText(logFileName(ns, name, new Date()), toText(retained.current.lines));
   }, []);
 
   return (

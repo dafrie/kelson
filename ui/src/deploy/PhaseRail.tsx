@@ -17,7 +17,7 @@ import "./PhaseRail.css";
  * rail.ts:reconcilerActor for what field would fix that.
  *
  * `compact` is the same rail on one line, for a screen where the deployment is
- * one of several things being shown (AppDetailPage). It drops nothing that
+ * one of several things being shown (ProjectDetailPage). It drops nothing that
  * carries a verdict: the diagnosis and its next step render in both forms,
  * because a state that needs an action needs it at every size.
  */
@@ -153,11 +153,11 @@ function ActionLink({
   project: string;
   environment: string;
 }) {
-  const app = `/apps/${encodeURIComponent(project)}`;
+  const base = `/projects/${encodeURIComponent(project)}`;
   const to =
     diagnosis.action.kind === "logs"
-      ? `${app}/${encodeURIComponent(environment)}/logs`
-      : `${app}/edit`;
+      ? `${base}/${encodeURIComponent(environment)}/logs`
+      : `${base}/edit`;
   return (
     <Link className="k-button k-rail__action" to={to}>
       {diagnosis.action.label}

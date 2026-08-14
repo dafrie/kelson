@@ -10,7 +10,7 @@ import type { PutSpecRequest } from "../gen/kelson/v1alpha1/spec_pb";
 import { BuildResponseSchema, BuildService } from "../gen/kelson/v1alpha1/build_pb";
 import type { BuildRequest } from "../gen/kelson/v1alpha1/build_pb";
 import { renderAt } from "../test/render";
-import { NewAppPage } from "./NewAppPage";
+import { NewProjectPage } from "./NewProjectPage";
 
 /**
  * The create flow, against a stubbed SpecService.
@@ -24,7 +24,7 @@ import { NewAppPage } from "./NewAppPage";
 const decoder = new TextDecoder();
 
 function renderNew(transport: Transport) {
-  return renderAt(transport, "/apps/new", "/apps/new", <NewAppPage />);
+  return renderAt(transport, "/projects/new", "/projects/new", <NewProjectPage />);
 }
 
 function type(label: string, value: string) {
@@ -142,7 +142,7 @@ function sourceSpecService(router: Router, requests: PutSpecRequest[]) {
 
 const BUILT = "ghcr.io/acme/hello@sha256:" + "a".repeat(64);
 
-describe("NewAppPage", () => {
+describe("NewProjectPage", () => {
   it("refuses a name that cannot be a metadata.name without asking the server", () => {
     let calls = 0;
     const transport = createRouterTransport((router) => {
@@ -190,8 +190,8 @@ describe("NewAppPage", () => {
                 code: "semantic/no-image-source",
                 resource: "Project/hello",
                 field: "$.spec.components[0]",
-                message: 'application "web" has no image source',
-                remediation: "set image on the application or the Project",
+                message: 'component "web" has no image source',
+                remediation: "set image on the component or the Project",
               },
               {
                 code: "secret/literal",
@@ -230,7 +230,7 @@ describe("NewAppPage", () => {
     expect(field("Port")).toContain("schema/out-of-range");
     expect(field("Port")).toContain("set a valid TCP port");
     expect(field("Health path")).toContain('health path "healthz" must start with /');
-    // A no-image-source error is about the application, but the only thing the
+    // A no-image-source error is about the component, but the only thing the
     // form owns there is the image, so it points at the image.
     expect(field("Image")).toContain("has no image source");
     expect(screen.getByText(/DB_PASSWORD" looks like a secret/)).toBeTruthy();
@@ -358,10 +358,10 @@ describe("NewAppPage", () => {
 
     expect(
       screen.getByRole("link", { name: "Deploy now" }).getAttribute("href"),
-    ).toBe("/apps/hello/development/deploy");
+    ).toBe("/projects/hello/development/deploy");
     expect(
-      screen.getByRole("link", { name: "View app" }).getAttribute("href"),
-    ).toBe("/apps/hello");
+      screen.getByRole("link", { name: "View project" }).getAttribute("href"),
+    ).toBe("/projects/hello");
   });
 
   it("answers a taken name as a taken name, not as a version conflict", async () => {
@@ -402,7 +402,7 @@ describe("NewAppPage", () => {
     // …and it offers the project that is in the way, rather than the store's
     // remediation about re-reading a version the user has never seen.
     expect(taken.closest(".k-field")?.querySelector("a")?.getAttribute("href")).toBe(
-      "/apps/hello",
+      "/projects/hello",
     );
     expect(screen.queryByText("Could not store the spec")).toBeNull();
   });
@@ -450,7 +450,7 @@ describe("NewAppPage", () => {
  * spec does not render it. That finding is shown rather than suppressed, and it
  * does not block.
  */
-describe("NewAppPage · from a Git repository", () => {
+describe("NewProjectPage · from a Git repository", () => {
   it("writes source and build, and creates despite the unrenderable image", async () => {
     const requests: PutSpecRequest[] = [];
     const transport = createRouterTransport((router) => {
@@ -597,7 +597,7 @@ describe("NewAppPage · from a Git repository", () => {
     // …and the deploy carries the pinned reference as the image override.
     expect(
       screen.getByRole("link", { name: "Deploy this image" }).getAttribute("href"),
-    ).toBe(`/apps/hello/development/deploy?image=${encodeURIComponent(BUILT)}`);
+    ).toBe(`/projects/hello/development/deploy?image=${encodeURIComponent(BUILT)}`);
   });
 
   it("renders a failed build as the structured refusal it is", async () => {

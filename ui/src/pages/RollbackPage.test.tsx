@@ -86,8 +86,8 @@ const transport = createRouterTransport((router) => {
 function renderRollback() {
   return renderAt(
     transport,
-    "/apps/checkout/production/rollback",
-    "/apps/:project/:env/rollback",
+    "/projects/checkout/production/rollback",
+    "/projects/:project/:env/rollback",
     <RollbackPage />,
   );
 }
@@ -96,8 +96,8 @@ function renderRollback() {
 function renderRollbackTo(revision: string) {
   return renderAt(
     transport,
-    `/apps/checkout/production/rollback?to=${revision}`,
-    "/apps/:project/:env/rollback",
+    `/projects/checkout/production/rollback?to=${revision}`,
+    "/projects/:project/:env/rollback",
     <RollbackPage />,
   );
 }

@@ -14,7 +14,7 @@ import { phaseToStatus } from "../components/phase";
 import { EmptyState, LoadingState } from "../components/States";
 
 /**
- * The app list: one card per (project, environment).
+ * The project list: one card per (project, environment).
  *
  * A project is not a deployable thing — an environment is (docs/model.md: the
  * Environment carries the namespace, the delivery mode and the cluster). So the
@@ -45,7 +45,7 @@ interface CardLive {
   health?: string;
 }
 
-export function AppsPage() {
+export function ProjectsPage() {
   const clients = useClients();
   const specs = useAsync(
     (signal) => clients.spec.listSpecs({}, { signal }),
@@ -115,12 +115,12 @@ export function AppsPage() {
   return (
     <>
       <div className="k-page-head">
-        <h1>Apps</h1>
+        <h1>Projects</h1>
         {/* The mockup's one accent-outlined mono action, in the place it puts
             it. This is the only way into the create flow, so it stays visible
             whether the grid is full or empty. */}
-        <Link className="k-button k-button--primary" to="/apps/new">
-          New app
+        <Link className="k-button k-button--primary" to="/projects/new">
+          New project
         </Link>
       </div>
 
@@ -146,7 +146,7 @@ export function AppsPage() {
 
       {specs.data !== undefined && projects === 0 ? (
         <EmptyState title="No projects stored yet — kelson-server's spec store is empty">
-          Create one with “New app” above, or put one with `kelson` or
+          Create one with “New project” above, or put one with `kelson` or
           SpecService.PutSpec, and it appears here.
         </EmptyState>
       ) : null}
@@ -162,7 +162,7 @@ export function AppsPage() {
       {pairs.length > 0 ? (
         <div className="k-grid">
           {pairs.map((pair) => (
-            <AppCard
+            <ProjectCard
               key={`${pair.project}/${pair.environment}`}
               project={pair.project}
               environment={pair.environment}
@@ -202,7 +202,7 @@ function Counts({ kinds }: { kinds: Record<string, StatusKind> }) {
   );
 }
 
-function AppCard({
+function ProjectCard({
   project,
   environment,
   onStatus,
@@ -256,7 +256,7 @@ function AppCard({
       <div className="k-card__head">
         <div className="k-card__ident">
           <Link
-            to={`/apps/${encodeURIComponent(project)}`}
+            to={`/projects/${encodeURIComponent(project)}`}
             className="k-card__name"
           >
             {project}

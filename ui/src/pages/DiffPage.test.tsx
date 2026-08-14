@@ -74,8 +74,8 @@ const transport = createRouterTransport((router) => {
 function renderDiff() {
   return renderAt(
     transport,
-    "/apps/checkout/production/diff",
-    "/apps/:project/:env/diff",
+    "/projects/checkout/production/diff",
+    "/projects/:project/:env/diff",
     <DiffPage />,
   );
 }
@@ -84,8 +84,8 @@ function renderDiff() {
 function renderDiffFrom(revision: string) {
   return renderAt(
     transport,
-    `/apps/checkout/production/diff?from=${revision}`,
-    "/apps/:project/:env/diff",
+    `/projects/checkout/production/diff?from=${revision}`,
+    "/projects/:project/:env/diff",
     <DiffPage />,
   );
 }

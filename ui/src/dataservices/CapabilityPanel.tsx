@@ -27,7 +27,7 @@ import { issueUrl } from "./presets";
  * whole idea. /cluster keeps the full profile document; this panel answers the
  * one question a data component raises.
  *
- * It lives on the app detail page because that is where a spec's postgres
+ * It lives on the project detail page because that is where a spec's postgres
  * components are. The create flow does not author a data component yet
  * (src/spec/documents.ts writes workload fields only), so there is no preset
  * being chosen there to attach this to; when there is, this component is what

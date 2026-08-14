@@ -11,7 +11,7 @@ function renderShell(at: string) {
     <MemoryRouter initialEntries={[at]}>
       <Routes>
         <Route element={<AppShell />}>
-          <Route path="apps" element={<span>apps screen</span>} />
+          <Route path="projects" element={<span>projects screen</span>} />
           <Route path="cluster" element={<span>cluster screen</span>} />
         </Route>
       </Routes>
@@ -21,11 +21,11 @@ function renderShell(at: string) {
 
 describe("AppShell", () => {
   it("ships only nav items that lead somewhere", () => {
-    renderShell("/apps");
+    renderShell("/projects");
     const nav = screen.getByRole("navigation", { name: "Primary" });
     expect(
       Array.from(nav.querySelectorAll("a")).map((a) => a.textContent),
-    ).toEqual(["Apps", "Cluster"]);
+    ).toEqual(["Projects", "Cluster"]);
   });
 
   it("marks the current destination active", () => {
@@ -33,13 +33,13 @@ describe("AppShell", () => {
     expect(screen.getByRole("link", { name: "Cluster" }).className).toContain(
       "k-nav__item--active",
     );
-    expect(screen.getByRole("link", { name: "Apps" }).className).not.toContain(
+    expect(screen.getByRole("link", { name: "Projects" }).className).not.toContain(
       "k-nav__item--active",
     );
   });
 
   it("points Docs at a destination that exists", () => {
-    renderShell("/apps");
+    renderShell("/projects");
     expect(screen.getByRole("link", { name: "Docs" })).toHaveProperty(
       "href",
       "https://github.com/dafrie/kelson/tree/main/docs",
@@ -54,7 +54,7 @@ describe("ThemeToggle in the shell", () => {
   });
 
   it("sits in the header and cycles the theme on <html>", () => {
-    renderShell("/apps");
+    renderShell("/projects");
     const toggle = screen.getByRole("button", { name: /^Theme:/ });
 
     // jsdom expresses no colour-scheme preference, so the shell opens on the

@@ -3,15 +3,15 @@ import { createRoutesFromElements, Navigate, Route } from "react-router-dom";
 import { AuthBoundary, RequireSession } from "./api/auth";
 import { AppShell } from "./components/AppShell";
 import { LoginPage } from "./pages/LoginPage";
-import { AppsPage } from "./pages/AppsPage";
-import { AppDetailPage } from "./pages/AppDetailPage";
+import { ProjectsPage } from "./pages/ProjectsPage";
+import { ProjectDetailPage } from "./pages/ProjectDetailPage";
 import { ClusterPage } from "./pages/ClusterPage";
 import { DeployPage } from "./pages/DeployPage";
 import { DiffPage } from "./pages/DiffPage";
 import { EditSpecPage } from "./pages/EditSpecPage";
 import { HistoryPage } from "./pages/HistoryPage";
 import { LogsPage } from "./pages/LogsPage";
-import { NewAppPage } from "./pages/NewAppPage";
+import { NewProjectPage } from "./pages/NewProjectPage";
 import { PromotePage } from "./pages/PromotePage";
 import { RollbackPage } from "./pages/RollbackPage";
 import { EmptyState } from "./components/States";
@@ -51,30 +51,30 @@ export const routes = createRoutesFromElements(
     <Route path="login" element={<LoginPage />} />
     <Route element={<RequireSession />}>
       <Route element={<AppShell />}>
-        <Route index element={<Navigate to="/apps" replace />} />
-        <Route path="apps" element={<AppsPage />} />
-        {/* Static before dynamic: /apps/new is the create flow, not a project
-            called "new". React Router ranks it first either way; the order here
-            says so to the reader too. */}
-        <Route path="apps/new" element={<NewAppPage />} />
-        <Route path="apps/:project" element={<AppDetailPage />} />
-        <Route path="apps/:project/edit" element={<EditSpecPage />} />
-        <Route path="apps/:project/:env/deploy" element={<DeployPage />} />
-        <Route path="apps/:project/:env/diff" element={<DiffPage />} />
-        <Route path="apps/:project/:env/history" element={<HistoryPage />} />
-        <Route path="apps/:project/:env/logs" element={<LogsPage />} />
+        <Route index element={<Navigate to="/projects" replace />} />
+        <Route path="projects" element={<ProjectsPage />} />
+        {/* Static before dynamic: /projects/new is the create flow, not a
+            project called "new". React Router ranks it first either way; the
+            order here says so to the reader too. */}
+        <Route path="projects/new" element={<NewProjectPage />} />
+        <Route path="projects/:project" element={<ProjectDetailPage />} />
+        <Route path="projects/:project/edit" element={<EditSpecPage />} />
+        <Route path="projects/:project/:env/deploy" element={<DeployPage />} />
+        <Route path="projects/:project/:env/diff" element={<DiffPage />} />
+        <Route path="projects/:project/:env/history" element={<HistoryPage />} />
+        <Route path="projects/:project/:env/logs" element={<LogsPage />} />
         {/* The environment in the path is the promotion's *target* — the one
             whose pins are written — and the source is picked on the screen.
             Naming the target is what makes this route reachable from the
             environment a reader is already looking at. */}
-        <Route path="apps/:project/:env/promote" element={<PromotePage />} />
-        <Route path="apps/:project/:env/rollback" element={<RollbackPage />} />
+        <Route path="projects/:project/:env/promote" element={<PromotePage />} />
+        <Route path="projects/:project/:env/rollback" element={<RollbackPage />} />
         <Route path="cluster" element={<ClusterPage />} />
         <Route
           path="*"
           element={
             <EmptyState title="No such page">
-              The UI starts at /apps; every flow hangs off a project and an
+              The UI starts at /projects; every flow hangs off a project and an
               environment.
             </EmptyState>
           }

@@ -69,16 +69,16 @@ a deploy or a log tail is a link that keeps working.
 
 | Route | What it does | RPCs |
 | --- | --- | --- |
-| `/apps` | One card per (project, environment): phase pill, revision, cause, live/degraded counts | `ListSpecs`, then one `DeployService.Status` per card |
-| `/apps/new` | Create a component: three fields, a rendered preview, then the store | `PutSpec` at `RENDER`, then with an idempotency key |
-| `/apps/:project` | Environment tabs with status, workload verdicts, data services, the environment's PR previews and Secrets, and the stored documents; buttons into the four flows | `GetSpec`, `Status`, `GetProfile`, `ListPreviews`, `ListSecrets`, `Render` (deferred presets only), `SetSecret`/`DeleteSecret` on use |
-| `/apps/:project/edit` | Edit the stored spec: a form tab and a raw YAML tab, a diff before saving, an optimistic-concurrency save. The form reaches `spec.previews` and the `delivery:` stanza it needs (ADR-0017) | `GetSpec`, `PutSpec` at `RENDER` then for real, `Diff` |
-| `/apps/:project/:env/deploy` | Preview (render dry-run) then a confirm that streams the deployment live | `Deploy` at `RENDER`, then at `NONE`; optional `Diff` at `SERVER` |
-| `/apps/:project/:env/diff` | Two tabs: the live cluster's own dry-run verdict, or today's render against a recorded revision. `?from=<revision>` opens the second one preselected | `Diff` at `SERVER`, or with `from_revision`; `History` for the picker |
-| `/apps/:project/:env/history` | The recorded revisions, newest first: what each was, when, the spec hash, the author the mode recorded, and a phase pill on the live one. Links out to diff and rollback | `History`, `Status` |
-| `/apps/:project/:env/logs` | Bounded Query, and a live tail that pauses, filters, reconnects and saves | `QueryLogs`, `FollowLogs` |
-| `/apps/:project/:env/promote` | The environment in the path is the **target**: pick a source, read the plan and the diff it produces, then write the pins. It never deploys | `GetSpec`, `Promote` at `RENDER` then `NONE` |
-| `/apps/:project/:env/rollback` | Revision picker, irreversibility preview, then the apply. `?to=<revision>` preselects and previews a target, never applies it | `History`, `Rollback` at `RENDER` then `NONE` |
+| `/projects` | One card per (project, environment): phase pill, revision, cause, live/degraded counts | `ListSpecs`, then one `DeployService.Status` per card |
+| `/projects/new` | Create a project and its first component: three fields, a rendered preview, then the store | `PutSpec` at `RENDER`, then with an idempotency key |
+| `/projects/:project` | Environment tabs with status, workload verdicts, data services, the environment's PR previews and Secrets, and the stored documents; buttons into the four flows | `GetSpec`, `Status`, `GetProfile`, `ListPreviews`, `ListSecrets`, `Render` (deferred presets only), `SetSecret`/`DeleteSecret` on use |
+| `/projects/:project/edit` | Edit the stored spec: a form tab and a raw YAML tab, a diff before saving, an optimistic-concurrency save. The form reaches `spec.previews` and the `delivery:` stanza it needs (ADR-0017) | `GetSpec`, `PutSpec` at `RENDER` then for real, `Diff` |
+| `/projects/:project/:env/deploy` | Preview (render dry-run) then a confirm that streams the deployment live | `Deploy` at `RENDER`, then at `NONE`; optional `Diff` at `SERVER` |
+| `/projects/:project/:env/diff` | Two tabs: the live cluster's own dry-run verdict, or today's render against a recorded revision. `?from=<revision>` opens the second one preselected | `Diff` at `SERVER`, or with `from_revision`; `History` for the picker |
+| `/projects/:project/:env/history` | The recorded revisions, newest first: what each was, when, the spec hash, the author the mode recorded, and a phase pill on the live one. Links out to diff and rollback | `History`, `Status` |
+| `/projects/:project/:env/logs` | Bounded Query, and a live tail that pauses, filters, reconnects and saves | `QueryLogs`, `FollowLogs` |
+| `/projects/:project/:env/promote` | The environment in the path is the **target**: pick a source, read the plan and the diff it produces, then write the pins. It never deploys | `GetSpec`, `Promote` at `RENDER` then `NONE` |
+| `/projects/:project/:env/rollback` | Revision picker, irreversibility preview, then the apply. `?to=<revision>` preselects and previews a target, never applies it | `History`, `Rollback` at `RENDER` then `NONE` |
 | `/cluster` | Server build and the detected ClusterProfile | `/healthz`, `GetProfile` |
 
 The history screen ([#67](https://github.com/dafrie/kelson/issues/67)) is bounded
@@ -122,8 +122,8 @@ The promote screen ([#11](https://github.com/dafrie/kelson/issues/11),
 environment it writes **into**. That is the direction a reader arrives with: they
 are looking at production and want what staging is running, so the screen is
 named from production's side — "promote into this environment" — and the source
-is the thing it asks for. Both entry points say it that way, on the app detail
-page next to the environment's other actions and once above the history
+is the thing it asks for. Both entry points say it that way, on the project
+detail page next to the environment's other actions and once above the history
 timeline.
 
 What it refuses to do, in the order a reader meets the refusals:
@@ -180,12 +180,12 @@ Five things the screens are deliberate about:
   remediation as a `fix:` line and `docs_url` as a link. Codes are never
   re-mapped; `delivery/unsupported` reaches the screen as the string the owning
   Go package defines.
-- **Creating an app asks three questions.** `/apps/new` shows a name, an image
-  and a port, and nothing else; an empty port is a worker, because the model
-  derives the workload kind from the shape rather than asking for a type. Every
-  other field the model can express sits behind one "More options" disclosure —
-  progressive disclosure is the whole design (docs/model.md's own target
-  shape), and the named failure mode is a first screen that asks forty
+- **Creating a project asks three questions.** `/projects/new` shows a name, an
+  image and a port, and nothing else; an empty port is a worker, because the
+  model derives the workload kind from the shape rather than asking for a type.
+  Every other field the model can express sits behind one "More options"
+  disclosure — progressive disclosure is the whole design (docs/model.md's own
+  target shape), and the named failure mode is a first screen that asks forty
   questions to deploy one container.
 
 ## The live log tail
@@ -237,7 +237,7 @@ arbitrary number of pods collide, and a colour alone would then be a lie.
 
 ## Data services
 
-`src/dataservices/` is the app detail page's third section
+`src/dataservices/` is the project detail page's third section
 ([#107](https://github.com/dafrie/kelson/issues/107)): a `kind: postgres`
 component is not a workload, so it is not listed among them. Four rules shape
 it, and each is there because the alternative would mislead:
@@ -303,8 +303,8 @@ wrong ones.
 
 ## Building spec documents in the browser
 
-`src/spec/documents.ts` writes the Project and Environment documents `/apps/new`
-stores. Three things about it are load-bearing:
+`src/spec/documents.ts` writes the Project and Environment documents
+`/projects/new` stores. Three things about it are load-bearing:
 
 - **It emits only what was filled in.** The store keeps the authored bytes
   (ADR-0013 §1) — this is the file the user now owns, so a builder that wrote
@@ -336,7 +336,7 @@ richer document the editor can write.
 
 ## Editing a stored spec
 
-`/apps/:project/edit` (#65) is the other half: `documents.ts` writes a document
+`/projects/:project/edit` (#65) is the other half: `documents.ts` writes a document
 nobody has an opinion about yet, and `src/spec/edit.ts` reads one back that
 somebody might. Those are different problems, because the store is byte-faithful
 and the spec is the user's file.

@@ -160,8 +160,8 @@ function droppingTransport() {
 function renderLogs(t: Transport = transport) {
   return renderAt(
     t,
-    "/apps/checkout/production/logs",
-    "/apps/:project/:env/logs",
+    "/projects/checkout/production/logs",
+    "/projects/:project/:env/logs",
     <LogsPage />,
   );
 }
