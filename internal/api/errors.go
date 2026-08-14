@@ -8,17 +8,17 @@ import (
 
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
 	"github.com/dafrie/kelson/internal/build"
+	"github.com/dafrie/kelson/internal/controlstore"
 	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/model"
 	"github.com/dafrie/kelson/internal/promote"
 	"github.com/dafrie/kelson/internal/redact"
 	"github.com/dafrie/kelson/internal/renderer"
 	"github.com/dafrie/kelson/internal/secret"
-	"github.com/dafrie/kelson/internal/serverstate"
 )
 
 // One wire error shape, six plane vocabularies (ADR-0013 §2). model.Error,
-// renderer.Error, delivery.Error, serverstate.Error, build.Error and
+// renderer.Error, delivery.Error, controlstore.Error, build.Error and
 // promote.Error each fill the subset of kelson.v1alpha1.Error they know. Codes
 // pass through verbatim — an agent branching on "schema/not-implemented" or
 // "store/version-conflict" sees the same string here that the owning Go package
@@ -94,7 +94,7 @@ func planeErrors(err error) []*kelsonv1alpha1.Error {
 		return []*kelsonv1alpha1.Error{fromDelivery(deliveryErr)}
 	}
 
-	var storeErr serverstate.Error
+	var storeErr controlstore.Error
 	if errors.As(err, &storeErr) {
 		return []*kelsonv1alpha1.Error{fromStore(storeErr)}
 	}
@@ -168,7 +168,7 @@ func fromRenderer(e renderer.Error) *kelsonv1alpha1.Error {
 	return &kelsonv1alpha1.Error{
 		Code: e.Code,
 		// The wire field keeps its v1alpha1 name; the renderer's does not
-		// (ADR-0027).
+		// (ADR-0032).
 		Application: e.Component,
 		Overlay:     e.Overlay,
 		Target:      e.Target,
@@ -201,7 +201,7 @@ func fromBuild(e build.Error) *kelsonv1alpha1.Error {
 	}
 }
 
-func fromStore(e serverstate.Error) *kelsonv1alpha1.Error {
+func fromStore(e controlstore.Error) *kelsonv1alpha1.Error {
 	return &kelsonv1alpha1.Error{
 		Code:        string(e.Code),
 		Resource:    e.Resource,
@@ -266,11 +266,11 @@ func fail(code connect.Code, err error) *connect.Error {
 // resources.
 func failStore(err error) error {
 	switch {
-	case serverstate.AsVersionConflict(err):
+	case controlstore.AsVersionConflict(err):
 		return fail(connect.CodeFailedPrecondition, err)
-	case serverstate.AsNotFound(err):
+	case controlstore.AsNotFound(err):
 		return fail(connect.CodeNotFound, err)
-	case serverstate.AsTooLarge(err):
+	case controlstore.AsTooLarge(err):
 		return fail(connect.CodeResourceExhausted, err)
 	default:
 		return nil
@@ -352,11 +352,19 @@ func unimplemented(what string) error {
 }
 
 // failRequest is the single boundary translation: state-plane errors keep their
-// own codes, a dependency failure is Unavailable, and everything else is the
-// caller's request being wrong.
+// own codes, a capability kelson has not rebuilt yet is Unimplemented, a
+// dependency failure is Unavailable, and everything else is the caller's
+// request being wrong.
 func failRequest(err error) error {
 	if cerr := failStore(err); cerr != nil {
 		return cerr
+	}
+	// A gated capability is not the caller's mistake and must never be reported
+	// as one: an agent that reads InvalidArgument rewrites its request and
+	// tries again forever, where Unimplemented tells it to stop (ADR-0028,
+	// issue #224). The structured detail rides along either way.
+	if delivery.AsNotImplemented(err) {
+		return fail(connect.CodeUnimplemented, err)
 	}
 	if cerr := failPromote(err); cerr != nil {
 		return cerr

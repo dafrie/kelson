@@ -12,27 +12,30 @@ and that renders as a `valueFrom.secretKeyRef` under every backend
 ([ADR-0018](adr/0018-secret-references.md)). What changes between backends is the mechanism that puts a
 value where the reference points — one field on one Environment, and no spec text moves.
 
-| Backend | Where the value lives | Who writes it | In the Git artifact |
+| Backend | Where the value lives | Who writes it | In the delivered artifact |
 |---|---|---|---|
 | `cluster` (default) | a Kubernetes Secret | `kelson secret set` | no |
-| `sops` | your delivery repository, encrypted with age | `kelson secret set` | **yes**, encrypted |
+| `sops` | the artifact kelson publishes, encrypted with age | `kelson secret set` | **yes**, encrypted |
 | `externalSecrets` | Vault, AWS/GCP/Azure secret manager | you, in that store | no |
 
 `cluster` needs no setup at all and is the right answer for most people. Its one real cost is written
-into ADR-0009's own consequences: **rebuilding a cluster from Git alone will not restore the secrets.**
-`sops` is what closes that, and this page is mostly about it.
+into ADR-0009's own consequences: **rebuilding a cluster from the delivered artifact alone will not
+restore the secrets.** `sops` is what closes that, and this page is mostly about it.
 
 ---
 
 ## The `sops` backend
 
-Values are encrypted with [age](https://age-encryption.org) and committed to the delivery repository.
-Flux's kustomize-controller decrypts them on the way into the cluster. A cluster rebuilt from the
-repository comes back with its secrets, and the only thing that has to survive outside Git is one age
-identity.
+Values are encrypted with [age](https://age-encryption.org) and travel **inside the artifact kelson
+publishes**, beside the workloads that reference them. kustomize-controller decrypts them on the way
+into the cluster. A cluster rebuilt from the artifact comes back with its secrets, and the only thing
+that has to survive outside is one age identity.
 
-It requires `delivery.mode: flux`. Direct mode has no decryptor, so kelson refuses at render time with
-`render/sops-requires-flux` rather than committing a file nothing would ever decrypt.
+It needs no mode and no gate. kustomize-controller decrypts a `Kustomization`'s sources
+per-Kustomization and does not care whether the source is a `GitRepository` or an `OCIRepository`, which
+is why [ADR-0022](adr/0022-sops-age.md)'s mechanism survived the transport change of
+[ADR-0028](adr/0028-delivery-spine.md) §7 intact — and why the old `render/sops-requires-flux` refusal
+is gone with the modes.
 
 ### Setup, once per cluster
 
@@ -44,38 +47,17 @@ age-keygen -o age.key
 # Public key: age13w78znajf5kee8msacel80jz6qeuc9tyxhuqkwnqcsaymlrj7clsy4fgdw
 ```
 
-**2. Give the identity to Flux.** kelson never holds it — `kelson secret set` needs only the public
-recipient — so this step is yours:
+**2. Give the identity to the cluster.** kelson never holds it — `kelson secret set` needs only the
+public recipient — so this step is yours, and it is the only one:
 
 ```sh
-kubectl -n flux-system create secret generic sops-age --from-file=age.agekey=age.key
+kubectl -n kelson-system create secret generic sops-age --from-file=age.agekey=age.key
 ```
 
-**3. Tell the Kustomization to decrypt.** The Kustomization that reconciles your delivery path is part of
-the cluster's bootstrap, not something kelson writes ([ADR-0012](adr/0012-flux-only-gitops.md)):
+The Secret goes in the namespace the `Kustomization` lives in, which is `kelson-system`
+([ADR-0028](adr/0028-delivery-spine.md) decision 3).
 
-```yaml
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: checkout
-  namespace: flux-system
-spec:
-  interval: 5m
-  path: ./clusters/prod/checkout
-  prune: true
-  sourceRef: { kind: GitRepository, name: deploy }
-  decryption:
-    provider: sops
-    secretRef:
-      name: sops-age
-```
-
-Without that block the encrypted file is applied verbatim: a Secret whose value is the literal string
-`ENC[AES256_GCM,…]`, and a workload that starts with a credential that is not one. `kelson secret set`
-prints this block every time it writes an encrypted file for exactly that reason.
-
-**4. Put the recipient in the Environment.**
+**3. Put the recipient in the Environment.**
 
 ```yaml
 apiVersion: kelson.dev/v1alpha1
@@ -83,18 +65,37 @@ kind: Environment
 metadata: {name: production}
 spec:
   project: checkout
-  delivery:
-    mode: flux
-    git:
-      repo: https://github.com/acme/deploy
-      branch: main
-      path: clusters/prod/checkout
+  namespace: checkout-production
   secrets:
     backend: sops
     ageRecipients:
       - age13w78znajf5kee8msacel80jz6qeuc9tyxhuqkwnqcsaymlrj7clsy4fgdw
     # ageKeySecret: sops-age   # optional; this is the default
 ```
+
+**There is no third step.** kelson writes the `spec.decryption` block on the `Kustomization` it owns,
+from `ageKeySecret`:
+
+```yaml
+  decryption:
+    provider: sops
+    secretRef:
+      name: sops-age
+```
+
+This **reverses [ADR-0022](adr/0022-sops-age.md) §5**, which said *"kelson does not write that
+Kustomization, because the reconciler's own objects belong to the operator"*. That was right when a
+user's own Kustomization reconciled a path in a user's own repository. Now kelson publishes the artifact
+and owns the Kustomization that consumes it, so the decryption block has no other plausible owner —
+and ADR-0022's worst failure mode goes with it: **"encrypted but never decrypted" is no longer reachable
+by skipping a step.** Without that block an encrypted file is applied verbatim, as a Secret whose value
+is the literal string `ENC[AES256_GCM,…]` and a workload that starts with a credential that is not one.
+Nobody has to remember it now.
+
+> **Transition ([#224](https://github.com/dafrie/kelson/issues/224)).** Until R1 lands the transport is
+> still a git repository, the Kustomization that reconciles it is still yours to write, and
+> `kelson secret set` still prints the decryption block for you to paste. The `sops-age` Secret lives
+> in whatever namespace that Kustomization does — `flux-system` in the usual bootstrap.
 
 `ageRecipients` holds **public** keys. They are not secret and they belong in the repository in the
 clear — that is the shape of the mechanism, not a compromise: encrypting needs the recipient, decrypting
@@ -109,16 +110,16 @@ kelson secret set checkout-db -f spec.yaml --env production url=postgres://user:
 `-f` is what tells kelson which backend to use — it reads `secrets.backend` from the spec. Without it,
 kelson assumes `cluster` and writes to the API server instead.
 
-The value is encrypted **in memory** and the ciphertext is committed. No plaintext file is ever created:
-kelson writes through an in-memory filesystem, so neither the plaintext nor the encrypted form touches
-your disk. Use `--from-stdin` or `--from-file` to keep the value out of your shell history:
+The value is encrypted **in memory** and only the ciphertext is stored. No plaintext file is ever
+created: kelson writes through an in-memory filesystem, so neither the plaintext nor the encrypted form
+touches your disk. Use `--from-stdin` or `--from-file` to keep the value out of your shell history:
 
 ```sh
 read -rs PW && printf '%s' "$PW" |
   kelson secret set checkout-db -f spec.yaml --env production --from-stdin password
 ```
 
-What lands in the repository is `clusters/prod/checkout/secrets/checkout-db.enc.yaml`:
+What kelson writes is an encrypted Secret manifest that ships with the workloads that reference it:
 
 ```yaml
 apiVersion: v1
@@ -146,8 +147,14 @@ sops:
 ```
 
 Only the **values** are encrypted. The Secret's name, namespace and key names stay readable, which is
-what makes an encrypted secret reviewable: a pull request shows which Secret gained which key, and shows
-the value as ciphertext.
+what makes an encrypted secret reviewable: a diff shows which Secret gained which key, and shows the
+value as ciphertext.
+
+> **Transition ([#225](https://github.com/dafrie/kelson/issues/225)).** Today the file is written to
+> `<delivery.git.path>/secrets/<name>.enc.yaml` in the delivery repository and travels to the cluster as
+> a commit. [ADR-0028](adr/0028-delivery-spine.md) §7 decides that the ciphertext travels in the
+> artifact; where `kelson secret set` holds it on the way there, so the publisher picks it up, is R2
+> work the ADRs do not settle.
 
 ### `set` writes the whole Secret
 
@@ -171,12 +178,12 @@ Pass every key the Secret should have. To drop a key deliberately, `kelson secre
 kelson secret list -f spec.yaml --env production
 ```
 
-reads the committed files and reports names and key names. It needs no key at all — SOPS encrypts
-values, not structure. There is no age column: a file's age is a fact about the repository rather than
-about the credential.
+reads the encrypted files and reports names and key names. It needs no key at all — SOPS encrypts
+values, not structure. There is no age column: a file's age is a fact about where it is stored rather
+than about the credential.
 
 There is no `kelson secret get` under any backend. Reading a value is `kubectl get secret` (or
-`sops -d`), with the cluster's or the repository's own access control behind it.
+`sops -d`), with the cluster's or the store's own access control behind it.
 
 ### Deleting
 
@@ -184,11 +191,12 @@ There is no `kelson secret get` under any backend. Reading a value is `kubectl g
 kelson secret delete checkout-db -f spec.yaml --env production
 ```
 
-removes the encrypted file; Flux prunes the Secret on its next reconcile because the Kustomization owns
-what it applied.
+removes the encrypted file; kustomize-controller prunes the Secret on the next reconcile, because the
+`Kustomization` owns what it applied and runs with `prune: true`.
 
-**The value is still in the repository's history.** Anyone with the age identity and a clone can read it.
-A deleted secret is a secret that needs rotating, not a secret that is gone.
+**Every previous version is still readable by anyone holding the age identity** — in the repository's
+history, and in the immutable artifacts kelson has already published, which are never deleted. A deleted
+secret is a secret that needs rotating, not a secret that is gone.
 
 ---
 
@@ -213,7 +221,7 @@ Adding a second recipient costs one line in each encrypted file and buys the rec
 
 Rotation is add-then-remove, and `kelson secret rotate` is what tells you where you are in it.
 
-**1. Add the new recipient** to `ageRecipients` alongside the old one, and commit the spec.
+**1. Add the new recipient** to `ageRecipients` alongside the old one, and apply the spec.
 
 **2. Find what is stale.**
 
@@ -267,7 +275,7 @@ Two mitigations, both to be set up before you need them:
 
 - **A second recipient whose identity lives offline.** Every file is wrapped for it, so it opens all of
   them. A printed key in a safe is a legitimate answer here.
-- **The identity backed up outside the repository** — a password manager, a hardware token, the cluster
+- **The identity backed up somewhere else entirely** — a password manager, a hardware token, the
   secret store you already run.
 
 **If the identity is gone and there is no second recipient**, the encrypted values are lost and the only
@@ -275,8 +283,8 @@ path forward is to reissue the credentials at their sources and write them again
 
 ```sh
 age-keygen -o age.key
-kubectl -n flux-system delete secret sops-age
-kubectl -n flux-system create secret generic sops-age --from-file=age.agekey=age.key
+kubectl -n kelson-system delete secret sops-age
+kubectl -n kelson-system create secret generic sops-age --from-file=age.agekey=age.key
 # put the new recipient in the Environment spec, replacing the old one, then for each Secret:
 kelson secret set checkout-db -f spec.yaml --env production url=<new value> token=<new value>
 ```
@@ -284,9 +292,9 @@ kelson secret set checkout-db -f spec.yaml --env production url=<new value> toke
 The old `.enc.yaml` files are inert once every Secret has been rewritten; `kelson secret rotate` will
 list any you missed.
 
-**If the cluster is gone but the repository and the identity survive**, there is nothing to recover:
-install Flux, create the `sops-age` Secret, point a Kustomization at the path, and the secrets come back
-with everything else.
+**If the cluster is gone but your spec repository and the identity survive**, there is nothing to
+recover: install Flux, create the `sops-age` Secret, apply the Project and Environment, and the secrets
+come back with everything else — kelson rebuilds the artifact and the Kustomization that decrypts it.
 
 ---
 
@@ -296,24 +304,24 @@ with everything else.
 decrypt. kelson names the cause after the controller's own message:
 
 ```
-flux: Kustomization flux-system/checkout rejected the change (BuildFailed): failed to decrypt secret …
-  cause: this Kustomization could not decrypt the SOPS-encrypted manifests at clusters/prod/checkout.
-  fix: check, in this order — (1) the Kustomization has spec.decryption: {provider: sops, secretRef:
-  {name: …}}; (2) that Secret exists in namespace flux-system and holds the age identity under a
-  .agekey key; (3) the identity is one of the recipients the files are encrypted to — `kelson secret
-  rotate` lists them without needing a key.
+flux: Kustomization kelson-system/checkout-production rejected the change (BuildFailed): failed to
+  decrypt secret …
+  cause: this Kustomization could not decrypt the SOPS-encrypted manifests in the artifact.
+  fix: check, in this order — (1) the Secret named by ageKeySecret exists in namespace kelson-system
+  and holds the age identity under a .agekey key; (2) the identity is one of the recipients the files
+  are encrypted to — `kelson secret rotate` lists them without needing a key.
 ```
 
+The block itself is no longer on that list: kelson writes `spec.decryption` on the Kustomization it
+owns, so a missing one is a kelson bug rather than a setup step somebody skipped.
+
 **A pod fails with `CreateContainerConfigError`.** The Secret the reference names does not exist yet.
-Either nothing wrote it (`kelson secret list`), or the Kustomization has not reconciled the commit yet,
-or it could not decrypt — see above.
+Either nothing wrote it (`kelson secret list`), or the Kustomization has not reconciled this revision
+yet, or it could not decrypt — see above.
 
 **`secret/sops-not-encrypted`.** There is a file where an encrypted Secret belongs that is not a SOPS
-document — almost always a plaintext Secret committed by hand. kelson reports it rather than overwriting
-it, because the first step is treating its contents as compromised: it is in the repository's history.
-
-**`secret/sops-write-failed` with a conflict.** The delivery branch moved while the command was running.
-kelson never force-pushes; re-run it and it re-reads the branch.
+document — almost always a plaintext Secret written by hand. kelson reports it rather than overwriting
+it, because the first step is treating its contents as compromised.
 
 ---
 
@@ -322,9 +330,10 @@ kelson never force-pushes; re-run it and it re-reads the branch.
 - **kelson never holds an age private key.** There is no flag for one and no code path that could use
   one. Everything kelson does with an encrypted file — writing it, listing it, detecting recipient drift
   — is built out of what SOPS leaves in the clear.
-- **kelson does not write the Kustomization that decrypts.** The reconciler's own objects are the
-  cluster's bootstrap, not kelson's ([ADR-0012](adr/0012-flux-only-gitops.md)). `kelson secret set`
-  prints the block you need.
+- **kelson does not hold, and does not ask for, the cluster's age identity.** Creating the Secret that
+  holds it is the one setup step that stays yours. kelson *does* write the `spec.decryption` block that
+  points at it — that reversal is [ADR-0028](adr/0028-delivery-spine.md) §7, and it is what closed
+  ADR-0022's "encrypted but never decrypted" gap.
 - **kelson does not read values back.** No backend has a `get`, and no message in the API schema has a
   field a value could arrive in.
 - **kelson does not content-sniff your logs.** The guarantee is the one kelson can keep: kelson never
@@ -335,8 +344,10 @@ kelson never force-pushes; re-run it and it re-reads the branch.
 
 ## See also
 
-- [ADR-0009](adr/0009-secrets.md) — secrets are references; values never enter Git
+- [ADR-0009](adr/0009-secrets.md) — secrets are references; values never enter the spec
 - [ADR-0018](adr/0018-secret-references.md) — the `{secret, key}` reference schema
 - [ADR-0020](adr/0020-external-secrets.md) — the `externalSecrets` backend
 - [ADR-0022](adr/0022-sops-age.md) — the `sops` backend, and why kelson holds no key
+- [ADR-0028](adr/0028-delivery-spine.md) §7 — the transport is the artifact, and kelson writes the
+  decryption block
 - [Model](model.md) — where `secrets:` sits in the spec

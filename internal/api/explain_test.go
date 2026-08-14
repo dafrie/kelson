@@ -2,48 +2,33 @@ package api
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"testing"
 
 	"connectrpc.com/connect"
 
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
-	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/observation"
 )
 
 // ExplainService is assembly over internal/explain, which owns the causal
 // machinery and is tested on its own. What these tests assert is the assembly:
-// that the handler resolves all four sources, hands them across intact, asks
-// the log engine for the crash-loop window, and reports a source it could not
-// read as a note rather than as a failure.
+// that the handler resolves the sources it has, hands them across intact, asks
+// the log engine for the crash-loop window, and reports the sources it does not
+// have as notes rather than as a failure.
 
-// recordedRevision renders the one Deployment of the fixture with the given env
-// entries, in the shape the rendered-history store keeps.
-func recordedRevision(image string, env string) []delivery.Manifest {
-	yaml := "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web\n  namespace: hello-development\n" +
-		"spec:\n  template:\n    spec:\n      containers:\n        - name: web\n          image: " + image + "\n"
-	if env != "" {
-		yaml += "          env:\n" + env
-	}
-	return []delivery.Manifest{{
-		APIVersion: "apps/v1", Kind: "Deployment", Name: "web", Namespace: "hello-development", YAML: []byte(yaml),
-	}}
-}
-
-const databaseURLEnv = "            - name: DATABASE_URL\n              value: postgres://db/app\n"
-
-// TestExplainAnswersTheAcceptanceCase: a CrashLoopBackOff caused by a missing
-// environment variable comes back over the wire with the variable and the
-// revision that introduced it, at high confidence, with the evidence attached.
-func TestExplainAnswersTheAcceptanceCase(t *testing.T) {
-	adapter := newFakeAdapter("direct")
-	adapter.statuses = []delivery.Status{{Phase: delivery.PhaseDegraded, Revision: "rev-00000043"}}
-	adapter.history = []delivery.Entry{
-		{Revision: "rev-00000043", CommittedAt: "2026-08-13T09:20:00Z", Message: "deploy hello development"},
-		{Revision: "rev-00000042", CommittedAt: "2026-08-12T17:02:00Z", Message: "deploy hello development"},
-	}
+// TestExplainStatesTheSourcesItLost is what remains of the acceptance case.
+//
+// The full one asserted that a CrashLoopBackOff caused by a missing environment
+// variable came back with the variable AND the revision that introduced it, at
+// high confidence. The revision half needed the recorded manifests of the last
+// two revisions, and ADR-0027 decision 7 deleted the store that kept them, so
+// the correlation is gone until issue #224 — as is the delivery phase.
+//
+// What must not be gone is the statement that they are missing. A diagnosis
+// that quietly stopped consulting a source reads exactly like one that
+// consulted it and found nothing.
+func TestExplainStatesTheSourcesItLost(t *testing.T) {
 	health := fakeEvaluator{"web": {
 		Healthy:     false,
 		Code:        observation.CodeCrashLoopBackOff,
@@ -55,11 +40,7 @@ func TestExplainAnswersTheAcceptanceCase(t *testing.T) {
 			Logs: "starting hello\nKeyError: 'DATABASE_URL'\n",
 		}},
 	}}
-	recorded := &fakeRecorded{revisions: map[string][]delivery.Manifest{
-		"rev-00000043": recordedRevision("ghcr.io/acme/hello:1.4.3", ""),
-		"rev-00000042": recordedRevision("ghcr.io/acme/hello:1.4.2", databaseURLEnv),
-	}}
-	connector, _ := connectorFor(adapter, recorded, health)
+	connector, _ := connectorFor(health)
 	c := serve(t, Options{Delivery: connector})
 
 	res, err := c.explain.Explain(context.Background(), connect.NewRequest(&kelsonv1alpha1.ExplainRequest{
@@ -72,44 +53,28 @@ func TestExplainAnswersTheAcceptanceCase(t *testing.T) {
 	}
 	msg := res.Msg
 
-	if msg.GetSubject().GetNamespace() != "hello-development" || msg.GetSubject().GetRevision() != "rev-00000043" {
-		t.Errorf("subject = %+v, want the resolved namespace and the live revision", msg.GetSubject())
+	if msg.GetSubject().GetNamespace() != "hello-development" {
+		t.Errorf("subject = %+v, want the resolved namespace", msg.GetSubject())
 	}
-	if msg.GetPhase() != string(delivery.PhaseDegraded) {
-		t.Errorf("phase = %q, want the adapter's own", msg.GetPhase())
-	}
-
-	var cause *kelsonv1alpha1.ExplainCause
-	for _, c := range msg.GetCauses() {
-		if c.GetCode() == "explain/missing-env-var" {
-			cause = c
+	// The container's own output still names the variable, which is the half of
+	// the acceptance case that survives.
+	var named bool
+	for _, cause := range msg.GetCauses() {
+		if strings.Contains(cause.GetMessage(), "DATABASE_URL") {
+			named = true
 		}
 	}
-	if cause == nil {
-		t.Fatalf("no missing-env-var cause in %+v", msg.GetCauses())
+	if !named {
+		t.Errorf("no cause names the variable the container complained about: %+v", msg.GetCauses())
 	}
-	if cause.GetConfidence() != "high" {
-		t.Errorf("confidence = %q, want high: the change and the container's output agree", cause.GetConfidence())
+	notes := strings.Join(msg.GetNotes(), "\n")
+	for _, want := range []string{"delivery phase", "no change was correlated", "#224"} {
+		if !strings.Contains(notes, want) {
+			t.Errorf("notes = %q, want %q stated", notes, want)
+		}
 	}
-	if !strings.Contains(cause.GetMessage(), "DATABASE_URL") {
-		t.Errorf("message does not name the variable: %q", cause.GetMessage())
-	}
-	if cause.GetIntroducedBy().GetRevision() != "rev-00000043" {
-		t.Errorf("introduced_by = %+v, want rev-00000043", cause.GetIntroducedBy())
-	}
-	if len(cause.GetEvidence()) == 0 {
-		t.Errorf("a high-confidence cause with no evidence is exactly what #77 forbids")
-	}
-
-	change := msg.GetRecentChange()
-	if change == nil || len(change.GetEnv()) != 1 || change.GetEnv()[0].GetName() != "DATABASE_URL" {
-		t.Fatalf("recent change = %+v, want the one env-var removal", change)
-	}
-	if change.GetEnv()[0].GetKind() != "removed" || change.GetPrevious().GetRevision() != "rev-00000042" {
-		t.Errorf("env change = %+v, previous = %+v", change.GetEnv()[0], change.GetPrevious())
-	}
-	if len(change.GetImages()) != 1 || change.GetImages()[0].GetAfter() != "ghcr.io/acme/hello:1.4.3" {
-		t.Errorf("image changes = %+v, want the tag bump", change.GetImages())
+	if msg.GetRecentChange() != nil {
+		t.Errorf("recent change = %+v, want none when no history could be read", msg.GetRecentChange())
 	}
 }
 
@@ -117,8 +82,6 @@ func TestExplainAnswersTheAcceptanceCase(t *testing.T) {
 // needs — the lines before the container terminated — not a plain tail, and it
 // is bounded by the capability's own cap rather than by a number invented here.
 func TestExplainAsksForTheCrashLoopLogWindow(t *testing.T) {
-	adapter := newFakeAdapter("direct")
-	adapter.statuses = []delivery.Status{{Phase: delivery.PhaseDegraded, Revision: "rev-00000001"}}
 	health := fakeEvaluator{"web": {
 		Healthy:  false,
 		Code:     observation.CodeCrashLoopBackOff,
@@ -128,7 +91,7 @@ func TestExplainAsksForTheCrashLoopLogWindow(t *testing.T) {
 	engine := &fakeLogEngine{result: observation.Result{Lines: []observation.Line{
 		{Pod: "web-1", Container: "web", Message: "fatal: STRIPE_API_KEY is not set"},
 	}}}
-	connector, _ := connectorFor(adapter, nil, health)
+	connector, _ := connectorFor(health)
 	c := serve(t, Options{Delivery: connector, Logs: engine})
 
 	res, err := c.explain.Explain(context.Background(), connect.NewRequest(&kelsonv1alpha1.ExplainRequest{
@@ -158,49 +121,10 @@ func TestExplainAsksForTheCrashLoopLogWindow(t *testing.T) {
 	}
 }
 
-// TestExplainDegradesToNotes: a server with no log engine, a plane with no
-// recorded manifests and an adapter whose history fails still answers. Every
-// missing source is stated, which is what keeps a partial answer from reading
-// as a complete one.
-func TestExplainDegradesToNotes(t *testing.T) {
-	adapter := newFakeAdapter("direct")
-	adapter.statuses = []delivery.Status{{Phase: delivery.PhaseDegraded, Revision: "rev-00000001"}}
-	adapter.historyErr = errors.New("the history store is unreachable")
-	health := fakeEvaluator{"web": {
-		Healthy:  false,
-		Code:     observation.CodeCrashLoopBackOff,
-		Reason:   "CrashLoopBackOff",
-		Resource: "Deployment/hello-development/web",
-	}}
-	connector, _ := connectorFor(adapter, nil, health)
-	c := serve(t, Options{Delivery: connector})
-
-	res, err := c.explain.Explain(context.Background(), connect.NewRequest(&kelsonv1alpha1.ExplainRequest{
-		Spec:        inlineSpec(projectDoc, map[string]string{"development": developmentDoc}),
-		Environment: "development",
-		Profile:     profileRef(),
-	}))
-	if err != nil {
-		t.Fatalf("a diagnosis must not fail because a second source did: %v", err)
-	}
-	if len(res.Msg.GetCauses()) == 0 {
-		t.Errorf("the crash loop is still a cause without history or logs")
-	}
-	notes := strings.Join(res.Msg.GetNotes(), "\n")
-	if !strings.Contains(notes, "history store is unreachable") {
-		t.Errorf("notes = %q, want the adapter's own history failure stated", notes)
-	}
-	if res.Msg.GetRecentChange() != nil {
-		t.Errorf("recent change = %+v, want none when no history could be read", res.Msg.GetRecentChange())
-	}
-}
-
 // TestExplainReportsAHealthyEnvironment: the RPC is not a failure detector. A
 // healthy environment gets a summary saying so and no causes.
 func TestExplainReportsAHealthyEnvironment(t *testing.T) {
-	adapter := newFakeAdapter("direct")
-	adapter.statuses = []delivery.Status{{Phase: delivery.PhaseHealthy, Revision: "rev-00000007"}}
-	connector, _ := connectorFor(adapter, nil, fakeEvaluator{})
+	connector, _ := connectorFor(fakeEvaluator{})
 	c := serve(t, Options{Delivery: connector})
 
 	res, err := c.explain.Explain(context.Background(), connect.NewRequest(&kelsonv1alpha1.ExplainRequest{
@@ -223,8 +147,7 @@ func TestExplainReportsAHealthyEnvironment(t *testing.T) {
 // that does not resolve is a request failure with the structured error riding
 // along, not a panic and not an empty explanation.
 func TestExplainRejectsAnUnknownEnvironment(t *testing.T) {
-	adapter := newFakeAdapter("direct")
-	connector, _ := connectorFor(adapter, nil, nil)
+	connector, _ := connectorFor(nil)
 	c := serve(t, Options{Delivery: connector})
 
 	_, err := c.explain.Explain(context.Background(), connect.NewRequest(&kelsonv1alpha1.ExplainRequest{

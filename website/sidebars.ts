@@ -185,8 +185,33 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'doc',
-          id: 'adr/0027-finish-the-component-rename',
-          label: '0027 — Finish the component rename',
+          id: 'adr/0027-crd-native-control-plane',
+          label: '0027 — CRD-native control plane',
+        },
+        {
+          type: 'doc',
+          id: 'adr/0028-delivery-spine',
+          label: '0028 — The delivery spine',
+        },
+        {
+          type: 'doc',
+          id: 'adr/0029-renderer-stays-go',
+          label: '0029 — The renderer stays Go',
+        },
+        {
+          type: 'doc',
+          id: 'adr/0030-flux-aio-install',
+          label: '0030 — Install substrate: flux-aio',
+        },
+        {
+          type: 'doc',
+          id: 'adr/0031-single-cluster-single-tenant',
+          label: '0031 — Single cluster, single tenant',
+        },
+        {
+          type: 'doc',
+          id: 'adr/0032-finish-the-component-rename',
+          label: '0032 — Finish the component rename',
         },
       ],
     },

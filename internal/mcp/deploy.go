@@ -10,24 +10,22 @@ import (
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
 )
 
-const deployDescription = `Deploy a stored project's environment, or preview what deploying it would do.
+const deployDescription = `Preview what deploying a stored project's environment would do. Applying is NOT AVAILABLE yet.
 
-MUTATES THE CLUSTER when dry_run="none". The default is dry_run="render", which applies nothing.
+MUTATES THE CLUSTER when dry_run="none" — and that rung CHANGES NOTHING TODAY, because kelson's delivery spine is being rebuilt on a controller (ADR-0028) and it is refused with the code delivery/not-implemented, naming issue #224. Do not retry it: the refusal is about kelson, not about your request, and it will not succeed until that issue lands.
 
 dry_run:
-  "render" (default) — validate and render only; returns what would be applied and the kinds and sizes of the manifests. Touches nothing.
-  "server"           — ask the Kubernetes API server itself (server-side dry-run, including admission and policy). Touches nothing, needs a reachable cluster.
-  "none"             — actually deploy, and wait for it to settle.
+  "render" (default) — validate and render only; returns what would be applied and the kinds and sizes of the manifests. Works, and is unaffected by the rebuild.
+  "server"           — ask the Kubernetes API server itself (server-side dry-run, including admission and policy). Works; needs a reachable cluster.
+  "none"             — refused with delivery/not-implemented (issue #224).
 
-With dry_run="none" this tool does not return a stream: it runs the deployment to its settled outcome and returns that — final phase, cause, and the structured error when it settled unhealthy. A deployment that never became healthy within the server's timeout returns a "stuck" verdict, which is an answer about the deployment, not a failure of this call.
+What this still answers well: whether a spec renders, what it renders, and whether the cluster would accept it — including admission and policy verdicts. That is the whole of the pre-flight check, and it is the part worth doing before a human deploys.
 
 Preconditions: the project must be stored (put_spec) and declare the environment. Supply image when the spec builds from source and you want a specific tag.
 
-Cost: dry_run="render" is fast. dry_run="none" blocks until the deployment settles or the server's timeout expires (5 minutes by default), so call it once and use wait_for_outcome or diagnose_component to follow up rather than calling it again.
+Cost: both preview rungs are one server call. "render" is offline; "server" needs the cluster.
 
-Every call carries an idempotency key, returned in the answer. If you retry after a timeout, pass the same idempotency_key back so the retry is the same deployment rather than a second one.
-
-Pass reason to say why you are deploying. It is recorded in kelson's audit trail beside the action, which is what makes the deployment reviewable afterwards by someone who was not here.`
+Pass reason to say why you are deploying. It is recorded in kelson's audit trail beside the action, which is what makes the attempt reviewable afterwards by someone who was not here.`
 
 type deployInput struct {
 	Project        string `json:"project" jsonschema:"the stored project name"`

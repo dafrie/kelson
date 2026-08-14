@@ -3,7 +3,7 @@ package api
 import (
 	"context"
 
-	"github.com/dafrie/kelson/internal/serverstate"
+	"github.com/dafrie/kelson/internal/controlstore"
 )
 
 // Who is making this request (issue #74, ADR-0024).
@@ -46,7 +46,7 @@ type Principal struct {
 	// Agent is the stored identity, present only for [PrincipalAgent]. It is
 	// the value read from the cluster during *this* request — never a cached
 	// one — which is what makes revocation immediate.
-	Agent serverstate.Agent
+	Agent controlstore.Agent
 }
 
 // Subject is the principal as one audit-safe string: "agent:deploybot",

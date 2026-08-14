@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dafrie/kelson/internal/serverstate"
+	"github.com/dafrie/kelson/internal/controlstore"
 )
 
 // Interim authentication: one shared password, two transports (issue #84).
@@ -223,7 +223,7 @@ const noCredential = "kelson-server requires a credential: log in at /auth/login
 // agent token and a revoked agent token is never reported as a wrong password.
 func (a *Auth) principal(r *http.Request) (Principal, string) {
 	if token, present := bearerToken(r); present {
-		if strings.HasPrefix(token, serverstate.AgentTokenPrefix) {
+		if strings.HasPrefix(token, controlstore.AgentTokenPrefix) {
 			return a.agentPrincipal(r, token)
 		}
 		switch {

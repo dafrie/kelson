@@ -16,8 +16,8 @@ import (
 	"github.com/dafrie/kelson/internal/build/buildpacks"
 	"github.com/dafrie/kelson/internal/build/detect"
 	"github.com/dafrie/kelson/internal/build/registry"
-	"github.com/dafrie/kelson/internal/delivery/git"
 	"github.com/dafrie/kelson/internal/delivery/kube"
+	"github.com/dafrie/kelson/internal/gitref"
 	"github.com/dafrie/kelson/internal/model"
 )
 
@@ -366,7 +366,7 @@ type buildTarget struct {
 // revisionResolver answers "what commit does this ref name?" against a remote
 // repository. It is an interface because the answer needs the git libraries,
 // which the command plane's lint allow-list forbids (.golangci.yml) — the
-// implementation lives in the delivery plane and tests pass a fake.
+// implementation is internal/gitref and tests pass a fake.
 type revisionResolver interface {
 	Resolve(ctx context.Context, repo, ref string) (string, error)
 }
@@ -401,10 +401,11 @@ func connectBuild(t buildTarget) (*buildPlane, error) {
 	}
 	return &buildPlane{
 		builder: driver,
-		// The source repository and the deployment repository are commonly the
-		// same forge, so the build reuses the delivery credential rather than
-		// inventing a second one.
-		revisions: git.RemoteResolver{Auth: gitAuth()},
+		// KELSON_GIT_TOKEN reads the *source* repository. It was named for the
+		// deployment repository the git writer pushed to, and that writer is
+		// gone (ADR-0028); a build reading a private source is the one job the
+		// credential still has.
+		revisions: gitref.RemoteResolver{Auth: sourceAuth()},
 	}, nil
 }
 
@@ -479,4 +480,14 @@ func connectBuildPlane(opts *buildOptions, namespace string, strategy detect.Str
 		return nil, fmt.Errorf("the build plane is unavailable in this build")
 	}
 	return plane, nil
+}
+
+// sourceAuth reads the source-repository credential from the environment. A
+// missing token is anonymous, which is correct for local paths and public
+// remotes and fails loudly at ls-remote time for anything else.
+func sourceAuth() gitref.Auth {
+	if token := strings.TrimSpace(os.Getenv("KELSON_GIT_TOKEN")); token != "" {
+		return gitref.Token{Token: token}
+	}
+	return gitref.Anonymous{}
 }

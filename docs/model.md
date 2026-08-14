@@ -6,6 +6,15 @@ called out, before implementation. The Go types in `internal/model` and the gene
 `schema/` are derived from this document; when they disagree, this document is wrong until an ADR says
 otherwise.
 
+**An ADR now says otherwise.** [ADR-0027](adr/0027-crd-native-control-plane.md) makes `Project` and
+`Environment` custom resources, [ADR-0028](adr/0028-delivery-spine.md) deletes delivery modes and the
+`delivery:` block with them, and [ADR-0031](adr/0031-single-cluster-single-tenant.md) deletes
+`Environment.spec.cluster`. This page describes the model those ADRs decided. The code still carries the
+deleted vocabulary until R1/R2 land ([#224](https://github.com/dafrie/kelson/issues/224),
+[#225](https://github.com/dafrie/kelson/issues/225)); every place that matters carries a **Transition**
+note saying so. The two documents themselves are unchanged in shape — the same `apiVersion`, the same
+`kind`, the same `spec` — and are now applied to a cluster as well as read from a file.
+
 **The leaf is a Component.** ADR-0006 called it an Application and put managed data services in a second
 list beside it; ADR-0014 unified the two into one `spec.components` list with a closed set of kinds —
 `service`, `worker`, `cron`, `agent`, `postgres`, `valkey`, and `helm` since
@@ -27,11 +36,25 @@ milestone that will implement the field.
 | Field | Rejected until |
 |---|---|
 | `Project.spec.components[].tools` (`kind: agent`) | M7 · Agent surface & MCP ([#75](https://github.com/dafrie/kelson/issues/75)) |
-| `Project.spec.defaults.policy.deployers`, `Environment.spec.policy.deployers` | M11 · Teams, RBAC & multi-tenancy |
-| `Environment.spec.cluster` | M10 · Environments & promotion |
+| `Project.spec.defaults.policy.deployers`, `Environment.spec.policy.deployers` | tenancy ([#231](https://github.com/dafrie/kelson/issues/231)) |
+| `Project.spec.components[].release` | the Flux-native `dependsOn` split ([#227](https://github.com/dafrie/kelson/issues/227), [ADR-0028](adr/0028-delivery-spine.md) decision 8) |
 
 The rest of `policy:` is enforced as of [ADR-0025](adr/0025-agent-policy.md) — `deployers` stays gated
-because it is about human subjects, which kelson does not model yet.
+because it is about human subjects, which kelson does not model yet
+([ADR-0031](adr/0031-single-cluster-single-tenant.md) decision 2).
+
+**`Environment.spec.cluster` is deleted, not gated.**
+[ADR-0031](adr/0031-single-cluster-single-tenant.md) decision 1: a gate is right for a field whose shape
+is known and whose implementation is pending, and multi-cluster placement has several plausible shapes
+(a cluster reference, a placement policy, a selector over a fleet, a per-target kubeconfig). Keeping one
+guessed spelling prejudges the design and delivers nothing. It was already refused at validation, so no
+document that works today stops working. Multi-cluster is
+[#232](https://github.com/dafrie/kelson/issues/232).
+
+> **Transition ([#224](https://github.com/dafrie/kelson/issues/224)).** The field and its
+> `notimplemented.go` row are still in `internal/model` until the removal PR
+> ([#234](https://github.com/dafrie/kelson/issues/234) carries the spec-vocabulary deletions as one
+> behaviour change). Writing it is a `schema/not-implemented` refusal today and an unknown field after.
 
 The gate lives in validation only: `internal/model/notimplemented.go` holds the table, and
 `internal/model/coverage_test.go` fails the build if a new spec field is neither consumed nor gated.
@@ -46,22 +69,22 @@ alone, and [ADR-0020](adr/0020-external-secrets.md) removed that last row when `
 Not every refusal is a gate. A field can be consumed and still have values kelson will not render:
 `preset: branch`, and a preset the target cluster's operator cannot host, are structured *render*
 errors, because the check needs a ClusterProfile and validation deliberately has none. See
-[docs/data-services.md](data-services.md). A `kind: helm` component in a non-Flux environment is a
-render error for a different reason — the refusal depends on the *Environment*, and a Project document
-is valid on its own terms against every environment it will ever meet (`render/helm-requires-flux`,
-[below](#the-flux-only-gate-and-why-it-exists)). `Environment.spec.previews` carries the same gate for
-the same reason (`render/previews-require-flux`,
-[Previews](#previews-a-child-environment-per-pull-request)), and
-`Project.spec.components[].release` carries it pointing the other way — direct mode only, because only
-the mode where kelson owns the apply can wait for a migration before rolling the workloads
-(`render/release-requires-direct`, [Release commands](#release-commands-migrations-before-the-rollout),
-[ADR-0019](adr/0019-release-command-hook.md)). `Environment.spec.secrets.backend` is a
-third: `backend: sops` is `render/sops-requires-flux` outside Flux mode, because its decryption step is
-kustomize-controller's and direct mode has none — see [Choosing the backend](#choosing-the-backend).
-And `backend: externalSecrets` adds a
-fourth kind of refusal, the one that depends on the *cluster*: `render/external-secrets-not-installed`,
-`render/external-secrets-store-not-found` and `render/external-secrets-store-ambiguous` are decided
-from the ClusterProfile, exactly as the data-service presets are.
+[docs/data-services.md](data-services.md). `backend: externalSecrets` refuses the same way —
+`render/external-secrets-not-installed`, `render/external-secrets-store-not-found` and
+`render/external-secrets-store-ambiguous` are all decided from the ClusterProfile.
+
+**No field's availability depends on a delivery mode any more.** There is one spine
+([ADR-0028](adr/0028-delivery-spine.md)), so `render/helm-requires-flux`,
+`render/previews-require-flux` and `render/sops-requires-flux` are vacuous and deleted with the mode
+plumbing that fed them, and `render/release-requires-direct` becomes a gate-table row
+([above](#what-this-document-describes-and-what-kelson-implements-today)) because the mode it required
+is the one that no longer exists. ADR-0016's *"an author can write a valid document that becomes
+invalid by changing `delivery.mode`"* is no longer a property this model has.
+
+> **Transition ([#224](https://github.com/dafrie/kelson/issues/224) /
+> [#234](https://github.com/dafrie/kelson/issues/234)).** The three vacuous codes and the mode plumbing
+> are still in `internal/renderer` and `internal/model`. Their removal is one behaviour-change PR with
+> the label rename, so a document written today may still meet them.
 
 And not every refusal is either: a field that belongs to another kind is a plain validation error, because
 one list means one type carrying fields only some of its kinds use. `preset` on a worker, `port` on a
@@ -82,7 +105,7 @@ kind: Environment                # where components run, and what differs there
 ```
 
 A **Project** names its Components inline (`spec.components`). An **Environment** binds itself to a
-Project (`spec.project`) and carries target, routing, delivery, policy and per-Component overrides.
+Project (`spec.project`) and carries target, routing, secrets, policy and per-Component overrides.
 Projects stay environment-agnostic (a Project document never mentions an environment) and Environments
 stay project-agnostic in shape (nothing in the Environment schema depends on which project it binds to).
 Environments are scoped to a Project by reference; they are not owned objects embedded in the Project.
@@ -96,7 +119,7 @@ Project and one authored field-by-field against the JSON Schema are the same doc
 
 **1. Precedence when Project and Environment both set a value.**
 See the precedence rules below. Short version: the innermost scope wins; Environment overrides
-Component overrides Project. For Environment-scoped concerns (delivery, policy, secrets), an explicit
+Component overrides Project. For Environment-scoped concerns (policy, secrets), an explicit
 Environment value always wins over a Project default; values never merge across the Project/Environment
 boundary — the winner is taken whole.
 
@@ -205,21 +228,24 @@ image fields are held to the same reference check — a blank or whitespace-bear
 An image on an override whose target is a data component is `schema/mutually-exclusive`: what a
 `kind: postgres` runs is its operator's business (ADR-0005).
 
-**P4 — Environment-scoped concerns (delivery, policy, secrets):** an explicit Environment value always
+**P4 — Environment-scoped concerns (policy, secrets):** an explicit Environment value always
 wins over the Project `defaults` value; otherwise the Project default; otherwise the built-in default:
 
 | Field | Built-in default |
 |---|---|
-| `delivery.mode` | `direct` |
 | `policy.agents`  | `allow` |
 | `policy.require` | none |
 | `secrets.backend`| `cluster` |
 
 These values never merge across the boundary: there is no "strictest of both" arithmetic. If production
 must stay propose-only, that is written on the production Environment — every guardrail under
-`policy:` is opt-in and therefore visible in the spec (ADR-0025). `delivery.git` exists only on
-Environments (a Project-level Git target for deployments would be meaningless; every environment needs
-its own repo/branch/path).
+`policy:` is opt-in and therefore visible in the spec (ADR-0025).
+
+> **Transition ([#224](https://github.com/dafrie/kelson/issues/224) /
+> [#234](https://github.com/dafrie/kelson/issues/234)).** `delivery.mode` (defaulting to `direct`) and
+> `delivery.git` are still in the Go types and the JSON Schema. [ADR-0028](adr/0028-delivery-spine.md)
+> decision 9 deletes the whole block — `Delivery`, `DeliveryMode`, `GitTarget` and
+> `semantic/git-target-missing` with it. Nothing in the target model reads them.
 
 **P5 — Data-component presets:** `Environment.spec.components[].preset` (matched by component name) replaces
 the Project component's preset for that Environment — `shared` in development, `ha-small` in production,
@@ -255,21 +281,28 @@ spec:
 ```
 
 The diff shows exactly that: one image line per promoted component, and nothing else, because nothing
-else changed. History records the deploy the way it records any other, and rollback is the same
-rollback — a promotion is a spec edit, so every mechanism that already handles spec edits handles it
-([ADR-0016](adr/0016-delivery-flows-v0.md)).
+else changed. A spec change bumps the `Environment`'s generation, so the deploy that follows is an
+ordinary reconcile with an ordinary artifact, and rollback is the ordinary rollback — a promotion is a
+spec edit, so every mechanism that already handles spec edits handles it
+([ADR-0016](adr/0016-delivery-flows-v0.md) decision 2, carried intact by
+[ADR-0028](adr/0028-delivery-spine.md) decision 6).
 
-Three consequences worth stating before they surprise anyone:
+Four consequences worth stating before they surprise anyone:
 
-- **The pin lives in the document you own**, not in server state, so an ejected Git repo still
-  reproduces what runs. That is the reason it is a spec field and not a release record.
+- **The pin lives in the document you own**, not in a release record — so the repository holding your
+  Project and Environment documents reproduces what runs. That is the reason it is a spec field.
 - **A pinned environment stops moving.** `--image` stands in for Project `image:` and therefore loses
   to a pin: a CI job passing a fresh digest will not change a pinned environment. Unpinning is deleting
   the field. This is what "pinned" means, and it is the point — production changes when someone
   promotes to it.
+- **The promotion stamps where it came from.** The patched `Environment` carries
+  `kelson.dev/promoted-from: <source-environment>@<revision>`. This is a deliberate walk-back of
+  ADR-0016's *"promotion keeps no record of its own"*, and a small one: an annotation has no lifecycle,
+  gates nothing and approves nothing. It turns "where did this image come from" from archaeology into a
+  `kubectl get` ([ADR-0028](adr/0028-delivery-spine.md) decision 6).
 - **Promotion gates nothing.** There is no approval step, no ordering between environments, no
   "production may only receive what staging ran", and no automatic promotion. The gate is wherever spec
-  edits are already gated: pull request review in Flux mode, and — for agents — `spec.policy`
+  edits are already gated: review of the document in your repository, and — for agents — `spec.policy`
   ([ADR-0025](adr/0025-agent-policy.md)), which can refuse a promotion into an environment outright.
 
 ### The porcelain
@@ -285,30 +318,37 @@ kelson promote -f project.yaml -f staging.yaml -f production.yaml --from staging
 It prints what would be pinned and the rendered diff of the target environment, asks for confirmation
 (`--yes` skips the question, never the preview), writes the pins into the Environment document on disk
 and prints the follow-up: `kelson deploy … --env production`. `--dry-run` stops after the preview and
-`--component web` restricts the promotion to one component (repeatable). The write is byte-faithful:
-the document comes back with one image line changed per component and comments, blank lines and key
-order untouched.
+`--component web` restricts the promotion to one component (repeatable). Editing a *file* stays
+byte-faithful — the document comes back with one image line changed per component and comments, blank
+lines and key order untouched — because that is a text edit on your disk, not a store round-trip.
 
-**The digest comes from the delivery history, not from the source environment's spec.** The images are
+**The digest comes from the deployed revision, not from the source environment's spec.** The images are
 read out of the manifests the source environment's *latest deployed revision* recorded — the deployed
 truth. Promoting the spec would move production to an image staging has not proven. Three consequences
 follow: promoting from an environment with nothing deployed is refused (`promote/nothing-deployed`), a
 component whose image the recorded revision does not carry is **skipped with a reason** and never
 guessed, and a component already pinned to what the source runs is reported as a no-op rather than
-rewritten.
+rewritten. Under [ADR-0028](adr/0028-delivery-spine.md) that revision is a tag in the registry, mirrored
+into `Environment.status.history[]`, so the read is a status read and the artifact behind it is
+immutable.
 
-The server-side equivalent is `DeployService.Promote` — same decision, the cluster-backed history on
-one side and the spec store on the other, with `dry_run` and `idempotency_key` from the standard
-ladder and optimistic concurrency on the spec `version`. It returns the pins it wrote, the source
-revision they came from, and the resulting diff with the same `exit_semantics` `Diff` reports, so a
-caller needs no second call to find out what the promotion changes. Agents reach the same operation
-through the `promote_component` MCP tool ([docs/mcp.md](mcp.md)), which previews by default.
+The server-side equivalent is `DeployService.Promote` — same decision, `Environment.status` on one side
+and a **patch to the target `Environment`** on the other, with `dry_run` and `idempotency_key` from the
+standard ladder and optimistic concurrency on the resource's `version` (`resourceVersion`). It returns
+the pins it wrote, the source revision they came from, and the resulting diff with the same
+`exit_semantics` `Diff` reports, so a caller needs no second call to find out what the promotion
+changes. Agents reach the same operation through the `promote_component` MCP tool
+([docs/mcp.md](mcp.md)), which previews by default.
 
-Two refusals worth knowing before you meet them. Promotion reads a delivery mode's *rendered history*,
-so it works where that history exists — direct mode today — and says so plainly where it does not
-rather than falling back to a re-render. And an Environment document written in a shape the pin cannot
-be spliced into (a flow-style `components:` list) is refused with `promote/document-unwritable` rather
-than reformatted: rewriting the document would be a bigger change than the promotion.
+**The byte-splice is gone, and so is the reason it existed.** ADR-0016 built the server-side promotion
+as a splice into a stored document because [ADR-0013](adr/0013-server-state-and-api-v0.md) §1 promised
+the store returned your bytes verbatim. [ADR-0027](adr/0027-crd-native-control-plane.md) decision 6 ends
+that promise: a custom resource is a decoded, re-serialized object, so there is no surrounding document
+to preserve and the write is a patch to a field. That is simpler, and it is a real loss for anyone who
+treated the server as their spec repository — the answer being that a spec repository should be a
+repository, where byte fidelity is git's job and always was. `promote/document-unwritable` (a flow-style
+`components:` list the pin cannot be spliced into) survives only on the **file** path, where there is
+still a document whose formatting kelson refuses to rewrite.
 
 The UI's promote screen (`/projects/<project>/<environment>/promote`) drives the same RPC: the
 environment in the path is the target, the plan and its diff are shown before anything is
@@ -328,7 +368,7 @@ what delegating topology to an operator means ([ADR-0005](adr/0005-delegate-to-o
 The rendered identity labels carry the same vocabulary as the spec: pods carry `kelson.dev/component`
 and Deployments select on it. ADR-0014 originally held that label at the old spelling because a
 Deployment's selector is immutable and renaming it would orphan every running workload;
-[ADR-0027](adr/0027-finish-the-component-rename.md) finished the rename while nothing was deployed
+[ADR-0032](adr/0032-finish-the-component-rename.md) finished the rename while nothing was deployed
 that could be orphaned. The consequence is real and has no migration path: a workload deployed before
 that change cannot be updated in place afterwards, and must be deleted and redeployed.
 
@@ -406,10 +446,21 @@ not a data service kelson manages. See [Secrets](#secrets-references-never-liter
 
 ## Release commands: migrations, before the rollout
 
-> Implemented since [#104](https://github.com/dafrie/kelson/issues/104) and
-> [ADR-0019](adr/0019-release-command-hook.md). Available in **direct mode only** — the one
-> delivery-mode gate in the model that points at `direct` rather than at `flux`, and the
-> [table below](#which-delivery-modes-support-a-release-command) says why.
+> **Gated — the field validates and renders nothing** ([ADR-0028](adr/0028-delivery-spine.md)
+> decision 8). [ADR-0019](adr/0019-release-command-hook.md)'s guarantee was *"the Job finished before
+> the Deployments changed"*, and its own rationale said only *the mode where kelson performs the apply
+> itself can stop between two resources*. That mode is gone, so `release:` moves into the gate table:
+> refused by name, with the tracked work in the message
+> ([#227](https://github.com/dafrie/kelson/issues/227)), rather than silently dropping a migration.
+>
+> The replacement is known and not built: two `Kustomization`s with `dependsOn`, the first holding the
+> release Job with a health check, the second the workloads. It is possible now precisely *because*
+> kelson owns the Kustomization ([ADR-0028](adr/0028-delivery-spine.md) decision 3) — ADR-0019's own
+> "Revisit when" predicted this exact resolution. The shape below is what #227 has to honour, and is
+> kept for that reason.
+>
+> **Transition ([#224](https://github.com/dafrie/kelson/issues/224)).** Until R1 lands, the direct
+> adapter still implements the barrier as described here, in the mode that is being deleted.
 
 A `release:` command runs to completion, and successfully, **before the revision's workloads roll**.
 It is where database migrations go.
@@ -446,8 +497,10 @@ references included, so the migration reads exactly the `DATABASE_URL` the appli
 `restartPolicy: Never`, `backoffLimit: 2` and the `activeDeadlineSeconds` your `timeout` resolves to.
 
 Order in a rendered set is not a wait: applying a Job before a Deployment says nothing about the Job
-having finished. **The waiting is delivery's**, and that is the whole reason this field is
-mode-gated — see [docs/delivery.md](delivery.md#the-release-barrier-in-direct-mode).
+having finished. **The waiting is delivery's**, and that is the whole reason the field is gated: the
+one path that could stop between two resources was the mode kelson applied in itself. The Flux-native
+answer puts the wait between two `Kustomization`s instead — see
+[docs/delivery.md](delivery.md#release-commands-and-the-barrier-that-is-not-built-yet).
 
 The small `backoffLimit` is deliberate and is not a retry policy for broken migrations. It exists so a
 *first* deploy — where the database was created seconds earlier and is not yet accepting connections —
@@ -514,26 +567,21 @@ The consequence worth stating: promoting a revision whose migration already ran 
 again in production**, against production's database, because it is a different database. That is what
 you want, and it is another reason the migration must be idempotent.
 
-### Which delivery modes support a release command
+### What the gate costs, stated plainly
 
-| Mode | Support |
-|---|---|
-| `direct` | **Full.** kelson owns the apply, so it applies up to the Job, waits for it, and only then applies the workloads. |
-| `flux` | **Refused** at render time — `render/release-requires-direct`. kelson writes files that somebody else's `Kustomization` applies in one pass; no commit can say "stop here until this Job is Complete", so the migration would run *beside* the rollout instead of before it, and a failed one would not stop it. |
-| `argocd` | Refused, same error. The adapter is removed ([ADR-0012](adr/0012-flux-only-gitops.md)) and the reasoning above would apply to it unchanged. |
-
-The refusal is deliberate, and it is the same rule the Flux-only gates obey from the other side: a spec
-field must render something real in every mode or refuse per mode honestly. The gap it leaves is real
-and worth knowing before you meet it — **previews are Flux-only
-([ADR-0017](adr/0017-pr-previews.md)), so a preview environment cannot carry a release command today**.
-Migrations for preview databases are tracked with the rest of that work; kelson refuses rather than
-rendering a Job that would race the preview's own rollout.
+Anyone whose deploy runs migrations loses the ordering guarantee ADR-0019 built, and gets an error
+message instead of a silent omission — honest, and still a regression
+([ADR-0028](adr/0028-delivery-spine.md) consequences). Until
+[#227](https://github.com/dafrie/kelson/issues/227) lands, run migrations the way you would without
+kelson: a `Job` through `spec.overlays`, or a command against the database out of band. An overlay
+carries the same *ordering* limitation — a rendered set is ordered, and order is not a wait — so
+whichever you choose, keep the migration backwards-compatible with the revision still serving.
 
 ## Helm components: a chart, delegated
 
-> Implemented since [ADR-0016](adr/0016-delivery-flows-v0.md) decision 4. Available in **Flux mode
-> only** — see the gate below, which is the first delivery-mode-dependent field in the model and is
-> accepted deliberately, for chart delegation and nothing else.
+> Implemented since [ADR-0016](adr/0016-delivery-flows-v0.md) decision 4. It needs **helm-controller
+> in the cluster**, which is a capability finding rather than a mode choice
+> ([below](#what-it-needs-in-the-cluster)).
 
 Some dependencies ship as a chart and nothing else. `kind: helm` runs one beside your components:
 kelson renders a `HelmRelease` and the source it fetches from, and helm-controller installs and
@@ -605,10 +653,10 @@ changed underneath it. Pinning is what makes the values-only preview survivable.
 ### `values` is not a secret store
 
 `values` is plain configuration. It is written verbatim into the `HelmRelease`, which is **not** a
-Secret and is **not** redacted anywhere: it appears in the rendered output, in every diff, and — in
-Flux mode, which is the only mode this kind runs in — committed in the delivery repository in plain
-text. Secret manifests kelson renders are redacted in display surfaces; a `HelmRelease` is not one of
-them, and pretending otherwise would be the more dangerous mistake.
+Secret and is **not** redacted anywhere: it appears in the rendered output, in every diff, and in the
+published artifact in plain text — where anyone who can pull from the registry can read it. Secret
+manifests kelson renders are redacted in display surfaces; a `HelmRelease` is not one of them, and
+pretending otherwise would be the more dangerous mistake.
 
 So chart credentials go in `valuesFrom`, as a `secretRef` to a Secret somebody else manages in the
 environment's namespace. helm-controller reads it at release time and kelson never sees the value
@@ -624,33 +672,29 @@ plenty of harmless `token` fields) and would still miss anything under a name no
 is a rule you follow, not a check you pass. The one thing validation does require of `values` is string
 keys, which Helm requires anyway.
 
-### The Flux-only gate, and why it exists
+### What it needs in the cluster
 
-A helm component renders **only** when the target Environment's `delivery.mode` is `flux`. Anything else
-is the structured render error `render/helm-requires-flux`, naming the component, the mode and the fix.
+helm-controller, and its source-controller. A `HelmRelease` applied where no helm-controller runs is an
+object that is accepted and then does nothing — the silent success
+[#141](https://github.com/dafrie/kelson/issues/141) exists to prevent — so its absence is reported as a
+**capability finding** (`internal/clusterprofile/helm`, `kelson profile`), never as a rendering decision.
+Since [ADR-0028](adr/0028-delivery-spine.md) that is the only question left to ask: every environment
+reconciles through Flux, so the mode gate `render/helm-requires-flux` is vacuous and deleted with the
+rest ([above](#what-this-document-describes-and-what-kelson-implements-today)). A document that
+validates renders, everywhere.
 
-The reason is that there is nothing to delegate to otherwise: direct mode applies manifests to the API
-server itself, and a `HelmRelease` applied where no helm-controller runs is an object that is accepted
-and then does nothing — the silent success [#141](https://github.com/dafrie/kelson/issues/141) exists to
-prevent. The gate is decided from **spec data**, in the pure renderer, so the same document renders the
-same way against every cluster; whether helm-controller is actually *installed* is a separate question,
-reported as a capability finding (`internal/clusterprofile/helm`), never as a rendering decision.
-
-This is the first field in the model whose availability depends on the delivery mode, which means an
-author can write a valid Project that becomes unrenderable by changing one line of an Environment.
-ADR-0016 takes that cost knowingly and scopes it to chart delegation: *any* future field that wants the
-same exemption has to argue for it against that paragraph.
-
-Installing helm-controller is not kelson's to do. A cluster needs source-controller and helm-controller;
-a flux-operator `FluxInstance` naming just those two components is a supported and common shape
-([#60](https://github.com/dafrie/kelson/issues/60)), and `kelson profile` reports which of them a cluster
-has.
+Both controllers are in flux-aio and in a default Flux install, so on the substrate
+[ADR-0030](adr/0030-flux-aio-install.md) offers they are already there. A flux-operator `FluxInstance`
+naming just those two components remains a supported and common shape
+([#60](https://github.com/dafrie/kelson/issues/60)).
 
 ## Previews: a child environment per pull request
 
 > Implemented since [ADR-0017](adr/0017-pr-previews.md), which decides the design;
-> [ADR-0016](adr/0016-delivery-flows-v0.md) decision 5 decided the shape. Available in **Flux mode
-> only**. **Two halves have to be in place**: the `previews:` block below, and a CI step that runs
+> [ADR-0016](adr/0016-delivery-flows-v0.md) decision 5 decided the shape. It is the **one feature that
+> needs flux-operator** ([ADR-0030](adr/0030-flux-aio-install.md) decision 4): `ResourceSet` and
+> `ResourceSetInputProvider` are its CRDs. **Two halves have to be in place**: the `previews:` block
+> below, and a CI step that runs
 > `kelson preview publish` — read [Publishing the artifacts](#publishing-the-artifacts) before turning
 > this on. Once they are, `PreviewService.ListPreviews` and the web UI's previews section say which
 > change requests are running ([Seeing your previews](#seeing-your-previews)).
@@ -693,9 +737,9 @@ spec:
 | `artifacts.repository` | the `oci://` repository per-pull-request manifests are published to |
 | `artifacts.secretRef` | a docker-registry Secret for a private artifact repository |
 
-`repo` is the **source** repository and `delivery.git.repo` is the **delivery** repository. They are
-usually different, kelson defaults neither from the other, and an SSH remote in `repo` is
-`schema/invalid-format`: the forge is reached over its HTTP API.
+`repo` is the **source** repository — whose pull requests become previews — and `artifacts.repository`
+is where the per-pull-request manifests are pushed. kelson defaults neither from the other, and an SSH
+remote in `repo` is `schema/invalid-format`: the forge is reached over its HTTP API.
 
 `filter.limit` defaults to 10 rather than flux-operator's own 100. The ceiling is a cost control, and
 an environment that quietly stands up a hundred preview namespaces the first time somebody bulk-labels
@@ -884,20 +928,19 @@ repository — kelson writes no `spec.verify`, so the trust boundary is the regi
 `oci://` as a tag, so `oci://registry.internal:5000/acme/previews` is rejected as
 `schema/invalid-format`. A registry on a non-default port is therefore unusable for previews today.
 
-### The Flux-only gate
+### What previews need in the cluster
 
-`previews:` renders **only** when the target Environment's `delivery.mode` is `flux`. Anything else is
-the structured render error `render/previews-require-flux`, naming the environment, the mode and the
-fix.
+flux-operator, and it is the only feature that needs it
+([ADR-0030](adr/0030-flux-aio-install.md) decision 4): previews *are* its `ResourceSet` lifecycle. On a
+cluster running flux-aio and no flux-operator, an environment declaring `previews:` gets the capability
+gap reported with an offer to install — the [ADR-0003](adr/0003-install-model.md) pattern, read from
+the `ClusterProfile`'s `fluxOperator` finding ([`internal/clusterprofile`](detection.md)), never a
+rendering decision. The old mode gate `render/previews-require-flux` is vacuous under one spine and is
+deleted with the rest
+([above](#what-this-document-describes-and-what-kelson-implements-today)).
 
-This is the same gate `kind: helm` carries and the second field in the model to carry one, which
-ADR-0016 asked any future exemption to argue for deliberately. The argument: previews *are*
-flux-operator's `ResourceSet` lifecycle, and outside Flux mode there is nothing to reconcile one —
-usually not even a served CRD, so a direct-mode apply fails on an unknown kind with a message about
-`fluxcd.controlplane.io/v1` that says nothing about previews. As with Helm, the gate is decided from
-**spec data** in the pure renderer, so the same document renders the same way against every cluster;
-whether flux-operator is actually installed is a capability finding
-([`internal/clusterprofile`](detection.md)), never a rendering decision.
+Worth knowing before choosing a substrate: flux-operator is AGPL-3.0, so a cluster that never wants
+previews never installs one.
 
 ## Secrets: references, never literals
 
@@ -991,12 +1034,13 @@ and the spec text does not change when it changes:
 |---|---|---|
 | `cluster` | the reference addresses a Kubernetes Secret written out of band. The built-in default | renders |
 | `externalSecrets` | an `ExternalSecret` per referenced Secret, resolved by external-secrets from Vault or a cloud secret manager | renders ([ADR-0020](adr/0020-external-secrets.md)) |
-| `sops` | values encrypted with age in the delivery repository, decrypted in-cluster by Flux. Flux mode only | renders ([ADR-0022](adr/0022-sops-age.md)) |
+| `sops` | values encrypted with age, shipped **inside the artifact**, decrypted in-cluster by kustomize-controller | renders ([ADR-0022](adr/0022-sops-age.md), transport amended by [ADR-0028](adr/0028-delivery-spine.md) §7) |
 
-An unknown backend is `render/secret-backend-unsupported`, and `sops` outside Flux mode is
-`render/sops-requires-flux`. Both are **render** errors rather than validation ones, for the reason the
-Helm gate is: they are decided from spec data alone, before anything is emitted, so the same document
-renders the same way against every cluster.
+An unknown backend is `render/secret-backend-unsupported` — a **render** error rather than a validation
+one, decided from spec data alone before anything is emitted, so the same document renders the same way
+against every cluster. `sops` needs no gate any more: kustomize-controller decrypts per-Kustomization
+and does not care whether the source is a `GitRepository` or an `OCIRepository`, so
+`render/sops-requires-flux` is vacuous under one spine and deleted with the rest.
 
 ### The `externalSecrets` backend
 
@@ -1041,8 +1085,9 @@ Nothing reads the Secret itself: kelson holds no value under this backend at any
 
 The spec text does not change here either. `{secret: checkout-db, key: url}` renders the same
 `secretKeyRef`, and a test asserts the sops render differs from the cluster render by nothing. What the
-backend changes is *where the value lives*: encrypted with [age](https://age-encryption.org) in the
-delivery repository, decrypted on the way into the cluster by Flux's kustomize-controller.
+backend changes is *where the value lives*: encrypted with [age](https://age-encryption.org), shipped
+inside the published artifact beside the workloads that reference it, and decrypted on the way into the
+cluster by kustomize-controller.
 
 ```yaml
 secrets:
@@ -1052,23 +1097,27 @@ secrets:
   ageKeySecret: sops-age             # optional; the Secret holding the age identity, default sops-age
 ```
 
-This is the backend that closes ADR-0009's documented gap: **a cluster rebuilt from Git alone comes back
-with its secrets**, because they are in the artifact. What has to survive outside Git is one age
-identity.
+This is the backend that closes ADR-0009's documented gap: **a cluster rebuilt from the artifact comes
+back with its secrets**, because they are in it. What has to survive outside is one age identity.
 
 | | |
 |---|---|
-| **Flux mode only** | `render/sops-requires-flux` otherwise. Direct mode has no decryptor, so the encrypted file would stay encrypted and every reference would fail at pod start |
-| **Where the file goes** | `<delivery.git.path>/secrets/<name>.enc.yaml`, written by `kelson secret set` and never by a render. It is inside the delivery path so the Kustomization that applies the workloads also decrypts, applies and prunes it |
-| **What is encrypted** | the values under `data`/`stringData` and nothing else. The Secret's name, namespace and key names stay readable, which is what makes an encrypted secret reviewable in a pull request |
+| **What is encrypted** | the values under `data`/`stringData` and nothing else. The Secret's name, namespace and key names stay readable, which is what makes an encrypted secret reviewable |
+| **Who decrypts** | kustomize-controller, per-Kustomization. It does not care whether the source is a `GitRepository` or an `OCIRepository`, which is why the mechanism survived the transport change intact ([ADR-0028](adr/0028-delivery-spine.md) §7) |
+| **Who writes the decryption block** | **kelson**, on the `Kustomization` it owns, from the environment's `ageKeySecret`. This reverses [ADR-0022](adr/0022-sops-age.md) §5 and closes its worst failure mode: "encrypted but never decrypted" is no longer reachable by skipping a step |
 | **What kelson holds** | the public recipients, and nothing else. There is no age private key anywhere in kelson and no flag that takes one |
 | **`set` writes the whole Secret** | carrying the other keys forward would need the identity kelson does not have, so a write that would drop keys is refused with those keys named (`secret/sops-partial-set`) |
 
-Two steps are the operator's, because kelson cannot do them: creating the Secret that holds the age
-identity, and putting `spec.decryption` on the Kustomization that reconciles the path. `kelson secret
-set` prints both. [Secrets](secrets.md) is the full guide — setup, rotation and recovery — and
-[ADR-0022](adr/0022-sops-age.md) records why the format is implemented rather than imported and why
-rotation reports rather than re-encrypts.
+One step is still the operator's, because kelson cannot do it: creating the Secret that holds the age
+**identity** in the cluster. `kelson secret set` prints the command. [Secrets](secrets.md) is the full
+guide — setup, rotation and recovery — and [ADR-0022](adr/0022-sops-age.md) records why the format is
+implemented rather than imported and why rotation reports rather than re-encrypts.
+
+> **Transition ([#225](https://github.com/dafrie/kelson/issues/225)).** `kelson secret set` writes the
+> ciphertext to `<delivery.git.path>/secrets/<name>.enc.yaml` today, because the transport is still a
+> git repository. Where the ciphertext is held once the artifact is the transport — so that the
+> publisher picks it up — is R2 work; the ADRs decide that it travels *in the artifact* and do not
+> decide where it is stored on the way there.
 
 ## Environment schema
 
@@ -1079,34 +1128,27 @@ metadata:
   name: production
 spec:
   project: checkout                  # required: the Project this environment deploys
-  cluster: prod-eu                   # rejected until M10 — there is no cluster registry (#141)
   namespace: checkout-prod           # target namespace
   routing:
     domainSuffix: acme.run
     gatewayClass: envoy              # Gateway API only (#140); a spec with `ingressClass` is rejected
     tls: true                        # default true
-  delivery:
-    mode: flux                       # direct | flux (argocd removed — ADR-0012)
-    git:                             # required for flux, forbidden for direct
-      repo: git@github.com:acme/deploy.git
-      branch: main
-      path: checkout/production
   policy:                            # agent guardrails, enforced server-side (ADR-0025)
     agents: propose-only             # allow | propose-only; default allow
     require: [dry-run]               # only dry-run is defined today
     maxReplicas: 5                   # the largest an agent may scale a workload here
     protect: [db]                    # components an agent may not remove or scale to zero
     forbid: [secret-set]             # deploy|rollback|promote|build|secret-set|secret-delete|spec-write|spec-delete
-    deployers: [team-platform]       # who may deploy; still rejected until M11 (#141)
+    deployers: [team-platform]       # who may deploy; still rejected — tenancy (#231)
   secrets:
     backend: cluster                 # cluster | externalSecrets | sops
     store: vault-backend             # externalSecrets only; optional when the cluster offers one store
     refreshInterval: 1h              # externalSecrets only; a positive Go duration, default 1h
     ageRecipients: [age1…]           # sops only; required — the PUBLIC age keys secrets are encrypted to
     ageKeySecret: sops-age           # sops only; the Secret holding the age identity, default sops-age
-  previews:                          # Flux mode only — see "Previews" below
+  previews:                          # needs flux-operator — see "Previews" below
     provider: github                 # github | gitlab
-    repo: https://github.com/acme/checkout           # the SOURCE repo, not delivery.git.repo
+    repo: https://github.com/acme/checkout           # the SOURCE repo, not the artifact repository
     secretRef: github-auth           # a Secret name, never a token
     artifacts:
       repository: oci://ghcr.io/acme/checkout-previews
@@ -1123,8 +1165,17 @@ spec:
       preset: ha-small
 ```
 
-Delivery mode is per-Environment ([ADR-0001](adr/0001-hybrid-state-model.md)): development applies
-directly, production goes through pull requests, one renderer feeding both.
+There is no `delivery:` block and no `cluster:` field: one spine
+([ADR-0028](adr/0028-delivery-spine.md)) and one cluster
+([ADR-0031](adr/0031-single-cluster-single-tenant.md)). Where artifacts are pushed is the controller's
+configuration (`--registry`, `--push-secret`), not application description — the same rule that puts the
+build destination on the server rather than in the spec.
+
+> **Transition ([#224](https://github.com/dafrie/kelson/issues/224) /
+> [#234](https://github.com/dafrie/kelson/issues/234)).** Both fields are still accepted by the schema:
+> `cluster:` as a `schema/not-implemented` refusal, `delivery:` as a live block whose `mode` defaults to
+> `direct`. Documents that set them keep working until the removal PR; documents that omit them are
+> already written for the target model.
 
 ## The minimum viables
 
@@ -1148,7 +1199,8 @@ spec:
   namespace: hello-dev
 ```
 
-Defaults fill the rest: direct delivery, no agent guardrails, cluster secrets, one replica.
+Defaults fill the rest: no agent guardrails, cluster secrets, one replica. Delivery needs nothing said
+about it — every environment renders, publishes an artifact and is reconciled by Flux.
 
 ## Validation (issue #28)
 
@@ -1164,16 +1216,20 @@ Stable code taxonomy:
 | `schema/missing-required` | schema | Environment without `spec.project` |
 | `schema/invalid-format` | schema | malformed domain, quantity, cron, name; an env mapping that is neither reference form |
 | `schema/out-of-range` | schema | `port: 70000` |
-| `schema/invalid-enum` | schema | `delivery.mode: github` |
+| `schema/invalid-enum` | schema | `secrets.backend: vault` |
 | `schema/duplicate-name` | schema | two Components named `web` |
 | `schema/mutually-exclusive` | semantic-shape | `schedule:` with `port:`; `preset:` on a worker; `chart:` on a service; `kind:` against the shape |
-| `schema/not-implemented` | schema | `tools:`, `policy:`, `secrets.store:`, `cluster:` — validated, not yet rendered |
+| `schema/not-implemented` | schema | `tools:`, `policy.deployers:`, `release:` — validated, not yet rendered |
 | `ref/unknown-component` | semantic | Environment override for an undeclared component |
 | `ref/unknown-service` | semantic | `from: {service: cache}` names no data component |
 | `ref/unknown-service-key` | semantic | `from: {service: db, key: tls}` |
 | `secret/literal` | semantic | secret value where a reference belongs |
 | `semantic/no-image-source` | semantic | no image and `build.strategy: none` |
-| `semantic/git-target-missing` | semantic | `mode: flux` without `git.repo` |
+
+`semantic/git-target-missing` existed to require a git target for a mode that no longer exists, and goes
+with the `delivery:` block ([ADR-0028](adr/0028-delivery-spine.md) decision 9). The codes are a
+compatibility promise, so a code is retired by deleting what could raise it — never by reusing it for
+something else.
 
 Every class carries a remediation: ranges state the accepted range, enums list the valid values,
 references list declared names, and secret literals name the exact `{secret: …, key: …}` replacement

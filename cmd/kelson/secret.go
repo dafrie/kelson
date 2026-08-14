@@ -11,10 +11,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dafrie/kelson/internal/delivery/git"
+	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/delivery/kube"
 	"github.com/dafrie/kelson/internal/model"
-	"github.com/dafrie/kelson/internal/renderer"
 	"github.com/dafrie/kelson/internal/secret"
 )
 
@@ -41,37 +40,28 @@ import (
 //     Environment whose spec.namespace overrides the default.
 
 // secretStore is the capability `kelson secret` needs from whichever backend
-// holds the value. Both implementations satisfy it — internal/secret's cluster
-// Store and its SOPSStore — so this file selects a backend and never a code
-// path (ADR-0022). It is declared here rather than imported as a concrete type
-// for the same reason deliveryConnector is: the production implementations
-// need a live cluster or a live repository, and none of the command wiring
-// under test does.
+// holds the value, so this file selects a backend and never a code path. It is
+// declared here rather than imported as a concrete type for the same reason
+// observationConnector is: the production implementation needs a live cluster,
+// and none of the command wiring under test does.
+//
+// One implementation satisfies it today — internal/secret's cluster Store. The
+// sops backend had a second, writing encrypted Secrets into the delivery
+// repository through the git writer, and it went with the writer (ADR-0028).
+// What replaces it is decided and not built: ADR-0028 decision 7 keeps SOPS
+// end to end and ships the encrypted Secrets *inside the published artifact*,
+// beside the workloads that reference them, with the Kustomization kelson owns
+// carrying spec.decryption. Until then the backend is refused by name
+// ([sopsUnavailable]), never quietly written somewhere else.
 type secretStore interface {
 	Set(ctx context.Context, req secret.SetRequest) (secret.Secret, error)
 	List(ctx context.Context, t secret.Target) ([]secret.Secret, error)
 	Delete(ctx context.Context, req secret.DeleteRequest) error
 }
 
-// sopsStore is the sops backend's extra capability: what `kelson secret
-// rotate` needs and what the cluster backend has no analogue for, because a
-// cluster Secret is not encrypted to anybody.
-type sopsStore interface {
-	secretStore
-	Drift(ctx context.Context, t secret.Target) ([]secret.SOPSDrift, error)
-	Recipients() []string
-	RepoPath(name string) string
-}
-
 // secretConnector builds the cluster store for one command run. It is the seam
 // the tests replace.
 type secretConnector func(kubeconfig string) (secretStore, error)
-
-// sopsSecretConnector builds the sops store from a resolved Environment. It is
-// a second seam rather than a branch inside the first because the two need
-// entirely different things: a kubeconfig, or a delivery repository and a
-// credential.
-type sopsSecretConnector func(resolved *model.Resolved) (sopsStore, error)
 
 // connectSecrets is the production cluster connector: one cluster connection,
 // the typed clientset behind it. It is the same reach `kelson status` and
@@ -85,38 +75,22 @@ func connectSecrets(kubeconfig string) (secretStore, error) {
 	return secret.New(cluster.Typed), nil
 }
 
-// connectSOPS is the production sops connector. It builds the same git writer
-// `kelson deploy` builds for this environment, from the same fields and the
-// same credential, so a secret lands in the repository a deploy commits to
-// rather than in one only this command believes in.
-func connectSOPS(resolved *model.Resolved) (sopsStore, error) {
-	target := resolved.Environment.Delivery.Git
-	if target == nil {
-		return nil, fmt.Errorf("environment %q selects secret backend sops but sets no delivery.git target", resolved.Environment.Name)
-	}
-	writer, err := git.New(git.Config{
-		Target: git.Target{Repo: target.Repo, Branch: target.Branch, Path: target.Path},
-		// Commit mode, not pull-request mode. A pull request holding a
-		// credential is a credential sitting in an open branch for as long as
-		// review takes, and the encrypted file is reviewable in the merge
-		// commit either way. ADR-0022 records this rather than leaving it to
-		// whichever mode happened to be the default.
-		Mode:     git.ModeCommit,
-		Identity: git.IdentityFromEnv(nil),
-		Auth:     gitAuth(),
-	})
-	if err != nil {
-		return nil, err
-	}
-	return secret.NewSOPS(secret.SOPSConfig{
-		Writer:     writer,
-		Recipients: resolved.Environment.Secrets.AgeRecipients,
-	})
+// sopsUnavailable is the refusal the sops backend now gets. It names what the
+// backend was doing, what replaces it and where that is tracked, so an author
+// whose Environment selects sops learns that kelson stopped writing rather than
+// that kelson wrote somewhere they did not expect.
+func sopsUnavailable(environment string) error {
+	return delivery.NotImplemented("secret",
+		"environment "+environment+" selects secret backend sops, and kelson cannot write it: the git "+
+			"writer that committed the encrypted Secret was deleted with the old delivery machinery. "+
+			"SOPS itself is unaffected — encryption, the age recipients and in-cluster decryption are "+
+			"unchanged (ADR-0028 decision 7) — what is missing is the destination",
+		"#224")
 }
 
-func newSecretCmd() *cobra.Command { return newSecretCmdFactory(connectSecrets, connectSOPS) }
+func newSecretCmd() *cobra.Command { return newSecretCmdFactory(connectSecrets) }
 
-func newSecretCmdFactory(connect secretConnector, connectSops sopsSecretConnector) *cobra.Command {
+func newSecretCmdFactory(connect secretConnector) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "secret",
 		Short: "Write, list and delete the Secrets an environment's references point at",
@@ -128,19 +102,20 @@ func newSecretCmdFactory(connect secretConnector, connectSops sopsSecretConnecto
 			"  cluster (default)  the value is written straight to the cluster's API server. kelson does not store\n" +
 			"                     it and reads it back masked. Secrets are NOT in the Git artifact — rebuilding a\n" +
 			"                     cluster from Git alone will not restore them.\n" +
-			"  sops               the value is encrypted with age and committed to the delivery repository, and\n" +
-			"                     Flux decrypts it in-cluster. Plaintext never touches your disk: kelson encrypts\n" +
-			"                     in memory and commits the ciphertext. Rebuilding from Git restores everything.\n" +
+			"  sops               NOT AVAILABLE while the delivery spine is rebuilt (issue #224). The value is\n" +
+			"                     meant to be encrypted with age and shipped inside the published artifact for\n" +
+			"                     Flux to decrypt in-cluster; the writer that used to commit it is deleted, so\n" +
+			"                     kelson refuses rather than writing it somewhere else.\n" +
 			"  externalSecrets    no value passes through kelson at all — write it in your secret manager.\n\n" +
 			"kelson never holds an age private key. `kelson secret set` needs only the public age1… recipients from\n" +
 			"secrets.ageRecipients; the identity that decrypts lives in a Secret you create for Flux.",
 		Args: cobra.NoArgs,
 	}
 	cmd.AddCommand(
-		newSecretSetCmd(connect, connectSops),
-		newSecretListCmd(connect, connectSops),
-		newSecretDeleteCmd(connect, connectSops),
-		newSecretRotateCmd(connect, connectSops),
+		newSecretSetCmd(connect),
+		newSecretListCmd(connect),
+		newSecretDeleteCmd(connect),
+		newSecretRotateCmd(connect),
 	)
 	return cmd
 }
@@ -154,11 +129,6 @@ type secretTarget struct {
 	namespace   string
 	kubeconfig  string
 	connect     secretConnector
-	connectSops sopsSecretConnector
-	// ageKeySecret is the resolved secrets.ageKeySecret, kept so the sops
-	// reminder names the Secret this environment's Kustomization must
-	// reference rather than the default.
-	ageKeySecret string
 }
 
 func (t *secretTarget) bind(cmd *cobra.Command) {
@@ -205,49 +175,39 @@ func (t *secretTarget) resolve() (*model.Resolved, error) {
 	}
 	t.project = resolved.Project
 	t.environment = resolved.Environment.Name
-	t.ageKeySecret = resolved.Environment.Secrets.AgeKeySecret
 	if t.namespace == "" {
 		t.namespace = resolved.Environment.Namespace
 	}
 	return resolved, nil
 }
 
-// store resolves the spec and returns the backend's store. The sops store is
-// returned separately as well, so a caller that needs its extra capabilities —
-// `rotate`, and the reminder `set` prints — does not have to type-assert.
-func (t *secretTarget) store() (secretStore, sopsStore, error) {
+// store resolves the spec and returns the backend's store, or the backend's
+// refusal. Every subcommand goes through here, so a backend kelson cannot write
+// is refused once, in one voice, whichever verb asked.
+func (t *secretTarget) store() (secretStore, error) {
 	resolved, err := t.resolve()
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if resolved == nil {
-		store, err := t.connect(t.kubeconfig)
-		return store, nil, err
+		return t.connect(t.kubeconfig)
 	}
 	switch resolved.Environment.Secrets.Backend {
 	case model.SecretsSOPS:
-		if t.connectSops == nil {
-			return nil, nil, fmt.Errorf("the sops backend is unavailable in this build")
-		}
-		store, err := t.connectSops(resolved)
-		if err != nil {
-			return nil, nil, err
-		}
-		return store, store, nil
+		return nil, sopsUnavailable(resolved.Environment.Name)
 	case model.SecretsExternalSecrets:
 		// Writing a cluster Secret here would put kelson in a fight with the
 		// external-secrets controller over an object it owns
 		// (creationPolicy: Owner, ADR-0020) — kelson's keys would survive
 		// until the next sync and then vanish. Under that backend no value
 		// passes through kelson at all, and saying so is the whole point.
-		return nil, nil, fmt.Errorf("environment %q uses secret backend externalSecrets, where the value is "+
+		return nil, fmt.Errorf("environment %q uses secret backend externalSecrets, where the value is "+
 			"written in your secret manager and external-secrets syncs it into the cluster. kelson never holds "+
 			"it (ADR-0020): write it at the store this environment reads from (%s), or change "+
 			"secrets.backend if you meant kelson to hold it",
 			resolved.Environment.Name, storeOrAny(resolved.Environment.Secrets.Store))
 	default:
-		store, err := t.connect(t.kubeconfig)
-		return store, nil, err
+		return t.connect(t.kubeconfig)
 	}
 }
 
@@ -267,8 +227,8 @@ type secretSetOptions struct {
 	dryRun    bool
 }
 
-func newSecretSetCmd(connect secretConnector, connectSops sopsSecretConnector) *cobra.Command {
-	opts := &secretSetOptions{secretTarget: secretTarget{connect: connect, connectSops: connectSops}}
+func newSecretSetCmd(connect secretConnector) *cobra.Command {
+	opts := &secretSetOptions{secretTarget: secretTarget{connect: connect}}
 	cmd := &cobra.Command{
 		Use:   "set <name> --env <environment> [-f spec.yaml] [key=value ...]",
 		Short: "Write keys into a Secret in the environment's namespace",
@@ -311,7 +271,7 @@ func runSecretSet(cmd *cobra.Command, opts *secretSetOptions, args []string) err
 	if err != nil {
 		return err
 	}
-	store, sops, err := opts.store()
+	store, err := opts.store()
 	if err != nil {
 		return err
 	}
@@ -333,56 +293,20 @@ func runSecretSet(cmd *cobra.Command, opts *secretSetOptions, args []string) err
 	if preserved := preservedKeys(written.Keys, values); len(preserved) > 0 {
 		out.printf("  keys kept:    %s\n", strings.Join(preserved, ", "))
 	}
-	if sops != nil {
-		out.printf("  encrypted to: %s\n", strings.Join(sops.Recipients(), ", "))
-		out.printf("  committed at: %s\n", sops.RepoPath(written.Name))
-	}
 	if opts.dryRun {
-		if sops != nil {
-			out.printf("\ndry run: kelson encrypted this and committed nothing.\n")
-		} else {
-			out.printf("\ndry run: the API server validated this and stored nothing.\n")
-		}
+		out.printf("\ndry run: the API server validated this and stored nothing.\n")
 		return out.err
 	}
 	out.printf("\nreference a key from a component's env:\n")
 	out.printf("  env:\n    MY_VARIABLE: { secret: %s, key: %s }\n", written.Name, sortedNames(values)[0])
-	if sops != nil {
-		printSOPSDecryptionReminder(out, opts.ageKeySecret)
-	}
 	return out.err
 }
 
-// printSOPSDecryptionReminder states the operator's half of the setup, which
-// kelson cannot do for them.
-//
-// kelson writes the encrypted file; the Kustomization that reconciles the path
-// belongs to the cluster's bootstrap and is not kelson's to write (ADR-0012,
-// internal/delivery/eject/bootstrap.go). Without the decryption block the file
-// is applied verbatim — a Secret whose values are the literal string
-// "ENC[AES256_GCM,…]" — and every workload reading it starts with a credential
-// that is not one. That failure is far from its cause, so the cause is printed
-// at the moment the first encrypted file is written.
-//
-// The block comes from renderer.SOPSDecryptionBlock, the same function that
-// writes it onto the preview Kustomization, so this text cannot drift from
-// what kelson itself emits.
-func printSOPSDecryptionReminder(out *printer, ageKeySecret string) {
-	out.printf("\nthe Flux Kustomization reconciling this path must decrypt it:\n")
-	for _, line := range strings.Split(strings.TrimRight(renderer.SOPSDecryptionBlock(ageKeySecret, "  "), "\n"), "\n") {
-		out.printf("%s\n", line)
-	}
-	out.printf("and the Secret it names holds the age identity, which kelson never has:\n")
-	out.printf("  kubectl -n flux-system create secret generic %s --from-file=age.agekey=age.key\n",
-		ageKeySecretName(ageKeySecret))
-}
-
-func ageKeySecretName(name string) string {
-	if name == "" {
-		return model.DefaultAgeKeySecret
-	}
-	return name
-}
+// The operator-half reminder that used to print here — the decryption block a
+// Flux Kustomization needs and the Secret holding the age identity — went with
+// the sops writer (ADR-0028). It belongs beside whatever writes the encrypted
+// Secret next, and printing it from a command that writes nothing would tell an
+// operator to wire decryption for a file that is not there.
 
 // collectValues assembles the key set from the three input forms, refusing a
 // key supplied twice.
@@ -453,8 +377,8 @@ func preservedKeys(all []string, written map[string]string) []string {
 
 // --- list ---------------------------------------------------------------------
 
-func newSecretListCmd(connect secretConnector, connectSops sopsSecretConnector) *cobra.Command {
-	opts := &secretTarget{connect: connect, connectSops: connectSops}
+func newSecretListCmd(connect secretConnector) *cobra.Command {
+	opts := &secretTarget{connect: connect}
 	cmd := &cobra.Command{
 		Use:   "list --env <environment> [-f spec.yaml]",
 		Short: "List the Secrets kelson manages for the environment",
@@ -471,7 +395,7 @@ func newSecretListCmd(connect secretConnector, connectSops sopsSecretConnector) 
 			"  kelson secret list -f spec.yaml --env production",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			store, sops, err := opts.store()
+			store, err := opts.store()
 			if err != nil {
 				return err
 			}
@@ -479,23 +403,20 @@ func newSecretListCmd(connect secretConnector, connectSops sopsSecretConnector) 
 			if err != nil {
 				return err
 			}
-			return printSecretList(cmd, opts, secrets, sops != nil)
+			return printSecretList(cmd, opts, secrets)
 		},
 	}
 	opts.bind(cmd)
 	return cmd
 }
 
-func printSecretList(cmd *cobra.Command, opts *secretTarget, secrets []secret.Secret, encrypted bool) error {
+func printSecretList(cmd *cobra.Command, opts *secretTarget, secrets []secret.Secret) error {
 	out := &printer{w: cmd.OutOrStdout()}
 	namespace, err := opts.target().Resolve()
 	if err != nil {
 		return err
 	}
 	where := "namespace " + namespace
-	if encrypted {
-		where = "the delivery repository for namespace " + namespace
-	}
 	if len(secrets) == 0 {
 		out.printf("kelson manages no Secrets in %s.\n", where)
 		out.printf("Write one with `kelson secret set <name> --project %s --env %s <key>=<value>`.\n",
@@ -504,13 +425,6 @@ func printSecretList(cmd *cobra.Command, opts *secretTarget, secrets []secret.Se
 	}
 
 	out.printf("%d Secret(s) kelson manages in %s\n\n", len(secrets), where)
-	if encrypted {
-		out.printf("%s%s\n", pad(secretNameColumn, "NAME"), "KEYS")
-		for _, s := range secrets {
-			out.printf("%s%s\n", pad(secretNameColumn, s.Name), strings.Join(s.Keys, ", "))
-		}
-		return out.err
-	}
 	out.printf("%s%s%s\n", pad(secretNameColumn, "NAME"), pad(secretAgeColumn, "AGE"), "KEYS")
 	now := secretClock()
 	for _, s := range secrets {
@@ -532,8 +446,8 @@ type secretDeleteOptions struct {
 	dryRun bool
 }
 
-func newSecretDeleteCmd(connect secretConnector, connectSops sopsSecretConnector) *cobra.Command {
-	opts := &secretDeleteOptions{secretTarget: secretTarget{connect: connect, connectSops: connectSops}}
+func newSecretDeleteCmd(connect secretConnector) *cobra.Command {
+	opts := &secretDeleteOptions{secretTarget: secretTarget{connect: connect}}
 	cmd := &cobra.Command{
 		Use:   "delete <name> --env <environment> [-f spec.yaml]",
 		Short: "Delete a Secret kelson manages",
@@ -560,7 +474,7 @@ func newSecretDeleteCmd(connect secretConnector, connectSops sopsSecretConnector
 }
 
 func runSecretDelete(cmd *cobra.Command, opts *secretDeleteOptions, name string) error {
-	store, sops, err := opts.store()
+	store, err := opts.store()
 	if err != nil {
 		return err
 	}
@@ -588,17 +502,7 @@ func runSecretDelete(cmd *cobra.Command, opts *secretDeleteOptions, name string)
 	}
 	out := &printer{w: cmd.OutOrStdout()}
 	if opts.dryRun {
-		if sops != nil {
-			out.printf("dry run: kelson would remove %s and committed nothing.\n", sops.RepoPath(name))
-			return out.err
-		}
 		out.printf("dry run: the API server accepted the delete of Secret %s in namespace %s and removed nothing.\n", name, namespace)
-		return out.err
-	}
-	if sops != nil {
-		out.printf("removed %s from the delivery repository\n", sops.RepoPath(name))
-		out.printf("Flux prunes the Secret on its next reconcile. The encrypted value stays in the repository's\n")
-		out.printf("history, so treat the credential as needing rotation rather than gone.\n")
 		return out.err
 	}
 	out.printf("deleted Secret %s in namespace %s\n", name, namespace)
@@ -621,8 +525,8 @@ func runSecretDelete(cmd *cobra.Command, opts *secretDeleteOptions, name string)
 //
 // The exit code follows the `kelson diff` contract: 0 for no drift, 2 for
 // drift present. Both are expected outcomes, so neither prints an error.
-func newSecretRotateCmd(connect secretConnector, connectSops sopsSecretConnector) *cobra.Command {
-	opts := &secretTarget{connect: connect, connectSops: connectSops}
+func newSecretRotateCmd(connect secretConnector) *cobra.Command {
+	opts := &secretTarget{connect: connect}
 	cmd := &cobra.Command{
 		Use:   "rotate -f spec.yaml --env <environment>",
 		Short: "Report which encrypted Secrets are not encrypted to the current age recipients",
@@ -649,57 +553,17 @@ func newSecretRotateCmd(connect secretConnector, connectSops sopsSecretConnector
 }
 
 func runSecretRotate(cmd *cobra.Command, opts *secretTarget) error {
-	_, sops, err := opts.store()
-	if err != nil {
+	// The drift report reads the encrypted files kelson wrote, and kelson has
+	// nowhere to have written them: the git writer that committed them is
+	// deleted (ADR-0028). store() is still called first, so an environment on
+	// backend cluster gets the "there is nothing to rotate keys for" answer it
+	// has always got, rather than a gate about a backend it does not use.
+	if _, err := opts.store(); err != nil {
 		return err
 	}
-	if sops == nil {
-		return fmt.Errorf("`kelson secret rotate` is for secret backend sops, and environment %q does not use it. "+
-			"Pass -f with the spec so kelson can read secrets.backend; under backend cluster a Secret is not "+
-			"encrypted to anybody and there is nothing to rotate keys for", opts.environment)
-	}
-	drift, err := sops.Drift(cmd.Context(), opts.target())
-	if err != nil {
-		return err
-	}
-
-	out := &printer{w: cmd.OutOrStdout()}
-	recipients := sops.Recipients()
-	out.printf("environment %s encrypts to %d age recipient(s):\n", opts.environment, len(recipients))
-	for _, r := range recipients {
-		out.printf("  %s\n", r)
-	}
-	if len(drift) == 0 {
-		out.printf("\nevery encrypted Secret is wrapped for exactly those recipients.\n")
-		return out.err
-	}
-
-	out.printf("\n%d encrypted Secret(s) are wrapped for a different set:\n", len(drift))
-	for _, d := range drift {
-		out.printf("\n  %s (%s)\n", d.Name, d.Path)
-		for _, r := range d.Missing {
-			out.printf("    missing:  %s — whoever holds this identity cannot read this Secret\n", r)
-		}
-		for _, r := range d.Extra {
-			out.printf("    extra:    %s — whoever holds this identity can still read this Secret\n", r)
-		}
-		out.printf("    fix:      kelson secret set %s -f <spec> --env %s %s\n",
-			d.Name, opts.environment, keyPlaceholders(d.Keys))
-		out.printf("    or:       sops updatekeys %s   (needs an identity that can already read it)\n", d.Path)
-	}
-	out.printf("\nnothing was changed.\n")
-	return &exitError{code: exitDiff}
-}
-
-// keyPlaceholders spells the key list a re-encrypting `set` has to name, so
-// the printed command is a template rather than a hint. Every key is there
-// because under this backend a set writes the whole file.
-func keyPlaceholders(keys []string) string {
-	parts := make([]string, 0, len(keys))
-	for _, k := range keys {
-		parts = append(parts, k+"=<value>")
-	}
-	return strings.Join(parts, " ")
+	return fmt.Errorf("`kelson secret rotate` is for secret backend sops, and environment %q does not use it. "+
+		"Pass -f with the spec so kelson can read secrets.backend; under backend cluster a Secret is not "+
+		"encrypted to anybody and there is nothing to rotate keys for", opts.environment)
 }
 
 // --- formatting ----------------------------------------------------------------

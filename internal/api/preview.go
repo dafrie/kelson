@@ -69,19 +69,14 @@ func (s *Server) ListPreviews(ctx context.Context, req *connect.Request[kelsonv1
 		return connect.NewResponse(out), nil
 	}
 
-	if s.delivery == nil {
-		return nil, unimplemented("the delivery plane")
-	}
 	t := Target{
 		Project:     out.Project,
 		Environment: out.Environment,
 		Namespace:   out.Namespace,
-		Mode:        string(resolved.Environment.Mode),
-		Git:         resolved.Environment.Delivery.Git,
 	}
-	plane, err := s.delivery(ctx, t)
+	plane, err := s.plane(ctx, t)
 	if err != nil {
-		return nil, unavailable("api: building the delivery plane: %w", err)
+		return nil, err
 	}
 	if plane.Previews == nil {
 		return nil, unimplemented("reading previews from the cluster")

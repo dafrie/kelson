@@ -75,11 +75,11 @@ func (c *clients) fail(op rpc, err error) error {
 		// The scope is enforced server-side and this process does not read it,
 		// so the only useful thing to say is which identity was refused and
 		// that widening it is an operator's act, not a retry.
-		r.addf("this agent identity is not allowed to do that. The refusal is server-side and final for this "+
-			"credential: an operator widens the identity's scope with a new `kelson agent create`, or the request "+
+		r.addf("this agent identity is not allowed to do that. The refusal is server-side and final for this " +
+			"credential: an operator widens the identity's scope with a new `kelson agent create`, or the request " +
 			"names a project and environment the identity covers. Retrying changes nothing.")
 	case connect.CodeResourceExhausted:
-		r.addf("this agent identity is over its request budget. Back off and retry — the budget refills "+
+		r.addf("this agent identity is over its request budget. Back off and retry — the budget refills " +
 			"continuously — or ask an operator for a credential with a higher --rate.")
 	default:
 	}

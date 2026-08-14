@@ -10,9 +10,11 @@ import (
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
 )
 
-const listComponentsDescription = `List every project kelson has stored and the live state of each of its environments: delivery phase, deployed revision, how many workloads are healthy, and the cause when one is not.
+const listComponentsDescription = `List every project kelson has stored and the live state of each of its environments: how many workloads are healthy, and the cause when one is not.
 
 READ-ONLY. Changes nothing.
+
+The delivery phase and the deployed revision are empty for now: the adapters that reported them were deleted with kelson's old delivery machinery and they return with issue #224. Workload health is real and is what the "unhappy environment" judgement below rests on.
 
 Use it to find out what exists and which environment is unhappy, when you do not already know. Once you know which environment is in trouble, prefer diagnose_component: it answers "why" in one call, and this tool deliberately answers only "what and where".
 

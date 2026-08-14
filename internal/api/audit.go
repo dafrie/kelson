@@ -13,10 +13,10 @@ import (
 	"connectrpc.com/connect"
 
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
+	"github.com/dafrie/kelson/internal/controlstore"
 	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/diff"
 	"github.com/dafrie/kelson/internal/redact"
-	"github.com/dafrie/kelson/internal/serverstate"
 )
 
 // The audit trail's capture point (issue #78, ADR-0026).
@@ -69,7 +69,7 @@ const ReasonHeader = "Kelson-Reason"
 // better counted as lost than left holding a goroutine.
 const auditWriteTimeout = 5 * time.Second
 
-// AuditSink is the audit-trail seam. *serverstate.AuditStore implements it; a
+// AuditSink is the audit-trail seam. *controlstore.AuditStore implements it; a
 // nil one is a server with no trail, which QueryAudit answers CodeUnimplemented
 // for and which makes every capture point below a no-op.
 //
@@ -77,8 +77,8 @@ const auditWriteTimeout = 5 * time.Second
 // through one implementation and answered queries from another would produce a
 // trail that disagreed with itself, which is worse than no trail at all.
 type AuditSink interface {
-	Append(ctx context.Context, rec serverstate.AuditRecord) error
-	Query(ctx context.Context, q serverstate.AuditQuery) (serverstate.AuditPage, error)
+	Append(ctx context.Context, rec controlstore.AuditRecord) error
+	Query(ctx context.Context, q controlstore.AuditQuery) (controlstore.AuditPage, error)
 }
 
 // auditor owns the sink, the failure counter and the logger. It is held by the
@@ -113,7 +113,7 @@ func (a *auditor) Failures() int64 { return a.failures.Load() }
 type auditEntry struct {
 	mu sync.Mutex
 	// rec is the record so far.
-	rec serverstate.AuditRecord
+	rec controlstore.AuditRecord
 	// refused is set when authorization turned the request away, so finish
 	// does not overwrite an authorization code with a transport one.
 	refused bool
@@ -150,8 +150,8 @@ func (a *auditor) begin(ctx context.Context, p Principal, procedure string, head
 	row, _ := scopeFor(procedure)
 	e := &auditEntry{
 		row: row,
-		rec: serverstate.AuditRecord{
-			Principal: serverstate.AuditPrincipal{Type: string(p.Type), Name: p.Name},
+		rec: controlstore.AuditRecord{
+			Principal: controlstore.AuditPrincipal{Type: string(p.Type), Name: p.Name},
 			Procedure: procedure,
 			Operation: row.Operation,
 			Reason:    reasonFrom(header),
@@ -171,8 +171,8 @@ func reasonFrom(header http.Header) string {
 		return ""
 	}
 	reason := strings.TrimSpace(header.Get(ReasonHeader))
-	if len(reason) > serverstate.MaxAuditReason*2 {
-		reason = reason[:serverstate.MaxAuditReason*2]
+	if len(reason) > controlstore.MaxAuditReason*2 {
+		reason = reason[:controlstore.MaxAuditReason*2]
 	}
 	return reason
 }
@@ -192,7 +192,7 @@ func (e *auditEntry) target(msg any) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.rec.Target.Project == "" {
-		e.rec.Target = serverstate.AuditTarget{Project: targets[0].Project, Environment: targets[0].Environment}
+		e.rec.Target = controlstore.AuditTarget{Project: targets[0].Project, Environment: targets[0].Environment}
 	}
 }
 
@@ -205,7 +205,7 @@ func (e *auditEntry) refuse(err authzError) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.refused = true
-	e.rec.Outcome = serverstate.AuditRefused
+	e.rec.Outcome = controlstore.AuditRefused
 	e.rec.Code = err.Code
 	e.rec.Message = err.Message
 }
@@ -228,9 +228,9 @@ func (a *auditor) finish(ctx context.Context, e *auditEntry, err error) {
 	e.written = true
 	if !e.refused {
 		if err == nil {
-			e.rec.Outcome = serverstate.AuditAllowed
+			e.rec.Outcome = controlstore.AuditAllowed
 		} else {
-			e.rec.Outcome = serverstate.AuditFailed
+			e.rec.Outcome = controlstore.AuditFailed
 			e.rec.Code, e.rec.Message = failureCode(err)
 		}
 	}
@@ -278,10 +278,10 @@ func (a *auditor) finish(ctx context.Context, e *auditEntry, err error) {
 // A procedure with no row in the scope table is recorded: it was refused, and a
 // refusal nobody can see is the failure mode the table exists to prevent.
 func (e *auditEntry) recordable() bool {
-	if e.rec.Outcome != serverstate.AuditAllowed {
+	if e.rec.Outcome != controlstore.AuditAllowed {
 		return true
 	}
-	return e.rec.Operation == serverstate.OpMutate || e.rec.Operation == serverstate.OpAdmin
+	return e.rec.Operation == controlstore.OpMutate || e.rec.Operation == controlstore.OpAdmin
 }
 
 // failureCode projects a handler failure onto the record's code and message. A
@@ -312,7 +312,7 @@ func auditTarget(ctx context.Context, project, environment string) {
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.rec.Target = serverstate.AuditTarget{Project: project, Environment: environment}
+	e.rec.Target = controlstore.AuditTarget{Project: project, Environment: environment}
 }
 
 // auditDryRun records which rung of the dry-run ladder the call asked for, so a
@@ -354,7 +354,7 @@ func auditIdempotencyKey(ctx context.Context, key string) {
 // bounded summary of what it touched. It merges rather than replaces, because
 // the revision and the shape of the change are learned at different moments —
 // the set is rendered before the apply, the revision comes back from it.
-func auditChange(ctx context.Context, change serverstate.AuditChange) {
+func auditChange(ctx context.Context, change controlstore.AuditChange) {
 	e := auditFrom(ctx)
 	if e == nil {
 		return
@@ -362,7 +362,7 @@ func auditChange(ctx context.Context, change serverstate.AuditChange) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.rec.Change == nil {
-		e.rec.Change = &serverstate.AuditChange{}
+		e.rec.Change = &controlstore.AuditChange{}
 	}
 	merged := e.rec.Change
 	if change.Revision != "" {
@@ -388,23 +388,22 @@ func auditChange(ctx context.Context, change serverstate.AuditChange) {
 	}
 }
 
-// auditRevision is the one-field case of [auditChange]: the apply landed and
-// this is what it was recorded as.
-func auditRevision(ctx context.Context, revision string) {
-	auditChange(ctx, serverstate.AuditChange{Revision: revision})
-}
+// [auditChange]'s one-field caller, auditRevision, went with the apply that
+// produced a revision (ADR-0028). AuditChange keeps the field: the record shape
+// is what an operator's stored trail is written in, and it carries revisions
+// the controller will record again (issue #224).
 
 // changeFromDiff summarises a computed comparison for a record.
-func changeFromDiff(d *diff.Diff) serverstate.AuditChange {
+func changeFromDiff(d *diff.Diff) controlstore.AuditChange {
 	if d == nil {
-		return serverstate.AuditChange{}
+		return controlstore.AuditChange{}
 	}
 	kinds := make([]string, 0, len(d.Resources))
 	for _, r := range d.Resources {
 		kinds = append(kinds, r.Kind)
 	}
-	return serverstate.AuditChange{
-		Source:   serverstate.ChangeFromDiff,
+	return controlstore.AuditChange{
+		Source:   controlstore.ChangeFromDiff,
 		Added:    d.Summary.Added,
 		Modified: d.Summary.Modified,
 		Removed:  d.Summary.Removed,
@@ -418,13 +417,13 @@ func changeFromDiff(d *diff.Diff) serverstate.AuditChange {
 // Source, rather than reporting zeros for added/modified/removed as if nothing
 // had changed — a record that claimed a deploy touched nothing would be the
 // worst kind of wrong.
-func changeFromSet(set delivery.ManifestSet) serverstate.AuditChange {
+func changeFromSet(set delivery.ManifestSet) controlstore.AuditChange {
 	kinds := make([]string, 0, len(set.Manifests))
 	for _, m := range set.Manifests {
 		kinds = append(kinds, m.Kind)
 	}
-	return serverstate.AuditChange{
-		Source:    serverstate.ChangeFromRendered,
+	return controlstore.AuditChange{
+		Source:    controlstore.ChangeFromRendered,
 		Resources: len(set.Manifests),
 		Kinds:     kinds,
 	}
@@ -444,7 +443,7 @@ func (s *Server) QueryAudit(ctx context.Context, req *connect.Request[kelsonv1al
 		return nil, unimplemented("the audit trail")
 	}
 	msg := req.Msg
-	page, err := s.audit.sink.Query(ctx, serverstate.AuditQuery{
+	page, err := s.audit.sink.Query(ctx, controlstore.AuditQuery{
 		Principal:     msg.GetPrincipal(),
 		PrincipalType: msg.GetPrincipalType(),
 		Project:       msg.GetProject(),
@@ -457,7 +456,7 @@ func (s *Server) QueryAudit(ctx context.Context, req *connect.Request[kelsonv1al
 		PageToken:     msg.GetPageToken(),
 	})
 	if err != nil {
-		if serverstate.AsAuditQuery(err) {
+		if controlstore.AsAuditQuery(err) {
 			return nil, fail(connect.CodeInvalidArgument, err)
 		}
 		return nil, failRequest(err)
@@ -483,7 +482,7 @@ func (s *Server) QueryAudit(ctx context.Context, req *connect.Request[kelsonv1al
 // wireAuditRecord projects one stored record onto the wire, verbatim: the
 // vocabulary of codes, outcomes and sources is the store's and this layer does
 // not translate it (ADR-0013 §2).
-func wireAuditRecord(rec serverstate.AuditRecord) *kelsonv1alpha1.AuditRecord {
+func wireAuditRecord(rec controlstore.AuditRecord) *kelsonv1alpha1.AuditRecord {
 	out := &kelsonv1alpha1.AuditRecord{
 		Id:         rec.ID,
 		TimeUnixMs: auditMillis(rec.Time),
@@ -502,7 +501,7 @@ func wireAuditRecord(rec serverstate.AuditRecord) *kelsonv1alpha1.AuditRecord {
 		Reason:         rec.Reason,
 		IdempotencyKey: rec.IdempotencyKey,
 	}
-	if rec.Target != (serverstate.AuditTarget{}) {
+	if rec.Target != (controlstore.AuditTarget{}) {
 		out.Target = &kelsonv1alpha1.AuditTarget{Project: rec.Target.Project, Environment: rec.Target.Environment}
 	}
 	if rec.Change != nil {
@@ -510,24 +509,24 @@ func wireAuditRecord(rec serverstate.AuditRecord) *kelsonv1alpha1.AuditRecord {
 			Revision:     rec.Change.Revision,
 			FromRevision: rec.Change.From,
 			Source:       rec.Change.Source,
-			Added:     int32(rec.Change.Added),     //nolint:gosec // a rendered set is orders of magnitude below int32
-			Modified:  int32(rec.Change.Modified),  //nolint:gosec // as above
-			Removed:   int32(rec.Change.Removed),   //nolint:gosec // as above
-			Resources: int32(rec.Change.Resources), //nolint:gosec // as above
-			Kinds:     rec.Change.Kinds,
-			MaxRisk:   rec.Change.MaxRisk,
+			Added:        int32(rec.Change.Added),     //nolint:gosec // a rendered set is orders of magnitude below int32
+			Modified:     int32(rec.Change.Modified),  //nolint:gosec // as above
+			Removed:      int32(rec.Change.Removed),   //nolint:gosec // as above
+			Resources:    int32(rec.Change.Resources), //nolint:gosec // as above
+			Kinds:        rec.Change.Kinds,
+			MaxRisk:      rec.Change.MaxRisk,
 		}
 	}
 	return out
 }
 
-func wireAuditOutcome(outcome serverstate.AuditOutcome) kelsonv1alpha1.AuditOutcome {
+func wireAuditOutcome(outcome controlstore.AuditOutcome) kelsonv1alpha1.AuditOutcome {
 	switch outcome {
-	case serverstate.AuditAllowed:
+	case controlstore.AuditAllowed:
 		return kelsonv1alpha1.AuditOutcome_AUDIT_OUTCOME_ALLOWED
-	case serverstate.AuditRefused:
+	case controlstore.AuditRefused:
 		return kelsonv1alpha1.AuditOutcome_AUDIT_OUTCOME_REFUSED
-	case serverstate.AuditFailed:
+	case controlstore.AuditFailed:
 		return kelsonv1alpha1.AuditOutcome_AUDIT_OUTCOME_FAILED
 	default:
 		return kelsonv1alpha1.AuditOutcome_AUDIT_OUTCOME_UNSPECIFIED
@@ -537,14 +536,14 @@ func wireAuditOutcome(outcome serverstate.AuditOutcome) kelsonv1alpha1.AuditOutc
 // auditOutcomeOf maps the wire filter onto the store's vocabulary. UNSPECIFIED
 // is "any", which is why it is not an error here — the store refuses a value it
 // does not know, and the enum cannot carry one.
-func auditOutcomeOf(outcome kelsonv1alpha1.AuditOutcome) serverstate.AuditOutcome {
+func auditOutcomeOf(outcome kelsonv1alpha1.AuditOutcome) controlstore.AuditOutcome {
 	switch outcome {
 	case kelsonv1alpha1.AuditOutcome_AUDIT_OUTCOME_ALLOWED:
-		return serverstate.AuditAllowed
+		return controlstore.AuditAllowed
 	case kelsonv1alpha1.AuditOutcome_AUDIT_OUTCOME_REFUSED:
-		return serverstate.AuditRefused
+		return controlstore.AuditRefused
 	case kelsonv1alpha1.AuditOutcome_AUDIT_OUTCOME_FAILED:
-		return serverstate.AuditFailed
+		return controlstore.AuditFailed
 	default:
 		return ""
 	}

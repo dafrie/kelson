@@ -9,12 +9,12 @@ import (
 
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
 	"github.com/dafrie/kelson/internal/clusterprofile"
+	"github.com/dafrie/kelson/internal/controlstore"
 	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/diff"
 	"github.com/dafrie/kelson/internal/model"
 	"github.com/dafrie/kelson/internal/promote"
 	"github.com/dafrie/kelson/internal/renderer"
-	"github.com/dafrie/kelson/internal/serverstate"
 )
 
 // Promote pins the target environment to what the source environment's latest
@@ -28,6 +28,14 @@ import (
 // moves what ran and not what was intended. The stored spec supplies the target
 // environment's document. internal/promote decides and splices; this handler
 // only sequences and stores.
+//
+// # It is gated (issue #224)
+//
+// The first of the three reads is what broke: the deployed digest came from the
+// rendered-history store, which ADR-0027 decision 7 deleted. [deployedImages]
+// carries the refusal and the reasoning. Everything else in this file — the
+// plan, the splice, the promotion diff, the agent-policy guard — is untouched
+// and is what the rebuild plugs a new digest source into.
 //
 // # The diff is computed here, not left to the caller
 //
@@ -93,7 +101,7 @@ func (s *Server) Promote(ctx context.Context, req *connect.Request[kelsonv1alpha
 		}
 	}
 
-	revision, deployed, err := s.deployedImages(ctx, spec.project, source, msg.GetMode())
+	revision, deployed, err := s.deployedImages(ctx, spec.project, source)
 	if err != nil {
 		return nil, failRequest(err)
 	}
@@ -111,7 +119,7 @@ func (s *Server) Promote(ctx context.Context, req *connect.Request[kelsonv1alpha
 		Components:   wirePromoted(changes),
 		FromRevision: revision,
 	}
-	auditChange(ctx, serverstate.AuditChange{From: revision})
+	auditChange(ctx, controlstore.AuditChange{From: revision})
 	profile, err := s.resolveProfile(ctx, msg.GetProfile())
 	if err != nil {
 		return nil, failRequest(err)
@@ -132,7 +140,7 @@ func (s *Server) Promote(ctx context.Context, req *connect.Request[kelsonv1alpha
 	if version == "" {
 		version = stored.Version
 	}
-	written, err := s.specs.Put(ctx, stored.Project, after, serverstate.PutOptions{
+	written, err := s.specs.Put(ctx, stored.Project, after, controlstore.PutOptions{
 		ExpectedVersion: version,
 		IdempotencyKey:  msg.GetIdempotencyKey(),
 	})
@@ -140,7 +148,7 @@ func (s *Server) Promote(ctx context.Context, req *connect.Request[kelsonv1alpha
 		return nil, failRequest(err)
 	}
 	res.Version = written.Version
-	auditChange(ctx, serverstate.AuditChange{Revision: written.Version})
+	auditChange(ctx, controlstore.AuditChange{Revision: written.Version})
 	return connect.NewResponse(res), nil
 }
 
@@ -161,51 +169,23 @@ func checkPromoteRequest(msg *kelsonv1alpha1.PromoteRequest) error {
 
 // deployedImages reads what the source environment's latest revision runs.
 //
-// It reads the recorded manifests through the same seam the rollback preview
-// and the revision diff use (Plane.Recorded), because those bytes are what was
-// applied. A mode whose history kelson cannot read says so rather than falling
-// back to a re-render, which would promote an intention.
-func (s *Server) deployedImages(ctx context.Context, project *model.Project, source *model.Environment, mode string) (string, map[string]string, error) {
-	resolved, errs := model.Resolve(project, source)
-	if len(errs) > 0 {
-		return "", nil, errs
-	}
-	t := Target{
-		Project:     project.Metadata.Name,
-		Environment: source.Metadata.Name,
-		Namespace:   resolved.Environment.Namespace,
-		Mode:        mode,
-		Git:         resolved.Environment.Delivery.Git,
-	}
-	if t.Mode == "" {
-		t.Mode = string(resolved.Environment.Mode)
-	}
-	adapter, plane, err := s.selectAdapter(ctx, t)
-	if err != nil {
-		return "", nil, err
-	}
-
-	entries, err := adapter.History(ctx, delivery.ManifestSet{Project: t.Project, Environment: t.Environment})
-	if err != nil {
-		return "", nil, err
-	}
-	if len(entries) == 0 {
-		return "", nil, promote.NothingDeployed(t.Project, t.Environment)
-	}
-	if plane.Recorded == nil {
-		return "", nil, fmt.Errorf("api: delivery mode %q keeps no rendered history kelson can read, so the images %s/%s runs cannot be read back; promote from an environment delivered in direct mode, or set the pin by hand",
-			adapter.Name(), t.Project, t.Environment)
-	}
-
-	manifests, err := plane.Recorded.Revision(ctx, entries[0].Revision)
-	if err != nil {
-		return "", nil, err
-	}
-	images, err := promote.Deployed(manifests)
-	if err != nil {
-		return "", nil, err
-	}
-	return entries[0].Revision, images, nil
+// It is the one step of the promotion that has no source any more. The seam it
+// read through was the rendered-history store, whose bytes were what was
+// actually applied; the spine's replacement is the source Environment's
+// `status.history[]` mirror and, beyond that window, the registry's tag list
+// (ADR-0028 decision 4). Neither exists yet, so the promotion refuses here —
+// before the plan, before the splice, and before anything is stored.
+//
+// Reading the *spec* of the source environment instead would be the wrong fix
+// and is deliberately not done: ADR-0016 decision 2 defines a promotion as
+// moving what ran, not what was intended, and a promotion that silently
+// promoted an intention would be worse than one that refuses.
+func (s *Server) deployedImages(_ context.Context, project *model.Project, source *model.Environment) (string, map[string]string, error) {
+	return "", nil, delivery.NotImplemented("promote",
+		fmt.Sprintf("kelson cannot read what %s/%s is running: promotion moves the images of the source "+
+			"environment's deployed revision, and the recorded history that answered that was deleted "+
+			"with the old delivery machinery", project.Metadata.Name, source.Metadata.Name),
+		"#224")
 }
 
 // pinnedDocuments applies every pin the plan writes to the environment's
@@ -216,18 +196,18 @@ func (s *Server) deployedImages(ctx context.Context, project *model.Project, sou
 // whatever the client named the document when it stored it, and a promotion
 // that wrote to the wrong file because the two disagreed would be the worst
 // possible way to find that out.
-func pinnedDocuments(docs serverstate.Documents, environment string, changes []promote.Change) (serverstate.Documents, error) {
+func pinnedDocuments(docs controlstore.Documents, environment string, changes []promote.Change) (controlstore.Documents, error) {
 	pins := promote.Pinned(changes)
 	if len(pins) == 0 {
 		return copyDocuments(docs), nil
 	}
 	key, doc, err := environmentDocument(docs, environment)
 	if err != nil {
-		return serverstate.Documents{}, err
+		return controlstore.Documents{}, err
 	}
 	for _, c := range pins {
 		if doc, err = promote.Pin(doc, environment, c.Component, c.To); err != nil {
-			return serverstate.Documents{}, err
+			return controlstore.Documents{}, err
 		}
 	}
 	out := copyDocuments(docs)
@@ -236,7 +216,7 @@ func pinnedDocuments(docs serverstate.Documents, environment string, changes []p
 }
 
 // environmentDocument finds the stored document declaring one environment.
-func environmentDocument(docs serverstate.Documents, environment string) (string, []byte, error) {
+func environmentDocument(docs controlstore.Documents, environment string) (string, []byte, error) {
 	keys := make([]string, 0, len(docs.Environments))
 	for key := range docs.Environments {
 		keys = append(keys, key)
@@ -256,8 +236,8 @@ func environmentDocument(docs serverstate.Documents, environment string) (string
 	return "", nil, fmt.Errorf("api: no stored document declares environment %q, so there is nothing to write the pin into", environment)
 }
 
-func copyDocuments(docs serverstate.Documents) serverstate.Documents {
-	out := serverstate.Documents{Project: docs.Project, Environments: make(map[string][]byte, len(docs.Environments))}
+func copyDocuments(docs controlstore.Documents) controlstore.Documents {
+	out := controlstore.Documents{Project: docs.Project, Environments: make(map[string][]byte, len(docs.Environments))}
 	for k, v := range docs.Environments {
 		out.Environments[k] = v
 	}
@@ -272,7 +252,7 @@ func copyDocuments(docs serverstate.Documents) serverstate.Documents {
 // store holding a spec no plane can use. The before side is allowed to fail —
 // an environment with no resolvable image renders nothing until the pin gives
 // it one — and then the diff reads as additions, which is what it is.
-func (s *Server) promotionDiff(ctx context.Context, res *kelsonv1alpha1.PromoteResponse, before, after serverstate.Documents, environment string, profile clusterprofile.ClusterProfile) []*kelsonv1alpha1.Error {
+func (s *Server) promotionDiff(ctx context.Context, res *kelsonv1alpha1.PromoteResponse, before, after controlstore.Documents, environment string, profile clusterprofile.ClusterProfile) []*kelsonv1alpha1.Error {
 	spec, err := decodeSpec(after.Project, after.Environments)
 	if err != nil {
 		return wireErrors(err)
@@ -303,7 +283,7 @@ func (s *Server) promotionDiff(ctx context.Context, res *kelsonv1alpha1.PromoteR
 	return nil
 }
 
-func documentsRef(docs serverstate.Documents) *kelsonv1alpha1.SpecRef {
+func documentsRef(docs controlstore.Documents) *kelsonv1alpha1.SpecRef {
 	return &kelsonv1alpha1.SpecRef{Spec: &kelsonv1alpha1.SpecRef_Documents{
 		Documents: &kelsonv1alpha1.SpecDocuments{Project: docs.Project, Environments: docs.Environments},
 	}}

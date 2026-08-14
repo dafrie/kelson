@@ -25,7 +25,7 @@ import (
 // These tests pin that mapping, because it is the half of the design a future
 // reader is most likely to want to "fix" by adding a phase.
 
-// releaseStatus is what internal/delivery/direct reports while a release
+// releaseStatus is what a delivery plane reports while a release
 // command runs (its Progress sink), reproduced here so the two halves of the
 // contract are asserted against the same shape.
 func releaseStatus(p delivery.Phase, cause, state string) delivery.Status {

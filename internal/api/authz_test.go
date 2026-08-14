@@ -15,7 +15,7 @@ import (
 
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
 	"github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1/kelsonv1alpha1connect"
-	"github.com/dafrie/kelson/internal/serverstate"
+	"github.com/dafrie/kelson/internal/controlstore"
 )
 
 // The enforcement tests of issue #74. Every one of them goes through the real
@@ -34,37 +34,37 @@ const (
 // --- the fake identity store -------------------------------------------------
 
 // fakeAgentStore is an in-memory AgentStore. The real one is tested against a
-// fake clientset in internal/serverstate; what matters here is the gate and the
+// fake clientset in internal/controlstore; what matters here is the gate and the
 // interceptor, so this one mints a token whose only job is to be looked up.
 type fakeAgentStore struct {
 	mu     sync.Mutex
-	agents map[string]serverstate.Agent
+	agents map[string]controlstore.Agent
 	tokens map[string]string
 	seq    int
 }
 
 func newFakeAgentStore() *fakeAgentStore {
-	return &fakeAgentStore{agents: map[string]serverstate.Agent{}, tokens: map[string]string{}}
+	return &fakeAgentStore{agents: map[string]controlstore.Agent{}, tokens: map[string]string{}}
 }
 
-func (f *fakeAgentStore) Create(_ context.Context, spec serverstate.AgentSpec) (serverstate.Agent, string, error) {
+func (f *fakeAgentStore) Create(_ context.Context, spec controlstore.AgentSpec) (controlstore.Agent, string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if _, exists := f.agents[spec.Name]; exists {
-		return serverstate.Agent{}, "", serverstate.Error{Code: serverstate.ErrAgentExists, Resource: "agent/" + spec.Name}
+		return controlstore.Agent{}, "", controlstore.Error{Code: controlstore.ErrAgentExists, Resource: "agent/" + spec.Name}
 	}
 	ttl := spec.TTL
 	if ttl == 0 {
-		ttl = serverstate.DefaultAgentTTL
+		ttl = controlstore.DefaultAgentTTL
 	}
 	limit := spec.Limit
 	if limit.RequestsPerMinute == 0 {
-		limit.RequestsPerMinute = serverstate.DefaultRequestsPerMinute
+		limit.RequestsPerMinute = controlstore.DefaultRequestsPerMinute
 	}
 	if limit.Burst == 0 {
-		limit.Burst = serverstate.DefaultBurst
+		limit.Burst = controlstore.DefaultBurst
 	}
-	agent := serverstate.Agent{
+	agent := controlstore.Agent{
 		Name:    spec.Name,
 		Created: testNow,
 		Expires: testNow.Add(ttl),
@@ -72,28 +72,28 @@ func (f *fakeAgentStore) Create(_ context.Context, spec serverstate.AgentSpec) (
 		Limit:   limit,
 	}
 	f.seq++
-	token := serverstate.AgentTokenPrefix + spec.Name + ".fake-secret"
+	token := controlstore.AgentTokenPrefix + spec.Name + ".fake-secret"
 	f.agents[spec.Name] = agent
 	f.tokens[token] = spec.Name
 	return agent, token, nil
 }
 
-func (f *fakeAgentStore) List(context.Context) ([]serverstate.Agent, error) {
+func (f *fakeAgentStore) List(context.Context) ([]controlstore.Agent, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	out := make([]serverstate.Agent, 0, len(f.agents))
+	out := make([]controlstore.Agent, 0, len(f.agents))
 	for _, agent := range f.agents {
 		out = append(out, agent)
 	}
 	return out, nil
 }
 
-func (f *fakeAgentStore) Revoke(_ context.Context, name string) (serverstate.Agent, error) {
+func (f *fakeAgentStore) Revoke(_ context.Context, name string) (controlstore.Agent, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	agent, ok := f.agents[name]
 	if !ok {
-		return serverstate.Agent{}, serverstate.NotFound("agent/"+name, "no such identity", "list them")
+		return controlstore.Agent{}, controlstore.NotFound("agent/"+name, "no such identity", "list them")
 	}
 	agent.Revoked = true
 	agent.RevokedAt = testNow
@@ -101,12 +101,12 @@ func (f *fakeAgentStore) Revoke(_ context.Context, name string) (serverstate.Age
 	return agent, nil
 }
 
-func (f *fakeAgentStore) Authenticate(_ context.Context, token string) (serverstate.Agent, error) {
+func (f *fakeAgentStore) Authenticate(_ context.Context, token string) (controlstore.Agent, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	name, ok := f.tokens[token]
 	if !ok {
-		return serverstate.Agent{}, serverstate.Error{Code: serverstate.ErrAgentCredential, Resource: "agent/credential"}
+		return controlstore.Agent{}, controlstore.Error{Code: controlstore.ErrAgentCredential, Resource: "agent/credential"}
 	}
 	return f.agents[name], nil
 }
@@ -202,9 +202,9 @@ func (b bearerCredential) WrapStreamingHandler(next connect.StreamingHandlerFunc
 }
 
 // mint issues an identity through the fake store and returns its token.
-func (g *gatedServer) mint(t *testing.T, name string, scope serverstate.Scope) string {
+func (g *gatedServer) mint(t *testing.T, name string, scope controlstore.Scope) string {
 	t.Helper()
-	_, token, err := g.agents.Create(t.Context(), serverstate.AgentSpec{Name: name, Scope: scope})
+	_, token, err := g.agents.Create(t.Context(), controlstore.AgentSpec{Name: name, Scope: scope})
 	if err != nil {
 		t.Fatalf("minting %s: %v", name, err)
 	}
@@ -278,9 +278,9 @@ func hasCode(codes []string, want string) bool {
 // environments, two answers.
 func TestScopedToDevelopmentCannotMutateProduction(t *testing.T) {
 	g := newGatedServer(t, Options{Specs: newFakeSpecStore()})
-	token := g.mint(t, "deploybot", serverstate.Scope{
+	token := g.mint(t, "deploybot", controlstore.Scope{
 		Environments: []string{devEnv},
-		Operations:   []serverstate.Operation{serverstate.OpMutate},
+		Operations:   []controlstore.Operation{controlstore.OpMutate},
 	})
 	c := g.as(token)
 
@@ -306,13 +306,13 @@ func TestScopedToDevelopmentCannotMutateProduction(t *testing.T) {
 // three separate refusals, and each one alone is enough.
 func TestScopeCoversEveryDimension(t *testing.T) {
 	g := newGatedServer(t, Options{Specs: newFakeSpecStore()})
-	scoped := g.as(g.mint(t, "scoped", serverstate.Scope{
+	scoped := g.as(g.mint(t, "scoped", controlstore.Scope{
 		Projects:     []string{"shop"},
 		Environments: []string{devEnv},
-		Operations:   []serverstate.Operation{serverstate.OpMutate},
+		Operations:   []controlstore.Operation{controlstore.OpMutate},
 	}))
-	readOnly := g.as(g.mint(t, "reporter", serverstate.Scope{
-		Operations: []serverstate.Operation{serverstate.OpRead},
+	readOnly := g.as(g.mint(t, "reporter", controlstore.Scope{
+		Operations: []controlstore.Operation{controlstore.OpRead},
 	}))
 
 	if code := authCode(deployTo(t, scoped, "billing", devEnv)); code != connect.CodePermissionDenied {
@@ -334,12 +334,12 @@ func TestScopeCoversEveryDimension(t *testing.T) {
 // rather than half-served.
 func TestARestrictedCredentialCannotReachWhatItCannotBeCheckedAgainst(t *testing.T) {
 	g := newGatedServer(t, Options{Specs: newFakeSpecStore()})
-	scoped := g.as(g.mint(t, "scoped", serverstate.Scope{
+	scoped := g.as(g.mint(t, "scoped", controlstore.Scope{
 		Projects:   []string{"shop"},
-		Operations: []serverstate.Operation{serverstate.OpMutate},
+		Operations: []controlstore.Operation{controlstore.OpMutate},
 	}))
-	unscoped := g.as(g.mint(t, "wide", serverstate.Scope{
-		Operations: []serverstate.Operation{serverstate.OpMutate},
+	unscoped := g.as(g.mint(t, "wide", controlstore.Scope{
+		Operations: []controlstore.Operation{controlstore.OpMutate},
 	}))
 
 	// ListSpecs spans every project.
@@ -372,10 +372,10 @@ func TestARestrictedCredentialCannotReachWhatItCannotBeCheckedAgainst(t *testing
 // refused, which is the direction that fails closed.
 func TestLogsFollowTheNamespaceConvention(t *testing.T) {
 	g := newGatedServer(t, Options{})
-	c := g.as(g.mint(t, "reporter", serverstate.Scope{
+	c := g.as(g.mint(t, "reporter", controlstore.Scope{
 		Projects:     []string{"shop"},
 		Environments: []string{devEnv},
-		Operations:   []serverstate.Operation{serverstate.OpRead},
+		Operations:   []controlstore.Operation{controlstore.OpRead},
 	}))
 
 	query := func(namespace string) connect.Code {
@@ -403,7 +403,7 @@ func TestLogsFollowTheNamespaceConvention(t *testing.T) {
 // cache eviction.
 func TestAnExpiredCredentialIsRefused(t *testing.T) {
 	g := newGatedServer(t, Options{Specs: newFakeSpecStore()})
-	token := g.mint(t, "deploybot", serverstate.Scope{Operations: []serverstate.Operation{serverstate.OpMutate}})
+	token := g.mint(t, "deploybot", controlstore.Scope{Operations: []controlstore.Operation{controlstore.OpMutate}})
 	c := g.as(token)
 
 	if code := authCode(deployTo(t, c, "shop", devEnv)); code == connect.CodeUnauthenticated {
@@ -421,7 +421,7 @@ func TestAnExpiredCredentialIsRefused(t *testing.T) {
 // and the password path is untouched.
 func TestRevocationIsImmediateAndLocksNoHumanOut(t *testing.T) {
 	g := newGatedServer(t, Options{Specs: newFakeSpecStore()})
-	token := g.mint(t, "deploybot", serverstate.Scope{Operations: []serverstate.Operation{serverstate.OpMutate}})
+	token := g.mint(t, "deploybot", controlstore.Scope{Operations: []controlstore.Operation{controlstore.OpMutate}})
 	agent := g.as(token)
 	human := g.as(testPassword)
 
@@ -455,7 +455,7 @@ func TestTheHumanPasswordPathIsUnaffected(t *testing.T) {
 		t.Errorf("a password caller was refused ListSpecs: %v", err)
 	}
 	// Far more requests than any agent budget allows.
-	for i := range serverstate.DefaultBurst * 3 {
+	for i := range controlstore.DefaultBurst * 3 {
 		if _, err := human.spec.ListSpecs(t.Context(), connect.NewRequest(&kelsonv1alpha1.ListSpecsRequest{})); err != nil {
 			t.Fatalf("a password caller was rate limited after %d requests: %v", i, err)
 		}
@@ -468,7 +468,7 @@ func TestTheHumanPasswordPathIsUnaffected(t *testing.T) {
 // scope from being advisory.
 func TestAnAgentCannotMintOrRevokeAnAgent(t *testing.T) {
 	g := newGatedServer(t, Options{})
-	token := g.mint(t, "deploybot", serverstate.Scope{Operations: []serverstate.Operation{serverstate.OpMutate}})
+	token := g.mint(t, "deploybot", controlstore.Scope{Operations: []controlstore.Operation{controlstore.OpMutate}})
 	agent := g.agentsClient(token)
 
 	_, err := agent.CreateAgent(t.Context(), connect.NewRequest(&kelsonv1alpha1.CreateAgentRequest{
@@ -513,10 +513,10 @@ func TestAnAgentCannotMintOrRevokeAnAgent(t *testing.T) {
 // good instead of backing off.
 func TestAnAgentOverItsBudgetGetsResourceExhausted(t *testing.T) {
 	g := newGatedServer(t, Options{Specs: newFakeSpecStore()})
-	_, token, err := g.agents.Create(t.Context(), serverstate.AgentSpec{
+	_, token, err := g.agents.Create(t.Context(), controlstore.AgentSpec{
 		Name:  "chatty",
-		Scope: serverstate.Scope{Operations: []serverstate.Operation{serverstate.OpRead}},
-		Limit: serverstate.Limit{RequestsPerMinute: 60, Burst: 3},
+		Scope: controlstore.Scope{Operations: []controlstore.Operation{controlstore.OpRead}},
+		Limit: controlstore.Limit{RequestsPerMinute: 60, Burst: 3},
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -542,15 +542,15 @@ func TestAnAgentOverItsBudgetGetsResourceExhausted(t *testing.T) {
 // TestABudgetIsPerIdentity: one runaway agent must not starve another.
 func TestABudgetIsPerIdentity(t *testing.T) {
 	g := newGatedServer(t, Options{Specs: newFakeSpecStore()})
-	small := serverstate.Limit{RequestsPerMinute: 60, Burst: 1}
-	_, chatty, err := g.agents.Create(t.Context(), serverstate.AgentSpec{
-		Name: "chatty", Scope: serverstate.Scope{Operations: []serverstate.Operation{serverstate.OpRead}}, Limit: small,
+	small := controlstore.Limit{RequestsPerMinute: 60, Burst: 1}
+	_, chatty, err := g.agents.Create(t.Context(), controlstore.AgentSpec{
+		Name: "chatty", Scope: controlstore.Scope{Operations: []controlstore.Operation{controlstore.OpRead}}, Limit: small,
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	_, quiet, err := g.agents.Create(t.Context(), serverstate.AgentSpec{
-		Name: "quiet", Scope: serverstate.Scope{Operations: []serverstate.Operation{serverstate.OpRead}}, Limit: small,
+	_, quiet, err := g.agents.Create(t.Context(), controlstore.AgentSpec{
+		Name: "quiet", Scope: controlstore.Scope{Operations: []controlstore.Operation{controlstore.OpRead}}, Limit: small,
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -582,7 +582,7 @@ func TestAnUnmappedMethodIsRefusedToEveryone(t *testing.T) {
 	const unmapped = "/kelson.v1alpha1.FutureService/DoSomething"
 
 	principals := map[string]Principal{
-		"an agent":            {Type: PrincipalAgent, Name: "deploybot", Agent: serverstate.Agent{Name: "deploybot", Expires: testNow.Add(time.Hour), Scope: serverstate.Scope{Operations: []serverstate.Operation{serverstate.OpMutate}}}},
+		"an agent":            {Type: PrincipalAgent, Name: "deploybot", Agent: controlstore.Agent{Name: "deploybot", Expires: testNow.Add(time.Hour), Scope: controlstore.Scope{Operations: []controlstore.Operation{controlstore.OpMutate}}}},
 		"a human":             {Type: PrincipalHuman, Name: "ada"},
 		"an anonymous caller": {Type: PrincipalAnonymous},
 	}
@@ -617,11 +617,11 @@ func TestEveryRequestIsAttributedToItsPrincipal(t *testing.T) {
 	var records recordingHandler
 	a := newAuthorizer(func() time.Time { return testNow }, slog.New(&records), nil)
 
-	agent := Principal{Type: PrincipalAgent, Name: "deploybot", Agent: serverstate.Agent{
+	agent := Principal{Type: PrincipalAgent, Name: "deploybot", Agent: controlstore.Agent{
 		Name:    "deploybot",
 		Expires: testNow.Add(time.Hour),
-		Scope:   serverstate.Scope{Environments: []string{devEnv}, Operations: []serverstate.Operation{serverstate.OpMutate}},
-		Limit:   serverstate.Limit{RequestsPerMinute: 60, Burst: 10},
+		Scope:   controlstore.Scope{Environments: []string{devEnv}, Operations: []controlstore.Operation{controlstore.OpMutate}},
+		Limit:   controlstore.Limit{RequestsPerMinute: 60, Burst: 10},
 	}}
 	row, err := a.admit(t.Context(), agent, kelsonv1alpha1connect.DeployServiceDeployProcedure)
 	if err != nil {
@@ -704,7 +704,7 @@ func TestAGateWithNoAgentStoreSaysSo(t *testing.T) {
 		t.Fatalf("NewAuth: %v", err)
 	}
 	req := httptest.NewRequest(http.MethodPost, apiPathPrefix+"SpecService/ListSpecs", nil)
-	req.Header.Set("Authorization", "Bearer "+serverstate.AgentTokenPrefix+"deploybot.whatever")
+	req.Header.Set("Authorization", "Bearer "+controlstore.AgentTokenPrefix+"deploybot.whatever")
 
 	_, message := auth.principal(req)
 	if message == "" {

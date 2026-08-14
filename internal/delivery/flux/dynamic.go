@@ -20,9 +20,9 @@ const DefaultNamespace = "flux-system"
 
 // The Flux API coordinates kelson reads. Pinned versions rather than discovery
 // lookups, for the same reason internal/clusterprofile/detect pins its own:
-// these groups are stable, and eject's bootstrap manifests already write
-// kustomize/source v1 (internal/delivery/eject/bootstrap.go), so a version this
-// adapter could read but not write would be the inconsistency.
+// these groups are stable, and the renderer's own preview Kustomization
+// already writes kustomize/source v1 (internal/renderer/previews.go), so a
+// version this adapter could read but not write would be the inconsistency.
 var (
 	kustomizationGVR = schema.GroupVersionResource{Group: "kustomize.toolkit.fluxcd.io", Version: "v1", Resource: "kustomizations"}
 	gitRepositoryGVR = schema.GroupVersionResource{Group: "source.toolkit.fluxcd.io", Version: "v1", Resource: "gitrepositories"}

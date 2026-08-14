@@ -30,19 +30,44 @@ const (
 	// be reported, not left hanging).
 	ErrNotWatched Code = "delivery/not-watched"
 
-	// Unsupported marks an operation the adapter's Capabilities forbid, so
-	// callers can negotiate up front rather than fail at apply time.
+	// Unsupported marks an operation this plane cannot perform on the target
+	// it was given, so callers can negotiate up front rather than fail at
+	// apply time.
 	ErrUnsupported Code = "delivery/unsupported"
+
+	// NotImplemented marks a delivery capability kelson used to have, deleted
+	// with the old machinery, and not yet rebuilt on the spine
+	// ([ADR-0028](docs/adr/0028-delivery-spine.md)).
+	//
+	// It is deliberately its own code rather than a reuse of
+	// delivery/unsupported. "Unsupported" is a statement about the target — ask
+	// something else and it works — and this is a statement about kelson: the
+	// capability is gone from every target until the tracked work lands. An
+	// agent must be able to tell "try another way" from "there is no way yet",
+	// and the difference between those two is the difference between retrying
+	// and stopping.
+	//
+	// The taxonomy is the one internal/model's `schema/not-implemented` gate
+	// table already established (notimplemented.go): a thing kelson cannot do
+	// is refused by name, with the tracking issue in the remediation, rather
+	// than half-wired or silently skipped.
+	ErrNotImplemented Code = "delivery/not-implemented"
 
 	// ImmutableField is returned when the API server refuses an update because
 	// a field of the live object cannot change in place. It is a distinct code
 	// from ApplyFailed because the remedy is distinct and unusual: there is
 	// nothing to fix in the spec — the spec is what the object should be — and
 	// re-deploying will fail identically until the live object is deleted.
-	// ADR-0027's selector rename is the case that motivated it, and a caller
-	// that switches on the code should not have to parse a Kubernetes
-	// validation message to tell "your spec is wrong" from "delete this and
-	// deploy again".
+	// The component rename's selector change
+	// ([ADR-0032](docs/adr/0032-finish-the-component-rename.md)) is the case
+	// that motivated it, and a caller that switches on the code should not have
+	// to parse a Kubernetes validation message to tell "your spec is wrong"
+	// from "delete this and deploy again".
+	//
+	// The direct adapter that raised it was deleted with the direct plane
+	// ([ADR-0028](docs/adr/0028-delivery-spine.md)); the code and its helpers
+	// stay because the failure belongs to any last mile that applies to a live
+	// API server, and the spine's reconcilers meet it too.
 	ErrImmutableField Code = "delivery/immutable-field"
 
 	// ReleaseFailed is returned when a component's release command — the
@@ -170,6 +195,28 @@ func AsReleaseFailed(err error) bool {
 	return errors.As(err, &de) && de.Code == ErrReleaseFailed
 }
 
+// NotImplemented reports a delivery capability the spine rebuild removed and
+// has not replaced yet, naming the issue that tracks its return.
+//
+// resource is what the caller asked for in kelson's own vocabulary ("deploy",
+// "rollback", "history"), what is the sentence explaining the gap, and tracking
+// is the issue reference — "#224", never a bare number and never prose without
+// one, because the whole point of the code is that a caller can find out when
+// the answer will change.
+func NotImplemented(resource, what, tracking string) Error {
+	return newError(ErrNotImplemented, resource, "", what,
+		"the delivery spine is being rebuilt on the controller (ADR-0028): render, publish an OCI "+
+			"artifact, let Flux reconcile. This capability returns with "+tracking+
+			". `kelson render` and `kelson diff` are unaffected and work offline.")
+}
+
+// AsNotImplemented reports whether err is a delivery/not-implemented refusal,
+// so a caller can say "not yet" rather than "it failed".
+func AsNotImplemented(err error) bool {
+	var de Error
+	return errors.As(err, &de) && de.Code == ErrNotImplemented
+}
+
 // UnsupportedError reports a capability mismatch (issue #32).
 func UnsupportedError(adapter, op string) error {
 	return newError(ErrUnsupported, adapter, op,
@@ -178,3 +225,11 @@ func UnsupportedError(adapter, op string) error {
 }
 
 var _ error = Error{}
+
+// AsUnsupported reports whether err is a delivery/unsupported capability
+// mismatch, so a caller can tell it apart from a delivery/not-implemented gap
+// in kelson itself.
+func AsUnsupported(err error) bool {
+	var de Error
+	return errors.As(err, &de) && de.Code == ErrUnsupported
+}

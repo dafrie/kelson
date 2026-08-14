@@ -1,58 +1,52 @@
 // Command schemagen generates the published JSON Schemas for the model
-// package (schema/project.schema.json, schema/environment.schema.json). It is
-// invoked by `go generate ./internal/model` and is the single source path
-// from Go types to the machine-readable schema agents reason against.
+// package (schema/project.schema.json, schema/environment.schema.json) and the
+// CustomResourceDefinitions that carry the same model into a cluster
+// (deploy/crds/*.yaml). It is invoked by `go generate ./internal/model` and is
+// the single source path from Go types to both machine-readable forms.
+//
+// Two output formats, one pipeline. ADR-0027 decision 4 refuses a second,
+// marker-driven generator for the CRDs: a marker set would be a second answer to
+// *what is a valid kelson spec?*, and the first time a field gained a json tag
+// without a marker (or the reverse) the JSON Schema and the CRD would disagree
+// about what a user may write, silently. Everything below reflects over the same
+// structs, once, and writes it out twice.
 package main
 
 import (
-	"bytes"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
-
-	"github.com/invopop/jsonschema"
-
-	"github.com/dafrie/kelson/internal/model"
 )
 
 func main() {
-	out := flag.String("out", "../../schema", "output directory, relative to the model package dir")
+	out := flag.String("out", "../../schema", "output directory for the JSON Schemas, relative to the model package dir")
+	crds := flag.String("crds", "../../deploy/crds", "output directory for the CustomResourceDefinitions")
 	flag.Parse()
 
-	schemas := []struct {
-		name string
-		doc  any
-	}{
-		{"project.schema.json", &model.Project{}},
-		{"environment.schema.json", &model.Environment{}},
-	}
-
-	r := &jsonschema.Reflector{
-		DoNotReference:            true,
-		ExpandedStruct:            true,
-		AllowAdditionalProperties: false,
-	}
-	if err := os.MkdirAll(*out, 0o755); err != nil {
+	if err := writeAll(*out, Schemas()); err != nil {
 		fatal(err)
 	}
-	for _, s := range schemas {
-		schema := r.Reflect(s.doc)
-		schema.ID = jsonschema.ID("https://kelson.dev/model/" + s.name)
-		data, err := json.MarshalIndent(schema, "", "  ")
-		if err != nil {
-			fatal(err)
-		}
-		data = bytes.ReplaceAll(data, []byte(`\u003c`), []byte("<"))
-		data = bytes.ReplaceAll(data, []byte(`\u003e`), []byte(">"))
-		data = bytes.ReplaceAll(data, []byte(`\u0026`), []byte("&"))
-		data = append(data, '\n')
-		if err := os.WriteFile(filepath.Join(*out, s.name), data, 0o644); err != nil {
-			fatal(err)
-		}
-		fmt.Println("wrote", filepath.Join(*out, s.name))
+	if err := writeAll(*crds, CRDs()); err != nil {
+		fatal(err)
 	}
+}
+
+// writeAll writes each generated file into dir, creating it if needed, and
+// names what it wrote. The files are keyed by base name, so a caller passing a
+// directory decides the whole path.
+func writeAll(dir string, files map[string][]byte) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	for _, name := range sortedKeys(files) {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, files[name], 0o644); err != nil {
+			return err
+		}
+		fmt.Println("wrote", path)
+	}
+	return nil
 }
 
 func fatal(err error) {

@@ -147,7 +147,7 @@ func Render(resolved *model.Resolved, profile clusterprofile.ClusterProfile, res
 	// before everything that must not roll until it has finished (issue #104).
 	// The set expresses that as order and nothing more — the waiting is the
 	// direct adapter's, which is the whole reason the field is direct-only
-	// (ADR-0019, internal/delivery/direct/release.go).
+	// (ADR-0019; the plane that honoured it is deleted — ADR-0028 decision 8).
 	for i := range resolved.Components {
 		c := &resolved.Components[i]
 		if c.Release == nil {
@@ -326,7 +326,7 @@ func selectorLabels(prov provenance) *yaml.Node {
 //
 // The payload's JSON key held "application" through ADR-0014 because renaming
 // it would have churned the annotation on every workload in every cluster to
-// say nothing new. ADR-0027 retires that argument: the same change renames the
+// say nothing new. ADR-0032 retires that argument: the same change renames the
 // selector label, and a workload whose selector changed cannot be updated in
 // place anyway — it is deleted and redeployed. There is no annotation left to
 // spare, so the key says what the model says.

@@ -31,7 +31,7 @@ type LogSelector struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
 	Namespace string                 `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"` // required
 	// The component whose pods to read. The field keeps its v1alpha1 name while
-	// the label it selects on does not (ADR-0027): renaming a wire field is a
+	// the label it selects on does not (ADR-0032): renaming a wire field is a
 	// separate break from renaming a cluster label, and this one buys nothing
 	// the label rename did not already buy.
 	Application   string   `protobuf:"bytes,2,opt,name=application,proto3" json:"application,omitempty"` // required — pods are selected by kelson.dev/component

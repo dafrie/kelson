@@ -1,13 +1,22 @@
-# The chart that installs kelson-server into a cluster (issue #58).
+# The chart that installs kelson into a cluster (issue #58): kelson-server, and
+# — since ADR-0027 — kelson's two CRDs and the controller that reconciles them.
 #
-# It ships no CRDs, on purpose. ADR-0003 says kelson adopts a cluster rather
-# than colonising it: everything the chart creates is an ordinary namespaced
-# object plus one read-only ClusterRole, so `helm uninstall` leaves the cluster
-# exactly as it found it and the workloads kelson deployed keep running
-# (issue #59). See README.md for what the chart deliberately does not do.
+# It shipped no CRDs until ADR-0027, and the reversal is that ADR's argument
+# rather than a change of doctrine. ADR-0003 says kelson adopts a cluster rather
+# than colonising it, and a CRD is the most additive thing a project can
+# install: it registers an API group nobody else claims, mutates no existing
+# object and changes no existing behaviour. Everything else the chart creates is
+# still an ordinary namespaced object plus read-only or kelson-scoped
+# ClusterRoles, so `helm uninstall` leaves the cluster as it found it and the
+# workloads kelson deployed keep running (issue #59).
+#
+# The sharper edge ADR-0027 names out loud: deleting a CRD deletes every custom
+# resource with it. `helm uninstall` does NOT delete files under crds/ — Helm
+# leaves them, deliberately — so removing kelson's CRDs is a separate,
+# deliberate `kubectl delete crd`. See README.md for what the chart does not do.
 apiVersion: v2
 name: kelson
-description: kelson-server — the API behind the kelson CLI, UI and MCP surface
+description: kelson — the API behind the CLI, UI and MCP surface, plus the CRDs and controller
 type: application
 
 # The chart's own version. It moves when the chart changes, independently of

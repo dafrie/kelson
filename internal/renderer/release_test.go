@@ -223,7 +223,7 @@ func TestReleaseHookMovesTheServiceAccountRatherThanDuplicatingIt(t *testing.T) 
 // delivery mode is refused by name rather than rendering a Job that would run
 // beside the rollout instead of before it.
 func TestReleaseRequiresDirectMode(t *testing.T) {
-	for _, mode := range []model.DeliveryMode{model.DeliveryFlux, model.DeliveryArgoCD, ""} {
+	for _, mode := range []model.DeliveryMode{model.DeliveryFlux, ""} {
 		t.Run(string(mode)+"-mode", func(t *testing.T) {
 			resolved := releaseFixture()
 			resolved.Environment.Mode = mode

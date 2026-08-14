@@ -81,7 +81,7 @@ func (c *clients) logsWindow(ctx context.Context, in logsWindowInput) (*mcpsdk.C
 
 	request := &kelsonv1alpha1.QueryLogsRequest{
 		// LogSelector.application is the v1alpha1 wire name for what the model
-		// calls a component; ADR-0027 renamed the vocabulary and the label, not
+		// calls a component; ADR-0032 renamed the vocabulary and the label, not
 		// the wire field.
 		Selector: &kelsonv1alpha1.LogSelector{Namespace: namespace, Application: component},
 	}

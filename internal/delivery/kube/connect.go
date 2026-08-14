@@ -21,6 +21,7 @@ import (
 	"k8s.io/client-go/discovery/cached/memory"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/restmapper"
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -35,6 +36,13 @@ type Cluster struct {
 	// reachable through the dynamic client — observation.ClientGoLogSource
 	// needs this and nothing else in-tree turns a kubeconfig into one.
 	Typed kubernetes.Interface
+	// Config is the resolved REST configuration the three clients above were
+	// built from. It is exposed so a caller that needs a *fourth* kind of
+	// client — internal/controlstore's typed client for the kelson.dev custom
+	// resources — builds it from the same credentials this connection resolved,
+	// rather than running the kubeconfig precedence chain a second time and
+	// risking a different answer.
+	Config *rest.Config
 }
 
 // Connect resolves a kubeconfig and returns a live connection.
@@ -78,5 +86,6 @@ func Connect(kubeconfig string) (*Cluster, error) {
 		Dynamic: dyn,
 		Mapper:  restmapper.NewDeferredDiscoveryRESTMapper(memory.NewMemCacheClient(disco)),
 		Typed:   typed,
+		Config:  cfg,
 	}, nil
 }

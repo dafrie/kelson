@@ -7,7 +7,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dafrie/kelson/internal/delivery/direct"
 	"github.com/dafrie/kelson/internal/delivery/install"
 	"github.com/dafrie/kelson/internal/delivery/kube"
 	"github.com/dafrie/kelson/internal/delivery/uninstall"
@@ -34,7 +33,7 @@ import (
 // and it names the volumes an operator will garbage-collect as well as the
 // resources kelson deletes itself.
 func newUninstallCmd() *cobra.Command {
-	return newUninstallCmdFactory(connectUninstall, connectRemover, openHistoryStore)
+	return newUninstallCmdFactory(connectUninstall, connectRemover)
 }
 
 // uninstaller is what the command needs from the delivery plane. It is declared
@@ -77,26 +76,6 @@ func connectRemover(opts uninstallOptions) (remover, error) {
 	})
 }
 
-// historyStore is the local rendered-history the command forgets after a
-// successful uninstall. Only the CLI's own JSONL journal is reachable from
-// here: the server's history lives in ConfigMaps in the server's namespace
-// (ADR-0013 §1) and removing it is an authorization decision that does not
-// exist yet (issue #84).
-type historyStore interface {
-	List(project, environment string) ([]direct.Record, error)
-	Environments(project string) ([]string, error)
-	Forget(project, environment string) (int, error)
-	ForgetProject(project string) (int, error)
-}
-
-// historyOpener resolves the data dir to a store. It is a seam so the command
-// tests drive a temp dir without a cluster.
-type historyOpener func(dir string) (historyStore, error)
-
-func openHistoryStore(dir string) (historyStore, error) {
-	return direct.OpenStore(direct.StoreOptions{Dir: dir})
-}
-
 // connectUninstall is the production connector: one cluster connection, the
 // dynamic client for the sweep and the discovery client for the catalog of
 // kinds to sweep.
@@ -122,17 +101,14 @@ type uninstallOptions struct {
 	allEnvironments bool
 	namespace       string
 	kubeconfig      string
-	history         string
 	keepData        bool
-	keepHistory     bool
 	yes             bool
 	connect         uninstallConnector
 	connectRemover  removerConnector
-	open            historyOpener
 }
 
-func newUninstallCmdFactory(connect uninstallConnector, removers removerConnector, open historyOpener) *cobra.Command {
-	opts := &uninstallOptions{connect: connect, connectRemover: removers, open: open}
+func newUninstallCmdFactory(connect uninstallConnector, removers removerConnector) *cobra.Command {
+	opts := &uninstallOptions{connect: connect, connectRemover: removers}
 	cmd := &cobra.Command{
 		Use:   "uninstall --project <name> --env <name> | --component <name>",
 		Short: "Remove what kelson deployed for an environment, or a platform component kelson installed",
@@ -147,8 +123,9 @@ func newUninstallCmdFactory(connect uninstallConnector, removers removerConnecto
 			"non-terminal stdin and no --yes it refuses rather than assuming an answer.\n\n" +
 			"What a project uninstall does NOT remove, on purpose:\n" +
 			"  the kelson server         `helm uninstall kelson` owns that install (docs/install.md)\n" +
-			"  CRDs                      kelson's own state is ConfigMaps (ADR-0013); the CRDs a component\n" +
-			"                            brought belong to `kelson uninstall --component`\n" +
+			"  CRDs                      kelson's own Project and Environment CRDs are removed by the install\n" +
+			"                            that created them; the CRDs a component brought belong to\n" +
+			"                            `kelson uninstall --component`\n" +
 			"  operators                 CloudNativePG, Valkey, Flux and cert-manager are never removed by a\n" +
 			"                            project uninstall — other tenants depend on them\n" +
 			"  adopted namespaces        a namespace kelson did not create stays, because deleting one\n" +
@@ -175,12 +152,8 @@ func newUninstallCmdFactory(connect uninstallConnector, removers removerConnecto
 		"namespace to sweep when kelson may not list namespaces by label (only needed for a restricted kube context, or an Environment that sets spec.namespace)")
 	f.StringVar(&opts.kubeconfig, "kubeconfig", "",
 		"path to a kubeconfig (default: $KUBECONFIG, in-cluster credentials, then ~/.kube/config)")
-	f.StringVar(&opts.history, "history", "",
-		"kelson data directory holding the direct-mode rendered history (default: $KELSON_DATA_DIR, else $XDG_DATA_HOME/kelson)")
 	f.BoolVar(&opts.keepData, "keep-data", false,
 		"leave the data services and their volumes in place; the namespace then stays too, because deleting it would delete them")
-	f.BoolVar(&opts.keepHistory, "keep-history", false,
-		"keep the local rendered history for this environment as an audit trail (it describes a set that no longer exists)")
 	f.BoolVar(&opts.yes, "yes", false, "delete without asking for confirmation; the preview is printed either way")
 	// --project is no longer a cobra-required flag: --component addresses a
 	// different thing entirely and needs none of the project addressing. The
@@ -221,11 +194,7 @@ func runUninstall(cmd *cobra.Command, opts *uninstallOptions) error {
 	}
 
 	out := &printer{w: cmd.OutOrStdout()}
-	history, err := opts.historyPreview(scope)
-	if err != nil {
-		return err
-	}
-	printUninstallPlan(out, plan, history)
+	printUninstallPlan(out, plan)
 	if err := out.err; err != nil {
 		return err
 	}
@@ -242,9 +211,6 @@ func runUninstall(cmd *cobra.Command, opts *uninstallOptions) error {
 	printUninstallReport(out, report)
 	if execErr != nil {
 		return execErr
-	}
-	if err := opts.forgetHistory(scope, out); err != nil {
-		return err
 	}
 	printUninstallBoundary(out, plan, report)
 	return out.err
@@ -290,7 +256,7 @@ func confirmUninstall(cmd *cobra.Command, opts *uninstallOptions, plan *uninstal
 // It shares this verb rather than getting one of its own because it is the same
 // promise at a different layer: kelson removes what kelson put there and
 // nothing else. What it does NOT share is the project addressing — a component
-// has no environment, no namespace to sweep and no local history — so the flags
+// has no environment and no namespace to sweep — so the flags
 // that describe those are refused rather than quietly ignored.
 func runComponentUninstall(cmd *cobra.Command, opts *uninstallOptions) error {
 	if err := opts.validateComponentScope(); err != nil {
@@ -354,14 +320,11 @@ func (o *uninstallOptions) validateComponentScope() error {
 	if o.keepData {
 		conflicting = append(conflicting, "--keep-data")
 	}
-	if o.keepHistory {
-		conflicting = append(conflicting, "--keep-history")
-	}
 	if len(conflicting) == 0 {
 		return nil
 	}
-	return fmt.Errorf("--component removes a platform component, which has no project, environment or local "+
-		"history: %s does not apply to it", strings.Join(conflicting, ", "))
+	return fmt.Errorf("--component removes a platform component, which has no project and no "+
+		"environment: %s does not apply to it", strings.Join(conflicting, ", "))
 }
 
 func confirmRemoval(cmd *cobra.Command, opts *uninstallOptions, removal *install.Removal, out *printer, asks bool) (bool, error) {
@@ -475,86 +438,9 @@ func printRemovalBoundary(out *printer, removal *install.Removal) {
 
 // --- the preview -------------------------------------------------------------
 
-// historyEffect is what the uninstall would do to the local rendered history.
-type historyEffect struct {
-	// dir is the data directory the history lives in.
-	dir string
-	// revisions is how many recorded revisions would go; -1 when the count is
-	// per-project and was not enumerated.
-	revisions int
-	// environments is what --all-environments would forget.
-	environments []string
-	// keep records --keep-history.
-	keep bool
-}
-
-// historyPreview reads what the local journal holds for this scope, without
-// changing it. A history directory that cannot be read is not a reason to
-// refuse an uninstall — the cluster is what matters — so the effect is reported
-// as unknown rather than fatal.
-func (o *uninstallOptions) historyPreview(scope uninstall.Scope) (historyEffect, error) {
-	dir, err := historyDir(o.history)
-	if err != nil {
-		return historyEffect{}, err
-	}
-	effect := historyEffect{dir: dir, revisions: -1, keep: o.keepHistory}
-	if o.open == nil {
-		return effect, nil
-	}
-	store, err := o.open(dir)
-	if err != nil {
-		return effect, nil
-	}
-	if scope.AllEnvironments {
-		envs, err := store.Environments(scope.Project)
-		if err == nil {
-			effect.environments = envs
-		}
-		return effect, nil
-	}
-	records, err := store.List(scope.Project, scope.Environment)
-	if err == nil {
-		effect.revisions = len(records)
-	}
-	return effect, nil
-}
-
-// forgetHistory removes the local journal for what was just uninstalled.
-//
-// An environment whose resources are gone has a history describing a set that
-// no longer exists, and leaving it behind means the next deploy of the same name
-// inherits revision numbers and a prune baseline from a deployment that is gone.
-// --keep-history keeps it as an audit trail.
-func (o *uninstallOptions) forgetHistory(scope uninstall.Scope, out *printer) error {
-	if o.keepHistory || o.open == nil {
-		return nil
-	}
-	dir, err := historyDir(o.history)
-	if err != nil {
-		return err
-	}
-	store, err := o.open(dir)
-	if err != nil {
-		return err
-	}
-	var dropped int
-	if scope.AllEnvironments {
-		dropped, err = store.ForgetProject(scope.Project)
-	} else {
-		dropped, err = store.Forget(scope.Project, scope.Environment)
-	}
-	if err != nil {
-		return err
-	}
-	if dropped > 0 {
-		out.printf("\nremoved %d recorded revision(s) of local history for %s\n", dropped, scope)
-	}
-	return nil
-}
-
 // printUninstallPlan is the first of the three steps: exactly what would be
 // deleted, kind and name, one line each.
-func printUninstallPlan(out *printer, plan *uninstall.Plan, history historyEffect) {
+func printUninstallPlan(out *printer, plan *uninstall.Plan) {
 	out.printf("kelson uninstall — %s\n", plan.Describe())
 
 	for _, ns := range plan.Namespaces {
@@ -597,7 +483,6 @@ func printUninstallPlan(out *printer, plan *uninstall.Plan, history historyEffec
 		}
 	}
 
-	printHistoryEffect(out, plan, history)
 	printReconcilers(out, plan)
 	printUnreadable(out, plan)
 }
@@ -632,19 +517,6 @@ func uninstallAnnotation(t uninstall.Target) string {
 		return ""
 	}
 	return "   — " + strings.Join(notes, "; ")
-}
-
-func printHistoryEffect(out *printer, plan *uninstall.Plan, history historyEffect) {
-	switch {
-	case history.keep:
-		out.printf("\nLocal history\n  kept (--keep-history): %s\n", history.dir)
-	case plan.Scope.AllEnvironments && len(history.environments) > 0:
-		out.printf("\nLocal history\n  the recorded revisions for %s go too (%s), from %s\n",
-			plan.Scope.Project, strings.Join(history.environments, ", "), history.dir)
-	case history.revisions > 0:
-		out.printf("\nLocal history\n  %d recorded revision(s) for %s go too, from %s\n",
-			history.revisions, plan.Scope, history.dir)
-	}
 }
 
 // printReconcilers warns when something else will simply put back what this

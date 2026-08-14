@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -15,25 +14,41 @@ import (
 // newStatusCmd builds `kelson status` (issue #135): the answer to "is my change
 // live, and if not, why".
 //
-// Two planes answer that, and both are needed. The delivery adapter reports the
-// state-machine phase for the revision, correlated through the provenance the
-// renderer stamps — that says whether the change arrived. The observation plane
-// classifies the live workloads — that says whether it works, naming the
-// kubelet's own reason (CrashLoopBackOff, ImagePullBackOff) rather than a
-// generic "deployment failed". A phase without a verdict is the conflation
-// issue #53 exists to prevent, so status never prints one without the other.
-func newStatusCmd() *cobra.Command { return newStatusCmdFactory(connectDelivery) }
+// # It answers half of that today, and says which half
+//
+// Two planes used to answer it. The delivery adapter reported the state-machine
+// phase for the revision — whether the change ARRIVED — and the observation
+// plane classified the live workloads — whether it WORKS, naming the kubelet's
+// own reason (CrashLoopBackOff, ImagePullBackOff) rather than a generic
+// "deployment failed".
+//
+// [ADR-0028](docs/adr/0028-delivery-spine.md) deleted both adapters, and with
+// them the phase. The observation half needs no adapter, no history and no
+// delivery mode — it reads the live cluster through internal/observation and
+// classifies the workloads the current render declares — so it keeps working
+// unchanged, and this command keeps working with it. What it does NOT do is
+// invent a phase: a "Healthy" or "Unknown" with nothing behind it would be the
+// conflation issue #53 exists to prevent, so the missing half is printed as
+// missing, once, naming the issue that restores it (#224, then
+// `Environment.status` per ADR-0027 decision 6).
+//
+// The gap is worth carrying rather than gating the command, because the two
+// questions fail independently and the surviving one is the one people run this
+// command in an incident to ask.
+func newStatusCmd() *cobra.Command { return newStatusCmdFactory(connectObservation) }
 
-func newStatusCmdFactory(connect deliveryConnector) *cobra.Command {
+func newStatusCmdFactory(connect observationConnector) *cobra.Command {
 	opts := &statusOptions{connect: connect}
 	cmd := &cobra.Command{
 		Use:   "status -f spec.yaml --env <name>",
-		Short: "Report whether the rendered spec is live, and the health verdict of its workloads",
-		Long: "Status reports the delivery phase of the rendered spec and the observation plane's health\n" +
-			"verdict for each workload it declares.\n\n" +
-			"The phase says whether the change arrived; the verdict says whether it works, naming the\n" +
-			"specific reason (CrashLoopBackOff, ImagePullBackOff, a failing probe) with the container\n" +
-			"logs behind it where they are readable.",
+		Short: "Report the health verdict of the workloads the rendered spec declares",
+		Long: "Status reports the observation plane's health verdict for each workload the rendered spec\n" +
+			"declares: whether it works, naming the specific reason (CrashLoopBackOff, ImagePullBackOff,\n" +
+			"a failing probe) with the container logs behind it where they are readable.\n\n" +
+			"It does NOT report the delivery phase — whether this revision arrived — because the adapters\n" +
+			"that answered that were deleted with the old delivery machinery (ADR-0028). That half returns\n" +
+			"with issue #224, read from Environment.status. Until then it is reported as missing rather\n" +
+			"than guessed at.",
 		Example: "  kelson status -f project.yaml -f production.yaml --env production\n" +
 			"  kelson status -f spec.yaml --env development --kubeconfig ./kubeconfig",
 		Args: cobra.NoArgs,
@@ -46,18 +61,14 @@ func newStatusCmdFactory(connect deliveryConnector) *cobra.Command {
 	f.StringVar(&opts.env, "env", "", "name of the Environment to report on (optional when the input holds exactly one)")
 	f.StringVar(&opts.profile, "profile", "", "ClusterProfile YAML file, or from-cluster to capture a live profile (requires cluster access)")
 	f.StringVar(&opts.kubeconfig, "kubeconfig", "", "path to a kubeconfig (default: $KUBECONFIG, in-cluster credentials, then ~/.kube/config)")
-	f.StringVar(&opts.mode, "mode", "", "delivery adapter to query, overriding the environment's delivery mode (direct or flux)")
 	f.StringVar(&opts.image, "image", "", imageFlagUsage)
-	f.StringVar(&opts.history, "history", "", "kelson data directory holding the direct-mode rendered history (default: $KELSON_DATA_DIR, else $XDG_DATA_HOME/kelson)")
 	cobra.CheckErr(cmd.MarkFlagRequired("file"))
 	return cmd
 }
 
 type statusOptions struct {
 	specInput
-	mode    string
-	history string
-	connect deliveryConnector
+	connect observationConnector
 }
 
 // runStatus reports and exits 0. A degraded workload is a successful report of
@@ -66,16 +77,11 @@ type statusOptions struct {
 // unusable in the `set -e` scripts that need it most. `kelson deploy` is the
 // command that gates on health.
 func runStatus(cmd *cobra.Command, opts *statusOptions) error {
-	target, set, err := resolveDeliveryTarget(opts.specInput, opts.history, opts.mode, cmd.ErrOrStderr())
+	target, set, err := resolveObservationTarget(opts.specInput, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}
-	adapter, plane, err := selectAdapter(opts.connect, target)
-	if err != nil {
-		return err
-	}
-
-	st, err := adapter.Status(cmd.Context(), set)
+	plane, err := connectPlane(opts.connect, target)
 	if err != nil {
 		return err
 	}
@@ -88,55 +94,48 @@ func runStatus(cmd *cobra.Command, opts *statusOptions) error {
 	}
 
 	out := &printer{w: cmd.OutOrStdout()}
-	out.printf("%s/%s via %s\n", set.Project, set.Environment, adapter.Name())
-	out.printf("%s %s\n", padPhase(st.Phase), phaseSummary(st))
-	printSummary(out, st, verdicts)
+	out.printf("%s/%s in namespace %s\n", set.Project, set.Environment, target.namespace)
+	printPhaseGap(out)
+	printSummary(out, set, verdicts)
 	printVerdicts(out, plane, verdicts)
 	return out.err
 }
 
-// printSummary prints the per-resource counters under the phase line.
+// printPhaseGap states the half of this command that is missing, in the place
+// the phase line used to be.
 //
-// The degraded counter is not the adapter's alone. The two planes answer
-// different questions: the adapter reads a resource's own conditions and says
-// whether the rollout of THIS revision finished, while observation classifies
-// the pods behind each workload. They disagreed in exactly the case status
-// exists for (issue #151) — a Deployment whose new pods CrashLoopBackOff keeps
-// the previous ReplicaSet alive, so the adapter reports a rollout still in
-// flight and counts "degraded: 0" directly above a verdict reading
-// "degraded: crash-loop-back-off".
-//
-// Neither source sees every resource (the adapter also judges CronJobs; the
-// probe classifies only Deployments), so the printed count is the larger of the
-// two. That is a lower bound on the union, and it can never under-report a
-// resource one of the planes has already called degraded.
-func printSummary(out *printer, st delivery.Status, verdicts []observation.Verdict) {
-	for _, key := range []string{"resources", "live"} {
-		if v, ok := st.Detail[key]; ok {
-			out.printf("  %-10s %s\n", key+":", v)
-		}
-	}
-	reported, ok := st.Detail["degraded"]
-	n := degradedCount(reported, verdicts)
-	if ok || n > 0 {
-		out.printf("  %-10s %d\n", "degraded:", n)
-	}
+// It is printed unconditionally, including when everything is healthy. A gap
+// that only announces itself on failure is a gap a reader learns about at the
+// worst possible moment, and "kelson did not tell me it wasn't checking" is the
+// complaint this line exists to make impossible.
+func printPhaseGap(out *printer) {
+	out.printf("  delivery phase: not reported — the adapters that answered \"did this revision arrive?\"\n")
+	out.printf("                  were deleted with the old delivery machinery (ADR-0028); it returns with\n")
+	out.printf("                  issue #224. What follows is workload health only.\n")
 }
 
-// degradedCount reconciles the adapter's degraded count with the verdicts. A
-// count the adapter did not report (or reported unparseably) contributes
-// nothing, which leaves the verdicts as the answer.
-func degradedCount(reported string, verdicts []observation.Verdict) int {
+// printSummary prints the per-resource counters.
+//
+// The degraded count used to be reconciled with the adapter's own, taking the
+// larger of the two, because the planes answered different questions and
+// disagreed in exactly the case status exists for (issue #151): a Deployment
+// whose new pods CrashLoopBackOff keeps the previous ReplicaSet alive, so the
+// adapter reported a rollout still in flight and counted "degraded: 0" directly
+// above a verdict reading "degraded: crash-loop-back-off".
+//
+// There is no second source now, so the verdicts are the count. That is a lower
+// bound on what is wrong — the probe classifies Deployments and the adapter also
+// judged CronJobs — and printPhaseGap is what keeps the bound from reading as a
+// complete answer.
+func printSummary(out *printer, set delivery.ManifestSet, verdicts []observation.Verdict) {
+	out.printf("  %-10s %d\n", "resources:", len(set.Manifests))
 	n := 0
 	for _, v := range verdicts {
 		if isDegraded(v) {
 			n++
 		}
 	}
-	if fromAdapter, err := strconv.Atoi(reported); err == nil && fromAdapter > n {
-		return fromAdapter
-	}
-	return n
+	out.printf("  %-10s %d\n", "degraded:", n)
 }
 
 // isDegraded applies the same test observation.Verdict.String uses when it
@@ -157,7 +156,7 @@ func isDegraded(v observation.Verdict) bool {
 // externalSecrets backend a Secret that never synced is why the pods below it
 // are stuck, and reading the cause before the symptom is what turns a
 // CreateContainerConfigError into an answer (issue #80, ADR-0020).
-func workloadVerdicts(ctx context.Context, plane *deliveryPlane, set delivery.ManifestSet, namespace string) ([]observation.Verdict, error) {
+func workloadVerdicts(ctx context.Context, plane *observationPlane, set delivery.ManifestSet, namespace string) ([]observation.Verdict, error) {
 	if plane.health == nil {
 		return nil, nil
 	}
@@ -185,7 +184,7 @@ func workloadVerdicts(ctx context.Context, plane *deliveryPlane, set delivery.Ma
 	return out, nil
 }
 
-func printVerdicts(out *printer, plane *deliveryPlane, verdicts []observation.Verdict) {
+func printVerdicts(out *printer, plane *observationPlane, verdicts []observation.Verdict) {
 	if plane.health == nil {
 		out.printf("\nno observation probe available: workload health was not read\n")
 		return
@@ -268,19 +267,4 @@ func deployments(set delivery.ManifestSet, fallbackNamespace string) []workloadR
 		out = append(out, workloadRef{namespace: ns, name: m.Name})
 	}
 	return out
-}
-
-// phaseSummary is the one-line explanation next to a phase: the adapter's cause
-// when it has one, and otherwise the revision the phase is about.
-func phaseSummary(st delivery.Status) string {
-	switch {
-	case st.Cause != "" && st.Revision != "":
-		return fmt.Sprintf("revision %s: %s", st.Revision, st.Cause)
-	case st.Cause != "":
-		return st.Cause
-	case st.Revision != "":
-		return "revision " + st.Revision
-	default:
-		return "no revision recorded"
-	}
 }

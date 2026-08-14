@@ -10,9 +10,10 @@ import (
 	"connectrpc.com/connect"
 
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
+	"github.com/dafrie/kelson/internal/controlstore"
+	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/diff"
 	"github.com/dafrie/kelson/internal/model"
-	"github.com/dafrie/kelson/internal/serverstate"
 )
 
 // The enforcement tests of issue #75 (ADR-0025). Like #74's, every one of them
@@ -59,7 +60,7 @@ func policyServer(t *testing.T, opts Options) *gatedServer {
 	opts.Specs = store
 	project, envs := policySpec()
 	if _, err := store.Put(t.Context(), "shop",
-		serverstate.Documents{Project: project, Environments: envs}, serverstate.PutOptions{}); err != nil {
+		controlstore.Documents{Project: project, Environments: envs}, controlstore.PutOptions{}); err != nil {
 		t.Fatalf("storing the policy spec: %v", err)
 	}
 	return newGatedServer(t, opts)
@@ -162,13 +163,13 @@ func TestEveryMutatingMethodHasAPolicyOperation(t *testing.T) {
 	for procedure, row := range rpcScopes {
 		op, named := agentOperations[procedure]
 		switch {
-		case row.Operation == serverstate.OpMutate && !named:
+		case row.Operation == controlstore.OpMutate && !named:
 			t.Errorf(`%s is a mutating RPC with no entry in agentOperations (internal/api/policy.go).
 
 Add one naming the operation `+"`policy.forbid`"+` knows it by, add the constant to
 model.AgentOperations() if it is new, and guard the handler with s.guard — otherwise
 this route is one no per-environment policy can refuse (issue #75).`, procedure)
-		case row.Operation != serverstate.OpMutate && named:
+		case row.Operation != controlstore.OpMutate && named:
 			t.Errorf("%s is in agentOperations as %q but the scope table does not call it a mutation; "+
 				"policy refuses mutations, so the two tables must agree", procedure, op)
 		}
@@ -202,8 +203,8 @@ this route is one no per-environment policy can refuse (issue #75).`, procedure)
 // stops it (covered by TestForbidNamesTheOperationItRefuses).
 func TestProposeOnlyRefusesEveryMutation(t *testing.T) {
 	g := policyServer(t, Options{})
-	agent := g.as(g.mint(t, "deploybot", serverstate.Scope{
-		Operations: []serverstate.Operation{serverstate.OpMutate},
+	agent := g.as(g.mint(t, "deploybot", controlstore.Scope{
+		Operations: []controlstore.Operation{controlstore.OpMutate},
 	}))
 
 	for op, drive := range policyDrivers {
@@ -255,8 +256,8 @@ func TestAHumanIsNeverRestrictedByAgentPolicy(t *testing.T) {
 // that ever changed.
 func TestPolicyAbsentAllowsEverything(t *testing.T) {
 	g := policyServer(t, Options{})
-	agent := g.as(g.mint(t, "deploybot", serverstate.Scope{
-		Operations: []serverstate.Operation{serverstate.OpMutate},
+	agent := g.as(g.mint(t, "deploybot", controlstore.Scope{
+		Operations: []controlstore.Operation{controlstore.OpMutate},
 	}))
 
 	for op, drive := range policyDrivers {
@@ -287,8 +288,8 @@ func TestForbidNamesTheOperationItRefuses(t *testing.T) {
 	for op, drive := range policyDrivers {
 		t.Run(string(op), func(t *testing.T) {
 			g := forbiddingServer(t, op)
-			agent := g.as(g.mint(t, "deploybot", serverstate.Scope{
-				Operations: []serverstate.Operation{serverstate.OpMutate},
+			agent := g.as(g.mint(t, "deploybot", controlstore.Scope{
+				Operations: []controlstore.Operation{controlstore.OpMutate},
 			}))
 
 			err := drive(t, agent, "shop", "forbidden")
@@ -321,10 +322,10 @@ spec:
 	// `development` exists because a promotion needs a source environment to
 	// read from; the rule under test is on the target.
 	_, envs := policySpec()
-	if _, err := store.Put(t.Context(), "shop", serverstate.Documents{
+	if _, err := store.Put(t.Context(), "shop", controlstore.Documents{
 		Project:      project,
 		Environments: map[string][]byte{"forbidden": env, "development": envs["development"]},
-	}, serverstate.PutOptions{}); err != nil {
+	}, controlstore.PutOptions{}); err != nil {
 		t.Fatalf("storing: %v", err)
 	}
 	return newGatedServer(t, Options{Specs: store})
@@ -334,8 +335,8 @@ spec:
 // would actually run, and the refusal names the rule, the value and the limit.
 func TestMaxReplicasIsCheckedAgainstTheResolvedSpec(t *testing.T) {
 	g := policyServer(t, Options{})
-	agent := g.as(g.mint(t, "deploybot", serverstate.Scope{
-		Operations: []serverstate.Operation{serverstate.OpMutate},
+	agent := g.as(g.mint(t, "deploybot", controlstore.Scope{
+		Operations: []controlstore.Operation{controlstore.OpMutate},
 	}))
 
 	// The stored spec runs one replica; the request pins nine through an
@@ -365,8 +366,8 @@ func TestMaxReplicasIsCheckedAgainstTheResolvedSpec(t *testing.T) {
 // takes a database away.
 func TestProtectedComponentsCannotBeRemovedOrScaledToZero(t *testing.T) {
 	g := policyServer(t, Options{})
-	agent := g.as(g.mint(t, "deploybot", serverstate.Scope{
-		Operations: []serverstate.Operation{serverstate.OpMutate},
+	agent := g.as(g.mint(t, "deploybot", controlstore.Scope{
+		Operations: []controlstore.Operation{controlstore.OpMutate},
 	}))
 
 	// Scaled to zero. The environment's own stored policy is what protects
@@ -396,14 +397,13 @@ func TestProtectedComponentsCannotBeRemovedOrScaledToZero(t *testing.T) {
 // waving the deploy through. There is no request field that could claim a
 // dry-run happened, which is the point.
 func TestRequireDryRunIsRunByTheServer(t *testing.T) {
-	adapter := newFakeAdapter("direct")
-	connector, _ := connectorFor(adapter, nil, nil)
+	connector, _ := connectorFor(nil)
 
 	// No preview seam: the requirement cannot be satisfied, so the deploy is
 	// refused with the rule named.
 	g := policyServer(t, Options{Delivery: connector})
-	agent := g.as(g.mint(t, "deploybot", serverstate.Scope{
-		Operations: []serverstate.Operation{serverstate.OpMutate},
+	agent := g.as(g.mint(t, "deploybot", controlstore.Scope{
+		Operations: []controlstore.Operation{controlstore.OpMutate},
 	}))
 	err := deployTo(t, agent, "shop", "staging")
 	if !hasCode(detailCodes(err), ErrPolicyDryRunRequired) {
@@ -411,17 +411,19 @@ func TestRequireDryRunIsRunByTheServer(t *testing.T) {
 			ErrPolicyDryRunRequired, detailCodes(err))
 	}
 	assertEscalates(t, err)
-	for _, call := range adapter.callLog() {
-		if call == "apply" {
-			t.Fatal("the adapter was called: an unsatisfiable requirement must refuse before anything is applied")
-		}
+	// And the refusal is the policy's, not the apply gate's: an unsatisfiable
+	// requirement is a statement about this agent that must be reached before
+	// the "kelson cannot apply yet" one (#224), or an agent would be told the
+	// wrong thing about a rule that still governs it.
+	if hasCode(detailCodes(err), string(delivery.ErrNotImplemented)) {
+		t.Fatal("the apply gate answered ahead of the policy refusal")
 	}
 
 	// A dry-run that reports the change would be rejected is the same refusal:
 	// the requirement is a *passing* dry-run.
 	blocked := policyServer(t, Options{Delivery: connector, Preview: previewConnector(&fakePreview{diff: blockedDiff()})})
-	agent = blocked.as(blocked.mint(t, "deploybot", serverstate.Scope{
-		Operations: []serverstate.Operation{serverstate.OpMutate},
+	agent = blocked.as(blocked.mint(t, "deploybot", controlstore.Scope{
+		Operations: []controlstore.Operation{controlstore.OpMutate},
 	}))
 	if err := deployTo(t, agent, "shop", "staging"); !hasCode(detailCodes(err), ErrPolicyDryRunRequired) {
 		t.Errorf("a blocked dry-run did not refuse the deploy: %v", detailCodes(err))
@@ -429,8 +431,8 @@ func TestRequireDryRunIsRunByTheServer(t *testing.T) {
 
 	// A dry-run that passes lets the deploy through to the delivery plane.
 	ok := policyServer(t, Options{Delivery: connector, Preview: previewConnector(&fakePreview{diff: cleanDiff()})})
-	agent = ok.as(ok.mint(t, "deploybot", serverstate.Scope{
-		Operations: []serverstate.Operation{serverstate.OpMutate},
+	agent = ok.as(ok.mint(t, "deploybot", controlstore.Scope{
+		Operations: []controlstore.Operation{controlstore.OpMutate},
 	}))
 	if err := deployTo(t, agent, "shop", "staging"); hasCode(detailCodes(err), ErrPolicyDryRunRequired) {
 		t.Errorf("a passing dry-run still refused the deploy: %v", err)
@@ -445,8 +447,8 @@ func TestRequireDryRunIsRunByTheServer(t *testing.T) {
 // server stores says otherwise. The stored one wins.
 func TestInlineSpecGetsTheStoredPolicy(t *testing.T) {
 	g := policyServer(t, Options{})
-	agent := g.as(g.mint(t, "wide", serverstate.Scope{
-		Operations: []serverstate.Operation{serverstate.OpMutate},
+	agent := g.as(g.mint(t, "wide", controlstore.Scope{
+		Operations: []controlstore.Operation{controlstore.OpMutate},
 	}))
 
 	err := deployInline(t, agent, prodEnv, "  policy:\n    agents: allow\n")
@@ -463,8 +465,8 @@ func TestInlineSpecGetsTheStoredPolicy(t *testing.T) {
 // mutation of production, checked against the policy the store holds now.
 func TestSpecWritesCannotRelaxTheRuleThatBindsThem(t *testing.T) {
 	g := policyServer(t, Options{})
-	agent := g.as(g.mint(t, "wide", serverstate.Scope{
-		Operations: []serverstate.Operation{serverstate.OpMutate},
+	agent := g.as(g.mint(t, "wide", controlstore.Scope{
+		Operations: []controlstore.Operation{controlstore.OpMutate},
 	}))
 
 	err := policyDrivers[model.AgentOpSpecWrite](t, agent, "shop", prodEnv)
@@ -488,8 +490,8 @@ func TestSpecWritesCannotRelaxTheRuleThatBindsThem(t *testing.T) {
 // exactly that — the quietest route to removing a propose-only environment.
 func TestASpecWriteCannotDeleteAnEnvironmentByOmittingIt(t *testing.T) {
 	g := policyServer(t, Options{})
-	agent := g.as(g.mint(t, "wide", serverstate.Scope{
-		Operations: []serverstate.Operation{serverstate.OpMutate},
+	agent := g.as(g.mint(t, "wide", controlstore.Scope{
+		Operations: []controlstore.Operation{controlstore.OpMutate},
 	}))
 
 	project, envs := policySpec()
@@ -511,8 +513,8 @@ func TestASpecWriteCannotDeleteAnEnvironmentByOmittingIt(t *testing.T) {
 // proposal, or `propose-only` would mean "do nothing" rather than "propose".
 func TestDryRunIsNeverRefused(t *testing.T) {
 	g := policyServer(t, Options{})
-	agent := g.as(g.mint(t, "deploybot", serverstate.Scope{
-		Operations: []serverstate.Operation{serverstate.OpMutate},
+	agent := g.as(g.mint(t, "deploybot", controlstore.Scope{
+		Operations: []controlstore.Operation{controlstore.OpMutate},
 	}))
 
 	stream, err := agent.deploy.Deploy(t.Context(), connect.NewRequest(&kelsonv1alpha1.DeployRequest{
@@ -541,8 +543,8 @@ func TestDryRunIsNeverRefused(t *testing.T) {
 // question kelson could not ask.
 func TestAnUnreadablePolicyFailsClosed(t *testing.T) {
 	g := newGatedServer(t, Options{Specs: brokenSpecStore{}})
-	agent := g.as(g.mint(t, "deploybot", serverstate.Scope{
-		Operations: []serverstate.Operation{serverstate.OpMutate},
+	agent := g.as(g.mint(t, "deploybot", controlstore.Scope{
+		Operations: []controlstore.Operation{controlstore.OpMutate},
 	}))
 
 	// An inline spec, so the render needs no store read and the only question
@@ -568,8 +570,8 @@ func TestAnUnreadablePolicyFailsClosed(t *testing.T) {
 // strictly than SecretTarget does.
 func TestAMutationMustNameItsEnvironment(t *testing.T) {
 	g := policyServer(t, Options{})
-	agent := g.as(g.mint(t, "wide", serverstate.Scope{
-		Operations: []serverstate.Operation{serverstate.OpMutate},
+	agent := g.as(g.mint(t, "wide", controlstore.Scope{
+		Operations: []controlstore.Operation{controlstore.OpMutate},
 	}))
 
 	_, err := agent.secrets.SetSecret(t.Context(), connect.NewRequest(&kelsonv1alpha1.SetSecretRequest{
@@ -605,7 +607,7 @@ func TestAnonymousGetsAgentStrictness(t *testing.T) {
 	store := newFakeSpecStore()
 	project, envs := policySpec()
 	if _, err := store.Put(t.Context(), "shop",
-		serverstate.Documents{Project: project, Environments: envs}, serverstate.PutOptions{}); err != nil {
+		controlstore.Documents{Project: project, Environments: envs}, controlstore.PutOptions{}); err != nil {
 		t.Fatalf("storing: %v", err)
 	}
 	c := serve(t, Options{Specs: store})
@@ -735,15 +737,15 @@ func cleanDiff() *diff.Diff {
 // "no such spec", which is the case that must fail closed.
 type brokenSpecStore struct{}
 
-func (brokenSpecStore) Put(context.Context, string, serverstate.Documents, serverstate.PutOptions) (serverstate.Stored, error) {
-	return serverstate.Stored{}, context.DeadlineExceeded
+func (brokenSpecStore) Put(context.Context, string, controlstore.Documents, controlstore.PutOptions) (controlstore.Stored, error) {
+	return controlstore.Stored{}, context.DeadlineExceeded
 }
-func (brokenSpecStore) Get(context.Context, string) (serverstate.Stored, error) {
-	return serverstate.Stored{}, context.DeadlineExceeded
+func (brokenSpecStore) Get(context.Context, string) (controlstore.Stored, error) {
+	return controlstore.Stored{}, context.DeadlineExceeded
 }
-func (brokenSpecStore) List(context.Context) ([]serverstate.Stored, error) {
+func (brokenSpecStore) List(context.Context) ([]controlstore.Stored, error) {
 	return nil, context.DeadlineExceeded
 }
-func (brokenSpecStore) Delete(context.Context, string, serverstate.DeleteOptions) error {
+func (brokenSpecStore) Delete(context.Context, string, controlstore.DeleteOptions) error {
 	return context.DeadlineExceeded
 }

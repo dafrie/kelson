@@ -1,6 +1,12 @@
 # ADR-0013: Server state lives in the cluster; API v0 shape
 
-- **Status:** Proposed (amended 2026-08-13: `EventService` added as the sixth service — the watch
+- **Status:** Superseded by [ADR-0027](0027-crd-native-control-plane.md) and
+  [ADR-0028](0028-delivery-spine.md), 2026-08-14 — §1's ConfigMap spec and history stores are replaced
+  by `kelson.dev/v1alpha1` custom resources and by the registry's tag list; §2 (the API surface and
+  the one wire error shape), §3 (the trust model and the shared-password amendment) and §4 (the
+  codegen convention) are unaffected and remain the record, described operationally in
+  [docs/server.md](../server.md).
+  (Amended 2026-08-13: `EventService` added as the sixth service — the watch
   stream of [#76](https://github.com/dafrie/kelson/issues/76). It adds no new state and no new seam;
   it observes through the same DeliveryConnector and health evaluator the Status RPC uses, so §1's
   "the process holds no state" is unchanged: the retained event window is a cache a restart is

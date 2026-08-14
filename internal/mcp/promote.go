@@ -12,19 +12,13 @@ import (
 	"github.com/dafrie/kelson/internal/diff"
 )
 
-const promoteDescription = `Pin one environment to the images another environment is currently running, without rebuilding anything.
+const promoteDescription = `NOT AVAILABLE. Promoting one environment's running images onto another is refused while kelson's delivery spine is rebuilt.
 
-MUTATES THE STORED SPEC when execute=true. The default is execute=false, which writes nothing.
+MUTATES THE STORED SPEC when execute=true, in principle. In practice it CHANGES NOTHING in every mode, including execute=false: every call is refused with the code delivery/not-implemented, naming issue #224. Do not retry it.
 
-Promotion in kelson is a spec edit and nothing else: the images the source environment's latest deployed revision runs are written as the target environment's per-component image pins. Nothing is built, nothing is deployed, and no promotion record is kept — the change is one image line per component in the target Environment document, and the deployment history records it the way it records any other spec change.
+What is missing is one input, not the operation. A promotion moves what the source environment actually RAN, read from its deployment history, and that history is deleted (ADR-0027); the plan, the image pins and the resulting diff are unchanged and waiting on it.
 
-The images come from the delivery history, not from the source environment's spec: a promotion moves what ran, not what was intended. A component whose image the recorded revision does not carry is reported as skipped with a reason, never guessed.
-
-The answer always includes the resulting diff of the target environment, whether or not it executed, so there is no second call needed to find out what the promotion changes.
-
-Preconditions: the project must be stored, both environments must be declared by it, and the source environment must have a deployed revision (promote/nothing-deployed otherwise). This does NOT deploy — call deploy on the target environment afterwards to make the pins live.
-
-Cost: one server call. Every call carries an idempotency key, returned in the answer; pass it back on a retry so the retry is the same write rather than a second one.`
+Do NOT substitute the source environment's spec for its deployed revision. That would promote what was intended rather than what ran, which is the mistake the whole design refuses; if a human wants that, they can write the image pin themselves with put_spec.`
 
 type promoteInput struct {
 	Project         string   `json:"project" jsonschema:"the stored project name"`

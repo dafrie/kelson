@@ -7,10 +7,10 @@ import (
 	"connectrpc.com/connect"
 
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
+	"github.com/dafrie/kelson/internal/controlstore"
 	"github.com/dafrie/kelson/internal/model"
 	"github.com/dafrie/kelson/internal/redact"
 	"github.com/dafrie/kelson/internal/secret"
-	"github.com/dafrie/kelson/internal/serverstate"
 )
 
 // SecretService served: write the Secrets a spec's references point at, list
@@ -97,8 +97,8 @@ func (s *Server) SetSecret(ctx context.Context, req *connect.Request[kelsonv1alp
 	// The record counts keys and names the kind. It cannot carry a value —
 	// there is no field for one here, the values went to internal/redact on
 	// entry, and the store scrubs every free-text field it accepts (#117).
-	auditChange(ctx, serverstate.AuditChange{
-		Source:    serverstate.ChangeFromRendered,
+	auditChange(ctx, controlstore.AuditChange{
+		Source:    controlstore.ChangeFromRendered,
 		Resources: len(request.Keys()),
 		Kinds:     []string{"Secret"},
 	})
@@ -161,8 +161,8 @@ func (s *Server) DeleteSecret(ctx context.Context, req *connect.Request[kelsonv1
 	if err := s.secrets.Delete(ctx, request); err != nil {
 		return nil, failSecret(err)
 	}
-	auditChange(ctx, serverstate.AuditChange{
-		Source:    serverstate.ChangeFromRendered,
+	auditChange(ctx, controlstore.AuditChange{
+		Source:    controlstore.ChangeFromRendered,
 		Resources: 1,
 		Kinds:     []string{"Secret"},
 	})

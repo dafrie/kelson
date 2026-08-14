@@ -10,7 +10,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dafrie/kelson/internal/delivery"
-	"github.com/dafrie/kelson/internal/delivery/direct"
 	"github.com/dafrie/kelson/internal/delivery/uninstall"
 )
 
@@ -59,32 +58,7 @@ func (f *fakeUninstaller) Execute(_ context.Context, plan *uninstall.Plan) (*uni
 	return report, f.execErr
 }
 
-// fakeHistory is the local rendered-history seam.
-type fakeHistory struct {
-	records   []direct.Record
-	envs      []string
-	forgot    []string
-	forgetErr error
-}
-
-func (f *fakeHistory) List(project, environment string) ([]direct.Record, error) {
-	_, _ = project, environment
-	return f.records, nil
-}
-
-func (f *fakeHistory) Environments(string) ([]string, error) { return f.envs, nil }
-
-func (f *fakeHistory) Forget(project, environment string) (int, error) {
-	f.forgot = append(f.forgot, project+"/"+environment)
-	return len(f.records), f.forgetErr
-}
-
-func (f *fakeHistory) ForgetProject(project string) (int, error) {
-	f.forgot = append(f.forgot, project+"/*")
-	return len(f.records), f.forgetErr
-}
-
-func runUninstallCmd(t *testing.T, engine *fakeUninstaller, history *fakeHistory, stdin string, args ...string) (stdout string, code int, msg string) {
+func runUninstallCmd(t *testing.T, engine *fakeUninstaller, stdin string, args ...string) (stdout string, code int, msg string) {
 	t.Helper()
 	root := &cobra.Command{Use: "kelson", SilenceUsage: true, SilenceErrors: true}
 	root.AddCommand(newUninstallCmdFactory(
@@ -92,7 +66,6 @@ func runUninstallCmd(t *testing.T, engine *fakeUninstaller, history *fakeHistory
 		// The project path never reaches the component remover; the component
 		// path has its own harness in install_test.go.
 		func(uninstallOptions) (remover, error) { return nil, errNoRemover },
-		func(string) (historyStore, error) { return history, nil },
 	))
 	var outBuf, errBuf bytes.Buffer
 	root.SetOut(&outBuf)
@@ -142,7 +115,7 @@ func fullPlan() *uninstall.Plan {
 // confirmation is even asked.
 func TestUninstallPreviewsBeforeDeleting(t *testing.T) {
 	engine := &fakeUninstaller{plan: fullPlan()}
-	stdout, code, msg := runUninstallCmd(t, engine, &fakeHistory{}, "",
+	stdout, code, msg := runUninstallCmd(t, engine, "",
 		"uninstall", "--project", "checkout", "--env", "production", "--yes")
 	if code != exitOK {
 		t.Fatalf("exit = %d (%s)\n%s", code, msg, stdout)
@@ -175,7 +148,7 @@ func TestUninstallPreviewsBeforeDeleting(t *testing.T) {
 // worked.
 func TestUninstallRefusesWithoutYesOnANonTerminal(t *testing.T) {
 	engine := &fakeUninstaller{plan: fullPlan()}
-	stdout, code, msg := runUninstallCmd(t, engine, &fakeHistory{}, "",
+	stdout, code, msg := runUninstallCmd(t, engine, "",
 		"uninstall", "--project", "checkout", "--env", "production")
 	if code != exitErr {
 		t.Fatalf("exit = %d, want %d\n%s", code, exitErr, stdout)
@@ -207,7 +180,7 @@ func TestUninstallReportsPerObjectResults(t *testing.T) {
 			Deleted: 1, Left: 1, Gone: 1,
 		},
 	}
-	stdout, code, msg := runUninstallCmd(t, engine, &fakeHistory{}, "",
+	stdout, code, msg := runUninstallCmd(t, engine, "",
 		"uninstall", "--project", "checkout", "--env", "production", "--yes")
 	if code != exitOK {
 		t.Fatalf("exit = %d (%s)\n%s", code, msg, stdout)
@@ -230,7 +203,7 @@ func TestUninstallReportsPerObjectResults(t *testing.T) {
 // nothing to confirm.
 func TestUninstallNothingToDo(t *testing.T) {
 	engine := &fakeUninstaller{plan: &uninstall.Plan{}}
-	stdout, code, msg := runUninstallCmd(t, engine, &fakeHistory{}, "",
+	stdout, code, msg := runUninstallCmd(t, engine, "",
 		"uninstall", "--project", "checkout", "--env", "production")
 	if code != exitOK {
 		t.Fatalf("exit = %d (%s)\n%s", code, msg, stdout)
@@ -307,56 +280,21 @@ func TestUninstallPromptNamesTheDataCount(t *testing.T) {
 	}
 }
 
-// TestUninstallForgetsLocalHistory: an environment whose resources are gone must
-// not leave a journal describing them behind. --keep-history is the deliberate
-// exception.
-func TestUninstallForgetsLocalHistory(t *testing.T) {
-	history := &fakeHistory{records: []direct.Record{{Revision: "rev-00000001"}, {Revision: "rev-00000002"}}}
-	engine := &fakeUninstaller{plan: fullPlan()}
-	stdout, code, msg := runUninstallCmd(t, engine, history, "",
-		"uninstall", "--project", "checkout", "--env", "production", "--yes")
-	if code != exitOK {
-		t.Fatalf("exit = %d (%s)\n%s", code, msg, stdout)
-	}
-	if strings.Join(history.forgot, ",") != "checkout/production" {
-		t.Fatalf("history forgotten = %v, want the uninstalled environment", history.forgot)
-	}
-	if !strings.Contains(stdout, "2 recorded revision(s)") {
-		t.Errorf("the preview does not say the history goes too\n%s", stdout)
-	}
-
-	kept := &fakeHistory{records: history.records}
-	stdout, code, _ = runUninstallCmd(t, &fakeUninstaller{plan: fullPlan()}, kept, "",
-		"uninstall", "--project", "checkout", "--env", "production", "--yes", "--keep-history")
-	if code != exitOK {
-		t.Fatalf("exit = %d\n%s", code, stdout)
-	}
-	if len(kept.forgot) != 0 {
-		t.Errorf("--keep-history removed the history anyway: %v", kept.forgot)
-	}
-	if !strings.Contains(stdout, "kept (--keep-history)") {
-		t.Errorf("--keep-history is not reported\n%s", stdout)
-	}
-}
-
-// TestUninstallAllEnvironments passes the scope through and forgets the whole
-// project's history.
+// TestUninstallAllEnvironments passes the scope through.
+//
+// It used to also assert that the local rendered-history journal was forgotten,
+// and that --keep-history spared it. Both went with the journal (ADR-0028): an
+// uninstall now touches the cluster and nothing else, so there is no local
+// state left to leave stale.
 func TestUninstallAllEnvironments(t *testing.T) {
-	history := &fakeHistory{envs: []string{"production", "staging"}}
 	engine := &fakeUninstaller{plan: fullPlan()}
-	stdout, code, msg := runUninstallCmd(t, engine, history, "",
+	stdout, code, msg := runUninstallCmd(t, engine, "",
 		"uninstall", "--project", "checkout", "--all-environments", "--yes")
 	if code != exitOK {
 		t.Fatalf("exit = %d (%s)\n%s", code, msg, stdout)
 	}
 	if len(engine.planned) != 1 || !engine.planned[0].AllEnvironments {
 		t.Fatalf("planned scope = %+v, want --all-environments", engine.planned)
-	}
-	if strings.Join(history.forgot, ",") != "checkout/*" {
-		t.Fatalf("history forgotten = %v, want the whole project", history.forgot)
-	}
-	if !strings.Contains(stdout, "production, staging") {
-		t.Errorf("the preview does not name the environments whose history goes\n%s", stdout)
 	}
 }
 
@@ -375,7 +313,7 @@ func TestUninstallRejectsContradictoryScope(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			engine := &fakeUninstaller{plan: fullPlan()}
-			_, code, msg := runUninstallCmd(t, engine, &fakeHistory{}, "", tc.args...)
+			_, code, msg := runUninstallCmd(t, engine, "", tc.args...)
 			if code != exitErr {
 				t.Fatalf("exit = %d, want %d (%s)", code, exitErr, msg)
 			}
@@ -403,7 +341,7 @@ func TestUninstallSurfacesExecutionFailures(t *testing.T) {
 			Failed: 1,
 		},
 	}
-	stdout, code, msg := runUninstallCmd(t, engine, &fakeHistory{}, "",
+	stdout, code, msg := runUninstallCmd(t, engine, "",
 		"uninstall", "--project", "checkout", "--env", "production", "--yes")
 	if code != exitErr {
 		t.Fatalf("exit = %d, want %d\n%s", code, exitErr, stdout)
@@ -429,7 +367,7 @@ func TestUninstallKeepDataIsReported(t *testing.T) {
 	plan.Namespaces[0].Reason = "--keep-data keeps the data resources in it"
 
 	engine := &fakeUninstaller{plan: plan}
-	stdout, code, msg := runUninstallCmd(t, engine, &fakeHistory{}, "",
+	stdout, code, msg := runUninstallCmd(t, engine, "",
 		"uninstall", "--project", "checkout", "--env", "production", "--keep-data", "--yes")
 	if code != exitOK {
 		t.Fatalf("exit = %d (%s)\n%s", code, msg, stdout)
@@ -453,7 +391,7 @@ func TestUninstallWarnsAboutReconciledResources(t *testing.T) {
 	plan := fullPlan()
 	plan.Targets[1].Reconciled = "Flux Kustomization flux-system/checkout"
 	engine := &fakeUninstaller{plan: plan}
-	stdout, code, _ := runUninstallCmd(t, engine, &fakeHistory{}, "",
+	stdout, code, _ := runUninstallCmd(t, engine, "",
 		"uninstall", "--project", "checkout", "--env", "production", "--yes")
 	if code != exitOK {
 		t.Fatalf("exit = %d\n%s", code, stdout)
@@ -481,7 +419,7 @@ func TestUninstallNamesANamespaceLeftToAnotherDeployment(t *testing.T) {
 			Left: 1,
 		},
 	}
-	stdout, code, msg := runUninstallCmd(t, engine, &fakeHistory{}, "",
+	stdout, code, msg := runUninstallCmd(t, engine, "",
 		"uninstall", "--project", "checkout", "--env", "production", "--yes")
 	if code != exitOK {
 		t.Fatalf("exit = %d (%s)\n%s", code, msg, stdout)

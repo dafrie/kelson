@@ -9,7 +9,7 @@ import (
 
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
 	"github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1/kelsonv1alpha1connect"
-	"github.com/dafrie/kelson/internal/serverstate"
+	"github.com/dafrie/kelson/internal/controlstore"
 )
 
 // AgentService's own tests. The interceptor's refusals are in authz_test.go;
@@ -89,7 +89,7 @@ func TestCreateAgentRefusesWhatItCannotHonour(t *testing.T) {
 		},
 		"a lifetime past the maximum": {
 			Name:       "deploybot",
-			TtlSeconds: int64(serverstate.MaxAgentTTL.Seconds()) + 1,
+			TtlSeconds: int64(controlstore.MaxAgentTTL.Seconds()) + 1,
 			Scope:      agentScope(kelsonv1alpha1.AgentOperation_AGENT_OPERATION_READ),
 		},
 		"a lifetime that would overflow a Duration": {

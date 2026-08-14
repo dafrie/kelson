@@ -831,9 +831,9 @@ func (v *validator) delivery(field string, d *Delivery) {
 		if d.Git != nil {
 			v.err(ErrMutuallyExclusive, field+".git",
 				"delivery.git is meaningless with mode direct",
-				"remove git, or change mode to flux or argocd")
+				"remove git, or change mode to flux")
 		}
-	case DeliveryFlux, DeliveryArgoCD:
+	case DeliveryFlux:
 		if d.Git == nil || d.Git.Repo == "" {
 			v.err(ErrGitTargetMissing, field+".git",
 				fmt.Sprintf("delivery mode %q requires a git target", d.Mode),
@@ -845,7 +845,7 @@ func (v *validator) delivery(field string, d *Delivery) {
 	default:
 		v.err(ErrInvalidEnum, field+".mode",
 			fmt.Sprintf("unknown delivery mode %q", d.Mode),
-			"valid modes: direct, flux, argocd")
+			"valid modes: direct, flux")
 	}
 }
 
@@ -1409,11 +1409,11 @@ func validateProject(p *Project, v *validator) {
 
 	if d := s.Defaults; d != nil {
 		switch d.DeliveryMode {
-		case "", DeliveryDirect, DeliveryFlux, DeliveryArgoCD:
+		case "", DeliveryDirect, DeliveryFlux:
 		default:
 			v.err(ErrInvalidEnum, "$.spec.defaults.deliveryMode",
 				fmt.Sprintf("unknown delivery mode %q", d.DeliveryMode),
-				"valid modes: direct, flux, argocd")
+				"valid modes: direct, flux")
 		}
 		v.policy("$.spec.defaults.policy", d.Policy)
 		// The Project's own components are in this document, so the
@@ -1630,8 +1630,8 @@ func ValidateEnvironment(e *Environment, p *Project) Errors {
 	validateServiceRefs(e, services, &v)
 
 	// The git requirement applies to the *effective* delivery mode: an
-	// Environment may inherit flux/argocd from a Project default (P4), and
-	// then it must carry the git target itself.
+	// Environment may inherit flux from a Project default (P4), and then it
+	// must carry the git target itself.
 	mode := DeliveryDirect
 	if p.Spec.Defaults != nil && p.Spec.Defaults.DeliveryMode != "" {
 		mode = p.Spec.Defaults.DeliveryMode
@@ -1639,7 +1639,7 @@ func ValidateEnvironment(e *Environment, p *Project) Errors {
 	if d := e.Spec.Delivery; d != nil && d.Mode != "" {
 		mode = d.Mode
 	}
-	if (mode == DeliveryFlux || mode == DeliveryArgoCD) &&
+	if mode == DeliveryFlux &&
 		(e.Spec.Delivery == nil || e.Spec.Delivery.Git == nil || e.Spec.Delivery.Git.Repo == "") {
 		v.err(ErrGitTargetMissing, "$.spec.delivery.git",
 			fmt.Sprintf("effective delivery mode is %q (environment or project default) but no git target is set", mode),

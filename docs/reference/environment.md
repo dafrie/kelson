@@ -76,7 +76,7 @@ This reference is **generated** from the committed JSON Schema [`schema/environm
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `git` | object | no |  |  |
-| `mode` | string enum `"direct"`, `"flux"`, `"argocd"` | yes |  |  |
+| `mode` | string enum `"direct"`, `"flux"` | yes |  |  |
 
 ##### `spec.delivery.git`
 

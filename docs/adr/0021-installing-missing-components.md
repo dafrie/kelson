@@ -1,6 +1,11 @@
 # ADR-0021: Installing missing platform components — pinned upstream manifests, per-object provenance
 
-- **Status:** Accepted (amended 2026-08-14: `envoy-gateway` moved from a deferred row to a supported
+- **Status:** Accepted (2026-08-14: [ADR-0030](0030-flux-aio-install.md) adds one catalog row whose
+  bytes kelson renders at release time rather than fetches, and states the trade against "nothing is
+  vendored" explicitly; the detection-first, digest-pinned, per-object-provenance mechanism is
+  unchanged.
+
+  Amended 2026-08-14: `envoy-gateway` moved from a deferred row to a supported
   one. The deferral's premise was that installing a Gateway API implementation claims a `GatewayClass`
   beside a cluster's existing routing; the pinned release's published `install.yaml` creates the
   Gateway API CRDs, the controller and its namespace and **no GatewayClass**, so the install carries no

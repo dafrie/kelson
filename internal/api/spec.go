@@ -8,9 +8,9 @@ import (
 
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
 	"github.com/dafrie/kelson/internal/clusterprofile"
+	"github.com/dafrie/kelson/internal/controlstore"
 	"github.com/dafrie/kelson/internal/model"
 	"github.com/dafrie/kelson/internal/renderer"
-	"github.com/dafrie/kelson/internal/serverstate"
 )
 
 // PutSpec validates the documents and stores them.
@@ -73,10 +73,10 @@ func (s *Server) PutSpec(ctx context.Context, req *connect.Request[kelsonv1alpha
 		return nil, err
 	}
 
-	stored, err := s.specs.Put(ctx, spec.project.Metadata.Name, serverstate.Documents{
+	stored, err := s.specs.Put(ctx, spec.project.Metadata.Name, controlstore.Documents{
 		Project:      docs.GetProject(),
 		Environments: docs.GetEnvironments(),
-	}, serverstate.PutOptions{
+	}, controlstore.PutOptions{
 		ExpectedVersion: msg.GetVersion(),
 		Force:           msg.GetForce(),
 		IdempotencyKey:  msg.GetIdempotencyKey(),
@@ -84,7 +84,7 @@ func (s *Server) PutSpec(ctx context.Context, req *connect.Request[kelsonv1alpha
 	if err != nil {
 		return nil, failRequest(err)
 	}
-	auditChange(ctx, serverstate.AuditChange{Revision: stored.Version})
+	auditChange(ctx, controlstore.AuditChange{Revision: stored.Version})
 	return connect.NewResponse(&kelsonv1alpha1.PutSpecResponse{Spec: wireSpec(stored, true)}), nil
 }
 
@@ -154,7 +154,7 @@ func (s *Server) DeleteSpec(ctx context.Context, req *connect.Request[kelsonv1al
 	if err := s.guardStored(ctx, model.AgentOpSpecDelete, req.Msg.GetProject()); err != nil {
 		return nil, err
 	}
-	err := s.specs.Delete(ctx, req.Msg.GetProject(), serverstate.DeleteOptions{
+	err := s.specs.Delete(ctx, req.Msg.GetProject(), controlstore.DeleteOptions{
 		ExpectedVersion: req.Msg.GetVersion(),
 		Force:           req.Msg.GetForce(),
 		IdempotencyKey:  req.Msg.GetIdempotencyKey(),
@@ -165,7 +165,7 @@ func (s *Server) DeleteSpec(ctx context.Context, req *connect.Request[kelsonv1al
 	return connect.NewResponse(&kelsonv1alpha1.DeleteSpecResponse{}), nil
 }
 
-func wireSpec(stored serverstate.Stored, withDocuments bool) *kelsonv1alpha1.Spec {
+func wireSpec(stored controlstore.Stored, withDocuments bool) *kelsonv1alpha1.Spec {
 	spec := &kelsonv1alpha1.Spec{
 		Project:      stored.Project,
 		Version:      stored.Version,

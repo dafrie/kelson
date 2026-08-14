@@ -1,46 +1,62 @@
 package main
 
 import (
-	"context"
-	"fmt"
-	"strings"
-
 	"github.com/spf13/cobra"
 
 	"github.com/dafrie/kelson/internal/delivery"
-	"github.com/dafrie/kelson/internal/delivery/rollback"
 )
 
-// newRollbackCmd builds `kelson rollback` (issues #38, #55): return an
-// environment to a recorded revision, replaying the exact bytes that were live
-// then — never a re-render.
+// newRollbackCmd builds `kelson rollback`, which is gated (issue #224).
 //
-// # The preview comes first, always
+// # What was here, and why it is not
 //
-// A rollback is the operation people reach for when they are already in
-// trouble, and the one thing that must not happen is discovering afterwards
-// that it could not restore what they thought. So the irreversibility preview
-// (internal/delivery/rollback) is computed and printed BEFORE anything is
-// applied: immutable fields the API server will refuse to change back, PVCs
-// whose data is gone either way, state a data operator owns, and the standing
-// caveat that kelson runs no migrations. --yes skips the confirmation, never
-// the preview.
-func newRollbackCmd() *cobra.Command { return newRollbackCmdFactory(connectDelivery) }
-
-func newRollbackCmdFactory(connect deliveryConnector) *cobra.Command {
-	opts := &rollbackOptions{connect: connect}
+// Rollback used to read the rendered-history journal, print the
+// irreversibility preview and replay the recorded bytes through the
+// environment's adapter. All three halves are gone: the journal was
+// internal/serverstate and internal/delivery/direct, the preview was
+// internal/delivery/rollback, and the replay was an adapter's Apply.
+//
+// [ADR-0028](docs/adr/0028-delivery-spine.md) decision 5 replaces the whole
+// operation with a pointer move. Every revision kelson publishes is an
+// immutable OCI artifact that cannot have changed since, so rolling back is
+// repointing an `OCIRepository` at a tag that already exists — expressed as a
+// `kelson.dev/rollback-to` annotation on the `Environment`, which also suspends
+// re-rendering so the controller cannot immediately republish the thing you
+// just rolled away from. `kelson rollback` becomes porcelain over that
+// annotation.
+//
+// # The irreversibility preview is the part worth saying out loud
+//
+// The old preview named what a rollback could not restore — immutable fields
+// the API server will refuse to change back, PVCs whose data is gone either
+// way, state a data operator owns — and it was computed from two sets of
+// recorded manifests. Nothing in the new spine has re-implemented it yet, which
+// is a real loss and exactly why this command refuses rather than offering a
+// rollback with the warning silently dropped. A rollback is what people reach
+// for when they are already in trouble; the one thing that must not happen is
+// discovering afterwards that it could not restore what they thought.
+func newRollbackCmd() *cobra.Command {
+	opts := &rollbackOptions{}
 	cmd := &cobra.Command{
 		Use:   "rollback -f spec.yaml --env <name> [--to <revision>]",
-		Short: "Return an environment to a recorded revision, previewing what cannot be reverted",
-		Long: "Rollback replays the rendered output recorded for a previous revision. Nothing is\n" +
-			"re-rendered: the bytes that were live then are the bytes applied now (issue #38).\n\n" +
-			"Before applying, it prints the irreversibility preview — every change the rollback cannot\n" +
-			"safely revert and why. With no --to, the target is the entry before the current one.",
-		Example: "  kelson rollback -f project.yaml -f production.yaml --env production\n" +
-			"  kelson rollback -f spec.yaml --env production --to 000007 --yes",
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runRollback(cmd, opts)
+		Short: "Return an environment to a recorded revision (rebuilding on the controller — see issue #224)",
+		Long: "Rollback is being rebuilt on the delivery spine (ADR-0028 decision 5, issue #224) and refuses\n" +
+			"in the meantime.\n\n" +
+			"What it becomes: every revision kelson publishes is an immutable OCI artifact, so a rollback\n" +
+			"repoints the environment's OCIRepository at a tag that already exists and suspends re-render\n" +
+			"until the pin clears. It replays nothing, because there is nothing to replay.\n\n" +
+			"What refusing protects: the irreversibility preview — the immutable fields, the volumes and\n" +
+			"the operator-owned state a rollback cannot restore — was computed from the recorded manifests\n" +
+			"this rebuild deleted. Rolling back without it would be the failure this command exists to\n" +
+			"prevent.",
+		Example: "  kelson diff -f project.yaml -f production.yaml --env production   # what is different now",
+		Args:    cobra.NoArgs,
+		RunE: func(*cobra.Command, []string) error {
+			return delivery.NotImplemented("rollback",
+				"kelson cannot roll back: the recorded rendered history and the irreversibility preview "+
+					"were deleted with the old delivery machinery, and the annotation-driven rollback that "+
+					"replaces them is not built",
+				"#224")
 		},
 	}
 	f := cmd.Flags()
@@ -49,9 +65,7 @@ func newRollbackCmdFactory(connect deliveryConnector) *cobra.Command {
 	f.StringVar(&opts.to, "to", "", "revision to restore (default: the entry before the current one)")
 	f.StringVar(&opts.profile, "profile", "", "ClusterProfile YAML file, or from-cluster to capture a live profile (requires cluster access)")
 	f.StringVar(&opts.kubeconfig, "kubeconfig", "", "path to a kubeconfig (default: $KUBECONFIG, in-cluster credentials, then ~/.kube/config)")
-	f.StringVar(&opts.mode, "mode", "", "delivery adapter to use, overriding the environment's delivery mode (direct or flux)")
 	f.StringVar(&opts.image, "image", "", imageFlagUsage)
-	f.StringVar(&opts.history, "history", "", "kelson data directory holding the direct-mode rendered history (default: $KELSON_DATA_DIR, else $XDG_DATA_HOME/kelson)")
 	f.BoolVar(&opts.yes, "yes", false, "apply the rollback without asking for confirmation; the preview is printed either way")
 	cobra.CheckErr(cmd.MarkFlagRequired("file"))
 	return cmd
@@ -59,152 +73,6 @@ func newRollbackCmdFactory(connect deliveryConnector) *cobra.Command {
 
 type rollbackOptions struct {
 	specInput
-	to      string
-	mode    string
-	history string
-	yes     bool
-	connect deliveryConnector
-}
-
-func runRollback(cmd *cobra.Command, opts *rollbackOptions) error {
-	target, set, err := resolveDeliveryTarget(opts.specInput, opts.history, opts.mode, cmd.ErrOrStderr())
-	if err != nil {
-		return err
-	}
-	adapter, plane, err := selectAdapter(opts.connect, target)
-	if err != nil {
-		return err
-	}
-	if !adapter.Capabilities().SupportsRollback {
-		return fmt.Errorf("the %s adapter cannot roll back", adapter.Name())
-	}
-
-	ctx := cmd.Context()
-	entries, err := adapter.History(ctx, set)
-	if err != nil {
-		return err
-	}
-	entry, err := rollbackTarget(entries, opts.to)
-	if err != nil {
-		return err
-	}
-
-	out := &printer{w: cmd.OutOrStdout()}
-	out.printf("Rolling %s/%s back to revision %s%s\n", set.Project, set.Environment, entry.Revision, committedAt(entry))
-	if err := previewRollback(ctx, plane, set, entry, out); err != nil {
-		return err
-	}
-	if err := out.err; err != nil {
-		return err
-	}
-
-	if !opts.yes {
-		ok, err := confirm(cmd, fmt.Sprintf("Restore revision %s?", entry.Revision))
-		if err != nil {
-			return err
-		}
-		if !ok {
-			return fmt.Errorf("rollback cancelled")
-		}
-	}
-
-	res, err := adapter.Rollback(ctx, set, entry)
-	if err != nil {
-		return err
-	}
-	if !res.Applied {
-		return fmt.Errorf("%s: the adapter did not complete the rollback to %s", adapter.Name(), entry.Revision)
-	}
-	out.printf("Restored revision %s as %s\n", entry.Revision, res.Revision)
-	return out.err
-}
-
-// rollbackTarget picks the revision to restore. With no --to it is the entry
-// before the current one — "undo the last deploy", the overwhelmingly common
-// intent. History is newest first, so that is index 1.
-func rollbackTarget(entries []delivery.Entry, to string) (delivery.Entry, error) {
-	if len(entries) == 0 {
-		return delivery.Entry{}, fmt.Errorf("no recorded history: nothing has been deployed for this environment, so there is nothing to roll back to")
-	}
-	if to == "" {
-		if len(entries) < 2 {
-			return delivery.Entry{}, fmt.Errorf("only one recorded revision (%s): there is no previous state to restore", entries[0].Revision)
-		}
-		return entries[1], nil
-	}
-	for _, e := range entries {
-		if e.Revision == to {
-			return e, nil
-		}
-	}
-	return delivery.Entry{}, fmt.Errorf("revision %q is not in the retained history (available: %s)", to, revisions(entries))
-}
-
-func revisions(entries []delivery.Entry) string {
-	names := make([]string, len(entries))
-	for i, e := range entries {
-		names[i] = e.Revision
-	}
-	return strings.Join(names, ", ")
-}
-
-func committedAt(e delivery.Entry) string {
-	if e.CommittedAt == "" {
-		return ""
-	}
-	return " (recorded " + e.CommittedAt + ")"
-}
-
-// previewRollback prints what the rollback cannot safely revert. A mode whose
-// recorded history kelson cannot read gets an explicit "no preview" line rather
-// than silence: an absent warning must never be mistaken for "nothing to warn
-// about".
-func previewRollback(ctx context.Context, plane *deliveryPlane, set delivery.ManifestSet, entry delivery.Entry, out *printer) error {
-	if plane.recorded == nil {
-		out.printf("\nno rendered history is readable for this delivery mode: the irreversibility preview is unavailable\n")
-		return nil
-	}
-	d, findings, err := rollback.PreviewRevision(ctx, plane.recorded, set.Project, set.Environment, entry.Revision)
-	if err != nil {
-		return err
-	}
-
-	out.printf("\nWhat changes: %d added, %d modified, %d removed (max risk %s)\n",
-		d.Summary.Added, d.Summary.Modified, d.Summary.Removed, d.Summary.MaxRisk)
-	if len(d.Summary.Disruptive) > 0 {
-		out.printf("Disruptive: %s\n", strings.Join(d.Summary.Disruptive, ", "))
-	}
-
-	out.printf("\nWhat a rollback cannot revert:\n")
-	if len(findings) == 0 {
-		out.printf("  (nothing identified)\n")
-		return nil
-	}
-	for _, f := range findings {
-		out.printf("  %s %s\n", marker(f), describeFinding(f))
-	}
-	return nil
-}
-
-// marker separates the findings that are merely risky from the ones where the
-// prior state is gone for good.
-func marker(f rollback.Finding) string {
-	if f.Never {
-		return "[unrecoverable]"
-	}
-	return "[warning]     "
-}
-
-func describeFinding(f rollback.Finding) string {
-	head := string(f.Cause)
-	if f.Resource != "" {
-		head = f.Resource + " — " + head
-	}
-	if f.Path != "" {
-		head += " at " + f.Path
-	}
-	if f.Message == "" {
-		return head
-	}
-	return head + ": " + f.Message
+	to  string
+	yes bool
 }

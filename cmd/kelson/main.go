@@ -28,7 +28,6 @@ func newRootCmd() *cobra.Command {
 		SilenceErrors: true,
 	}
 	root.AddCommand(newRenderCmd())
-	root.AddCommand(newEjectCmd())
 	root.AddCommand(newDiffCmd())
 	root.AddCommand(newBuildCmd())
 	root.AddCommand(newProfileCmd())

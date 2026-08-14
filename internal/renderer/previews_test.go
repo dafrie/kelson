@@ -41,7 +41,7 @@ func githubPreviews() *model.ResolvedPreviews {
 // mode there is nothing to reconcile a ResourceSet — usually not even a served
 // CRD — so kelson refuses rather than emitting one.
 func TestPreviewsRequireFluxMode(t *testing.T) {
-	for _, mode := range []model.DeliveryMode{model.DeliveryDirect, model.DeliveryArgoCD, ""} {
+	for _, mode := range []model.DeliveryMode{model.DeliveryDirect, ""} {
 		r := previewsFixture(githubPreviews())
 		r.Environment.Mode = mode
 		_, err := Render(r, gatewayProfile(), nil)

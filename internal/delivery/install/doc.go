@@ -53,7 +53,7 @@
 // The acceptance criterion of issue #60 is that uninstall removes only what
 // kelson installed. That is a claim about the cluster, so it is recorded in the
 // cluster, per object, at the moment it can be observed — the same discipline
-// internal/delivery/direct applies to namespaces (delivery.AnnNamespaceOwnership).
+// kelson applies to namespaces (delivery.AnnNamespaceOwnership).
 //
 //	kelson.dev/installed-component: <name>   label, the selector handle
 //	kelson.dev/installed-version:   <version> label, the pin kelson applied

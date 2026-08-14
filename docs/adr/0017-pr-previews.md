@@ -1,6 +1,9 @@
 # ADR-0017: PR previews — the `previews:` block, the artifact tag, and what stage 1 does not do
 
-- **Status:** Accepted
+- **Status:** Accepted (2026-08-14: [ADR-0028](0028-delivery-spine.md) adopts this ADR's artifact and
+  publisher as the delivery spine's, so previews and ordinary deploys share one OCI format and one
+  determinism test; decision 5's Flux-only gate becomes vacuous and `ResourceSet` stays previews-only,
+  as recorded here.)
 - **Date:** 2026-08-14
 - **Amended:** 2026-08-14 — [Stage 2, the publisher](#stage-2--the-publisher-amended-2026-08-14)
   (decisions 8–11)

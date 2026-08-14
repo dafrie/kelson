@@ -67,9 +67,29 @@ builds:
       - -X github.com/dafrie/kelson/internal/version.Version={{.Version}}
       - -X github.com/dafrie/kelson/internal/version.Commit={{.ShortCommit}}
 
+  # kelson-controller reconciles the kelson.dev custom resources (ADR-0027).
+  # It ships as a binary as well as an image because `kelson-controller
+  # --kubeconfig` against a remote cluster is a real way to run it while
+  # developing, and because every other binary in this release is downloadable.
+  - id: kelson-controller
+    main: ./cmd/kelson-controller
+    binary: kelson-controller
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/dafrie/kelson/internal/version.Version={{.Version}}
+      - -X github.com/dafrie/kelson/internal/version.Commit={{.ShortCommit}}
+
 archives:
   - id: kelson
-    ids: [kelson, kelson-server, kelson-mcp]
+    ids: [kelson, kelson-server, kelson-mcp, kelson-controller]
     formats: [tar.gz]
     name_template: >-
       {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
@@ -101,6 +121,28 @@ dockers:
     build_flag_templates:
       - "--platform=linux/arm64"
 
+  - id: kelson-controller-amd64
+    ids: [kelson-controller]
+    goos: linux
+    goarch: amd64
+    use: buildx
+    dockerfile: Dockerfile.controller
+    image_templates:
+      - "ghcr.io/dafrie/kelson-controller:{{ .Version }}-amd64"
+    build_flag_templates:
+      - "--platform=linux/amd64"
+
+  - id: kelson-controller-arm64
+    ids: [kelson-controller]
+    goos: linux
+    goarch: arm64
+    use: buildx
+    dockerfile: Dockerfile.controller
+    image_templates:
+      - "ghcr.io/dafrie/kelson-controller:{{ .Version }}-arm64"
+    build_flag_templates:
+      - "--platform=linux/arm64"
+
 docker_manifests:
   - name_template: "ghcr.io/dafrie/kelson-server:{{ .Version }}"
     image_templates:
@@ -110,6 +152,15 @@ docker_manifests:
     image_templates:
       - "ghcr.io/dafrie/kelson-server:{{ .Version }}-amd64"
       - "ghcr.io/dafrie/kelson-server:{{ .Version }}-arm64"
+
+  - name_template: "ghcr.io/dafrie/kelson-controller:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/dafrie/kelson-controller:{{ .Version }}-amd64"
+      - "ghcr.io/dafrie/kelson-controller:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/dafrie/kelson-controller:latest"
+    image_templates:
+      - "ghcr.io/dafrie/kelson-controller:{{ .Version }}-amd64"
+      - "ghcr.io/dafrie/kelson-controller:{{ .Version }}-arm64"
 
 changelog:
   use: github

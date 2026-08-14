@@ -2,14 +2,12 @@ package api
 
 import (
 	"context"
-	"fmt"
 
 	"connectrpc.com/connect"
 
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
 	"github.com/dafrie/kelson/internal/explain"
 	"github.com/dafrie/kelson/internal/observation"
-	"github.com/dafrie/kelson/internal/redact"
 )
 
 // ExplainService served: "why is this component degraded?" answered with
@@ -18,20 +16,25 @@ import (
 // # The handler is assembly, and that is the point
 //
 // Every judgement in the answer belongs to a plane that already owns it: the
-// phase is the adapter's, the verdicts are the observation plane's, the
-// recorded manifests are the history store's, the log window is the log
-// engine's. This handler resolves them and hands them to internal/explain,
-// which is where the causal machinery lives so the CLI and the MCP surface can
-// compose the same capability instead of each growing a diagnosis of their own.
+// verdicts are the observation plane's, the log window is the log engine's.
+// This handler resolves them and hands them to internal/explain, which is where
+// the causal machinery lives so the CLI and the MCP surface can compose the
+// same capability instead of each growing a diagnosis of their own.
 //
-// # It degrades the way a diagnosis must
+// # It degrades the way a diagnosis must, and it is degraded right now
 //
-// Status is the spine and its failure is the answer. Everything after it is
-// additive: an adapter with no history, a plane with no recorded manifests, a
-// server started without a log engine — each costs a correlation and arrives in
-// the response's `notes`, never as a transport error. A tool an agent calls
-// when something is already broken must not itself break because a second
-// source is unavailable.
+// Everything beyond the verdicts is additive: a missing delivery phase, missing
+// recorded manifests, a server started without a log engine — each costs a
+// correlation and arrives in the response's `notes`, never as a transport
+// error. A tool an agent calls when something is already broken must not itself
+// break because a second source is unavailable.
+//
+// [ADR-0028](docs/adr/0028-delivery-spine.md) deleted two of those sources: the
+// delivery phase (the adapters reported it) and the recorded manifests that let
+// a cause name the revision that introduced the change it blames. Both arrive
+// as notes, which is the mechanism ADR-0023 built for exactly this, and both
+// return with issue #224. The verdict-derived causes — the ones that fire in a
+// real incident — are unaffected.
 func (s *Server) Explain(ctx context.Context, req *connect.Request[kelsonv1alpha1.ExplainRequest]) (*connect.Response[kelsonv1alpha1.ExplainResponse], error) {
 	msg := req.Msg
 	out, err := s.renderSpec(ctx, msg.GetSpec(), msg.GetEnvironment(), msg.GetImage(), msg.GetProfile())
@@ -42,16 +45,12 @@ func (s *Server) Explain(ctx context.Context, req *connect.Request[kelsonv1alpha
 	if err != nil {
 		return nil, fail(connect.CodeInternal, err)
 	}
-	t := target(out, msg.GetMode())
-	adapter, plane, err := s.selectAdapter(ctx, t)
+	t := target(out)
+	plane, err := s.plane(ctx, t)
 	if err != nil {
 		return nil, failRequest(err)
 	}
 
-	status, err := adapter.Status(ctx, set)
-	if err != nil {
-		return nil, failRequest(err)
-	}
 	verdicts, err := observeWorkloads(ctx, plane, set, t.Namespace)
 	if err != nil {
 		return nil, failRequest(err)
@@ -61,22 +60,18 @@ func (s *Server) Explain(ctx context.Context, req *connect.Request[kelsonv1alpha
 		Project:     set.Project,
 		Environment: set.Environment,
 		Namespace:   t.Namespace,
-		Status:      status,
 		Verdicts:    verdicts,
 		Logs:        s.explainLogs(),
-		Manifests:   explainManifests(plane),
 	}
-	// History is what makes the change correlation possible, and an adapter
-	// that cannot report it yields a note rather than a failure: a mode kelson
-	// records no history for, or a store momentarily unreachable, must not take
-	// the diagnosis with it. The note is composed here because the reason
-	// belongs to this plane — which adapter refused, and why.
-	entries, err := adapter.History(ctx, set)
-	if err != nil {
-		in.Notes = append(in.Notes, fmt.Sprintf("the %s adapter could not report its history (%s), so no change was correlated",
-			adapter.Name(), redact.Scrub(err.Error())))
-	}
-	in.History = entries
+	// Status and History are left zero and the notes say so, rather than the
+	// answer implying kelson looked and found nothing. Which sources were
+	// consulted is part of a diagnosis (ADR-0023): one that quietly omits an
+	// input is one a reader cannot weigh.
+	in.Notes = append(in.Notes,
+		"the delivery phase was not read: the adapters that reported it were deleted with the old "+
+			"delivery machinery (ADR-0028) and it returns with issue #224",
+		"no revision history was available, so no change was correlated: history becomes the artifact "+
+			"registry's tag list under the new spine (issue #224)")
 
 	return connect.NewResponse(wireExplanation(explain.Explain(ctx, in))), nil
 }
@@ -103,16 +98,6 @@ func (s *Server) explainLogs() explain.LogFn {
 		}
 		return res.Lines, nil
 	}
-}
-
-// explainManifests adapts the plane's recorded-history source onto explain's
-// seam. A mode that keeps no rendered history kelson can read has none, and the
-// explanation says so.
-func explainManifests(plane *Plane) explain.ManifestFn {
-	if plane == nil || plane.Recorded == nil {
-		return nil
-	}
-	return plane.Recorded.Revision
 }
 
 // wireExplanation projects the explanation onto the schema. It is a field-for-

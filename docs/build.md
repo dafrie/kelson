@@ -85,7 +85,7 @@ So the destination arrives as a flag:
 | reference | `<repository>@sha256:…` — what the command prints |
 
 **One repository per Project, not per Component.** The source is
-project-level (`spec.source`), so the build is too. Model rule P3 resolves an
+project-level (`spec.source`), so the build is too. Model rule P3 resolves a
 Component's image to its own `image:` if it has one and to the Project's
 otherwise, which means one built image feeds every component that does not
 name one. One build, one repository, one digest pinned into all of them.
@@ -395,7 +395,7 @@ discovered at runtime:
 | `internal/build/detect` | strategy detection over an `fs.FS`, with a typed reason and the evidence path |
 | `internal/build/registry` | reference parsing, digest pinning, tag and destination derivation, credential references, the insecure-registry list |
 | `internal/delivery/kube` | `BuildExecutor`: submits the Job, streams pod logs, classifies the outcome, parses the digest — for either driver |
-| `internal/delivery/git` | `RemoteResolver`: `ls-remote` ref resolution |
+| `internal/gitref` | `RemoteResolver`: `ls-remote` ref resolution (it lived in `internal/delivery/git` until ADR-0028 deleted the writer around it) |
 | `cmd/kelson` | `kelson build`: flags, spec, and the `buildConnector` seam, where the resolved strategy picks a driver |
 | `internal/api` | `BuildService.Build`: the same plan over the wire, behind the `BuildConnector` seam |
 

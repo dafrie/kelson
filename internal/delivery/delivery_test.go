@@ -1,82 +1,15 @@
 package delivery
 
 import (
-	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
-// stubAdapter exercises the interface contract without a cluster or git repo.
-type stubAdapter struct {
-	name         string
-	capabilities Capabilities
-}
-
-func (s stubAdapter) Name() string { return s.name }
-
-func (s stubAdapter) Capabilities() Capabilities { return s.capabilities }
-
-func (s stubAdapter) Apply(context.Context, ManifestSet) (Result, error) {
-	return Result{Revision: "stub", Applied: true}, nil
-}
-
-func (s stubAdapter) Status(context.Context, ManifestSet) (Status, error) {
-	return Status{Phase: PhaseHealthy, Revision: "stub"}, nil
-}
-
-func (s stubAdapter) History(context.Context, ManifestSet) ([]Entry, error) {
-	return nil, nil
-}
-
-func (s stubAdapter) Rollback(context.Context, ManifestSet, Entry) (Result, error) {
-	return Result{Revision: "stub", Applied: true}, nil
-}
-
-func TestRegistrySelectAndNegotiate(t *testing.T) {
-	r := NewRegistry()
-	if err := r.Register(stubAdapter{name: "direct"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.Register(stubAdapter{name: "direct"}); err == nil {
-		t.Fatal("expected duplicate-name registration to fail")
-	}
-	if err := r.Register(stubAdapter{name: "flux", capabilities: Capabilities{RequiresGit: true, SupportsPR: true}}); err != nil {
-		t.Fatal(err)
-	}
-
-	a, err := r.Select("direct")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if a.Name() != "direct" {
-		t.Fatalf("got %q", a.Name())
-	}
-
-	flux, err := r.Select("flux")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !flux.Capabilities().RequiresGit || !flux.Capabilities().SupportsPR {
-		t.Fatal("flux should require git and support PRs; direct should not")
-	}
-
-	// The seam is not hardcoded to two adapters (ADR-0012): registering a third
-	// under an arbitrary name works with no change to Registry itself.
-	if err := r.Register(stubAdapter{name: "custom-gitops", capabilities: Capabilities{RequiresGit: true}}); err != nil {
-		t.Fatal(err)
-	}
-	custom, err := r.Select("custom-gitops")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if custom.Name() != "custom-gitops" {
-		t.Fatalf("got %q", custom.Name())
-	}
-
-	if _, err := r.Select("nope"); err == nil {
-		t.Fatal("selecting an unregistered adapter should fail")
-	}
-}
+// The Registry/Adapter/Capabilities tests that lived here went with the seam
+// they tested (ADR-0028 decision 9): there is one delivery path now, so there
+// is nothing to select between and no capability to negotiate. What remains is
+// the error taxonomy, which every plane still speaks.
 
 func TestConflictErrorIsLoud(t *testing.T) {
 	err := Conflict("Project/checkout", "$.spec", "concurrent edit detected", "re-read the latest spec and reapply")
@@ -89,6 +22,33 @@ func TestConflictErrorIsLoud(t *testing.T) {
 	}
 	if !AsConflict(err) {
 		t.Fatal("AsConflict should report true")
+	}
+	if de.DocsURL == "" {
+		t.Fatal("structured error must carry a docs URL")
+	}
+}
+
+// A gated capability must be recognisable as "not yet" rather than "it failed",
+// and must name where the work is tracked. That is the whole contract the
+// deleted verbs lean on: an agent branching on the code stops instead of
+// retrying, and a human reading the message knows when the answer changes.
+func TestNotImplementedNamesItsTrackingIssue(t *testing.T) {
+	err := NotImplemented("deploy", "kelson cannot apply a rendered set", "#224")
+	var de Error
+	if !errors.As(err, &de) {
+		t.Fatalf("expected delivery.Error, got %T", err)
+	}
+	if de.Code != ErrNotImplemented {
+		t.Fatalf("got code %q, want %q", de.Code, ErrNotImplemented)
+	}
+	if !AsNotImplemented(err) {
+		t.Fatal("AsNotImplemented should report true")
+	}
+	if AsApplyFailed(err) || AsUnsupported(err) {
+		t.Fatal("a not-implemented refusal must not be mistaken for a failure or a capability mismatch")
+	}
+	if !strings.Contains(de.Remediation, "#224") {
+		t.Errorf("the remediation must name the tracking issue, got: %s", de.Remediation)
 	}
 	if de.DocsURL == "" {
 		t.Fatal("structured error must carry a docs URL")

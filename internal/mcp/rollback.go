@@ -12,15 +12,13 @@ import (
 	"github.com/dafrie/kelson/internal/diff"
 )
 
-const rollbackDescription = `Return an environment to a previously deployed revision, or preview what that would restore.
+const rollbackDescription = `NOT AVAILABLE. Rolling back an environment is refused while kelson's delivery spine is rebuilt.
 
-MUTATES THE CLUSTER when execute=true. The default is execute=false, which applies nothing.
+MUTATES THE CLUSTER when execute=true, in principle. In practice it CHANGES NOTHING in every mode, including execute=false: every call is refused with the code delivery/not-implemented, naming issue #224. Do not retry it and do not work around it.
 
-The preview is the point: it lists what a rollback cannot revert — findings flagged unrecoverable are changes no rollback can undo (data written, a volume resized, an external side effect) — plus a summary of the resources that would change. Read it before setting execute=true; a rollback is what people reach for when they are already in trouble, and discovering afterwards that it did not restore what they assumed is the failure this preview exists to prevent.
+Why the preview is refused too, and not answered as "no findings": the preview lists what a rollback cannot revert — data written, a volume resized, an external side effect — and it was computed by comparing two recorded revisions. The store that kept them is deleted (ADR-0027), so an empty preview would report "nothing to worry about" for a question nothing looked at. That is the exact failure the preview exists to prevent.
 
-Preconditions: the project must be stored, the environment must have deployment history (a first deployment cannot be rolled back), and the delivery adapter must support rollback. Omit to_revision to restore the revision before the current one.
-
-Cost: one server call that reads history and, when executing, applies and waits for the adapter. Every call carries an idempotency key, returned in the answer; pass it back on a retry.`
+What to do instead: diagnose_application to find out what is wrong, and tell the human that the environment needs a rollback a person must perform.`
 
 type rollbackInput struct {
 	Project        string `json:"project" jsonschema:"the stored project name"`

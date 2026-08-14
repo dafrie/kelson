@@ -1,6 +1,6 @@
 # ADR-0001: Hybrid state model — one renderer, pluggable delivery
 
-- **Status:** Accepted (Argo CD adapter scope superseded by [ADR-0012](0012-flux-only-gitops.md), 2026-08-12)
+- **Status:** Accepted (Argo CD adapter scope superseded by [ADR-0012](0012-flux-only-gitops.md), 2026-08-12; hybrid delivery — the mode list, per-environment mode selection and `direct` — superseded by [ADR-0028](0028-delivery-spine.md), 2026-08-14. The pure renderer and the pluggable-seam insight survive, and the seam's last implementation is the Flux spine.)
 - **Date:** 2026-08-11
 
 ## Context

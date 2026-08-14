@@ -29,26 +29,25 @@ const uninstallTimeout = 3 * time.Minute
 // built on — the provenance selector selects exactly the rendered set — with
 // kubectl as the deleting tool. This proves the command:
 //
-//  1. a deploy records that kelson created the namespace, which is the only
-//     licence uninstall accepts for deleting one;
+//  1. the namespace records only the renderer's "declared" ownership, which is
+//     NOT licence to delete it — so the namespace survives (the applier that
+//     recorded authorship is deleted, ADR-0028; it returns with issue #224);
 //  2. without --yes and with no terminal, it deletes nothing and exits
 //     non-zero;
 //  3. with --yes it previews, deletes, and reports per object;
-//  4. every rendered object is gone and the namespace with it;
+//  4. every rendered object is gone and the namespace is not;
 //  5. a second run reports nothing to do and exits 0.
 //
-// The bystanders are planted here too, but what they prove in THIS scenario is
-// that the sweep did not reach them — they live in the namespace kelson
-// created, so they go when it does. That they SURVIVE is the adopted-namespace
-// scenario below, which is where the non-destructive claim is actually at risk.
+// The bystanders are planted here too, and they must survive: the sweep is by
+// label and the namespace stays, so nothing but the labelled set may go.
 func TestUninstallRemovesExactlyWhatKelsonDeployed(t *testing.T) {
 	h := newHarness(t, "kelson-e2e-uninstall")
 	const env = "uninstall"
 
 	spec := h.copyFixture("spec.yaml")
 
-	t.Log("== deploy the set ==")
-	h.kelsonOK("deploy", "-f", spec, "--env", env, "--history", h.history, "--timeout", deployTimeout, "--yes")
+	t.Log("== put the rendered set in the cluster ==")
+	h.applyRendered(spec, env)
 	h.waitForRollout("web", baseImage, rolloutTimeout)
 
 	rendered := h.renderedNamespacedSet(spec, env)
@@ -56,19 +55,20 @@ func TestUninstallRemovesExactlyWhatKelsonDeployed(t *testing.T) {
 		t.Fatal("the fixture rendered nothing namespaced, so this test would prove nothing")
 	}
 
-	t.Log("== the namespace records that kelson created it ==")
-	// internal/delivery/direct.stampNamespaceOwnership writes this at apply
-	// time and it is the ONLY thing uninstall accepts as licence to delete a
-	// namespace. Asserting it before the uninstall keeps the namespace
-	// assertion below from passing for the wrong reason.
-	h.assertNamespaceOwnership("created")
+	t.Log("== the namespace records only that kelson declared it ==")
+	// "created" is the ONLY value uninstall accepts as licence to delete a
+	// namespace, and it was written by the applier ADR-0028 deleted. Nothing
+	// upgrades the renderer's "declared" today, so the namespace survives the
+	// uninstall — asserted below. The authorship half returns with the
+	// controller (issue #224), and this assertion goes back to "created" then.
+	h.assertNamespaceOwnership("declared")
 
 	t.Log("== plant bystanders kelson must not sweep ==")
 	bystanders := h.plantBystanders()
 
 	t.Log("== without --yes and with no terminal, it deletes nothing ==")
 	before := h.listKeys(deletableTypes, projectSelector)
-	refused := h.kelson("uninstall", "--project", uninstallProject, "--env", env, "--history", h.history)
+	refused := h.kelson("uninstall", "--project", uninstallProject, "--env", env)
 	if refused.code == 0 {
 		t.Fatalf("uninstall without --yes exited 0 on a non-terminal stdin; there was nobody to answer\n%s", refused.combined())
 	}
@@ -80,7 +80,7 @@ func TestUninstallRemovesExactlyWhatKelsonDeployed(t *testing.T) {
 	}
 
 	t.Log("== uninstall ==")
-	res := h.kelsonOK("uninstall", "--project", uninstallProject, "--env", env, "--history", h.history, "--yes")
+	res := h.kelsonOK("uninstall", "--project", uninstallProject, "--env", env, "--yes")
 	for _, want := range []string{"kelson uninstall", "Workloads", "deleted "} {
 		if !strings.Contains(res.stdout, want) {
 			t.Errorf("the uninstall output does not contain %q; the preview and the per-object results are the contract\n%s",
@@ -95,17 +95,19 @@ func TestUninstallRemovesExactlyWhatKelsonDeployed(t *testing.T) {
 		return len(left) == 0, "still present: " + sortedKeys(left)
 	})
 
-	t.Log("== the namespace is gone, because kelson created it ==")
-	h.waitFor("the namespace to be gone", uninstallTimeout, func() (bool, string) {
-		got := h.kubectl("get", "namespace", h.namespace, "-o", "jsonpath={.status.phase}")
-		if got.code != 0 {
-			return true, "the namespace is not there, which is what a deleted namespace looks like"
-		}
-		return false, "namespace phase " + strings.TrimSpace(got.stdout)
-	})
+	t.Log("== the namespace stays, because nothing recorded that kelson created it ==")
+	// This is the conservative half of the rule and it is the half that matters:
+	// with no authorship record, uninstall refuses to delete the namespace
+	// rather than assuming. A namespace delete takes everything inside it, so
+	// "kelson is not sure" must mean "kelson leaves it".
+	phase := strings.TrimSpace(h.kubectlOK("get", "namespace", h.namespace, "-o", "jsonpath={.status.phase}").stdout)
+	if phase != "Active" {
+		t.Fatalf("namespace %s is %q, want Active: with ownership %q recorded, uninstall must leave it",
+			h.namespace, phase, "declared")
+	}
 
 	t.Log("== a second run reports nothing to do ==")
-	second := h.kelsonOK("uninstall", "--project", uninstallProject, "--env", env, "--history", h.history, "--yes")
+	second := h.kelsonOK("uninstall", "--project", uninstallProject, "--env", env, "--yes")
 	if !strings.Contains(second.stdout, "nothing to do") {
 		t.Errorf("the second uninstall does not report an empty plan; a repeated uninstall must be a clean no-op\n%s",
 			second.combined())
@@ -115,8 +117,7 @@ func TestUninstallRemovesExactlyWhatKelsonDeployed(t *testing.T) {
 // TestUninstallLeavesAnAdoptedNamespaceAndItsBystanders is the other half of the
 // namespace rule, and the one carrying the non-destructive claim.
 //
-// The namespace here is created by the test, so the deploy records
-// kelson.dev/namespace-ownership=adopted. Uninstall must then delete everything
+// The namespace here is created by the test. Uninstall must delete everything
 // it labelled and leave the namespace — with the unlabelled bystander, another
 // project's labelled object and the namespace's own furniture all intact. A
 // namespace delete would have taken all three.
@@ -132,16 +133,16 @@ func TestUninstallLeavesAnAdoptedNamespaceAndItsBystanders(t *testing.T) {
 
 	spec := h.copyFixture("spec.yaml")
 
-	t.Log("== deploy into the pre-existing namespace ==")
-	h.kelsonOK("deploy", "-f", spec, "--env", env, "--history", h.history, "--timeout", deployTimeout, "--yes")
+	t.Log("== put the rendered set into the pre-existing namespace ==")
+	h.applyRendered(spec, env)
 	h.waitForRollout("web", baseImage, rolloutTimeout)
-	h.assertNamespaceOwnership("adopted")
+	h.assertNamespaceOwnership("declared")
 
 	t.Log("== plant bystanders kelson must not touch ==")
 	bystanders := h.plantBystanders()
 
 	t.Log("== uninstall ==")
-	res := h.kelsonOK("uninstall", "--project", uninstallProject, "--env", env, "--history", h.history, "--yes")
+	res := h.kelsonOK("uninstall", "--project", uninstallProject, "--env", env, "--yes")
 	if !strings.Contains(res.stdout, "stays") {
 		t.Errorf("the preview does not say the namespace stays, or why\n%s", res.combined())
 	}
@@ -165,17 +166,8 @@ func TestUninstallLeavesAnAdoptedNamespaceAndItsBystanders(t *testing.T) {
 		}
 	}
 
-	t.Log("== the local rendered history for this environment is gone ==")
-	// The journal describes a set that no longer exists. Leaving it would give
-	// the next deploy of the same name a revision sequence and a prune baseline
-	// inherited from a deployment that is gone (direct.Store.Forget).
-	status := h.kelson("status", "-f", spec, "--env", env, "--history", h.history)
-	if status.code == 0 && strings.Contains(status.stdout, "rev-") {
-		t.Errorf("`kelson status` still reports a recorded revision for an uninstalled environment\n%s", status.combined())
-	}
-
 	t.Log("== a second run reports nothing to do ==")
-	second := h.kelsonOK("uninstall", "--project", uninstallProject, "--env", env, "--history", h.history, "--yes")
+	second := h.kelsonOK("uninstall", "--project", uninstallProject, "--env", env, "--yes")
 	if !strings.Contains(second.stdout, "nothing to do") {
 		t.Errorf("the second uninstall does not report an empty plan\n%s", second.combined())
 	}
@@ -205,9 +197,19 @@ func TestUninstallLeavesACreatedNamespaceAnotherProjectMovedInto(t *testing.T) {
 
 	spec := h.copyFixture("spec.yaml")
 
-	t.Log("== deploy, and confirm kelson created the namespace ==")
-	h.kelsonOK("deploy", "-f", spec, "--env", env, "--history", h.history, "--timeout", deployTimeout, "--yes")
+	t.Log("== put the rendered set in the cluster ==")
+	h.applyRendered(spec, env)
 	h.waitForRollout("web", baseImage, rolloutTimeout)
+
+	t.Log("== record that kelson created the namespace ==")
+	// The applier that stamped `created` at apply time went with the direct
+	// plane (ADR-0028; it returns with issue #224), and the renderer alone only
+	// claims `declared`. The annotation is an input to this test, not its
+	// subject: what is under test is what uninstall does when it holds the
+	// created licence AND somebody else is living in the namespace, so the
+	// licence is written here rather than waited for.
+	h.kubectlOK("annotate", "namespace", h.namespace,
+		"kelson.dev/namespace-ownership=created", "--overwrite")
 	h.assertNamespaceOwnership("created")
 
 	t.Log("== a second project is deployed into the same namespace ==")
@@ -215,7 +217,7 @@ func TestUninstallLeavesACreatedNamespaceAnotherProjectMovedInto(t *testing.T) {
 	bystanders := h.plantBystanders()
 
 	t.Log("== uninstall ==")
-	res := h.kelsonOK("uninstall", "--project", uninstallProject, "--env", env, "--history", h.history, "--yes")
+	res := h.kelsonOK("uninstall", "--project", uninstallProject, "--env", env, "--yes")
 	for _, want := range []string{"stays", "left behind", "grocery/production"} {
 		if !strings.Contains(res.stdout, want) {
 			t.Errorf("the preview does not say %q; the namespace survives and nothing names the deployment it "+
@@ -243,7 +245,7 @@ func TestUninstallLeavesACreatedNamespaceAnotherProjectMovedInto(t *testing.T) {
 	}
 
 	t.Log("== a second run has nothing to do, and still says why the namespace stays ==")
-	second := h.kelsonOK("uninstall", "--project", uninstallProject, "--env", env, "--history", h.history, "--yes")
+	second := h.kelsonOK("uninstall", "--project", uninstallProject, "--env", env, "--yes")
 	if !strings.Contains(second.stdout, "nothing to do") {
 		t.Errorf("the second uninstall does not report an empty plan\n%s", second.combined())
 	}
@@ -274,8 +276,8 @@ func (h *harness) plantForeignTenant(project, environment string) string {
 	return "configmap/other-tenant"
 }
 
-// assertNamespaceOwnership reads the annotation the delivery plane records at
-// apply time. It reads the whole annotation map rather than one escaped
+// assertNamespaceOwnership reads the namespace-ownership annotation. It reads
+// the whole annotation map rather than one escaped
 // jsonpath expression, for the reason additivity_test.go does: the key contains
 // dots, and an escaping mistake would read as "the annotation is gone".
 func (h *harness) assertNamespaceOwnership(want string) {

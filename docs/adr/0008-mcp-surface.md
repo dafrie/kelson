@@ -1,6 +1,6 @@
 # ADR-0008: MCP tools are task-shaped, not endpoint-shaped
 
-- **Status:** Accepted (tool names amended by [ADR-0027](0027-finish-the-component-rename.md),
+- **Status:** Accepted (tool names amended by [ADR-0032](0032-finish-the-component-rename.md),
   2026-08-14: `diagnose_application` is `diagnose_component`, and its siblings moved with it. The
   task-shaped rule decided here is unchanged.)
 - **Date:** 2026-08-12

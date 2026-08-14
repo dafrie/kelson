@@ -25,7 +25,7 @@ func (s *Server) QueryLogs(ctx context.Context, req *connect.Request[kelsonv1alp
 	query := observation.Query{
 		Namespace: msg.GetSelector().GetNamespace(),
 		// LogSelector.application is the v1alpha1 wire name for the component
-		// (ADR-0027 renamed the vocabulary and the label, not the wire field).
+		// (ADR-0032 renamed the vocabulary and the label, not the wire field).
 		Component:  msg.GetSelector().GetApplication(),
 		Containers: msg.GetSelector().GetContainers(),
 		Tail:       int(msg.GetTail()),
@@ -59,7 +59,7 @@ func (s *Server) FollowLogs(ctx context.Context, req *connect.Request[kelsonv1al
 	query := observation.Query{
 		Namespace: msg.GetSelector().GetNamespace(),
 		// LogSelector.application is the v1alpha1 wire name for the component
-		// (ADR-0027 renamed the vocabulary and the label, not the wire field).
+		// (ADR-0032 renamed the vocabulary and the label, not the wire field).
 		Component:  msg.GetSelector().GetApplication(),
 		Containers: msg.GetSelector().GetContainers(),
 		Since:      unixMillis(msg.GetSinceUnixMs()),

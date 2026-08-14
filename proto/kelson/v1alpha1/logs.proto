@@ -12,7 +12,7 @@ option go_package = "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1;k
 message LogSelector {
   string namespace = 1;    // required
   // The component whose pods to read. The field keeps its v1alpha1 name while
-  // the label it selects on does not (ADR-0027): renaming a wire field is a
+  // the label it selects on does not (ADR-0032): renaming a wire field is a
   // separate break from renaming a cluster label, and this one buys nothing
   // the label rename did not already buy.
   string application = 2;  // required — pods are selected by kelson.dev/component

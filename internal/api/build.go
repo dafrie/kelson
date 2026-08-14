@@ -11,9 +11,9 @@ import (
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
 	"github.com/dafrie/kelson/internal/build"
 	"github.com/dafrie/kelson/internal/build/registry"
+	"github.com/dafrie/kelson/internal/controlstore"
 	"github.com/dafrie/kelson/internal/model"
 	"github.com/dafrie/kelson/internal/redact"
-	"github.com/dafrie/kelson/internal/serverstate"
 )
 
 // DefaultBuildTimeout is the budget one build gets, matching the CLI's
@@ -184,7 +184,7 @@ func (s *Server) Build(ctx context.Context, req *connect.Request[kelsonv1alpha1.
 	// A build produces an image, not a delivery revision, so the record's
 	// "what did this produce?" field is the pinned reference — which is exactly
 	// what a later deploy would name (issue #78).
-	auditChange(ctx, serverstate.AuditChange{Revision: res.Reference, From: request.Revision})
+	auditChange(ctx, controlstore.AuditChange{Revision: res.Reference, From: request.Revision})
 	return stream.Send(&kelsonv1alpha1.BuildResponse{
 		Event: &kelsonv1alpha1.BuildResponse_Finished_{
 			Finished: &kelsonv1alpha1.BuildResponse_Finished{

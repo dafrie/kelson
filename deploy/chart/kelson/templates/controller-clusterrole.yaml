@@ -1,0 +1,47 @@
+{{- include "kelson.authGate" . -}}
+{{- if and .Values.controller.enabled .Values.controller.rbac.create }}
+# The controller's grant, and it is deliberately the smallest one that lets it
+# do what ADR-0028 steps 1–3 need: read the two kelson kinds anywhere in the
+# cluster, and write their status.
+#
+# Cluster-scoped rather than namespaced because a Project and its Environments
+# live wherever their team's namespace is, and a controller that watched only
+# the release namespace would silently ignore every other one. It grants no
+# access to workloads, no access to Secrets and no access to Flux objects: the
+# controller renders and stops (issue #224). The wider grant delivery needs —
+# applying an OCIRepository and a Kustomization in kelson-system, and whatever
+# reads the observation step turns out to want — arrives with the code that
+# uses it, not before, because an unused write grant is a grant nobody can
+# audit the use of.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "kelson.controller.fullname" . }}
+  labels:
+    {{- include "kelson.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controller
+rules:
+  # The specs it reconciles. Read-only: the status subresource below is the
+  # only thing the controller writes, which is exactly the separation ADR-0027
+  # decision 1 gives the status subresource credit for — a controller that
+  # cannot write a spec cannot race the user who authored it.
+  - apiGroups: ["kelson.dev"]
+    resources: ["projects", "environments"]
+    verbs: ["get", "list", "watch"]
+
+  # What it observed. `update` beside `patch` because a future reconciler may
+  # need to replace a status wholesale; today every write is a merge patch.
+  - apiGroups: ["kelson.dev"]
+    resources: ["projects/status", "environments/status"]
+    verbs: ["get", "patch", "update"]
+{{- if .Values.controller.leaderElection.enabled }}
+
+  # Leader election, and only when it is on. The Lease is namespaced, so this
+  # could be a Role — it is here so that one binding covers a
+  # leaderElectionNamespace outside the release namespace, which is the case an
+  # operator running the controller apart from the server would hit.
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+{{- end }}
+{{- end }}

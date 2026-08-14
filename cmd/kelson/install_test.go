@@ -86,7 +86,6 @@ func runComponentUninstallCmd(t *testing.T, engine *fakeRemover, stdin string, a
 	root.AddCommand(newUninstallCmdFactory(
 		func(uninstallOptions) (uninstaller, error) { return nil, errors.New("no uninstaller in this test") },
 		func(uninstallOptions) (remover, error) { return engine, nil },
-		func(string) (historyStore, error) { return nil, errors.New("no history in this test") },
 	))
 	var outBuf, errBuf bytes.Buffer
 	root.SetOut(&outBuf)

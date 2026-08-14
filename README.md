@@ -3,13 +3,21 @@
 A self-hosted PaaS that runs on your Kubernetes cluster and writes standard manifests instead of hiding them.
 
 **Pre-alpha, and not usable yet.** What works end to end today: `kelson render`, `kelson diff`
-(including server-side dry-run), `kelson deploy`, `kelson status`, `kelson rollback`,
-`kelson promote`, `kelson eject` and `kelson profile`, plus `kelson-server`, which serves the same capabilities over
-ConnectRPC — loopback-only and unauthenticated in v0
-([ADR-0013](docs/adr/0013-server-state-and-api-v0.md)) — and `kelson-mcp`, the agent surface over that
-API ([docs/mcp.md](docs/mcp.md)). There is no UI and no install path yet.
-The [roadmap](docs/roadmap.md) and
-[issues](https://github.com/dafrie/kelson/issues) track the assembly work.
+(including server-side dry-run), `kelson deploy`, `kelson status`, `kelson rollback`, `kelson promote`,
+`kelson build`, `kelson secret`, `kelson explain`, `kelson install` / `kelson uninstall` and
+`kelson profile`; `kelson-server`, which serves the same capabilities over ConnectRPC behind a shared
+password and carries the web UI on the same listener ([docs/server.md](docs/server.md)); and
+`kelson-mcp`, the agent surface over that API ([docs/mcp.md](docs/mcp.md)). A Helm chart installs the
+server ([docs/install.md](docs/install.md)).
+
+**The spine is being rebuilt underneath all of that.** ADRs
+[0027](docs/adr/0027-crd-native-control-plane.md)–[0031](docs/adr/0031-single-cluster-single-tenant.md)
+make `Project` and `Environment` custom resources reconciled by a controller, and replace the delivery
+modes with one path: render, push an immutable OCI artifact, let Flux reconcile. `deploy`, `rollback`,
+`history` and `promote` keep their names and change underneath — the commands above describe what
+works **today**, not what they will do after
+[#223](https://github.com/dafrie/kelson/issues/223). The [roadmap](docs/roadmap.md) and
+[issues](https://github.com/dafrie/kelson/issues) track it.
 
 ## Why Kubernetes
 
@@ -24,47 +32,60 @@ So kelson doesn't wrap Kubernetes in new concepts. It generates Kubernetes.
 ## How it works
 
 ```
-     kelson.yaml
-          │
-    ┌─────▼─────┐
-    │  Renderer │   pure function: no cluster, no network, no clock
-    └─────┬─────┘
-          │  plain Kubernetes YAML
-      ┌───┴───┐
-      ▼       ▼
-   direct    Flux
-      └───┬───┘
-          ▼
-     your cluster
+   Project + Environment       custom resources you kubectl apply
+             │
+     ┌───────▼───────┐
+     │   Renderer    │   pure function: no cluster, no network, no clock
+     └───────┬───────┘
+             │  plain Kubernetes YAML
+     ┌───────▼───────┐
+     │ OCI artifact  │   immutable, one tag per generation
+     └───────┬───────┘
+             │  OCIRepository + Kustomization
+     ┌───────▼───────┐
+     │     Flux      │   applies, prunes, corrects drift
+     └───────┬───────┘
+             ▼
+        your cluster
 ```
 
-The renderer is a pure function, so the same input always produces the same bytes. That's what makes the delivery modes one code path rather than two, and what makes previews worth trusting. Delivery is a pluggable adapter seam; Flux is the supported GitOps mode, and an Argo CD adapter may return later ([ADR-0012](docs/adr/0012-flux-only-gitops.md)).
+The renderer is a pure function, so the same input always produces the same bytes. That's what makes a
+revision an artifact digest rather than a bookkeeping entry, and what makes previews worth trusting.
+There is one delivery path ([ADR-0028](docs/adr/0028-delivery-spine.md)): kelson publishes, Flux
+applies, and kelson never reconciles.
 
-Direct mode is Git mode with an implicit repository. It still versions rendered output, so you keep diffs, history and rollback, and `kelson eject --to-git` replays that history into a real repo when you want it.
+History is the registry's tag list. Rollback repoints an `OCIRepository` at a tag that already exists,
+so it moves bytes that cannot have changed rather than replaying a journal. And because every revision
+is already a flat directory of standard manifests, `flux pull artifact` — or `kelson render` offline —
+reproduces the exact YAML outside kelson.
 
 ## What's different
 
-**Uninstalling doesn't break anything.** `kelson uninstall` removes what kelson deployed for one environment — previewed object by object, data called out separately, nothing deleted without an answer — and leaves everything else in the namespace untouched, including a namespace it adopted rather than created. `helm uninstall` removes the server and leaves your applications running. Both halves are covered by the end-to-end suite ([#59](https://github.com/dafrie/kelson/issues/59), [test/e2e](test/e2e/)); that suite is not yet a required CI check, so treat it as verified-on-demand rather than gated.
+**Uninstalling doesn't break anything.** `kelson uninstall` removes what kelson deployed for one environment — previewed object by object, data called out separately, nothing deleted without an answer — and leaves everything else in the namespace untouched, including a namespace it adopted rather than created. `helm uninstall` removes the control plane and leaves your applications running. Both halves are covered by the end-to-end suite ([#59](https://github.com/dafrie/kelson/issues/59), [test/e2e](test/e2e/)); that suite is not yet a required CI check, so treat it as verified-on-demand rather than gated.
 
 **You see what will happen first.** Three levels: a rendered diff, a server-side dry-run against the real API server, and an ephemeral live environment. The middle one is the API server's own answer, including admission webhooks, policy rejections and quota checks. Nothing else in this category surfaces it.
 
-**It adopts what you already run.** kelson detects Gateway API, cert-manager, external-secrets, Prometheus, CloudNativePG and Flux, and renders to fit. Routing is Gateway API only — clusters without it get a clear capability gap and an offer to install a Gateway implementation, never a parallel ingress stack next to yours.
+**It adopts what you already run.** kelson detects Gateway API, cert-manager, external-secrets, Prometheus, CloudNativePG and Flux, and renders to fit. Routing is Gateway API only — clusters without it get a clear capability gap and an offer to install a Gateway implementation, never a parallel ingress stack next to yours. A cluster with no Flux at all is offered flux-aio: every Flux controller in one pod, small enough for k3s ([ADR-0030](docs/adr/0030-flux-aio-install.md)).
 
-**Agents get guardrails, not just tools.** The MCP server ships (`kelson-mcp`, [docs/mcp.md](docs/mcp.md)): seven task-shaped tools over the same API, every mutation defaulting to a dry run, every error structured with a code and a remediation. *Still designed rather than built ([M7](https://github.com/dafrie/kelson/issues/8))*: agents authenticating as themselves with scoped, expiring credentials, and per-environment policy deciding what they may do unsupervised. In production the intended default is propose-only, which is the same pull-request path a human uses.
+**Agents get guardrails, not just tools.** The MCP server ships (`kelson-mcp`, [docs/mcp.md](docs/mcp.md)): seven task-shaped tools over the same API, every mutation defaulting to a dry run, every error structured with a code and a remediation. Agents authenticate as themselves with scoped, expiring credentials ([ADR-0024](docs/adr/0024-agent-identities.md)), per-environment policy decides what they may do unsupervised and is enforced server-side from the stored spec ([ADR-0025](docs/adr/0025-agent-policy.md)), and every mutation lands in an audit trail ([ADR-0026](docs/adr/0026-agent-audit-trail.md)). *Not built:* `propose-only` refuses the mutation and points at the proposal — it does not open the pull request itself, because that needs a forge credential the control plane deliberately does not hold.
 
 **It doesn't reimplement operators.** CloudNativePG for Postgres, Strimzi for Kafka, cert-manager for TLS, external-secrets for secrets. Kubero vendored Bitnami charts and broke working installs when the catalog was withdrawn.
 
 ## Decisions
 
-- [ADR-0001](docs/adr/0001-hybrid-state-model.md) — One pure renderer, pluggable delivery
+- [ADR-0001](docs/adr/0001-hybrid-state-model.md) — One pure renderer (its pluggable-delivery half superseded by 0028)
 - [ADR-0002](docs/adr/0002-tech-stack.md) — Go control plane, TypeScript/React UI
 - [ADR-0003](docs/adr/0003-install-model.md) — Adopt existing clusters, bootstrap empty ones
 - [ADR-0004](docs/adr/0004-licensing.md) — MIT, no feature gating
 - [ADR-0005](docs/adr/0005-delegate-to-operators.md) — Delegate stateful workloads
 - [ADR-0006](docs/adr/0006-project-application-environment.md) — Project, Application, Environment
 - [ADR-0007](docs/adr/0007-data-services.md) — Data services: presets, delegation, branching
-- [ADR-0012](docs/adr/0012-flux-only-gitops.md) — Flux-only GitOps delivery; Argo CD deferred
+- [ADR-0012](docs/adr/0012-flux-only-gitops.md) — Flux, and only Flux
 - [ADR-0014](docs/adr/0014-components.md) — One `components` list, per-component identity
+- [ADR-0027](docs/adr/0027-crd-native-control-plane.md) — `Project` and `Environment` are custom resources
+- [ADR-0028](docs/adr/0028-delivery-spine.md) — Render, push an OCI artifact, let Flux reconcile
+- [ADR-0030](docs/adr/0030-flux-aio-install.md) — flux-aio as the install substrate
+- [ADR-0031](docs/adr/0031-single-cluster-single-tenant.md) — One cluster, one tenant, for now
 
 ## Docs
 

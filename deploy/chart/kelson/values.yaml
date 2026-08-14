@@ -142,6 +142,84 @@ server:
 # (ADR-0013 §1). More than one is a real HA configuration, not a hope.
 replicaCount: 1
 
+# -- kelson-controller: the reconciler behind the Project and Environment
+# custom resources (ADR-0027, ADR-0028).
+#
+# The CRDs themselves are in the chart's `crds/` directory and Helm applies
+# them on install whatever this says — registering an API group nobody else
+# claims is additive, which is ADR-0027's argument for a CRD being compatible
+# with ADR-0003's install doctrine. Note Helm's own limitation while you are
+# here: files under `crds/` are applied on `helm install` and **not** upgraded
+# by `helm upgrade`, so a chart version that changes a CRD needs
+# `kubectl apply -f deploy/crds/` alongside the upgrade.
+#
+# The Deployment is off by default and that is a statement about maturity, not
+# about the design: today the controller validates, resolves and renders, and
+# then stops — publishing the artifact and writing the Flux objects are behind
+# an interface with a no-op implementation (issue #224). Turning it on gets you
+# `kubectl get environments` with a Ready condition and validation errors in
+# `.status`, which is genuinely useful and is not yet a deployment.
+controller:
+  enabled: false
+
+  # -- Image coordinates. `tag` falls back to `image.tag`, because both
+  # binaries are cut from one tag by one goreleaser run.
+  image:
+    repository: ghcr.io/dafrie/kelson-controller
+    tag: ""
+
+  # -- Replica count. One is right while the controller only writes statuses;
+  # see leaderElection below before raising it.
+  replicaCount: 1
+
+  # -- Port the liveness (/healthz) and readiness (/readyz) endpoints bind to.
+  probePort: 8081
+
+  # -- Address the Prometheus metrics endpoint binds to (`0` disables it).
+  # It is off by default because serving a port nobody scrapes is an open port
+  # for no benefit; set `:8080` and point a ServiceMonitor at it.
+  metricsBindAddress: "0"
+
+  # -- Leader election. Off by default, and safe while the controller only
+  # writes statuses: two replicas would compute the same verdict from the same
+  # spec and the second write is a no-op patch. It becomes required rather than
+  # advisable once delivery is real (issue #224) — two processes pushing
+  # artifacts and applying Flux objects is a race.
+  leaderElection:
+    enabled: false
+    # Defaults to the release namespace.
+    namespace: ""
+
+  serviceAccount:
+    create: true
+    # Defaults to <fullname>-controller.
+    name: ""
+    annotations: {}
+
+  rbac:
+    # -- Create the controller's ClusterRole and binding: get/list/watch on
+    # kelson.dev Projects and Environments, and status writes on both. That is
+    # the whole grant — no workloads, no Secrets, no Flux objects — because
+    # that is the whole of what the controller does today. See
+    # templates/controller-clusterrole.yaml for the per-rule reasoning.
+    create: true
+
+  # -- Resource requests and limits. The controller's work is Kubernetes API
+  # calls and a pure render, so the shape matches the server's.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+
+  # -- Extra command-line arguments appended verbatim, for a flag this chart
+  # does not surface yet (`--cluster-profile`, for instance).
+  extraArgs: []
+
+  # -- Extra environment variables, as ordinary core/v1 EnvVar entries.
+  extraEnv: []
+
 # -- Namespace object. Helm needs the release namespace to exist before it
 # writes its own release record, so this is not a substitute for
 # `helm install --create-namespace`; it exists for the case where the namespace

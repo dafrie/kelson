@@ -8,8 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dafrie/kelson/internal/controlstore"
 	"github.com/dafrie/kelson/internal/delivery/kube"
-	"github.com/dafrie/kelson/internal/serverstate"
 )
 
 // `kelson agent` issues, lists and revokes agent identities (issue #74,
@@ -49,9 +49,9 @@ import (
 // production implementation needs a live cluster and the command wiring under
 // test does not.
 type agentStore interface {
-	Create(ctx context.Context, spec serverstate.AgentSpec) (serverstate.Agent, string, error)
-	List(ctx context.Context) ([]serverstate.Agent, error)
-	Revoke(ctx context.Context, name string) (serverstate.Agent, error)
+	Create(ctx context.Context, spec controlstore.AgentSpec) (controlstore.Agent, string, error)
+	List(ctx context.Context) ([]controlstore.Agent, error)
+	Revoke(ctx context.Context, name string) (controlstore.Agent, error)
 }
 
 // agentConnector builds the store for one command run. It is the seam the tests
@@ -69,7 +69,7 @@ func connectAgents(kubeconfig, namespace string) (agentStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	return serverstate.NewAgentStore(serverstate.AgentStoreOptions{
+	return controlstore.NewAgentStore(controlstore.AgentStoreOptions{
 		Client:    cluster.Typed,
 		Namespace: namespace,
 	})
@@ -150,18 +150,18 @@ func newAgentCreateCmd(connect agentConnector) *cobra.Command {
 	}
 	opts.bind(cmd)
 	f := cmd.Flags()
-	f.DurationVar(&opts.ttl, "ttl", serverstate.DefaultAgentTTL,
-		fmt.Sprintf("how long the credential is valid (maximum %s); rotate rather than asking for a longer one", serverstate.MaxAgentTTL))
+	f.DurationVar(&opts.ttl, "ttl", controlstore.DefaultAgentTTL,
+		fmt.Sprintf("how long the credential is valid (maximum %s); rotate rather than asking for a longer one", controlstore.MaxAgentTTL))
 	f.StringArrayVar(&opts.projects, "project", nil,
 		"a project the identity may act on (repeatable; omit for every project)")
 	f.StringArrayVar(&opts.environments, "env", nil,
 		"an environment the identity may act on (repeatable; omit for every environment)")
-	f.StringArrayVar(&opts.allow, "allow", []string{string(serverstate.OpRead)},
+	f.StringArrayVar(&opts.allow, "allow", []string{string(controlstore.OpRead)},
 		"an operation class to grant: read or mutate (repeatable; mutate implies read)")
 	f.IntVar(&opts.rate, "rate", 0,
-		fmt.Sprintf("requests per minute this identity may make (default %d)", serverstate.DefaultRequestsPerMinute))
+		fmt.Sprintf("requests per minute this identity may make (default %d)", controlstore.DefaultRequestsPerMinute))
 	f.IntVar(&opts.burst, "burst", 0,
-		fmt.Sprintf("how many requests it may make back to back (default %d)", serverstate.DefaultBurst))
+		fmt.Sprintf("how many requests it may make back to back (default %d)", controlstore.DefaultBurst))
 	f.BoolVar(&opts.quiet, "quiet", false, "print the token alone, for capture into an environment variable")
 	return cmd
 }
@@ -175,15 +175,15 @@ func runAgentCreate(cmd *cobra.Command, opts *agentCreateOptions, name string) e
 	if err != nil {
 		return err
 	}
-	agent, token, err := store.Create(cmd.Context(), serverstate.AgentSpec{
+	agent, token, err := store.Create(cmd.Context(), controlstore.AgentSpec{
 		Name: name,
 		TTL:  opts.ttl,
-		Scope: serverstate.Scope{
+		Scope: controlstore.Scope{
 			Projects:     opts.projects,
 			Environments: opts.environments,
 			Operations:   operations,
 		},
-		Limit: serverstate.Limit{RequestsPerMinute: opts.rate, Burst: opts.burst},
+		Limit: controlstore.Limit{RequestsPerMinute: opts.rate, Burst: opts.burst},
 	})
 	if err != nil {
 		return err
@@ -291,17 +291,17 @@ func runAgentRevoke(cmd *cobra.Command, opts *agentOptions, name string) error {
 // parseOperations turns --allow values into classes. An unknown one is refused
 // rather than ignored: a typo that silently granted nothing would produce an
 // identity that fails on its first call for a reason nothing explained.
-func parseOperations(allow []string) ([]serverstate.Operation, error) {
+func parseOperations(allow []string) ([]controlstore.Operation, error) {
 	if len(allow) == 0 {
 		return nil, fmt.Errorf("--allow needs at least one operation class: read, or read and mutate")
 	}
-	out := make([]serverstate.Operation, 0, len(allow))
+	out := make([]controlstore.Operation, 0, len(allow))
 	for _, value := range allow {
-		switch serverstate.Operation(strings.TrimSpace(strings.ToLower(value))) {
-		case serverstate.OpRead:
-			out = append(out, serverstate.OpRead)
-		case serverstate.OpMutate:
-			out = append(out, serverstate.OpMutate)
+		switch controlstore.Operation(strings.TrimSpace(strings.ToLower(value))) {
+		case controlstore.OpRead:
+			out = append(out, controlstore.OpRead)
+		case controlstore.OpMutate:
+			out = append(out, controlstore.OpMutate)
 		default:
 			return nil, fmt.Errorf("unknown operation class %q: --allow takes read or mutate. "+
 				"Finer-grained policy is issue #75; there is nothing here that could enforce it yet", value)
@@ -310,7 +310,7 @@ func parseOperations(allow []string) ([]serverstate.Operation, error) {
 	return out, nil
 }
 
-func agentState(agent serverstate.Agent, now time.Time) string {
+func agentState(agent controlstore.Agent, now time.Time) string {
 	switch {
 	case agent.Revoked:
 		return "(revoked " + agent.RevokedAt.Format(time.RFC3339) + ")"
@@ -321,7 +321,7 @@ func agentState(agent serverstate.Agent, now time.Time) string {
 	}
 }
 
-func operationList(ops []serverstate.Operation) string {
+func operationList(ops []controlstore.Operation) string {
 	out := make([]string, 0, len(ops))
 	for _, op := range ops {
 		out = append(out, string(op))

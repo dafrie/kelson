@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dafrie/kelson/internal/serverstate"
+	"github.com/dafrie/kelson/internal/controlstore"
 )
 
 // `kelson audit`'s tests (issue #78, ADR-0026).
@@ -23,35 +23,35 @@ var auditNow = time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
 // fakeAuditStore records the query it was asked and answers from a fixed set,
 // paging the way the real store does.
 type fakeAuditStore struct {
-	queries []serverstate.AuditQuery
-	records []serverstate.AuditRecord
-	window  serverstate.AuditWindow
+	queries []controlstore.AuditQuery
+	records []controlstore.AuditRecord
+	window  controlstore.AuditWindow
 	err     error
 	// pageSize caps a page below whatever the query asked for, so the export's
 	// paging loop is actually exercised rather than answered in one round trip.
 	pageSize int
 }
 
-func (f *fakeAuditStore) Query(_ context.Context, q serverstate.AuditQuery) (serverstate.AuditPage, error) {
+func (f *fakeAuditStore) Query(_ context.Context, q controlstore.AuditQuery) (controlstore.AuditPage, error) {
 	f.queries = append(f.queries, q)
 	if f.err != nil {
-		return serverstate.AuditPage{}, f.err
+		return controlstore.AuditPage{}, f.err
 	}
 	limit := q.Limit
 	if limit <= 0 {
-		limit = serverstate.DefaultAuditPageSize
+		limit = controlstore.DefaultAuditPageSize
 	}
 	if f.pageSize > 0 && f.pageSize < limit {
 		limit = f.pageSize
 	}
-	var matched []serverstate.AuditRecord
+	var matched []controlstore.AuditRecord
 	for _, rec := range f.records {
 		if q.PageToken != "" && rec.ID >= q.PageToken {
 			continue
 		}
 		matched = append(matched, rec)
 	}
-	page := serverstate.AuditPage{Window: f.window}
+	page := controlstore.AuditPage{Window: f.window}
 	if len(matched) > limit {
 		page.NextPageToken = matched[limit-1].ID
 		matched = matched[:limit]
@@ -60,22 +60,22 @@ func (f *fakeAuditStore) Query(_ context.Context, q serverstate.AuditQuery) (ser
 	return page, nil
 }
 
-func auditRecords(n int) []serverstate.AuditRecord {
-	out := make([]serverstate.AuditRecord, 0, n)
+func auditRecords(n int) []controlstore.AuditRecord {
+	out := make([]controlstore.AuditRecord, 0, n)
 	for i := range n {
-		out = append(out, serverstate.AuditRecord{
+		out = append(out, controlstore.AuditRecord{
 			// Descending, as the store returns them.
 			ID:        string(rune('z'-i)) + "-id",
 			Time:      auditNow.Add(-time.Duration(i) * time.Minute),
-			Principal: serverstate.AuditPrincipal{Type: "agent", Name: "deploybot"},
+			Principal: controlstore.AuditPrincipal{Type: "agent", Name: "deploybot"},
 			Scope:     "projects=shop environments=production operations=mutate",
 			Procedure: "/kelson.v1alpha1.DeployService/Deploy",
-			Operation: serverstate.OpMutate,
-			Target:    serverstate.AuditTarget{Project: "shop", Environment: "production"},
-			Outcome:   serverstate.AuditAllowed,
-			Change: &serverstate.AuditChange{
+			Operation: controlstore.OpMutate,
+			Target:    controlstore.AuditTarget{Project: "shop", Environment: "production"},
+			Outcome:   controlstore.AuditAllowed,
+			Change: &controlstore.AuditChange{
 				Revision:  "rev-0000000" + string(rune('1'+i)),
-				Source:    serverstate.ChangeFromRendered,
+				Source:    controlstore.ChangeFromRendered,
 				Resources: 4,
 				Kinds:     []string{"Deployment", "Service"},
 			},
@@ -84,11 +84,11 @@ func auditRecords(n int) []serverstate.AuditRecord {
 	return out
 }
 
-func completeWindow() serverstate.AuditWindow {
-	return serverstate.AuditWindow{
+func completeWindow() controlstore.AuditWindow {
+	return controlstore.AuditWindow{
 		Complete:     true,
-		RetainDays:   serverstate.DefaultAuditRetentionDays,
-		RetainedFrom: auditNow.AddDate(0, 0, -serverstate.DefaultAuditRetentionDays),
+		RetainDays:   controlstore.DefaultAuditRetentionDays,
+		RetainedFrom: auditNow.AddDate(0, 0, -controlstore.DefaultAuditRetentionDays),
 	}
 }
 
@@ -148,7 +148,7 @@ func TestAuditAlwaysStatesTheWindow(t *testing.T) {
 func TestAuditShoutsWhenTheWindowIsIncomplete(t *testing.T) {
 	store := &fakeAuditStore{
 		records: auditRecords(1),
-		window: serverstate.AuditWindow{
+		window: controlstore.AuditWindow{
 			Complete:     false,
 			Dropped:      17,
 			RetainDays:   30,
@@ -194,7 +194,7 @@ func TestAuditFlagsReachTheStore(t *testing.T) {
 		t.Errorf("--agent produced principal %q of type %q", q.Principal, q.PrincipalType)
 	case q.Procedure != "Deploy":
 		t.Errorf("procedure = %q", q.Procedure)
-	case q.Outcome != serverstate.AuditRefused:
+	case q.Outcome != controlstore.AuditRefused:
 		t.Errorf("outcome = %q", q.Outcome)
 	case q.Limit != 7:
 		t.Errorf("limit = %d", q.Limit)
@@ -262,9 +262,9 @@ func TestAuditExportRoundTrips(t *testing.T) {
 	if len(lines) != total {
 		t.Fatalf("the export wrote %d lines for %d records", len(lines), total)
 	}
-	var decoded []serverstate.AuditRecord
+	var decoded []controlstore.AuditRecord
 	for i, line := range lines {
-		var rec serverstate.AuditRecord
+		var rec controlstore.AuditRecord
 		if err := json.Unmarshal([]byte(line), &rec); err != nil {
 			t.Fatalf("line %d is not a JSON object: %v\n%s", i, err, line)
 		}
@@ -310,9 +310,9 @@ func TestAuditExportPagesToExhaustion(t *testing.T) {
 	if len(store.queries) != 5 {
 		t.Errorf("the export made %d queries for 5 single-record pages", len(store.queries))
 	}
-	if store.queries[0].Limit != serverstate.MaxAuditPageSize {
+	if store.queries[0].Limit != controlstore.MaxAuditPageSize {
 		t.Errorf("the export asked for a page of %d, want the store's maximum %d so it pages in as few "+
-			"round trips as the bound allows", store.queries[0].Limit, serverstate.MaxAuditPageSize)
+			"round trips as the bound allows", store.queries[0].Limit, controlstore.MaxAuditPageSize)
 	}
 	if store.queries[1].PageToken == "" {
 		t.Error("the export did not carry the page token forward")
@@ -324,7 +324,7 @@ func TestAuditExportPagesToExhaustion(t *testing.T) {
 func TestAuditExportSaysWhenItIsIncomplete(t *testing.T) {
 	store := &fakeAuditStore{
 		records: auditRecords(1),
-		window: serverstate.AuditWindow{
+		window: controlstore.AuditWindow{
 			RetainDays:   30,
 			RetainedFrom: auditNow.AddDate(0, 0, -30),
 			Dropped:      4,

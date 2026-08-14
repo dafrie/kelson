@@ -11,9 +11,9 @@ import (
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
 	"github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1/kelsonv1alpha1connect"
 	"github.com/dafrie/kelson/internal/clusterprofile"
+	"github.com/dafrie/kelson/internal/controlstore"
 	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/model"
-	"github.com/dafrie/kelson/internal/serverstate"
 )
 
 // Per-environment agent policy (issue #75, ADR-0025).
@@ -401,7 +401,7 @@ func (s *Server) storedPolicies(ctx context.Context, project string) (map[string
 	}
 	stored, err := s.specs.Get(ctx, project)
 	if err != nil {
-		if serverstate.AsNotFound(err) {
+		if controlstore.AsNotFound(err) {
 			return nil, nil
 		}
 		return nil, refused(policyError{

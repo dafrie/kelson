@@ -83,7 +83,8 @@ var workloadKinds = map[schema.GroupKind]bool{
 // dataKinds hold state that deleting them destroys. The note is what the
 // preview prints under the resource: the irreversible part of an uninstall has
 // to say what it takes with it, in the same voice the rollback preview uses for
-// what a rollback cannot revert (internal/delivery/rollback).
+// what a rollback cannot revert (the preview that computed it is deleted with
+// the old delivery machinery, ADR-0028 decision 5).
 var dataKinds = map[schema.GroupKind]string{
 	gk("postgresql.cnpg.io", "Cluster"): "a CloudNativePG Postgres cluster: the operator deletes the volumes it " +
 		"created along with it, so the database and anything stored only in those volumes are gone for good",

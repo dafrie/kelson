@@ -29,23 +29,23 @@ const (
 	// the rollout has already settled. Short on purpose: past a minute this is
 	// a disagreement, not a delay.
 	statusTimeout = 90 * time.Second
-	// deployTimeout is what `kelson deploy` is given to reach Healthy. The CLI's
-	// own timeout is preferred over the test's because it diagnoses the stall
-	// (statemachine's stuck verdict) instead of just killing the process.
-	deployTimeout = "5m"
 )
 
-// TestDeployLifecycle is the delivery spine end to end against a real API
-// server: deploy, observe healthy, mutate, preview the change offline and
-// against the live cluster, deploy the change, roll back, and verify the
-// cluster itself reverted.
+// TestRenderApplyObserveLifecycle is what the delivery spine can prove end to
+// end today, against a real API server.
 //
-// The rollback assertion is the load-bearing one. `kelson rollback` replays
-// recorded bytes rather than re-rendering (issue #38), and the only way to know
-// that actually restored anything is to ask the cluster what image it is
-// running now — which is what waitForRollout does, through kubectl, not through
-// kelson's own status.
-func TestDeployLifecycle(t *testing.T) {
+// The suite used to run the whole loop through kelson: deploy, observe healthy,
+// mutate, preview offline and against the live cluster, deploy the change, roll
+// back, and verify the cluster itself reverted. ADR-0028 deleted the applier
+// and the rollback, so what is left is the half that never needed them — render
+// and both diff levels — plus the property that makes the deletion survivable:
+// a kelson render is a flat set of standard manifests, so `kubectl apply` puts
+// exactly it in the cluster and `kelson status` reads the workloads back.
+//
+// The deploy and rollback halves come back with issue #224, against the
+// controller and the artifact; [TestDeletedVerbsRefuseHonestly] is what stands
+// in for them until then.
+func TestRenderApplyObserveLifecycle(t *testing.T) {
 	h := newHarness(t, "kelson-e2e")
 	const env = "e2e"
 
@@ -55,8 +55,8 @@ func TestDeployLifecycle(t *testing.T) {
 	original := h.copyFixture("original.yaml")
 	spec := h.copyFixture("spec.yaml")
 
-	t.Log("== deploy the initial revision ==")
-	h.kelsonOK("deploy", "-f", spec, "--env", env, "--history", h.history, "--timeout", deployTimeout, "--yes")
+	t.Log("== put the rendered set in the cluster ==")
+	h.applyRendered(spec, env)
 	h.waitForRollout("web", baseImage, rolloutTimeout)
 
 	// The whole rendered set is live, not only the Deployment the poll watched.
@@ -64,15 +64,14 @@ func TestDeployLifecycle(t *testing.T) {
 		h.kubectlOK("-n", h.namespace, "get", want)
 	}
 
-	t.Log("== status agrees the revision is live and healthy ==")
-	// These three lines are status's contract (cmd/kelson/status.go): which
-	// adapter answered, the delivery phase, and the observation verdict. A phase
-	// without a verdict is exactly the conflation issue #53 exists to prevent,
-	// so the harness asserts both halves rather than either alone.
+	t.Log("== status reports the workload healthy, and says what it cannot report ==")
+	// Status answers half of its question now (cmd/kelson/status.go): the
+	// observation verdict is real, and the delivery phase is stated as missing
+	// rather than guessed. Asserting both is the point — a gap that stopped
+	// announcing itself would be the silent success this project refuses.
 	h.waitForStatus(spec, env, statusTimeout,
-		"kelson-e2e/e2e via direct",
-		"Healthy",
 		"Deployment/kelson-e2e/web healthy",
+		"delivery phase: not reported",
 	)
 
 	t.Log("== mutate the spec ==")
@@ -88,28 +87,41 @@ func TestDeployLifecycle(t *testing.T) {
 	assertDiffExitChanged(t, l2)
 	assertImageChange(t, l2, baseImage, nextImage)
 
-	t.Log("== deploy the mutated revision ==")
-	h.kelsonOK("deploy", "-f", spec, "--env", env, "--history", h.history, "--timeout", deployTimeout, "--yes")
+	t.Log("== the mutated set applies and the cluster rolls to it ==")
+	h.applyRendered(spec, env)
 	h.waitForRollout("web", nextImage, rolloutTimeout)
 
-	t.Log("== roll back to the first revision ==")
-	// No --to: the default target is the entry before the current one, which
-	// after exactly two deploys is revision 1. Asserting the printed revision
-	// keeps that from silently becoming something else.
-	rb := h.kelsonOK("rollback", "-f", spec, "--env", env, "--history", h.history, "--yes")
-	if !strings.Contains(rb.stdout, "back to revision rev-00000001") {
-		t.Fatalf("rollback did not target the first recorded revision\n%s", rb.combined())
-	}
+	t.Log("== status is healthy again on the new image ==")
+	h.waitForStatus(spec, env, statusTimeout, "Deployment/kelson-e2e/web healthy")
+}
 
-	// The proof: the cluster is running the original image again, from bytes
-	// that were recorded, while spec.yaml on disk still says otherwise.
-	h.waitForRollout("web", baseImage, rolloutTimeout)
-	if live := h.get("deployment", "web", "{.spec.template.spec.containers[0].image}"); live != baseImage {
-		t.Fatalf("after rollback the Deployment runs %q, want %q", live, baseImage)
-	}
+// TestDeletedVerbsRefuseHonestly is what stands in for the deploy and rollback
+// halves of the lifecycle until issue #224 lands.
+//
+// A gated verb is only acceptable if it refuses in a shape a caller can act on,
+// and the one place that is worth proving against a real binary rather than a
+// unit test is here: the exit code, the taxonomy code and the tracking issue,
+// as a user's shell sees them.
+func TestDeletedVerbsRefuseHonestly(t *testing.T) {
+	h := newHarness(t, "kelson-e2e-gated")
+	const env = "e2e"
+	spec := h.copyFixture("spec.yaml")
 
-	t.Log("== status is healthy again on the restored revision ==")
-	h.waitForStatus(original, env, statusTimeout, "Deployment/kelson-e2e/web healthy")
+	for _, args := range [][]string{
+		{"deploy", "-f", spec, "--env", env, "--yes"},
+		{"rollback", "-f", spec, "--env", env, "--yes"},
+	} {
+		res := h.kelson(args...)
+		if res.code == 0 {
+			t.Fatalf("`kelson %s` exited 0; the machinery behind it is deleted\n%s", strings.Join(args, " "), res.combined())
+		}
+		out := res.combined()
+		for _, want := range []string{"delivery/not-implemented", "#224"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("`kelson %s` did not name %q:\n%s", strings.Join(args, " "), want, out)
+			}
+		}
+	}
 }
 
 // waitForStatus polls `kelson status` until its output contains every want.
@@ -121,7 +133,7 @@ func TestDeployLifecycle(t *testing.T) {
 func (h *harness) waitForStatus(spec, env string, timeout time.Duration, wants ...string) {
 	h.t.Helper()
 	h.waitFor("kelson status to report "+strings.Join(wants, " + "), timeout, func() (bool, string) {
-		res := h.kelson("status", "-f", spec, "--env", env, "--history", h.history)
+		res := h.kelson("status", "-f", spec, "--env", env)
 		if res.code != 0 {
 			return false, fmt.Sprintf("status exited %d\n%s", res.code, res.combined())
 		}

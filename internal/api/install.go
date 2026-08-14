@@ -6,8 +6,8 @@ import (
 	"connectrpc.com/connect"
 
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
+	"github.com/dafrie/kelson/internal/controlstore"
 	"github.com/dafrie/kelson/internal/delivery/install"
-	"github.com/dafrie/kelson/internal/serverstate"
 )
 
 // InstallService served: `kelson install` at the API plane (issue #60,
@@ -125,8 +125,8 @@ func (s *Server) Install(ctx context.Context, req *connect.Request[kelsonv1alpha
 		// The audit record counts objects and names the kinds touched: a
 		// platform install is exactly the kind of wide write the trail exists
 		// for (ADR-0026).
-		auditChange(ctx, serverstate.AuditChange{
-			Source:    serverstate.ChangeFromRendered,
+		auditChange(ctx, controlstore.AuditChange{
+			Source:    controlstore.ChangeFromRendered,
 			Resources: applied,
 			Kinds:     kinds,
 		})

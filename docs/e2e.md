@@ -60,7 +60,7 @@ still run and the script then fails fast with an explicit message rather than fa
 `examples/hello-e2e` is deliberately minimal: one component, one port, one health path, deployed
 with [`traefik/whoami`](https://github.com/traefik/whoami) — a small, real, publicly hosted image that
 actually starts and answers HTTP (every path, 200), which keeps the "healthy" case boringly
-deterministic. It carries no `delivery.mode`, so it resolves to the `direct` adapter, and no routing,
+deterministic. It carries no routing,
 since a stock kind cluster has no Gateway API for the renderer to attach a route to. Declaring domains
 against such a cluster is a render-time capability gap since
 [#140](https://github.com/dafrie/kelson/issues/140), not a silent Ingress
@@ -69,7 +69,8 @@ against such a cluster is a render-time capability gap since
 ## What's out of scope here
 
 Per [ADR-0003](adr/0003-install-model.md), the combinatorial cluster-shape space (Gateway API,
-cert-manager, Flux, ArgoCD, ...) is covered by `ClusterProfile` fixtures in the renderer's golden
+cert-manager, flux-aio vs full Flux, flux-operator, ...) is covered by `ClusterProfile` fixtures in the
+renderer's golden
 tests, not by additional kind clusters. This harness runs a single, minimal shape; issue #86 tracks
 extending it to a small set of representative shapes and wiring it into CI.
 
