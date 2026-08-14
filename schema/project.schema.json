@@ -448,6 +448,18 @@
                   "type": "string",
                   "description": "externalSecrets only; how often the value is re-read from the backing store; a positive Go duration such as 30s or 15m or 1h",
                   "default": "1h"
+                },
+                "ageRecipients": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array",
+                  "description": "sops only; age public keys (age1…) that encrypted secrets are readable by — required for backend sops"
+                },
+                "ageKeySecret": {
+                  "type": "string",
+                  "description": "sops only; name of the Secret holding the age identity — created by the operator in the Kustomization's namespace",
+                  "default": "sops-age"
                 }
               },
               "additionalProperties": false,

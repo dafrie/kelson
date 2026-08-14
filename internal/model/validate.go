@@ -46,6 +46,13 @@ var (
 	// secretKeyRE is Kubernetes' own alphabet for a key of a Secret's data
 	// map. A reference kelson accepts must be one the kubelet could project.
 	secretKeyRE = regexp.MustCompile(`^[-._a-zA-Z0-9]+$`)
+	// ageRecipientRE is an age X25519 public key: bech32 with the "age" human
+	// readable part, which is `age1` plus 58 characters of the bech32
+	// alphabet. The checksum is not verified here — validation may not import
+	// filippo.io/age (the depguard `main` rule), and internal/sops rejects a
+	// recipient that parses badly anyway. What this catches is the mistake
+	// people actually make: pasting the AGE-SECRET-KEY half into the spec.
+	ageRecipientRE = regexp.MustCompile(`^age1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{58}$`)
 )
 
 // SecretShapedName reports whether a variable name is one people put
@@ -85,6 +92,17 @@ func ValidSecretKey(s string) bool {
 // SecretKeyAlphabet describes [ValidSecretKey] in the form a remediation can
 // use, so the writer and the reference explain the same rule in the same words.
 const SecretKeyAlphabet = "letters, digits, '-', '_' and '.', which is the key alphabet Kubernetes enforces on Secret data"
+
+// ValidAgeRecipient reports whether s is spelled like an age X25519 public
+// key. It is exported so `kelson secret` can refuse a bad `--age-recipient`
+// with the same rule the spec is held to.
+func ValidAgeRecipient(s string) bool { return ageRecipientRE.MatchString(s) }
+
+// AgeSecretKeyPrefix is how an age *identity* starts. It is named here so the
+// one mistake that must never pass — pasting the private half into a spec or a
+// flag — can be recognised and refused with a message that says what happened
+// rather than "invalid format".
+const AgeSecretKeyPrefix = "AGE-SECRET-KEY-"
 
 // DefaultNamespace is the namespace an environment targets when its spec names
 // none: `<project>-<environment>` (docs/model.md).
@@ -511,8 +529,67 @@ func (v *validator) secrets(field string, s *SecretBackend) {
 				"remove "+f.name+", or set backend to externalSecrets")
 		}
 	}
+	// The two sops-only fields, refused under the other backends for the same
+	// reason and with the same code.
+	if len(s.AgeRecipients) > 0 && s.Backend != "" && s.Backend != SecretsSOPS {
+		v.err(ErrMutuallyExclusive, field+".ageRecipients",
+			fmt.Sprintf("ageRecipients is only meaningful with backend sops, not %q", s.Backend),
+			"remove ageRecipients, or set backend to sops")
+	}
+	if s.AgeKeySecret != "" && s.Backend != "" && s.Backend != SecretsSOPS {
+		v.err(ErrMutuallyExclusive, field+".ageKeySecret",
+			fmt.Sprintf("ageKeySecret is only meaningful with backend sops, not %q", s.Backend),
+			"remove ageKeySecret, or set backend to sops")
+	}
+	if s.Backend == SecretsSOPS {
+		v.ageRecipients(field, s.AgeRecipients)
+	}
 	if s.RefreshInterval != "" {
 		v.secretRefreshInterval(field+".refreshInterval", s.RefreshInterval)
+	}
+}
+
+// ageRecipients checks the sops backend's key list: at least one, each spelled
+// like an age public key, none of them a private one, no duplicates.
+//
+// The list is required rather than defaulted because there is nothing to
+// default it to. A sops environment with no recipient is one where
+// `kelson secret set` has nobody to encrypt for, and failing at validation
+// with the `age-keygen` line in the message is better than failing at the
+// first `set` — which is the moment a human is holding a credential and least
+// wants to go and read documentation.
+func (v *validator) ageRecipients(field string, recipients []string) {
+	if len(recipients) == 0 {
+		v.err(ErrMissingRequired, field+".ageRecipients",
+			"secrets.backend sops encrypts to age recipients and none are listed",
+			"generate a key with `age-keygen -o age.key`, keep the AGE-SECRET-KEY line out of Git, and list "+
+				"the public half here: secrets: { backend: sops, ageRecipients: [age1…] }. The private half goes "+
+				"into a Kubernetes Secret the Kustomization decrypts with — kelson never holds it (ADR-0021)")
+		return
+	}
+	seen := map[string]bool{}
+	for i, r := range recipients {
+		at := fmt.Sprintf("%s.ageRecipients[%d]", field, i)
+		switch {
+		case strings.HasPrefix(r, AgeSecretKeyPrefix):
+			// The worst possible paste, so it gets its own message: everything
+			// else here is a typo, and this one is a credential in Git.
+			v.err(ErrInvalidFormat, at,
+				"this is an age *private* key, not a recipient",
+				"put the public half here — the age1… line `age-keygen` prints as \"Public key\". If this key "+
+					"has been committed, treat it as compromised: generate a new one, re-encrypt with "+
+					"`kelson secret set`, and rewrite or rotate what the old key could open")
+		case !ValidAgeRecipient(r):
+			v.err(ErrInvalidFormat, at,
+				fmt.Sprintf("%q is not an age recipient", r),
+				"an age X25519 recipient is `age1` followed by 58 characters, as printed by `age-keygen`. "+
+					"SSH recipients are not supported here")
+		case seen[r]:
+			v.err(ErrDuplicateName, at,
+				fmt.Sprintf("age recipient %q is listed twice", r),
+				"remove the duplicate; a repeated recipient wraps the same data key twice and means nothing")
+		}
+		seen[r] = true
 	}
 }
 

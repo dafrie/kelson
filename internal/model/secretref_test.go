@@ -234,17 +234,106 @@ func TestSecretReferenceIsNotALiteral(t *testing.T) {
 // All three backends are here since ADR-0020: `store` left the gate table with
 // it, and `externalSecrets` no longer requires one — with exactly one store on
 // the cluster the renderer resolves it, and only the renderer can know that.
+// `sops` carries its recipient list, which ADR-0021 makes required: there is
+// nothing to default an encryption key to.
 func TestSecretBackendUngated(t *testing.T) {
-	for _, backend := range []string{"cluster", "externalSecrets", "sops"} {
+	for backend, extra := range map[string]string{
+		"cluster":         "",
+		"externalSecrets": "",
+		"sops":            ", ageRecipients: [" + testAgeRecipient + "]",
+	} {
 		_, errs := DecodeDocuments([]byte(`apiVersion: kelson.dev/v1alpha1
 kind: Environment
 metadata: {name: production}
 spec:
   project: checkout
-  secrets: {backend: ` + backend + "}\n"))
+  secrets: {backend: ` + backend + extra + "}\n"))
 		if len(errs) != 0 {
 			t.Errorf("backend %q must validate, got:\n%v", backend, errs)
 		}
+	}
+}
+
+// testAgeRecipient is a real age public key, generated for these tests. It is
+// a *public* key, which is the point of the backend: it can appear in a spec,
+// in a test and in a commit message without being a secret. The identity it
+// pairs with was discarded.
+const testAgeRecipient = "age13w78znajf5kee8msacel80jz6qeuc9tyxhuqkwnqcsaymlrj7clsy4fgdw"
+
+// TestSOPSFieldsAreBackendScoped is TestExternalSecretsFieldsAreBackendScoped
+// from the other side: the sops-only fields configure sops and nothing else.
+func TestSOPSFieldsAreBackendScoped(t *testing.T) {
+	for _, field := range []string{"ageRecipients: [" + testAgeRecipient + "]", "ageKeySecret: sops-age"} {
+		_, errs := DecodeDocuments([]byte(`apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata: {name: production}
+spec:
+  project: checkout
+  secrets: {backend: cluster, ` + field + "}\n"))
+		if !slices.Contains(errs.Codes(), ErrMutuallyExclusive) {
+			t.Errorf("%q under backend cluster must be refused, got:\n%v", field, errs)
+		}
+	}
+}
+
+// TestAgeRecipientsAreChecked: the list is required under sops, and the one
+// mistake that must never pass silently — pasting the private half — is
+// refused with its own message rather than as a format error.
+func TestAgeRecipientsAreChecked(t *testing.T) {
+	cases := []struct {
+		name  string
+		value string
+		want  Code
+	}{
+		{"missing", "", ErrMissingRequired},
+		{"empty list", "ageRecipients: []", ErrMissingRequired},
+		{"not a recipient", "ageRecipients: [nonsense]", ErrInvalidFormat},
+		{"private key", "ageRecipients: [AGE-SECRET-KEY-1Y2DQSCCZNAAF70QZYMRGPTWPGYRCZ2R4SDZZF52VUEJG4WVEC7ZQ6RDHC9]", ErrInvalidFormat},
+		{"duplicate", "ageRecipients: [" + testAgeRecipient + ", " + testAgeRecipient + "]", ErrDuplicateName},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			field := tc.value
+			if field != "" {
+				field = ", " + field
+			}
+			_, errs := DecodeDocuments([]byte(`apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata: {name: production}
+spec:
+  project: checkout
+  secrets: {backend: sops` + field + "}\n"))
+			if !slices.Contains(errs.Codes(), tc.want) {
+				t.Errorf("want %s, got:\n%v", tc.want, errs)
+			}
+		})
+	}
+}
+
+// TestAgeKeySecretDefaults: the renderer writes this name into a
+// Kustomization's spec.decryption.secretRef and must never have to decide what
+// an empty one means, so resolution fills it in — beside the externalSecrets
+// refresh interval, for the same reason.
+func TestAgeKeySecretDefaults(t *testing.T) {
+	p, e := loadPair(t, `apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata: {name: checkout}
+spec:
+  components:
+    - {name: api, image: nginx}`, `apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata: {name: production}
+spec:
+  project: checkout
+  delivery: {mode: flux, git: {repo: https://example.test/deploy.git}}
+  secrets: {backend: sops, ageRecipients: [`+testAgeRecipient+`]}
+`)
+	r, errs := Resolve(p, e)
+	if len(errs) != 0 {
+		t.Fatalf("resolve: %v", errs)
+	}
+	if r.Environment.Secrets.AgeKeySecret != DefaultAgeKeySecret {
+		t.Errorf("ageKeySecret = %q, want the default %q", r.Environment.Secrets.AgeKeySecret, DefaultAgeKeySecret)
 	}
 }
 

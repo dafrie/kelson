@@ -138,8 +138,9 @@ type Policy struct {
 // breaking change.
 //
 // `store` and `refreshInterval` configure the `externalSecrets` backend and
-// nothing else (ADR-0020); setting either under `cluster` or `sops` is refused
-// rather than ignored.
+// nothing else (ADR-0020); `ageRecipients` and `ageKeySecret` configure `sops`
+// and nothing else (ADR-0021). Setting a field under the wrong backend is
+// refused rather than ignored.
 type SecretBackend struct {
 	Backend SecretBackendType `yaml:"backend" json:"backend" jsonschema:"required,enum=cluster,enum=externalSecrets,enum=sops"`
 
@@ -160,7 +161,38 @@ type SecretBackend struct {
 	// written out explicitly so the manifest always says what the cluster will
 	// do.
 	RefreshInterval string `yaml:"refreshInterval,omitempty" json:"refreshInterval,omitempty" jsonschema:"default=1h,description=externalSecrets only; how often the value is re-read from the backing store; a positive Go duration such as 30s or 15m or 1h"`
+
+	// AgeRecipients are the age public keys `kelson secret set` encrypts to
+	// under backend sops. Required for that backend, refused for the others.
+	//
+	// These are *public* keys and they belong in the spec in the clear, which
+	// is the whole shape of the backend: encrypting needs only the recipient,
+	// decrypting needs the identity, and kelson only ever does the first
+	// (ADR-0021). The private half lives in a Kubernetes Secret the operator
+	// creates and kustomize-controller reads; nothing in kelson can hold it.
+	//
+	// More than one is the rotation story: a file is wrapped once per
+	// recipient and any matching identity opens it, so adding the new key,
+	// re-encrypting and then dropping the old one is a handover with no
+	// window in which nobody can read the file.
+	AgeRecipients []string `yaml:"ageRecipients,omitempty" json:"ageRecipients,omitempty" jsonschema:"description=sops only; age public keys (age1…) that encrypted secrets are readable by — required for backend sops"`
+
+	// AgeKeySecret names the Kubernetes Secret holding the age *identity*,
+	// which Flux's Kustomization references as
+	// `spec.decryption.secretRef.name`. Empty means DefaultAgeKeySecret.
+	//
+	// kelson writes the reference and never the Secret. Creating it is the
+	// operator's step and it is documented rather than automated, because a
+	// kelson that could write that Secret would be a kelson that holds the
+	// key that opens every encrypted file in the repository.
+	AgeKeySecret string `yaml:"ageKeySecret,omitempty" json:"ageKeySecret,omitempty" jsonschema:"default=sops-age,description=sops only; name of the Secret holding the age identity — created by the operator in the Kustomization's namespace, never by kelson"`
 }
+
+// DefaultAgeKeySecret is the Secret name kelson writes into a Kustomization's
+// `spec.decryption.secretRef` when the spec names none. It is the name Flux's
+// own SOPS guide uses, so the documented setup and the rendered reference
+// agree without the author having to restate either.
+const DefaultAgeKeySecret = "sops-age"
 
 // DefaultSecretRefreshInterval is the ExternalSecret refresh interval kelson
 // writes when the spec sets none. It is external-secrets' own default (its
