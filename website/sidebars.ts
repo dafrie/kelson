@@ -177,6 +177,11 @@ const sidebars: SidebarsConfig = {
           id: 'adr/0025-agent-policy',
           label: '0025 — Agent policy',
         },
+        {
+          type: 'doc',
+          id: 'adr/0026-agent-audit-trail',
+          label: '0026 — The audit trail',
+        },
       ],
     },
   ],

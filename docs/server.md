@@ -26,6 +26,7 @@ In a cluster it is a Helm install, and every flag below is a values knob — see
 | `--kubeconfig` | `KUBECONFIG` | in-cluster, then `~/.kube/config` | Which cluster it works against. |
 | `--namespace` | — | `kelson-system` | Where the spec and history ConfigMaps live. |
 | `--keep` | — | 20 | Deployment revisions retained per environment. |
+| `--audit-retention` | — | 30 | Days of audit records retained (maximum 120). `0` turns the trail off. See [The audit trail](#the-audit-trail). |
 | `--registry` | `KELSON_REGISTRY` | unset | Destination registry for builds, e.g. `ghcr.io/acme`. See [build](build.md). |
 | `--push-secret` | — | unset | Name of an existing `kubernetes.io/dockerconfigjson` Secret authenticating the push. |
 | `--build-namespace` | — | the environment's namespace | Where build Jobs run. |
@@ -251,9 +252,8 @@ Every authenticated request leaves one JSON line on stderr:
 ```
 
 `principal` is `agent:<name>`, `human:<name>`, `human` for a bearer-password caller, or `anonymous`.
-This is the seam the audit trail of [#78](https://github.com/dafrie/kelson/issues/78) builds on — it
-is not the audit trail: there is no queryable store, no retention and no tamper evidence. No request
-payload is logged.
+No request payload is logged. This line is the *volatile* half of attribution; the durable half is
+[the audit trail](#the-audit-trail) below.
 
 ### What this is not
 
@@ -352,6 +352,86 @@ should surface it to a person rather than retry.
 - On a server started **without a password**, every caller is anonymous and kelson cannot tell a
   person from an agent — so it applies the agent rules to everyone. Set a password.
 
+## The audit trail
+
+`kelson audit` answers "what did it actually do?" — the question that makes agent operation
+reviewable after the fact ([#78](https://github.com/dafrie/kelson/issues/78),
+[ADR-0026](adr/0026-agent-audit-trail.md)). It is free and always on, per
+[ADR-0004](adr/0004-licensing.md).
+
+```console
+$ kelson audit --since 24h --project shop
+2026-08-14T09:41:02Z  allowed  agent:deploybot  DeployService.Deploy
+  target=shop/production  revision=rev-00000007  4 resources applied  kinds=Deployment,Service
+  scope: projects=shop environments=production operations=mutate
+  reason: rolling out the checkout fix from PR 412
+
+2026-08-14T09:38:55Z  refused  agent:reporter   SecretService.SetSecret
+  target=shop/production  code=auth/out-of-scope
+  scope: projects=shop operations=read
+  agent identity "reporter" is not granted the mutate operation class
+
+window: the store retains 30 days, back to 2026-07-16; oldest record in range 2026-08-13T06:02:11Z
+this window is complete: nothing inside the range queried was dropped.
+```
+
+Filters: `--project`, `--env`, `--agent`, `--principal`, `--procedure`, `--outcome`, `--since`.
+`--export jsonl` writes every matching record as one JSON object per line, for a pipeline.
+
+### What it records
+
+**Every mutation and every refusal.** Allowed *reads* are not recorded: a status poll changes
+nothing, and an agent polling every two seconds would fill the store's daily bound in about an hour,
+evicting the mutations the trail exists for. If you need read auditing, the Kubernetes API server's
+own audit log already sees every read kelson makes on your behalf.
+
+Each record names the principal and its type, the credential's scope *as it was when it acted*, the
+procedure, the target project and environment, the outcome (`allowed`, `refused` or `failed` — the
+third is "allowed, and then it broke"), the refusal or failure code, the dry-run rung, the revision
+the change produced, a bounded summary of what it touched, and the reason the caller stated.
+
+**The revision is the pointer to the diff**, not a copy of it: `kelson rollback --dry-run` and
+`DeployService.History` reconstruct the exact manifests from it. A second unbounded copy per record
+would exhaust the store in one deploy.
+
+**Nothing secret is in a record.** There is no request payload, and the two free-text fields go
+through kelson's redaction registry twice on the way in
+([#117](https://github.com/dafrie/kelson/issues/117)).
+
+### Where it lives, and what that costs
+
+ConfigMaps in the state namespace, one per UTC day, under the same labels and the same RBAC the spec
+and history stores already have — so the trail needs no extra grant, and
+`kubectl get configmap -l kelson.dev/state=audit -o yaml` reads it when kelson-server itself is what
+you are investigating. `kelson audit` talks to the cluster directly for the same reason `kelson
+agent` does: the authority is your kube context, and it still works when the server is down.
+
+A ConfigMap is a poor append log and kelson does not pretend otherwise. **The day is a ring**: past
+2000 records or 768 KiB, the oldest of that day are dropped, and the count of what was dropped
+travels with every query result. **Every answer states its window** — the retention boundary and
+whether anything inside the range queried was lost — whether or not anything was, because a reader
+who never sees the horizon cannot know it exists. Longer retention is an external sink, which does
+not exist yet; a longer ring would be a promise the storage cannot keep.
+
+An audit write that fails does **not** fail the request it was recording — an audit trail that could
+take a deployment down would be a new way to take a deployment down. It is counted and logged at
+`ERROR` on stderr with a running total, so a hole in the trail is loud even though it is not fatal.
+
+### Reading it is administrative
+
+`AuditService.QueryAudit` is refused to every agent credential whatever its scope. An agent that could
+read the trail could read what its reviewer is about to see, and the trail spans every project by
+construction, so there is no scoped version of the answer that would be safe to serve. The way an
+agent explains itself is the `reason` it supplies on the way in — the mutating MCP tools all take
+one, and it lands in the record beside the action.
+
+### What it is not
+
+Not tamper-evident: anyone who can write ConfigMaps in the state namespace can edit it, so the RBAC
+on that namespace is the boundary. Not a record of unauthenticated attempts — those are refused by
+the HTTP gate before any interceptor runs, and there is no principal to attribute them to. Not in
+the web UI yet.
+
 ## SecretService needs Secret permissions, and that is a real grant
 
 `SecretService` ([#116](https://github.com/dafrie/kelson/issues/116)) writes the Kubernetes Secrets a
@@ -408,7 +488,9 @@ environment's previews.
 - `internal/api` — the ConnectRPC handlers (`api.go`), the credential gate (`auth.go`), the principal
   (`principal.go`), the RPC-to-scope table (`scope.go`), the authorization interceptor (`authz.go`)
   and the per-identity budgets (`ratelimit.go`).
-- `internal/serverstate` — the ConfigMap-backed spec and history stores, and the Secret-backed agent
-  identity store (`agent.go`).
+- `internal/serverstate` — the ConfigMap-backed spec, history and audit stores (`audit.go`), and the
+  Secret-backed agent identity store (`agent.go`).
+- `internal/api/audit.go` — the audit capture points and `AuditService`; `cmd/kelson/audit.go` — the
+  `kelson audit` command and its JSONL export.
 - `internal/secret` — the cluster secret backend behind `SecretService`.
 - `internal/delivery/flux` — the preview read behind `PreviewService` (`previews.go`).
