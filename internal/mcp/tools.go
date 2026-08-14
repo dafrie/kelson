@@ -35,6 +35,12 @@ var (
 
 	rpcGetProfile = rpc{kelsonv1alpha1connect.ProfileServiceName, "GetProfile"}
 
+	// rpcExplain is the causal capability of issue #77. diagnose_application
+	// composes it rather than deriving causes here: ADR-0023 put the
+	// structured-cause machinery in the API layer precisely so this surface,
+	// the CLI and the UI read one answer.
+	rpcExplain = rpc{kelsonv1alpha1connect.ExplainServiceName, "Explain"}
+
 	rpcSetSecret   = rpc{kelsonv1alpha1connect.SecretServiceName, "SetSecret"}
 	rpcListSecrets = rpc{kelsonv1alpha1connect.SecretServiceName, "ListSecrets"}
 )

@@ -16,7 +16,9 @@ import (
 
 const diagnoseApplicationDescription = `Answer "what is wrong with this environment, and why" in one call.
 
-Composes, for one (project, environment): the delivery phase, revision, namespace and cause; every workload's health verdict with the server's own remediation; a bounded window of the failing workload's logs (the lines before it terminated, when it is failing); the last 5 deployment revisions; a compact summary of what the spec declares (components, images, kinds); the Secrets kelson manages in the namespace, by name and key; and the cluster's version skew against what kelson renders against.
+Composes, for one (project, environment): the server's own causal answer — WHY — with a confidence and the evidence behind each cause; the delivery phase, revision, namespace and cause; every workload's health verdict with the server's own remediation; a bounded window of the failing workload's logs (the lines before it terminated, when it is failing); the last 5 deployment revisions; a compact summary of what the spec declares (components, images, kinds); the Secrets kelson manages in the namespace, by name and key; and the cluster's version skew against what kelson renders against.
+
+Read the WHY section first, and weigh each cause by its confidence rather than by its position. "high" means a controller named the reason — a kubelet waiting reason, a scheduler message, an external-secrets condition, an API-server rejection — or that two independent signals agreed; act on it. "medium" means one signal only, or a heuristic the server itself calls one, and its sentence says which half is a correlation; verify before acting. "low" is an audit-mode policy finding that vetoed nothing. Each cause carries the evidence it rests on (the controller's own words, a bounded log excerpt, a field reference in the rendered manifest) and, where the recorded history shows one, the revision that introduced the change being blamed — which is the answer to "what changed" without a second call. The section also lists what the server could not read, so a partial answer is never mistaken for a complete one.
 
 The Secrets are there for one specific failure: a workload stuck in CreateContainerConfigError is usually a spec referencing { secret: <name>, key: <key> } that does not exist. Compare the SECRETS section against the references in the spec; set_secret writes a missing one.
 
@@ -41,7 +43,7 @@ func diagnoseApplicationTool(c *clients) tool {
 	def := readOnlyTool("diagnose_application", "Diagnose an application", diagnoseApplicationDescription)
 	return tool{
 		def:  def,
-		rpcs: []rpc{rpcStatus, rpcQueryLogs, rpcHistory, rpcGetSpec, rpcListSecrets, rpcGetProfile},
+		rpcs: []rpc{rpcExplain, rpcStatus, rpcQueryLogs, rpcHistory, rpcGetSpec, rpcListSecrets, rpcGetProfile},
 		add: func(srv *mcpsdk.Server) {
 			mcpsdk.AddTool(srv, def, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in diagnoseApplicationInput) (*mcpsdk.CallToolResult, any, error) {
 				return c.diagnoseApplication(ctx, in)
@@ -50,15 +52,18 @@ func diagnoseApplicationTool(c *clients) tool {
 	}
 }
 
-// diagnoseApplication is the composition ADR-0008 §1 names: status, verdicts, a
-// log window around the failure, recent history and a spec summary, in one
-// answer.
+// diagnoseApplication is the composition ADR-0008 §1 names: the server's
+// causes, status, verdicts, a log window around the failure, recent history and
+// a spec summary, in one answer.
 //
 // Status is the spine and its failure is the answer; everything after it is
 // additive, so a history store that cannot be read or a log engine the server
 // was started without degrades to a note instead of taking the diagnosis with
 // it. Nothing here classifies anything: the verdicts, their remediations and
-// the phase are relayed exactly as the server reported them.
+// the phase are relayed exactly as the server reported them — and since #77 so
+// is the causal answer itself, which ExplainService produces and the WHY
+// section renders (why.go, ADR-0023). This tool is the task-shaped
+// presentation of that capability, never a second implementation of it.
 func (c *clients) diagnoseApplication(ctx context.Context, in diagnoseApplicationInput) (*mcpsdk.CallToolResult, any, error) {
 	res, err := c.deploy.Status(ctx, connect.NewRequest(&kelsonv1alpha1.StatusRequest{
 		Spec:        specRef(in.Project),
@@ -71,6 +76,8 @@ func (c *clients) diagnoseApplication(ctx context.Context, in diagnoseApplicatio
 
 	var r report
 	r.addf("%s/%s: %s", in.Project, in.Environment, verdictLine(status))
+
+	c.reportWhy(ctx, &r, in)
 
 	r.section("STATUS")
 	r.addf("  phase      %s", status.GetPhase())

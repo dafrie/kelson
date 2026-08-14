@@ -34,6 +34,7 @@ func schemaFiles() []protoreflect.FileDescriptor {
 		kelsonv1alpha1.File_kelson_v1alpha1_logs_proto,
 		kelsonv1alpha1.File_kelson_v1alpha1_events_proto,
 		kelsonv1alpha1.File_kelson_v1alpha1_secret_proto,
+		kelsonv1alpha1.File_kelson_v1alpha1_explain_proto,
 	}
 }
 

@@ -19,8 +19,11 @@ The rule the surface is designed around ([ADR-0008](adr/0008-mcp-surface.md)):
 Every tool decomposes into API calls any other client could make, which is what keeps the agent
 surface from becoming a privileged backdoor with its own logic. Nothing in `internal/mcp` reads a
 cluster, classifies a workload's health or decides what a delivery phase means — it composes
-`SpecService`, `DeployService`, `LogService` and `EventService` and relays their answers, including
-their structured errors, verbatim.
+`SpecService`, `DeployService`, `LogService`, `ExplainService` and `EventService` and relays their
+answers, including their structured errors, verbatim. Since [#77](https://github.com/dafrie/kelson/issues/77)
+that includes the causal answer itself: the structured causes behind "why is this degraded?" are
+`ExplainService`'s, computed in `internal/explain` ([ADR-0023](adr/0023-explain-structured-causes.md)),
+and `diagnose_application` is their task-shaped presentation rather than a second implementation.
 
 The *shape* is deliberately not the API's:
 
@@ -42,7 +45,7 @@ The *shape* is deliberately not the API's:
 | Tool | Mutates | What it does |
 |---|---|---|
 | `list_applications` | no | Every stored project with the live phase, revision and workload health of each environment. Start here when you do not know what exists. |
-| `diagnose_application` | no | The flagship composition: phase, revision, namespace and cause, workload verdicts with remediation, a log window around the failure, the last 5 revisions, a compact spec summary, the kelson-managed Secrets by name and key, and the cluster's version skew against what kelson renders against — in one call. |
+| `diagnose_application` | no | The flagship composition: the server's structured causes with confidence, evidence and the revision that introduced the change each blames (the `WHY` section); phase, revision, namespace and cause; workload verdicts with remediation; a log window around the failure; the last 5 revisions; a compact spec summary; the kelson-managed Secrets by name and key; and the cluster's version skew against what kelson renders against — in one call. |
 | `logs_window` | no | A bounded log window (≤ 200 lines) for one application, optionally the lines before a container terminated, optionally filtered. Never follows. |
 | `deploy` | **yes**, unless `dry_run` (default `render`) | Renders, server-side dry-runs or deploys. With `dry_run="none"` it consumes the deploy stream to the settled outcome and returns that — never a stream. |
 | `rollback` | **yes**, when `execute=true` | Previews what a rollback cannot revert (unrecoverable findings flagged) plus the change counts; applies it on request. |
@@ -63,6 +66,7 @@ The Protobuf schema is a consistency check here, never the design.
 | Projects / environments per project in a listing | 25 / 10 |
 | Workload verdicts, components, findings | 12 / 20 / 15 |
 | Log lines — `diagnose_application` / `logs_window` | 80 / 200 |
+| Causes, evidence per cause, log lines per excerpt, total | 6 / 4 / 8 / 12 KiB — enforced by the server ([ADR-0023](adr/0023-explain-structured-causes.md)) |
 | History entries | 5 |
 | Deploy transitions, watch events | 20 |
 | Manifests in a deploy preview | 30, identities and sizes only — never bodies |

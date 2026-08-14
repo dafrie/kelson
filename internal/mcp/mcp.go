@@ -112,6 +112,7 @@ func New(opts Options) *Server {
 		events:  kelsonv1alpha1connect.NewEventServiceClient(httpClient, addr, auth...),
 		secrets: kelsonv1alpha1connect.NewSecretServiceClient(httpClient, addr, auth...),
 		profile: kelsonv1alpha1connect.NewProfileServiceClient(httpClient, addr, auth...),
+		explain: kelsonv1alpha1connect.NewExplainServiceClient(httpClient, addr, auth...),
 	}
 
 	srv := mcpsdk.NewServer(&mcpsdk.Implementation{
