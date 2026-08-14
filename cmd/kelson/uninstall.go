@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dafrie/kelson/internal/delivery/direct"
+	"github.com/dafrie/kelson/internal/delivery/install"
 	"github.com/dafrie/kelson/internal/delivery/kube"
 	"github.com/dafrie/kelson/internal/delivery/uninstall"
 )
@@ -33,7 +34,7 @@ import (
 // and it names the volumes an operator will garbage-collect as well as the
 // resources kelson deletes itself.
 func newUninstallCmd() *cobra.Command {
-	return newUninstallCmdFactory(connectUninstall, openHistoryStore)
+	return newUninstallCmdFactory(connectUninstall, connectRemover, openHistoryStore)
 }
 
 // uninstaller is what the command needs from the delivery plane. It is declared
@@ -47,6 +48,34 @@ type uninstaller interface {
 
 // uninstallConnector builds the uninstaller for one command run.
 type uninstallConnector func(opts uninstallOptions) (uninstaller, error)
+
+// remover is the component half of this verb (issue #60): what removes a
+// platform component kelson installed. It is a separate interface from
+// uninstaller because the two answer different questions about ownership —
+// one reads project provenance labels, the other reads per-object install
+// provenance — and collapsing them would let a project uninstall reach the
+// operators, which is exactly what must never happen.
+type remover interface {
+	Plan(ctx context.Context, component string) (*install.Removal, error)
+	Execute(ctx context.Context, removal *install.Removal) (*install.RemovalReport, error)
+}
+
+// removerConnector builds the remover for one command run.
+type removerConnector func(opts uninstallOptions) (remover, error)
+
+func connectRemover(opts uninstallOptions) (remover, error) {
+	cluster, err := kube.Connect(opts.kubeconfig)
+	if err != nil {
+		return nil, err
+	}
+	return install.NewRemover(install.RemoverOptions{
+		Client: cluster.Dynamic,
+		// A platform component is mostly cluster-scoped — CRDs, ClusterRoles,
+		// webhook configurations — so this sweep is discovery-driven over both
+		// scopes, unlike the project sweep above.
+		Catalog: install.DiscoveryCatalog{Client: cluster.Typed.Discovery()},
+	})
+}
 
 // historyStore is the local rendered-history the command forgets after a
 // successful uninstall. Only the CLI's own JSONL journal is reachable from
@@ -89,6 +118,7 @@ func connectUninstall(opts uninstallOptions) (uninstaller, error) {
 type uninstallOptions struct {
 	project         string
 	env             string
+	component       string
 	allEnvironments bool
 	namespace       string
 	kubeconfig      string
@@ -97,37 +127,45 @@ type uninstallOptions struct {
 	keepHistory     bool
 	yes             bool
 	connect         uninstallConnector
+	connectRemover  removerConnector
 	open            historyOpener
 }
 
-func newUninstallCmdFactory(connect uninstallConnector, open historyOpener) *cobra.Command {
-	opts := &uninstallOptions{connect: connect, open: open}
+func newUninstallCmdFactory(connect uninstallConnector, removers removerConnector, open historyOpener) *cobra.Command {
+	opts := &uninstallOptions{connect: connect, connectRemover: removers, open: open}
 	cmd := &cobra.Command{
-		Use:   "uninstall --project <name> --env <name>",
-		Short: "Remove what kelson deployed for an environment, and nothing else",
+		Use:   "uninstall --project <name> --env <name> | --component <name>",
+		Short: "Remove what kelson deployed for an environment, or a platform component kelson installed",
 		Long: "Uninstall deletes the resources kelson deployed for one (project, environment) — the set its\n" +
 			"provenance labels select, re-checked object by object — and leaves everything else in the\n" +
 			"namespace exactly as it is.\n\n" +
+			"With --component it removes a platform component instead, and only the parts of it kelson's own\n" +
+			"`kelson install` created. A component kelson adopted, or one that was in the cluster before\n" +
+			"kelson, is never touched (ADR-0021).\n\n" +
 			"It prints what it would delete before it deletes anything, including a data section naming the\n" +
 			"databases, caches and volumes whose contents do not come back. Without --yes it asks; with a\n" +
 			"non-terminal stdin and no --yes it refuses rather than assuming an answer.\n\n" +
-			"What it does NOT remove, on purpose:\n" +
+			"What a project uninstall does NOT remove, on purpose:\n" +
 			"  the kelson server         `helm uninstall kelson` owns that install (docs/install.md)\n" +
-			"  CRDs                      kelson installs none; its state is ConfigMaps (ADR-0013)\n" +
-			"  operators                 CloudNativePG, Valkey, Flux and cert-manager are never kelson's to\n" +
-			"                            install or remove (ADR-0005), and other tenants depend on them\n" +
+			"  CRDs                      kelson's own state is ConfigMaps (ADR-0013); the CRDs a component\n" +
+			"                            brought belong to `kelson uninstall --component`\n" +
+			"  operators                 CloudNativePG, Valkey, Flux and cert-manager are never removed by a\n" +
+			"                            project uninstall — other tenants depend on them\n" +
 			"  adopted namespaces        a namespace kelson did not create stays, because deleting one\n" +
 			"                            deletes everything inside it\n" +
 			"  anything unlabelled       Secrets kelson did not write, and every resource that does not\n" +
 			"                            carry kelson's provenance labels for this environment",
 		Example: "  kelson uninstall --project checkout --env production\n" +
 			"  kelson uninstall --project checkout --env production --keep-data --yes\n" +
-			"  kelson uninstall --project checkout --all-environments --yes",
+			"  kelson uninstall --project checkout --all-environments --yes\n" +
+			"  kelson uninstall --component cert-manager",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runUninstall(cmd, opts) },
 	}
 	f := cmd.Flags()
 	f.StringVar(&opts.project, "project", "", "name of the Project to uninstall")
+	f.StringVar(&opts.component, "component", "",
+		"remove a platform component kelson installed ("+strings.Join(install.Names(), ", ")+"), instead of a project environment")
 	f.StringVar(&opts.env, "env", "", "name of the Environment to uninstall")
 	f.BoolVar(&opts.allEnvironments, "all-environments", false,
 		"uninstall every environment of the project, not one")
@@ -142,11 +180,21 @@ func newUninstallCmdFactory(connect uninstallConnector, open historyOpener) *cob
 	f.BoolVar(&opts.keepHistory, "keep-history", false,
 		"keep the local rendered history for this environment as an audit trail (it describes a set that no longer exists)")
 	f.BoolVar(&opts.yes, "yes", false, "delete without asking for confirmation; the preview is printed either way")
-	cobra.CheckErr(cmd.MarkFlagRequired("project"))
+	// --project is no longer a cobra-required flag: --component addresses a
+	// different thing entirely and needs none of the project addressing. The
+	// "exactly one of them" rule is enforced in runUninstall, where it can say
+	// which flags disagree instead of naming one of them.
 	return cmd
 }
 
 func runUninstall(cmd *cobra.Command, opts *uninstallOptions) error {
+	if opts.component != "" {
+		return runComponentUninstall(cmd, opts)
+	}
+	if opts.project == "" {
+		return fmt.Errorf("an uninstall is addressed by project or by component: " +
+			"pass --project <name> --env <name>, or --component <name>")
+	}
 	scope := uninstall.Scope{
 		Project:         opts.project,
 		Environment:     opts.env,
@@ -230,6 +278,197 @@ func confirmUninstall(cmd *cobra.Command, opts *uninstallOptions, plan *uninstal
 		return false, out.err
 	}
 	return true, nil
+}
+
+// --- the component path -------------------------------------------------------
+
+// runComponentUninstall removes a platform component, and only the parts of it
+// kelson created (issue #60).
+//
+// It shares this verb rather than getting one of its own because it is the same
+// promise at a different layer: kelson removes what kelson put there and
+// nothing else. What it does NOT share is the project addressing — a component
+// has no environment, no namespace to sweep and no local history — so the flags
+// that describe those are refused rather than quietly ignored.
+func runComponentUninstall(cmd *cobra.Command, opts *uninstallOptions) error {
+	if err := opts.validateComponentScope(); err != nil {
+		return err
+	}
+	if opts.connectRemover == nil {
+		return fmt.Errorf("the delivery plane is unavailable in this build")
+	}
+	engine, err := opts.connectRemover(*opts)
+	if err != nil {
+		return err
+	}
+
+	ctx := cmd.Context()
+	removal, err := engine.Plan(ctx, opts.component)
+	if err != nil {
+		return err
+	}
+
+	out := &printer{w: cmd.OutOrStdout()}
+	printRemovalPlan(out, removal)
+	if err := out.err; err != nil {
+		return err
+	}
+	if removal.Empty() {
+		return nil
+	}
+
+	ok, err := confirmRemoval(cmd, opts, removal, out, interactive(cmd))
+	if err != nil || !ok {
+		return err
+	}
+
+	report, execErr := engine.Execute(ctx, removal)
+	printRemovalReport(out, report)
+	if execErr != nil {
+		return execErr
+	}
+	printRemovalBoundary(out, removal)
+	return out.err
+}
+
+// validateComponentScope refuses the project flags rather than ignoring them.
+// A user who typed --component and --keep-data together has a belief about what
+// is about to happen, and silently dropping one of them leaves that belief
+// intact and wrong.
+func (o *uninstallOptions) validateComponentScope() error {
+	var conflicting []string
+	if o.project != "" {
+		conflicting = append(conflicting, "--project")
+	}
+	if o.env != "" {
+		conflicting = append(conflicting, "--env")
+	}
+	if o.allEnvironments {
+		conflicting = append(conflicting, "--all-environments")
+	}
+	if o.namespace != "" {
+		conflicting = append(conflicting, "--namespace")
+	}
+	if o.keepData {
+		conflicting = append(conflicting, "--keep-data")
+	}
+	if o.keepHistory {
+		conflicting = append(conflicting, "--keep-history")
+	}
+	if len(conflicting) == 0 {
+		return nil
+	}
+	return fmt.Errorf("--component removes a platform component, which has no project, environment or local "+
+		"history: %s does not apply to it", strings.Join(conflicting, ", "))
+}
+
+func confirmRemoval(cmd *cobra.Command, opts *uninstallOptions, removal *install.Removal, out *printer, asks bool) (bool, error) {
+	if opts.yes {
+		return true, nil
+	}
+	if !asks {
+		return false, fmt.Errorf("refusing to delete %d resources without --yes: stdin is not a terminal, so there is nobody to ask",
+			len(removal.Targets))
+	}
+	question := fmt.Sprintf("Delete these %d resources of %s?", len(removal.Targets), removal.Component.Name)
+	if collateral := removalCollateral(removal); collateral > 0 {
+		question = fmt.Sprintf("Delete these %d resources of %s, taking %d custom resource(s) with them?",
+			len(removal.Targets), removal.Component.Name, collateral)
+	}
+	ok, err := confirm(cmd, question)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		out.printf("aborted: nothing was deleted.\n")
+		return false, out.err
+	}
+	return true, nil
+}
+
+func removalCollateral(removal *install.Removal) int {
+	var n int
+	for _, t := range removal.Targets {
+		n += len(t.Collateral)
+	}
+	return n
+}
+
+func printRemovalPlan(out *printer, removal *install.Removal) {
+	out.printf("kelson uninstall — component %s, selector %s\n",
+		removal.Component.Name, install.Selector(removal.Component.Name))
+
+	if removal.Empty() {
+		out.printf("\nnothing to do: kelson did not install %s in this cluster.\n", removal.Component.Name)
+		printKeptComponents(out, removal)
+		printUnreadableComponents(out, removal)
+		return
+	}
+
+	for _, tier := range install.Tiers {
+		targets := removal.Tier(tier)
+		if len(targets) == 0 {
+			continue
+		}
+		out.printf("\n%s (%d)\n", tier, len(targets))
+		for _, t := range targets {
+			out.printf("  %s\n", t.Ref)
+			// A CRD deletion takes every custom resource of that kind in the
+			// cluster with it, including resources kelson never created. That is
+			// the irreversible part of removing an operator, and it is named
+			// object by object rather than counted.
+			for _, c := range t.Collateral {
+				out.printf("      goes with it: %s (the API server deletes it with the CRD; kelson does not touch it directly)\n", c)
+			}
+		}
+	}
+
+	printKeptComponents(out, removal)
+	printUnreadableComponents(out, removal)
+}
+
+func printKeptComponents(out *printer, removal *install.Removal) {
+	if len(removal.Kept) == 0 {
+		return
+	}
+	out.printf("\nLeft alone (%d) — labelled for %s, but not kelson's to delete\n",
+		len(removal.Kept), removal.Component.Name)
+	for _, k := range removal.Kept {
+		out.printf("  %s\n      %s\n", k.Ref, k.Reason)
+	}
+}
+
+func printUnreadableComponents(out *printer, removal *install.Removal) {
+	if len(removal.Unreadable) == 0 {
+		return
+	}
+	out.printf("\nThe sweep was incomplete:\n")
+	for _, u := range removal.Unreadable {
+		out.printf("  %s\n", u)
+	}
+}
+
+func printRemovalReport(out *printer, report *install.RemovalReport) {
+	if report == nil {
+		return
+	}
+	out.printf("\n")
+	for _, res := range report.Results {
+		if res.Detail == "" {
+			out.printf("  %-7s %s\n", res.Outcome, res.Ref)
+			continue
+		}
+		out.printf("  %-7s %s — %s\n", res.Outcome, res.Ref, res.Detail)
+	}
+	out.printf("\n%d deleted, %d already gone, %d left untouched, %d failed\n",
+		report.Deleted, report.Gone, report.Left, report.Failed)
+}
+
+func printRemovalBoundary(out *printer, removal *install.Removal) {
+	out.printf("\nStill installed, and not this command's to remove:\n")
+	out.printf("  everything kelson adopted rather than created when it installed %s\n", removal.Component.Name)
+	out.printf("  every application kelson deployed against it — `kelson uninstall --project <p> --env <e>`\n")
+	out.printf("  every other platform component; each one is removed by name\n")
 }
 
 // --- the preview -------------------------------------------------------------
@@ -457,7 +696,8 @@ func printUninstallReport(out *printer, report *uninstall.Report) {
 func printUninstallBoundary(out *printer, plan *uninstall.Plan) {
 	out.printf("\nStill installed, and not this command's to remove:\n")
 	out.printf("  the kelson server, if you run one — `helm uninstall kelson` (docs/install.md)\n")
-	out.printf("  the operators kelson delegates to (CloudNativePG, Valkey, Flux, cert-manager)\n")
+	out.printf("  the operators kelson delegates to (CloudNativePG, Valkey, Flux, cert-manager); one kelson\n")
+	out.printf("  installed itself goes with `kelson uninstall --component <name>`\n")
 	for _, ns := range plan.Namespaces {
 		if !ns.Delete {
 			out.printf("  namespace %s and everything else in it\n", ns.Name)

@@ -89,6 +89,9 @@ func runUninstallCmd(t *testing.T, engine *fakeUninstaller, history *fakeHistory
 	root := &cobra.Command{Use: "kelson", SilenceUsage: true, SilenceErrors: true}
 	root.AddCommand(newUninstallCmdFactory(
 		func(uninstallOptions) (uninstaller, error) { return engine, nil },
+		// The project path never reaches the component remover; the component
+		// path has its own harness in install_test.go.
+		func(uninstallOptions) (remover, error) { return nil, errNoRemover },
 		func(string) (historyStore, error) { return history, nil },
 	))
 	var outBuf, errBuf bytes.Buffer
