@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/dafrie/kelson/internal/build"
 	"github.com/dafrie/kelson/internal/build/buildkit"
+	"github.com/dafrie/kelson/internal/build/buildpacks"
 	"github.com/dafrie/kelson/internal/build/detect"
 	"github.com/dafrie/kelson/internal/build/registry"
 	"github.com/dafrie/kelson/internal/delivery/git"
@@ -47,12 +49,13 @@ func newBuildCmdFactory(connect buildConnector) *cobra.Command {
 	opts := &buildOptions{connect: connect}
 	cmd := &cobra.Command{
 		Use:   "build -f spec.yaml --registry <prefix>",
-		Short: "Build the project's source into an image with an in-cluster BuildKit job",
-		Long: "Build clones the Project's source in the cluster, builds it with rootless BuildKit and pushes\n" +
-			"the result, streaming the build log as it happens.\n\n" +
+		Short: "Build the project's source into an image with an in-cluster build job",
+		Long: "Build clones the Project's source in the cluster, builds it rootlessly and pushes the result,\n" +
+			"streaming the build log as it happens.\n\n" +
 			"Strategy selection follows ADR-0010: an explicit spec.build.strategy wins, otherwise a\n" +
-			"Dockerfile decides. Detecting the strategy needs to see the source tree, which the CLI can only\n" +
-			"do for a local checkout — pass -C for auto-detection, or name the strategy in the spec.\n\n" +
+			"Dockerfile selects BuildKit and its absence selects Cloud Native Buildpacks. Detecting the\n" +
+			"strategy needs to see the source tree, which the CLI can only do for a local checkout — pass -C\n" +
+			"for auto-detection, or name the strategy in the spec.\n\n" +
 			"The last line of stdout is the digest-pinned image reference, so it can be fed straight to\n" +
 			"`kelson deploy --image`.",
 		Example: "  kelson build -f project.yaml --registry ghcr.io/acme --push-secret ghcr-push\n" +
@@ -163,7 +166,7 @@ func buildImage(cmd *cobra.Command, opts *buildOptions) (build.Result, error) {
 	if namespace == "" {
 		namespace = resolved.Environment.Namespace
 	}
-	plane, err := connectBuildPlane(opts, namespace)
+	plane, err := connectBuildPlane(opts, namespace, detection.Strategy)
 	if err != nil {
 		return build.Result{}, err
 	}
@@ -316,8 +319,15 @@ func resolveRevision(ctx context.Context, resolver revisionResolver, repo, ref s
 // --- the build plane seam ---------------------------------------------------
 
 // buildTarget is what the build command resolved from its flags and spec:
-// which cluster, which namespace, which credential, and how long it may run.
+// which strategy, which cluster, which namespace, which credential, and how
+// long it may run.
 type buildTarget struct {
+	// strategy is what ResolveStrategy decided, and it selects the driver:
+	// dockerfile builds with BuildKit, buildpacks with the CNB lifecycle
+	// (ADR-0010). It travels to the connector rather than being decided there,
+	// because the decision is the shared plan's (internal/build/plan.go) and
+	// the two callers must not be able to make it differently.
+	strategy   detect.Strategy
 	kubeconfig string
 	namespace  string
 	pushSecret string
@@ -343,25 +353,20 @@ type buildPlane struct {
 // cluster, none of the wiring under test does.
 type buildConnector func(buildTarget) (*buildPlane, error)
 
-// connectBuild is the production connector: one cluster connection, the
-// BuildKit driver over the Kubernetes build executor, and a remote ref
-// resolver sharing the delivery credential.
+// connectBuild is the production connector: one cluster connection, the driver
+// the resolved strategy selects over the Kubernetes build executor, and a
+// remote ref resolver sharing the delivery credential.
 //
-// This is the first caller of buildkit.New and kube.NewBuildExecutor outside
-// tests — the gap issue #48 exists to close.
+// One executor serves both drivers. It satisfies each one's Cluster seam
+// structurally, and nothing in it is strategy-specific since it reads the
+// destination off the Job's annotations rather than a builder's argv
+// (internal/delivery/kube/build_executor.go).
 func connectBuild(t buildTarget) (*buildPlane, error) {
 	cluster, err := kube.Connect(t.kubeconfig)
 	if err != nil {
 		return nil, err
 	}
-	driver, err := buildkit.New(buildkit.Options{
-		Cluster: kube.NewBuildExecutor(cluster.Typed),
-		Config: buildkit.Config{
-			Namespace:  t.namespace,
-			PushSecret: t.pushSecret,
-			Timeout:    buildkit.Duration(t.timeout),
-		},
-	})
+	driver, err := buildDriver(t, kube.NewBuildExecutor(cluster.Typed))
 	if err != nil {
 		return nil, err
 	}
@@ -374,11 +379,58 @@ func connectBuild(t buildTarget) (*buildPlane, error) {
 	}, nil
 }
 
-func connectBuildPlane(opts *buildOptions, namespace string) (*buildPlane, error) {
+// buildExecutor is what both drivers need from the cluster: submit a rendered
+// build Job and stream it to completion. It is declared here so the driver
+// pick below is one function taking one seam, rather than two nearly identical
+// constructions — kube.BuildExecutor satisfies buildkit.Cluster and
+// buildpacks.Cluster structurally, and this names that fact.
+type buildExecutor interface {
+	Submit(ctx context.Context, manifest []byte) (string, error)
+	Wait(ctx context.Context, name string, w io.Writer) (build.Result, error)
+}
+
+// buildDriver constructs the driver the resolved strategy selects (ADR-0010).
+//
+// A strategy this build cannot run is an error here rather than a silent
+// fallback to BuildKit: building a Dockerfile-less repository with the
+// Dockerfile driver fails deep inside buildctl with a message about a missing
+// file, which tells the user nothing about the strategy that was actually
+// chosen.
+func buildDriver(t buildTarget, cluster buildExecutor) (build.Builder, error) {
+	switch t.strategy {
+	case detect.StrategyDockerfile:
+		return buildkit.New(buildkit.Options{
+			Cluster: cluster,
+			Config: buildkit.Config{
+				Namespace:  t.namespace,
+				PushSecret: t.pushSecret,
+				Timeout:    buildkit.Duration(t.timeout),
+			},
+		})
+	case detect.StrategyBuildpacks:
+		// No Rebaser is injected: `kelson build` has no rebase command, and a
+		// Rebaser needs an OCI client this plane may not import. Rebase fails
+		// closed without one rather than pretending to patch a run image
+		// (internal/build/buildpacks: Driver.Rebase).
+		return buildpacks.New(buildpacks.Options{
+			Cluster: cluster,
+			Config: buildpacks.Config{
+				Namespace:  t.namespace,
+				PushSecret: t.pushSecret,
+				Timeout:    buildpacks.Duration(t.timeout),
+			},
+		})
+	default:
+		return nil, fmt.Errorf("no build driver for strategy %q", t.strategy)
+	}
+}
+
+func connectBuildPlane(opts *buildOptions, namespace string, strategy detect.Strategy) (*buildPlane, error) {
 	if opts.connect == nil {
 		return nil, fmt.Errorf("the build plane is unavailable in this build")
 	}
 	plane, err := opts.connect(buildTarget{
+		strategy:   strategy,
 		kubeconfig: opts.kubeconfig,
 		namespace:  namespace,
 		pushSecret: opts.pushSecret,

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"connectrpc.com/connect"
 
 	"github.com/dafrie/kelson/internal/api"
+	"github.com/dafrie/kelson/internal/build"
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
 	"github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1/kelsonv1alpha1connect"
 	"github.com/dafrie/kelson/internal/version"
@@ -373,4 +375,35 @@ func TestAuthBannerSaysWhichPostureItStartedIn(t *testing.T) {
 	if strings.Contains(authBanner(auth), "hunter2") {
 		t.Error("the banner printed the password")
 	}
+}
+
+// TestBuildDriverForStrategy: the strategy the shared plan resolved selects the
+// driver (#48, #49, ADR-0010), and a strategy this server has no driver for is
+// an error rather than a silent fallback — building a Dockerfile-less
+// repository with BuildKit fails deep in buildctl with a message about a
+// missing file, which says nothing about the strategy that was chosen.
+func TestBuildDriverForStrategy(t *testing.T) {
+	for _, strategy := range []string{"dockerfile", "buildpacks"} {
+		driver, err := buildDriver(api.BuildTarget{Strategy: strategy, Namespace: "shop-production"}, nopExecutor{})
+		if err != nil {
+			t.Fatalf("buildDriver(%q): %v", strategy, err)
+		}
+		if driver.Name() != strategy {
+			t.Errorf("buildDriver(%q) built the %q driver", strategy, driver.Name())
+		}
+	}
+	for _, strategy := range []string{"", "none", "railpack"} {
+		if _, err := buildDriver(api.BuildTarget{Strategy: strategy}, nopExecutor{}); err == nil {
+			t.Errorf("strategy %q has no driver and must be refused", strategy)
+		}
+	}
+}
+
+// nopExecutor satisfies the cluster seam both drivers take. buildDriver only
+// constructs them, so it never runs.
+type nopExecutor struct{}
+
+func (nopExecutor) Submit(context.Context, []byte) (string, error) { return "", nil }
+func (nopExecutor) Wait(context.Context, string, io.Writer) (build.Result, error) {
+	return build.Result{}, nil
 }

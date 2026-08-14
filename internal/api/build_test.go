@@ -347,7 +347,7 @@ func TestBuildAutoStrategyNeedsASourceTree(t *testing.T) {
 	}
 }
 
-// The three other refusals, each with its own code so an agent branches rather
+// The two other refusals, each with its own code so an agent branches rather
 // than reading prose.
 func TestBuildRefusals(t *testing.T) {
 	noSource := strings.Replace(buildProjectDoc,
@@ -357,8 +357,6 @@ func TestBuildRefusals(t *testing.T) {
 	// the build plane never gets a say.
 	none := strings.Replace(buildProjectDoc,
 		"    strategy: dockerfile\n", "    strategy: none\n  image: ghcr.io/acme/shop:1.0.0\n", 1)
-	buildpacks := strings.Replace(buildProjectDoc, "    strategy: dockerfile\n", "    strategy: buildpacks\n", 1)
-
 	cases := []struct {
 		name    string
 		project string
@@ -366,7 +364,6 @@ func TestBuildRefusals(t *testing.T) {
 	}{
 		{"no source repository", noSource, build.ReasonNoSource},
 		{"strategy none is nothing to build", none, build.ReasonNothingToBuild},
-		{"buildpacks is deferred", buildpacks, build.ReasonStrategyNotImplemented},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -405,6 +402,41 @@ func TestBuildWithoutADestinationIsRefused(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "--registry") {
 		t.Errorf("the refusal should name the flag that fixes it: %v", err)
+	}
+}
+
+// The resolved strategy selects the driver, so it has to reach the connector —
+// which is where the concrete drivers are constructed, because this plane may
+// not import the Kubernetes client they need (#49, ADR-0010). A spec naming
+// buildpacks now builds; it is no longer a refusal.
+func TestBuildStrategyReachesTheConnector(t *testing.T) {
+	for _, strategy := range []string{"dockerfile", "buildpacks"} {
+		t.Run(strategy, func(t *testing.T) {
+			project := strings.Replace(buildProjectDoc, "    strategy: dockerfile\n", "    strategy: "+strategy+"\n", 1)
+			builder := &fakeBuilder{}
+			var target BuildTarget
+			c := serve(t, Options{
+				Build:         buildPlaneFor(builder, &fakeRevisions{}, &target),
+				BuildDefaults: BuildDefaults{Registry: "ghcr.io/acme"},
+			})
+
+			got, err := collectBuild(t, c, &kelsonv1alpha1.BuildRequest{
+				Spec:        inlineSpec(project, map[string]string{"production": buildEnvironmentDoc}),
+				Environment: "production",
+			})
+			if err != nil {
+				t.Fatalf("Build: %v", err)
+			}
+			if target.Strategy != strategy {
+				t.Errorf("the connector was asked for %q, want %q", target.Strategy, strategy)
+			}
+			if got.started.GetStrategy() != strategy {
+				t.Errorf("Started.strategy = %q, want %q", got.started.GetStrategy(), strategy)
+			}
+			if builder.calls() != 1 {
+				t.Errorf("the build ran %d times, want 1", builder.calls())
+			}
+		})
 	}
 }
 

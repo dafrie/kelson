@@ -63,7 +63,9 @@ import (
 	"time"
 
 	"github.com/dafrie/kelson/internal/api"
+	"github.com/dafrie/kelson/internal/build"
 	"github.com/dafrie/kelson/internal/build/buildkit"
+	"github.com/dafrie/kelson/internal/build/buildpacks"
 	"github.com/dafrie/kelson/internal/clusterprofile"
 	"github.com/dafrie/kelson/internal/clusterprofile/detect"
 	"github.com/dafrie/kelson/internal/delivery"
@@ -539,10 +541,10 @@ func deliveryConnector(cfg config, history *serverstate.HistoryStore) api.Delive
 }
 
 // buildConnector is the server's connectBuild: one cluster connection per
-// build, the BuildKit driver over the Kubernetes build executor, and a remote
-// ref resolver sharing the delivery credential. It is cmd/kelson/build.go's
-// connectBuild with the CLI's kubeconfig flag replaced by the server's
-// (issues #48, #54).
+// build, the driver the resolved strategy selects over the Kubernetes build
+// executor, and a remote ref resolver sharing the delivery credential. It is
+// cmd/kelson/build.go's connectBuild with the CLI's kubeconfig flag replaced
+// by the server's (issues #48, #49, #54).
 //
 // The Job's deadline and the RPC's budget are the same constant deliberately.
 // If the Job outlived the watch, a cancelled stream would leave a build running
@@ -554,14 +556,7 @@ func buildConnector(cfg config) api.BuildConnector {
 		if err != nil {
 			return nil, err
 		}
-		driver, err := buildkit.New(buildkit.Options{
-			Cluster: kube.NewBuildExecutor(cluster.Typed),
-			Config: buildkit.Config{
-				Namespace:  t.Namespace,
-				PushSecret: t.PushSecret,
-				Timeout:    buildkit.Duration(api.DefaultBuildTimeout),
-			},
-		})
+		driver, err := buildDriver(t, kube.NewBuildExecutor(cluster.Typed))
 		if err != nil {
 			return nil, err
 		}
@@ -572,6 +567,48 @@ func buildConnector(cfg config) api.BuildConnector {
 			// rather than inventing a second one — the CLI's choice, unchanged.
 			Revisions: git.RemoteResolver{Auth: gitAuth()},
 		}, nil
+	}
+}
+
+// buildExecutor is what both drivers need from the cluster: submit a rendered
+// build Job and stream it to completion. kube.BuildExecutor satisfies
+// buildkit.Cluster and buildpacks.Cluster structurally, and one executor
+// serves both because it reads what a build pushed off the Job's annotations
+// rather than out of a builder's argv.
+type buildExecutor interface {
+	Submit(ctx context.Context, manifest []byte) (string, error)
+	Wait(ctx context.Context, name string, w io.Writer) (build.Result, error)
+}
+
+// buildDriver constructs the driver the resolved strategy selects (ADR-0010),
+// mirroring cmd/kelson's function of the same name. The strategy arrives on
+// the target because it was decided by the plan both callers share; this only
+// maps it to a driver, and refuses a strategy it has none for rather than
+// falling back to one that would fail obscurely.
+func buildDriver(t api.BuildTarget, cluster buildExecutor) (build.Builder, error) {
+	switch t.Strategy {
+	case buildkit.StrategyName:
+		return buildkit.New(buildkit.Options{
+			Cluster: cluster,
+			Config: buildkit.Config{
+				Namespace:  t.Namespace,
+				PushSecret: t.PushSecret,
+				Timeout:    buildkit.Duration(api.DefaultBuildTimeout),
+			},
+		})
+	case buildpacks.StrategyName:
+		// No Rebaser: the server exposes no rebase RPC, and Driver.Rebase
+		// fails closed without one rather than pretending to patch a run image.
+		return buildpacks.New(buildpacks.Options{
+			Cluster: cluster,
+			Config: buildpacks.Config{
+				Namespace:  t.Namespace,
+				PushSecret: t.PushSecret,
+				Timeout:    buildpacks.Duration(api.DefaultBuildTimeout),
+			},
+		})
+	default:
+		return nil, fmt.Errorf("no build driver for strategy %q", t.Strategy)
 	}
 }
 

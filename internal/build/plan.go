@@ -39,7 +39,13 @@ const (
 	// "deploy spec.image, build nothing".
 	ReasonNothingToBuild = "build/nothing-to-build"
 	// ReasonStrategyNotImplemented: the resolved strategy is real but this
-	// release does not implement it (buildpacks, #49).
+	// release does not implement it.
+	//
+	// Nothing returns it today: dockerfile and buildpacks are both implemented
+	// (#48, #49). It stays because the reason taxonomy is a compatibility
+	// promise the API repeats (kelson.v1alpha1.Error) and because ADR-0010
+	// anticipates a strategy this release would not have — railpack is the
+	// named candidate — which is exactly the case it describes.
 	ReasonStrategyNotImplemented = "build/strategy-not-implemented"
 	// ReasonDetectionNeedsSource: the strategy is `auto` and detecting it needs
 	// a source tree the caller does not have (#50).
@@ -90,18 +96,13 @@ func ResolveStrategy(spec *model.Build, tree fs.FS) (detect.Detection, error) {
 	}
 
 	switch detection.Strategy {
-	case detect.StrategyDockerfile:
+	// Both strategies of ADR-0010 run: a Dockerfile build through BuildKit
+	// (#48) and a Cloud Native Buildpacks build through the lifecycle (#49).
+	// Which driver the caller then constructs is its own wiring; what this
+	// function decides is the strategy, and it is the same decision on both
+	// sides.
+	case detect.StrategyDockerfile, detect.StrategyBuildpacks:
 		return detection, nil
-
-	case detect.StrategyBuildpacks:
-		return detection, Error{
-			Reason: ReasonStrategyNotImplemented,
-			Message: fmt.Sprintf("%s, but the buildpacks strategy is not implemented in this release",
-				detection.Message),
-			Remediation: "add a Dockerfile to the source (it takes precedence, ADR-0010) or set " +
-				"spec.build.strategy: dockerfile; buildpacks is deferred out of the v0.1 cut and tracked " +
-				"by issue #49, and ADR-0010 still makes it the eventual default",
-		}
 
 	default: // detect.StrategyNone
 		return detection, Error{
