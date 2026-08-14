@@ -188,6 +188,110 @@ describe("ProjectDetailPage", () => {
   });
 });
 
+describe("ProjectDetailPage components (#214)", () => {
+  const MULTI_PROJECT = `kind: Project
+metadata:
+  name: checkout
+
+spec:
+  image: ghcr.io/acme/checkout:1.4.2
+
+  components:
+    - name: web
+      port: 8080
+
+    - name: worker
+
+    - name: nightly
+      schedule: "0 3 * * *"
+
+    - name: db
+      kind: postgres
+      preset: small
+`;
+
+  const multi = createRouterTransport((router) => {
+    router.service(SpecService, {
+      getSpec: () => ({
+        spec: {
+          project: "checkout",
+          version: "7",
+          environments: ["production"],
+          documents: {
+            project: new TextEncoder().encode(MULTI_PROJECT),
+            environments: { production: new TextEncoder().encode(ENV_YAML) },
+          },
+        },
+      }),
+    });
+    router.service(DeployService, {
+      status: () => ({ phase: "Healthy", revision: "8f2c1ad", verdicts: [] }),
+    });
+  });
+
+  function renderMulti() {
+    return renderAt(multi, "/projects/checkout", "/projects/:project", <ProjectDetailPage />);
+  }
+
+  it("lists the project's components with the kind each shape derives", async () => {
+    renderMulti();
+
+    expect(await screen.findByText("Components (4)")).toBeTruthy();
+    const kinds = new Map(
+      [...document.querySelectorAll(".k-component")].map((row) => [
+        row.querySelector(".k-component__name")?.textContent,
+        row.querySelector(".k-chip")?.textContent,
+      ]),
+    );
+    // The table of docs/model.md: a port is a service, a schedule is a cron,
+    // neither is a worker, and a written kind is read rather than derived.
+    expect(kinds.get("web")).toBe("service");
+    expect(kinds.get("worker")).toBe("worker");
+    expect(kinds.get("nightly")).toBe("cron");
+    expect(kinds.get("db")).toBe("postgres");
+    // Rule P3 is visible where it decides something: the worker declares no
+    // image, so it runs the project's.
+    expect(screen.getByText(/no port, no schedule · the project's image/)).toBeTruthy();
+  });
+
+  it("offers adding one, and sends it to the editor that writes the spec", async () => {
+    renderMulti();
+
+    expect(
+      (await screen.findByRole("link", { name: "Add component" })).getAttribute("href"),
+    ).toBe("/projects/checkout/edit?add=component");
+  });
+
+  it("links each workload to its own logs, and a database to the section that owns it", async () => {
+    renderMulti();
+
+    await screen.findByText("Components (4)");
+    const links = screen.getAllByRole("link", { name: "Logs" });
+    // One per workload — the environment in the tab, the component in the query.
+    expect(links.map((l) => l.getAttribute("href"))).toEqual([
+      "/projects/checkout/production/logs?component=web",
+      "/projects/checkout/production/logs?component=worker",
+      "/projects/checkout/production/logs?component=nightly",
+      // …and the environment panel's own Logs button, which takes none.
+      "/projects/checkout/production/logs",
+    ]);
+    // A database has no pods, so it is pointed at the section that can answer
+    // for it rather than at a log stream that cannot exist (#107).
+    expect(
+      screen.getByText(/a managed data service — its preset and health are in Data services/),
+    ).toBeTruthy();
+  });
+
+  it("says so when the stored document declares no components", async () => {
+    renderDetail();
+
+    expect(await screen.findByText("Components (0)")).toBeTruthy();
+    expect(
+      screen.getByText(/No components were read from the stored Project document/),
+    ).toBeTruthy();
+  });
+});
+
 describe("ProjectDetailPage data services", () => {
   const DATA_PROJECT = `kind: Project
 metadata:

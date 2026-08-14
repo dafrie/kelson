@@ -20,6 +20,12 @@ import { PhaseRail } from "../deploy/PhaseRail";
 import { parseCause, type RailInput } from "../deploy/rail";
 import { Previews } from "../previews/Previews";
 import { SecretsPanel } from "../secrets/SecretsPanel";
+import {
+  isDataComponentKind,
+  isKnownKind,
+  parseComponents,
+  type ComponentSummary,
+} from "../spec/components";
 
 /**
  * One project: its environments' delivery state, its documents, its actions.
@@ -33,6 +39,15 @@ import { SecretsPanel } from "../secrets/SecretsPanel";
  * database has no image to roll and no replicas to scale, its topology is a
  * preset an operator implements, and listing it among the workloads would
  * invite every wrong instinct at once.
+ *
+ * Above all of it is what the Project *is*: its components (issue #214). A
+ * Project is a container of them (ADR-0014) and this page used to show only
+ * where they run, which made a project read as a single app with environments.
+ * The list is the spec's own — read from the stored document, kind derived the
+ * way docs/model.md derives it — and it sits before the environment tabs
+ * because it is a fact about the project rather than about one environment. It
+ * does not replace the data-services section: this says what the project
+ * contains, that one says what a database is doing.
  *
  * The spec documents are printed byte-faithfully. The server stores what was
  * authored (ADR-0013: the spec is the user's document) and re-serialising YAML
@@ -77,6 +92,14 @@ export function ProjectDetailPage() {
         </EmptyState>
       ) : null}
 
+      {spec.data !== undefined ? (
+        <Components
+          project={project}
+          environment={selected}
+          projectDoc={decodeDocument(spec.data.spec?.documents?.project)}
+        />
+      ) : null}
+
       {environments.length > 0 ? (
         <>
           <nav className="k-tabs" aria-label="Environments">
@@ -113,6 +136,132 @@ export function ProjectDetailPage() {
       ) : null}
     </>
   );
+}
+
+/**
+ * What this project is made of (#214).
+ *
+ * The kinds are the spec's own: derived from the shape for a workload — a
+ * `port:` is a service, a `schedule:` is a cron, neither is a worker — and read
+ * from `kind:` for the ones that state it (docs/model.md, ADR-0014). Nothing
+ * here asks a cluster: a Project document says what its components are whether
+ * or not anything is deployed, and that is exactly the claim this section
+ * makes. Health belongs to the environment panel below, per environment,
+ * because a component is not healthy or unhealthy in the abstract.
+ *
+ * Each row links to the one screen that is *about* a single component: the log
+ * tail, which takes a component name and prefills it from the link. Deploy,
+ * diff and rollback are environment-wide acts and stay where they are.
+ */
+function Components({
+  project,
+  environment,
+  projectDoc,
+}: {
+  project: string;
+  /** The environment tab in view, which is where a per-component link points. */
+  environment: string | undefined;
+  /** The stored Project document, as authored. */
+  projectDoc: string;
+}) {
+  const components = useMemo(() => parseComponents(projectDoc), [projectDoc]);
+  const base = `/projects/${encodeURIComponent(project)}`;
+
+  return (
+    <section className="k-section">
+      <div className="k-env__head">
+        <div className="k-eyebrow">Components ({components.length})</div>
+        {/* Adding one is an edit of the stored spec, so it goes to the editor
+            rather than growing a second write path — the query parameter opens
+            it on the panel that does it. */}
+        <Link className="k-button" to={`${base}/edit?add=component`}>
+          Add component
+        </Link>
+      </div>
+      <div className="k-section__body">
+        {components.length === 0 ? (
+          <p className="k-note">
+            No components were read from the stored Project document. A Project
+            is a container of components — a service, its worker, a nightly job
+            and the database they share are one Project (ADR-0014) — and the
+            documents below are what this list is read from.
+          </p>
+        ) : (
+          <ul className="k-components">
+            {components.map((component) => (
+              <ComponentRow
+                key={component.name}
+                component={component}
+                project={project}
+                environment={environment}
+              />
+            ))}
+          </ul>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function ComponentRow({
+  component,
+  project,
+  environment,
+}: {
+  component: ComponentSummary;
+  project: string;
+  environment: string | undefined;
+}) {
+  const data = isDataComponentKind(component.kind);
+  return (
+    <li className="k-component">
+      <div className="k-component__ident">
+        <span className="k-mono k-component__name">{component.name}</span>
+        <span className="k-chip k-mono">{component.kind}</span>
+        <span className="k-mono k-component__fact">{componentFact(component)}</span>
+        {isKnownKind(component.kind) ? null : (
+          <span className="k-mono k-component__fact">
+            a kind this build does not know — the server is the authority on
+            whether it renders
+          </span>
+        )}
+      </div>
+      {data ? (
+        // A database has no pods, so no log stream to offer: what it is doing
+        // is the data services section's answer, per environment (#107).
+        <span className="k-mono k-component__fact">
+          a managed data service — its preset and health are in Data services
+        </span>
+      ) : environment !== undefined ? (
+        <Link
+          className="k-button"
+          to={`/projects/${encodeURIComponent(project)}/${encodeURIComponent(
+            environment,
+          )}/logs?component=${encodeURIComponent(component.name)}`}
+        >
+          Logs
+        </Link>
+      ) : null}
+    </li>
+  );
+}
+
+/** The one thing worth saying about a component beside its kind. */
+function componentFact(component: ComponentSummary): string {
+  if (isDataComponentKind(component.kind)) {
+    return component.preset === "" ? "the model's default preset" : `preset: ${component.preset}`;
+  }
+  const shape =
+    component.schedule !== ""
+      ? component.schedule
+      : component.port !== ""
+        ? `port ${component.port}`
+        : "no port, no schedule";
+  // Rule P3, which is what makes one repository ship a web process and a
+  // worker: a component with no image of its own runs the project's.
+  return component.image === ""
+    ? `${shape} · the project's image`
+    : `${shape} · ${component.image}`;
 }
 
 /** A verdict row as rendered: the fetched one, or the stream's delta over it. */
