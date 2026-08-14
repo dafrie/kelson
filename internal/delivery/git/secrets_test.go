@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// The two properties the sops backend rests on (issue #81, ADR-0021): a deploy
+// The two properties the sops backend rests on (issue #81, ADR-0022): a deploy
 // never prunes an encrypted Secret, and a secret write never prunes a
 // manifest. They are the same repository path written by two commands with
 // different ideas of what they own, and getting either wrong loses production

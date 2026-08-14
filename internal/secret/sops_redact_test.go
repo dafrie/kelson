@@ -12,7 +12,7 @@ import (
 )
 
 // The redaction property of issue #117, carried onto the sops paths (issue
-// #81, ADR-0021).
+// #81, ADR-0022).
 //
 // ADR-0009's amendment states the guarantee as **kelson never adds a secret to
 // a log**, and #117 made it a property rather than a convention by registering

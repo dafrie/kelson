@@ -87,7 +87,7 @@ func Render(resolved *model.Resolved, profile clusterprofile.ClusterProfile, res
 	if errs := secretBackendSupported(resolved); len(errs) > 0 {
 		return nil, errs
 	}
-	// And the delivery-mode gate for `sops` (ADR-0021), which is the same gate
+	// And the delivery-mode gate for `sops` (ADR-0022), which is the same gate
 	// again for the same reason: its decryption step is kustomize-controller's,
 	// so an environment that is not in Flux mode has nothing that could turn
 	// the encrypted file in the repository into a Secret in the cluster.

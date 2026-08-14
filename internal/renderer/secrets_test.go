@@ -79,7 +79,7 @@ func TestRenderedOutputCarriesNoSecretValue(t *testing.T) {
 	}
 }
 
-// TestSecretBackendGate: all three backends have a mechanism since ADR-0021,
+// TestSecretBackendGate: all three backends have a mechanism since ADR-0022,
 // so the only thing left to refuse by name is a backend that is not one of
 // them. The refusal lists what is.
 func TestSecretBackendGate(t *testing.T) {

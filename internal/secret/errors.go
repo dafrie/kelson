@@ -47,7 +47,7 @@ const (
 	// server would not answer.
 	ErrReadFailed Code = "secret/read-failed"
 
-	// The `sops` backend's own refusals (issue #81, ADR-0021). They are in this
+	// The `sops` backend's own refusals (issue #81, ADR-0022). They are in this
 	// package's vocabulary rather than the git plane's because what a user is
 	// doing is setting a secret; that it reaches a repository rather than an
 	// API server is the backend's business, not theirs.

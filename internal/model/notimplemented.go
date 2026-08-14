@@ -27,7 +27,7 @@ import (
 // `secrets:` was gated whole until ADR-0018, which narrowed it to `store` alone
 // once `backend` began deciding the rendered shape; ADR-0020 then removed that
 // last row when `store` and `refreshInterval` became the ExternalSecret's own
-// `secretStoreRef` and `spec.refreshInterval` (issue #80). ADR-0021 finished
+// `secretStoreRef` and `spec.refreshInterval` (issue #80). ADR-0022 finished
 // the block: `ageRecipients` is what `kelson secret set` encrypts to and
 // `ageKeySecret` is a Kustomization's `spec.decryption.secretRef`, so `sops`
 // stopped being a render refusal and became a mechanism (issue #81). Nothing

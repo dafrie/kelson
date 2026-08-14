@@ -324,13 +324,16 @@ two is not a breaking change.
 |---|---|---|
 | `cluster` | Kubernetes Secret written by kelson via the API | v0.1 |
 | `externalSecrets` | Vault, AWS/GCP/Azure secret manager — kelson renders an `ExternalSecret` and never holds the value ([ADR-0020](adr/0020-external-secrets.md)) | v0.1 |
-| `sops` | Encrypted in Git, age keys | v0.2 |
+| `sops` | Encrypted with age in the delivery repository, decrypted in-cluster by Flux — kelson encrypts in memory and holds no private key ([ADR-0022](adr/0022-sops-age.md)) | v0.1 |
 
-In v0.1 rendered manifests contain only `secretKeyRef`, and **kelson does not persist secret values** —
-the cluster is the store, read back masked for display. No prerequisites: `kelson secret set FOO=bar`
-(command planned, M8).
-The cost is that secrets are not part of the reproducible artifact, so a cluster rebuild from Git alone
-will not restore them; the v0.2 backends close that for anyone who needs it.
+Rendered manifests contain only `secretKeyRef` under all three, and **kelson does not persist secret
+values** — the store is the cluster, the delivery repository or your secret manager, and kelson reads
+back masked for display. No prerequisites for the default: `kelson secret set checkout-db url=…`.
+
+The cost of the `cluster` backend is that secrets are not part of the reproducible artifact, so a cluster
+rebuild from Git alone will not restore them. `sops` closes that — the credential is in the artifact,
+encrypted, and the only thing that has to survive outside Git is one age identity. See
+[Secrets](secrets.md).
 
 Two failures not repeated from the category: build-time secrets go through BuildKit secret mounts rather
 than build arguments or image layers, and no secret value is ever written to a log, event, error or diff.

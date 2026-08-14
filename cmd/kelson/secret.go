@@ -43,7 +43,7 @@ import (
 // secretStore is the capability `kelson secret` needs from whichever backend
 // holds the value. Both implementations satisfy it — internal/secret's cluster
 // Store and its SOPSStore — so this file selects a backend and never a code
-// path (ADR-0021). It is declared here rather than imported as a concrete type
+// path (ADR-0022). It is declared here rather than imported as a concrete type
 // for the same reason deliveryConnector is: the production implementations
 // need a live cluster or a live repository, and none of the command wiring
 // under test does.
@@ -99,7 +99,7 @@ func connectSOPS(resolved *model.Resolved) (sopsStore, error) {
 		// Commit mode, not pull-request mode. A pull request holding a
 		// credential is a credential sitting in an open branch for as long as
 		// review takes, and the encrypted file is reviewable in the merge
-		// commit either way. ADR-0021 records this rather than leaving it to
+		// commit either way. ADR-0022 records this rather than leaving it to
 		// whichever mode happened to be the default.
 		Mode:     git.ModeCommit,
 		Identity: git.IdentityFromEnv(nil),
@@ -614,7 +614,7 @@ func runSecretDelete(cmd *cobra.Command, opts *secretDeleteOptions, name string)
 // It reports rather than re-encrypts, and the reason is the same one that
 // makes this backend safe: re-encrypting an existing file to a new recipient
 // set needs the data key, the data key needs an age identity, and kelson never
-// holds one (ADR-0021). What it can do without a key is exactly the part
+// holds one (ADR-0022). What it can do without a key is exactly the part
 // people get wrong — knowing *which* files are stale after a key change, and
 // remembering that a file still wrapped for a retired key is still readable by
 // whoever kept it.

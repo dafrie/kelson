@@ -278,7 +278,7 @@ func previewResourcesTemplate(resolved *model.Resolved, previews *model.Resolved
 	// Under the sops backend a preview's artifact carries the same encrypted
 	// Secrets the parent environment's path does, so its Kustomization needs
 	// the same decryption block or every preview pod fails at start against a
-	// Secret nothing decrypted (ADR-0021). This is the only Kustomization
+	// Secret nothing decrypted (ADR-0022). This is the only Kustomization
 	// kelson writes, and it is written through the same function that states
 	// the requirement to the operator, so the two cannot drift.
 	if resolved.Environment.Secrets.Backend == model.SecretsSOPS {

@@ -27,7 +27,8 @@ It spans M0–M8, the v0.1 half of M9, and the minimal bootstrap. Deliberately t
 | Argo CD adapter | Removed entirely, not deferred ([ADR-0012](adr/0012-flux-only-gitops.md)): Flux is the only GitOps mode; the adapter seam stays pluggable for a possible return. |
 | Buildpacks (#49) | Dockerfile covers most repos. [ADR-0010](adr/0010-build-strategy.md) makes Buildpacks the eventual *default*, so this defers the default, not the decision. |
 | Release history UI (#67) | The API has it; the UI can wait. |
-| ~~external-secrets (#80)~~ | *Reversed by shipping early:* it turned out to need no per-backend code at all — kelson renders an `ExternalSecret` and delegates every provider to the operator's own SecretStore ([ADR-0020](adr/0020-external-secrets.md)). SOPS (#81) is still deferred. |
+| ~~external-secrets (#80)~~ | *Reversed by shipping early:* it turned out to need no per-backend code at all — kelson renders an `ExternalSecret` and delegates every provider to the operator's own SecretStore ([ADR-0020](adr/0020-external-secrets.md)). |
+| ~~SOPS + age (#81)~~ | *Reversed by shipping early:* it closes the one gap ADR-0009 documented against the `cluster` backend — a cluster rebuilt from Git alone now comes back with its secrets. kelson encrypts in memory and holds no private key ([ADR-0022](adr/0022-sops-age.md)). |
 | MySQL | The operator landscape is materially weaker than CNPG. Two engines done properly beats three half-supported. |
 | M10–M16 | See the phase tables below. |
 
@@ -74,7 +75,7 @@ server are peers over one schema and an API designed around the UI first ends up
 | **M5 · ClusterProfile & install** | Detection and adoption, Helm chart, non-destructive uninstall, minimal k3s bootstrap, storage capability. Installing Flux means flux-operator + `FluxInstance` (#60). |
 | **M7 · Agent surface & MCP** | ConnectRPC schema (#69), `kelson-server` v0 (#139), dry-run everywhere, idempotency, structured errors, MCP server, agent identities, policy. **Runs before M6.** |
 | **M6 · Web UI** | App list and detail, deploy flow with preview, live logs, diff view, rollback — built against the M7 schema |
-| **M8 · Secrets** | SOPS/age, structural no-plaintext guarantee (#82), binding injection, cluster backend |
+| **M8 · Secrets** | ~~SOPS/age (#81)~~ *(landed early, [ADR-0022](adr/0022-sops-age.md))*, structural no-plaintext guarantee (#82), binding injection, cluster backend |
 | **M9 · Data services (v0.1 half)** | CNPG presets (shared/small/ha), backups once per environment, PITR-capable archiving, verified restore, `kelson db`, preset rename (#146) |
 
 ## Phase 3 — Platform

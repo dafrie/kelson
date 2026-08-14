@@ -434,7 +434,7 @@ func TestSecretDeleteDryRunRemovesNothing(t *testing.T) {
 // a command that guessed one would write into the wrong namespace.
 //
 // --env stays a required flag. --project became optional when -f arrived
-// (ADR-0021): the spec names the project, and reading the spec is also how
+// (ADR-0022): the spec names the project, and reading the spec is also how
 // kelson learns which backend holds the value. Without either, the refusal has
 // to name both ways out.
 func TestSecretCommandsRequireTheirTarget(t *testing.T) {

@@ -134,7 +134,7 @@ func TestRevisionMatches(t *testing.T) {
 // build failure whose message describes a mechanism ("Error getting data
 // key"), not a situation. The situation is one of three setup mistakes, all of
 // them far from where the reader is standing, so kelson names them (issue #81,
-// ADR-0021).
+// ADR-0022).
 func TestDecryptionFailureIsNamed(t *testing.T) {
 	messages := []struct {
 		reason  string

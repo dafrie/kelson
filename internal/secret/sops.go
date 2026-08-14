@@ -12,7 +12,7 @@ import (
 	"github.com/dafrie/kelson/internal/sops"
 )
 
-// The `sops` backend's authoring path (issue #81, ADR-0021): the same three
+// The `sops` backend's authoring path (issue #81, ADR-0022): the same three
 // commands as the cluster backend, writing into the delivery repository
 // instead of into the cluster.
 //
@@ -59,7 +59,7 @@ type SOPSConfig struct {
 	// Recipients are the age public keys from `secrets.ageRecipients`. At
 	// least one is required — there is nothing to default an encryption key
 	// to, which is why the model makes the field required rather than
-	// optional (ADR-0021).
+	// optional (ADR-0022).
 	Recipients []string
 
 	// Now stamps the encrypted file's `lastmodified`. Nil means time.Now.
@@ -79,7 +79,7 @@ func NewSOPS(cfg SOPSConfig) (*SOPSStore, error) {
 		return nil, newError(ErrSOPSNoTarget, "",
 			"the sops backend writes into the environment's delivery repository and none is configured",
 			"set delivery.git.repo on the Environment; backend sops requires delivery.mode: flux, which "+
-				"requires a git target (ADR-0021)")
+				"requires a git target (ADR-0022)")
 	}
 	if len(cfg.Recipients) == 0 {
 		return nil, newError(ErrSOPSNoRecipients, "",
@@ -175,7 +175,7 @@ func (s *SOPSStore) refuseKeyLoss(session *git.Session, namespace string, req Se
 			quoteList(req.Keys()), quoteList(lost)),
 		"pass every key the Secret should have — under backend sops a set writes the whole file, because "+
 			"kelson would need the age identity to carry the other keys forward and never holds one. "+
-			"To drop them deliberately, `kelson secret delete "+req.Name+"` first (ADR-0021)")
+			"To drop them deliberately, `kelson secret delete "+req.Name+"` first (ADR-0022)")
 }
 
 // List reports the encrypted Secrets in the delivery repository, masked.

@@ -5,7 +5,7 @@
 // [Store] is the `cluster` backend (issue #116, ADR-0018): a value written
 // through the Kubernetes API into the environment's namespace, read back
 // masked, never persisted by kelson. [SOPSStore] is the `sops` backend (issue
-// #81, [ADR-0021]): the same value encrypted in memory with age recipients and
+// #81, [ADR-0022]): the same value encrypted in memory with age recipients and
 // committed to the delivery repository, decrypted in-cluster by Flux. The two
 // have the same three methods so `kelson secret` selects a backend rather than
 // a code path, and everything the rest of this doc says about redaction,
@@ -83,5 +83,5 @@
 // API and the MCP surface all reach through the same seam.
 //
 // [ADR-0018]: https://github.com/dafrie/kelson/blob/main/docs/adr/0018-secret-references.md
-// [ADR-0021]: https://github.com/dafrie/kelson/blob/main/docs/adr/0021-sops-age.md
+// [ADR-0022]: https://github.com/dafrie/kelson/blob/main/docs/adr/0022-sops-age.md
 package secret

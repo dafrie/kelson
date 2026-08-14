@@ -50,7 +50,7 @@ func secretKeyRefNode(name, key string) *yaml.Node {
 // (ADR-0020, internal/renderer/externalsecrets.go). `sops` means the Secret is
 // in the delivery repository, encrypted, and kustomize-controller decrypts it
 // on the way in — which the renderer expresses by writing `spec.decryption`
-// onto every Kustomization it emits (ADR-0021, sopsDecryption below).
+// onto every Kustomization it emits (ADR-0022, sopsDecryption below).
 //
 // The refusal is the renderer's for the reason ADR-0016's Helm gate is: it is
 // decided from spec data alone, before anything is emitted, so the same
@@ -101,7 +101,7 @@ func sopsRequiresFlux(resolved *model.Resolved) Errors {
 		Remediation: "set delivery.mode: flux on this environment, or use backend: cluster and write the Secret " +
 			"with `kelson secret set`. SOPS keeps the value in the delivery repository and kustomize-controller " +
 			"decrypts it on the way into the cluster; direct mode has no decryptor, so the encrypted file would " +
-			"stay encrypted and every reference to it would fail at pod start (ADR-0021)",
+			"stay encrypted and every reference to it would fail at pod start (ADR-0022)",
 	}}
 }
 
@@ -116,7 +116,7 @@ func sopsRequiresFlux(resolved *model.Resolved) Errors {
 // The Secret it names holds the age *identity*. kelson writes the reference
 // and never the Secret — creating it is the operator's documented step, and a
 // kelson that could write it would be a kelson holding the key that opens
-// every encrypted file in the repository (ADR-0021). The name comes from
+// every encrypted file in the repository (ADR-0022). The name comes from
 // `secrets.ageKeySecret`, defaulted during resolution so nothing here has to
 // decide what an empty one means.
 //

@@ -940,7 +940,7 @@ func underPath(repoPath, prefix string) bool {
 }
 
 // SecretsDir is the subdirectory of the delivery path holding the encrypted
-// Secrets of the `sops` backend (issue #81, ADR-0021):
+// Secrets of the `sops` backend (issue #81, ADR-0022):
 // `<delivery path>/secrets/<name>.enc.yaml`.
 //
 // It is inside the delivery path because that is what makes the mechanism

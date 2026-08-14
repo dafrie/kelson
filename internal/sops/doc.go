@@ -1,5 +1,5 @@
 // Package sops writes SOPS-encrypted Kubernetes Secret manifests with age
-// recipients (issue #81, [ADR-0021]). It encrypts and it never decrypts.
+// recipients (issue #81, [ADR-0022]). It encrypts and it never decrypts.
 //
 // # What it is for
 //
@@ -24,7 +24,7 @@
 // dependency a CLI takes on to encrypt a two-key Secret.
 //
 // The alternative rejected second is shelling out to a `sops` binary. It is
-// honest and it is what ADR-0021 records as the fallback, but it makes a
+// honest and it is what ADR-0022 records as the fallback, but it makes a
 // second executable a runtime dependency of `kelson secret set`, and the
 // plaintext then has to reach that process — through a pipe or, worse, a file.
 // "Plaintext never touches the working tree" is the acceptance criterion of
@@ -80,5 +80,5 @@
 // calling (internal/secret does), so a value cannot reach an error message on
 // any path out of here either.
 //
-// [ADR-0021]: https://github.com/dafrie/kelson/blob/main/docs/adr/0021-sops-age.md
+// [ADR-0022]: https://github.com/dafrie/kelson/blob/main/docs/adr/0022-sops-age.md
 package sops

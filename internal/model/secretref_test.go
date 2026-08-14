@@ -234,7 +234,7 @@ func TestSecretReferenceIsNotALiteral(t *testing.T) {
 // All three backends are here since ADR-0020: `store` left the gate table with
 // it, and `externalSecrets` no longer requires one — with exactly one store on
 // the cluster the renderer resolves it, and only the renderer can know that.
-// `sops` carries its recipient list, which ADR-0021 makes required: there is
+// `sops` carries its recipient list, which ADR-0022 makes required: there is
 // nothing to default an encryption key to.
 func TestSecretBackendUngated(t *testing.T) {
 	for backend, extra := range map[string]string{

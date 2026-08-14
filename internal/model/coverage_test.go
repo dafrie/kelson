@@ -79,11 +79,11 @@ var renderedFields = map[string]map[string]string{
 		"$.spec.components[].env.*.key":                 "renderer: secretKeyRef key within that Secret (ADR-0018)",
 
 		"$.spec.defaults.deliveryMode":            "resolve P4 → internal/delivery: adapter selection",
-		"$.spec.defaults.secrets.backend":         "resolve P4 → renderer: selects the reference mechanism; cluster renders secretKeyRefs, externalSecrets also renders an ExternalSecret per referenced Secret, sops adds the Kustomization decryption block and requires flux (ADR-0021)",
+		"$.spec.defaults.secrets.backend":         "resolve P4 → renderer: selects the reference mechanism; cluster renders secretKeyRefs, externalSecrets also renders an ExternalSecret per referenced Secret, sops adds the Kustomization decryption block and requires flux (ADR-0022)",
 		"$.spec.defaults.secrets.store":           "resolve P4 → renderer: ExternalSecret spec.secretStoreRef, resolved against the ClusterProfile's stores (ADR-0020)",
 		"$.spec.defaults.secrets.refreshInterval": "resolve P4 → renderer: ExternalSecret spec.refreshInterval (default 1h, ADR-0020)",
-		"$.spec.defaults.secrets.ageRecipients":   "resolve P4 → internal/secret: the age public keys `kelson secret set` encrypts to under backend sops (ADR-0021)",
-		"$.spec.defaults.secrets.ageKeySecret":    "resolve P4 → renderer: Kustomization spec.decryption.secretRef.name (default sops-age, ADR-0021)",
+		"$.spec.defaults.secrets.ageRecipients":   "resolve P4 → internal/secret: the age public keys `kelson secret set` encrypts to under backend sops (ADR-0022)",
+		"$.spec.defaults.secrets.ageKeySecret":    "resolve P4 → renderer: Kustomization spec.decryption.secretRef.name (default sops-age, ADR-0022)",
 
 		"$.spec.overlays[].patch":    "renderer: strategic-merge patch against rendered resources",
 		"$.spec.overlays[].manifest": "renderer: extra manifest emitted as-is",
@@ -96,11 +96,11 @@ var renderedFields = map[string]map[string]string{
 		"$.spec.project":   "resolve: binds the Environment to its Project",
 		"$.spec.namespace": "renderer: target namespace on every resource",
 
-		"$.spec.secrets.backend":         "renderer: selects the reference mechanism; cluster renders secretKeyRefs, externalSecrets also renders an ExternalSecret per referenced Secret, sops adds the Kustomization decryption block and requires flux (ADR-0021)",
+		"$.spec.secrets.backend":         "renderer: selects the reference mechanism; cluster renders secretKeyRefs, externalSecrets also renders an ExternalSecret per referenced Secret, sops adds the Kustomization decryption block and requires flux (ADR-0022)",
 		"$.spec.secrets.store":           "renderer: ExternalSecret spec.secretStoreRef, resolved against the ClusterProfile's stores (ADR-0020)",
 		"$.spec.secrets.refreshInterval": "renderer: ExternalSecret spec.refreshInterval (default 1h, ADR-0020)",
-		"$.spec.secrets.ageRecipients":   "internal/secret: the age public keys `kelson secret set` encrypts to under backend sops (ADR-0021)",
-		"$.spec.secrets.ageKeySecret":    "renderer: Kustomization spec.decryption.secretRef.name (default sops-age, ADR-0021)",
+		"$.spec.secrets.ageRecipients":   "internal/secret: the age public keys `kelson secret set` encrypts to under backend sops (ADR-0022)",
+		"$.spec.secrets.ageKeySecret":    "renderer: Kustomization spec.decryption.secretRef.name (default sops-age, ADR-0022)",
 
 		"$.spec.routing.domainSuffix": "renderer: default hostname for ported components",
 		"$.spec.routing.gatewayClass": "renderer: HTTPRoute parentRef",

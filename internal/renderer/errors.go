@@ -101,7 +101,7 @@ const (
 	// `cluster` emits nothing extra (a secretKeyRef already addresses a Secret
 	// in the namespace), `externalSecrets` emits an ExternalSecret per
 	// referenced Secret (ADR-0020), and `sops` emits the decryption block on
-	// every Kustomization kelson writes (ADR-0021). See
+	// every Kustomization kelson writes (ADR-0022). See
 	// internal/renderer/secrets.go.
 	ErrSecretBackendUnsupported = "render/secret-backend-unsupported"
 	// ErrSOPSRequiresFlux: the environment selects backend sops and its
@@ -110,7 +110,7 @@ const (
 	// Secret in the repository would never become a Secret in the cluster and
 	// every reference to it would fail at pod start. It is the same
 	// delivery-mode gate ADR-0016 decision 4 took for charts and ADR-0017 took
-	// for previews, decided from spec data alone (ADR-0021).
+	// for previews, decided from spec data alone (ADR-0022).
 	ErrSOPSRequiresFlux = "render/sops-requires-flux"
 	// ErrExternalSecretsNotInstalled: the environment selects backend
 	// externalSecrets and the ClusterProfile reports no external-secrets

@@ -237,7 +237,7 @@ var decryptionMarkers = []string{
 // the identity in it is not one of the file's recipients. Naming them here is
 // what turns "my deploy is red" into a next step, and it costs nothing when
 // the failure is something else — the markers do not match and nothing is
-// appended (issue #81, ADR-0021).
+// appended (issue #81, ADR-0022).
 //
 // The controller's message is relayed verbatim ahead of this, as every other
 // reason's is. sops does not put secret material in its errors, and

@@ -139,7 +139,7 @@ type Policy struct {
 //
 // `store` and `refreshInterval` configure the `externalSecrets` backend and
 // nothing else (ADR-0020); `ageRecipients` and `ageKeySecret` configure `sops`
-// and nothing else (ADR-0021). Setting a field under the wrong backend is
+// and nothing else (ADR-0022). Setting a field under the wrong backend is
 // refused rather than ignored.
 type SecretBackend struct {
 	Backend SecretBackendType `yaml:"backend" json:"backend" jsonschema:"required,enum=cluster,enum=externalSecrets,enum=sops"`
@@ -168,7 +168,7 @@ type SecretBackend struct {
 	// These are *public* keys and they belong in the spec in the clear, which
 	// is the whole shape of the backend: encrypting needs only the recipient,
 	// decrypting needs the identity, and kelson only ever does the first
-	// (ADR-0021). The private half lives in a Kubernetes Secret the operator
+	// (ADR-0022). The private half lives in a Kubernetes Secret the operator
 	// creates and kustomize-controller reads; nothing in kelson can hold it.
 	//
 	// More than one is the rotation story: a file is wrapped once per

@@ -564,7 +564,7 @@ func (v *validator) ageRecipients(field string, recipients []string) {
 			"secrets.backend sops encrypts to age recipients and none are listed",
 			"generate a key with `age-keygen -o age.key`, keep the AGE-SECRET-KEY line out of Git, and list "+
 				"the public half here: secrets: { backend: sops, ageRecipients: [age1…] }. The private half goes "+
-				"into a Kubernetes Secret the Kustomization decrypts with — kelson never holds it (ADR-0021)")
+				"into a Kubernetes Secret the Kustomization decrypts with — kelson never holds it (ADR-0022)")
 		return
 	}
 	seen := map[string]bool{}
