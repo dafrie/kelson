@@ -184,7 +184,9 @@ spec:
 
 Provenance labels and annotations are stamped exactly as on every other resource, including
 `kelson.dev/project` and `kelson.dev/environment` — which is how a human looking at
-`kelson-data` can tell whose database is whose, and how a future uninstall can find them.
+`kelson-data` can tell whose database is whose, and how `kelson uninstall` finds them. It deletes
+them last of all, in its own `DATA` section of the preview, naming the PersistentVolumeClaims
+CloudNativePG will garbage-collect with the `Cluster` ([installing](install.md), "Uninstalling").
 
 **What `shared` did not do even while it rendered: credentials.** The `Database` CRD creates a
 database, not a role, and generates no Secret. The owner role and its password would live in the
