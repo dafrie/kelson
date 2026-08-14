@@ -80,7 +80,7 @@ func TestDiagnoseComposesTheWholeAnswer(t *testing.T) {
 		},
 	})
 
-	out := h.call(t, "diagnose_application", map[string]any{"project": "hello", "environment": "production"})
+	out := h.call(t, "diagnose_component", map[string]any{"project": "hello", "environment": "production"})
 
 	mustContain(t, out,
 		"hello/production: Degraded — 1 of 2 workloads failing, first is web (crash-loop-back-off)",
@@ -151,7 +151,7 @@ spec:
 		},
 	})
 
-	out := h.call(t, "diagnose_application", map[string]any{"project": "hello", "environment": "production"})
+	out := h.call(t, "diagnose_component", map[string]any{"project": "hello", "environment": "production"})
 	mustContain(t, out,
 		"ghcr.io/acme/hello@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef (pinned)",
 		"ghcr.io/acme/hello:1.4.2", // the unpinned worker keeps the Project answer
@@ -182,7 +182,7 @@ func TestDiagnoseHealthyUsesTail(t *testing.T) {
 		},
 	})
 
-	out := h.call(t, "diagnose_application", map[string]any{"project": "hello", "environment": "production"})
+	out := h.call(t, "diagnose_component", map[string]any{"project": "hello", "environment": "production"})
 	mustContain(t, out, "1 of 1 workloads healthy", "no recorded revisions")
 	if query.GetTail() != diagnoseLogLines || query.GetAround() != nil {
 		t.Errorf("a healthy workload must be read with Tail, got %+v", query)
@@ -210,7 +210,7 @@ func TestDiagnoseTruncatesLogs(t *testing.T) {
 		},
 	})
 
-	out := h.call(t, "diagnose_application", map[string]any{"project": "hello", "environment": "production"})
+	out := h.call(t, "diagnose_component", map[string]any{"project": "hello", "environment": "production"})
 	mustContain(t, out, "… 20 more earlier lines (truncated)", fmt.Sprintf("line %d", diagnoseLogLines+19))
 	mustNotContain(t, out, "line 19 ")
 }
@@ -225,7 +225,7 @@ func TestDiagnoseDegradesWithoutTakingTheDiagnosisDown(t *testing.T) {
 		},
 	})
 
-	out := h.call(t, "diagnose_application", map[string]any{"project": "hello", "environment": "production"})
+	out := h.call(t, "diagnose_component", map[string]any{"project": "hello", "environment": "production"})
 	mustContain(t, out,
 		"1 of 2 workloads failing",
 		"LOGS",
@@ -257,7 +257,7 @@ func TestDiagnoseStatusFailureIsTheAnswer(t *testing.T) {
 		},
 	})
 
-	out := h.callErr(t, "diagnose_application", map[string]any{"project": "hello", "environment": "production"})
+	out := h.callErr(t, "diagnose_component", map[string]any{"project": "hello", "environment": "production"})
 	mustContain(t, out,
 		"kelson.v1alpha1.DeployService.Status failed",
 		"code: store/not-found",
@@ -284,7 +284,7 @@ func TestDiagnoseReportsVersionSkew(t *testing.T) {
 		},
 	})
 
-	out := h.call(t, "diagnose_application", map[string]any{"project": "hello", "environment": "production"})
+	out := h.call(t, "diagnose_component", map[string]any{"project": "hello", "environment": "production"})
 	mustContain(t, out,
 		"VERSION SKEW",
 		"[unsupported]",
@@ -292,7 +292,7 @@ func TestDiagnoseReportsVersionSkew(t *testing.T) {
 		"1.23.0",
 		"kind: postgres",
 	)
-	h.assertComposed(t, "diagnose_application")
+	h.assertComposed(t, "diagnose_component")
 }
 
 // TestDiagnoseSkewSaysNoneRatherThanNothing: a cluster inside the matrix must
@@ -308,7 +308,7 @@ func TestDiagnoseSkewSaysNoneRatherThanNothing(t *testing.T) {
 		},
 	})
 
-	out := h.call(t, "diagnose_application", map[string]any{"project": "hello", "environment": "production"})
+	out := h.call(t, "diagnose_component", map[string]any{"project": "hello", "environment": "production"})
 	mustContain(t, out, "VERSION SKEW", "none: every component this cluster reports")
 }
 
@@ -322,6 +322,6 @@ func TestDiagnoseSkewDegradesWhenTheServerHasNoCluster(t *testing.T) {
 		},
 	})
 
-	out := h.call(t, "diagnose_application", map[string]any{"project": "hello", "environment": "production"})
+	out := h.call(t, "diagnose_component", map[string]any{"project": "hello", "environment": "production"})
 	mustContain(t, out, "VERSION SKEW", "unavailable")
 }

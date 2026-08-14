@@ -55,10 +55,10 @@ MIT. Every feature. SSO, RBAC and audit logs are security basics, not upsells. P
 Three concepts, and no more without a strong argument. See [ADR-0006](adr/0006-project-application-environment.md).
 
 - **Project** — a grouping with shared configuration. A product or a team's surface area.
-- **Application** — one deployable. A web service, a worker, a cron job. Renders to one workload.
-- **Environment** — where an Application runs and what differs there. Cluster, namespace, domain, delivery mode, policy.
+- **Component** — one deployable. A web service, a worker, a cron job. Renders to one workload.
+- **Environment** — where a Component runs and what differs there. Cluster, namespace, domain, delivery mode, policy.
 
-A typical service is one Project containing three Applications, deployed into two or three Environments.
+A typical service is one Project containing three Components, deployed into two or three Environments.
 
 ## Non-goals
 
@@ -66,7 +66,7 @@ A typical service is one Project containing three Applications, deployed into tw
 - **Not a general-purpose dashboard.** Headlamp and k9s exist. kelson shows applications, not every resource in the cluster.
 - **Not a CI system.** kelson builds images and deploys them. It doesn't replace GitHub Actions or run your test matrix.
 - **Not a replacement for Flux.** kelson can install Flux (via flux-operator) for someone who has nothing, but composing with an existing installation is the design point. Flux is the only supported GitOps mode ([ADR-0012](adr/0012-flux-only-gitops.md)); the adapter seam stays open for others.
-- **Not a monitoring stack.** kelson adopts your Prometheus, Loki and Grafana and renders per-application views. It doesn't ship a TSDB.
+- **Not a monitoring stack.** kelson adopts your Prometheus, Loki and Grafana and renders per-component views. It doesn't ship a TSDB.
 - **Not cloud infrastructure provisioning.** No Crossplane-style resource graph. If you need an RDS instance, provision it with Crossplane or Terraform and reference the result.
 
 ## What success looks like

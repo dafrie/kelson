@@ -38,6 +38,7 @@ import (
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	apivalidation "k8s.io/apimachinery/pkg/api/validation"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
@@ -296,7 +297,7 @@ func (a *Adapter) applySet(ctx context.Context, set delivery.ManifestSet, rec Re
 	// pruned, so the previous revision keeps serving.
 	//
 	// A rollback deliberately does not re-run release commands. Rolling the
-	// application back does not roll a migration back — a schema change is not
+	// workload back does not roll a migration back — a schema change is not
 	// in the rendered output and kelson has no down-migration to run — so
 	// re-running the old revision's release command would at best repeat work
 	// the database has already done. The rolled-back workloads meet the newer
@@ -761,6 +762,14 @@ func applyError(ref ResourceRef, err error) error {
 		conflict.Cause = err.Error()
 		return conflict
 	}
+	if fields, ok := immutableFields(err); ok {
+		immutable := delivery.ImmutableField(ref.String(), fields,
+			"the API server refuses the update: "+fields+" cannot change on an existing object",
+			"delete "+ref.String()+" and deploy again — re-deploying without deleting fails the same way, "+
+				"and there is no in-place edit that reaches the new value")
+		immutable.Cause = err.Error()
+		return immutable
+	}
 	if apierrors.IsInvalid(err) || apierrors.IsBadRequest(err) {
 		return withCause(delivery.ApplyFailed(ref.String(), "",
 			"the API server rejected the resource: "+err.Error(),
@@ -779,6 +788,48 @@ func applyError(ref ResourceRef, err error) error {
 func withCause(e delivery.Error, cause error) delivery.Error {
 	e.Cause = cause.Error()
 	return e
+}
+
+// immutableFields pulls the field paths out of a 422 the API server rejected
+// because they cannot change on an object that already exists. A Deployment's
+// spec.selector is the case this exists for: ADR-0027 renamed the label the
+// selector matches on, and every Deployment applied before that change refuses
+// every apply after it. Without this branch the caller reads
+// "the API server rejected the resource" plus a remediation telling it to fix
+// the spec — which is exactly the wrong instruction, because the spec is right
+// and the live object is what has to go.
+//
+// Detection is on the message rather than the reason: the API server reports
+// every immutability rejection as Invalid, and only the cause distinguishes
+// "you cannot change this" from "this value is malformed".
+func immutableFields(err error) (string, bool) {
+	if !apierrors.IsInvalid(err) {
+		return "", false
+	}
+	var status apierrors.APIStatus
+	if !errors.As(err, &status) || status.Status().Details == nil {
+		return "", false
+	}
+	var fields []string
+	seen := map[string]bool{}
+	for _, cause := range status.Status().Details.Causes {
+		if !strings.Contains(cause.Message, apivalidation.FieldImmutableErrorMsg) {
+			continue
+		}
+		name := cause.Field
+		if name == "" {
+			name = "a field"
+		}
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		fields = append(fields, name)
+	}
+	if len(fields) == 0 {
+		return "", false
+	}
+	return strings.Join(fields, ", "), true
 }
 
 // conflictDetail pulls the contested field paths and owning managers out of a

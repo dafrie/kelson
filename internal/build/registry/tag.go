@@ -11,15 +11,15 @@ const maxTagLength = 128
 // Tag names the image a build produced, derived deterministically from the
 // source revision (issue #51). The convention is:
 //
-//	<project>-<application>-<revision>
+//	<project>-<component>-<revision>
 //
 // each sanitized to Docker tag characters ([a-zA-Z0-9_.-]) and truncated so
 // the whole tag fits the 128-byte limit. The tag is for humans only —
 // reproducibility comes from the digest, which is what rendered manifests pin
 // to. The revision is the most volatile component, so the truncation budget is
-// taken from it (project and application prefix stay intact).
-func Tag(project, application, revision string) string {
-	tag := sanitize(project) + "-" + sanitize(application) + "-" + sanitize(revision)
+// taken from it (project and component prefix stay intact).
+func Tag(project, component, revision string) string {
+	tag := sanitize(project) + "-" + sanitize(component) + "-" + sanitize(revision)
 	if len(tag) > maxTagLength {
 		tag = strings.TrimRight(tag[:maxTagLength], "-.")
 	}

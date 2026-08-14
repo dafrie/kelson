@@ -18,8 +18,8 @@ PROJECT_FILE="$EXAMPLE_DIR/project.yaml"
 ENV_FILE="$EXAMPLE_DIR/e2e.yaml"
 ENV_NAME="e2e"
 PROJECT_NAME="hello-e2e"
-APP_NAME="web"
-SELECTOR="kelson.dev/project=${PROJECT_NAME},kelson.dev/application=${APP_NAME}"
+COMPONENT_NAME="web"
+SELECTOR="kelson.dev/project=${PROJECT_NAME},kelson.dev/component=${COMPONENT_NAME}"
 # NAMESPACE is derived from the rendered manifests once render has run (below)
 # rather than hardcoded, so it can't drift from what the renderer actually
 # targets.
@@ -80,10 +80,10 @@ if ! "$KELSON" deploy -f "$PROJECT_FILE" -f "$ENV_FILE" --env "$ENV_NAME" \
 fi
 log "deploy exited 0"
 
-kubectl -n "$NAMESPACE" rollout status deployment/"$APP_NAME" --timeout=60s ||
+kubectl -n "$NAMESPACE" rollout status deployment/"$COMPONENT_NAME" --timeout=60s ||
 	die "kubectl does not agree the Deployment is rolled out after a successful deploy"
-wait_for "a ready ${APP_NAME} pod" '{.items[*].status.containerStatuses[*].ready}' "true" 1 0
-log "kubectl confirms ${APP_NAME} is running and ready in ${NAMESPACE}"
+wait_for "a ready ${COMPONENT_NAME} pod" '{.items[*].status.containerStatuses[*].ready}' "true" 1 0
+log "kubectl confirms ${COMPONENT_NAME} is running and ready in ${NAMESPACE}"
 
 log "== stage: induce CrashLoopBackOff =="
 # whoami exits 2 on an unrecognised flag (verified locally: `docker run
@@ -132,10 +132,10 @@ if ! "$KELSON" rollback -f "$PROJECT_FILE" -f "$ENV_FILE" --env "$ENV_NAME" --ku
 fi
 log "rollback exited 0"
 
-kubectl -n "$NAMESPACE" rollout status deployment/"$APP_NAME" --timeout=60s ||
+kubectl -n "$NAMESPACE" rollout status deployment/"$COMPONENT_NAME" --timeout=60s ||
 	die "kubectl does not agree the Deployment rolled out after rollback"
 
-command_after=$(kubectl -n "$NAMESPACE" get deployment "$APP_NAME" -o jsonpath='{.spec.template.spec.containers[0].command}')
+command_after=$(kubectl -n "$NAMESPACE" get deployment "$COMPONENT_NAME" -o jsonpath='{.spec.template.spec.containers[0].command}')
 if [[ -n "$command_after" && "$command_after" != "[]" ]]; then
 	die "rollback did not restore the original container command (found: ${command_after})"
 fi
@@ -153,7 +153,7 @@ for _ in $(seq 1 12); do
 	sleep 5
 done
 [[ "$ready_after" == *"true"* && "$ready_after" != *"false"* ]] ||
-	die "not every surviving ${APP_NAME} pod is ready after rollback (found: ${ready_after:-none})"
+	die "not every surviving ${COMPONENT_NAME} pod is ready after rollback (found: ${ready_after:-none})"
 log "kubectl confirms the original workload is restored and healthy"
 
 elapsed=$(($(date +%s) - start_ts))

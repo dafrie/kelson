@@ -39,7 +39,7 @@ const (
 )
 
 // ellipsis marks a value this package cut. It is a distinct marker rather than
-// three dots so a reader can tell kelson's truncation from the application's
+// three dots so a reader can tell kelson's truncation from the workload's
 // own output.
 const ellipsis = " […truncated]"
 

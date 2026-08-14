@@ -57,7 +57,7 @@ still run and the script then fails fast with an explicit message rather than fa
 
 ## The example
 
-`examples/hello-e2e` is deliberately minimal: one application, one port, one health path, deployed
+`examples/hello-e2e` is deliberately minimal: one component, one port, one health path, deployed
 with [`traefik/whoami`](https://github.com/traefik/whoami) — a small, real, publicly hosted image that
 actually starts and answers HTTP (every path, 200), which keeps the "healthy" case boringly
 deterministic. It carries no `delivery.mode`, so it resolves to the `direct` adapter, and no routing,

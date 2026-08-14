@@ -368,7 +368,7 @@ func (h *harness) waitForRollout(deployment, wantImage string, timeout time.Dura
 			return false, "deployment not readable: " + strings.TrimSpace(tmpl.combined())
 		}
 		pods := h.kubectl("-n", h.namespace, "get", "pods",
-			"-l", "kelson.dev/application="+deployment,
+			"-l", "kelson.dev/component="+deployment,
 			"-o", "jsonpath={range .items[*]}{.metadata.name}={.status.phase}/{.spec.containers[0].image} {end}")
 		observed := strings.TrimSpace(tmpl.stdout) + " | pods: " + strings.TrimSpace(pods.stdout)
 

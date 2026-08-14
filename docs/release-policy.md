@@ -30,9 +30,9 @@ release. Cutting a release is one command:
 git tag v0.X.Y && git push origin v0.X.Y
 ```
 
-### What this means for the Application spec
+### What this means for the spec
 
-The Application spec (`kelson.dev/v1alpha1`) is a versioned input to the
+The spec (`kelson.dev/v1alpha1`) is a versioned input to the
 renderer, not a private schema. It is what users, agents and the UI all author
 against. Compatibility rules:
 
@@ -48,7 +48,7 @@ against. Compatibility rules:
 
 ## CRD / spec API versioning
 
-The control-plane CRDs and the Application/Project/Environment spec share the
+The control-plane CRDs and the Project/Component/Environment spec share the
 `kelson.dev/v1alpha1` API version. A breaking change to the schema *that
 cannot be expressed as a field deprecation* requires a new API version
 (`v1beta1`, then `v1`). The cycle:
@@ -120,7 +120,7 @@ gets the deprecation warning they need *before* the removal lands.
 
 For the lifetime of `1.x` this is a hard promise:
 
-> An Application spec that rendered successfully against `kelson vX.Y.Z` will
+> A spec that rendered successfully against `kelson vX.Y.Z` will
 > render successfully against any `kelson vX.Y'.Z'` where `Y' ≥ Y`, *unless*
 > a deprecation cycle has explicitly closed for a field the spec still sets.
 > When a cycle closes, the spec continues to render; the deprecated field is

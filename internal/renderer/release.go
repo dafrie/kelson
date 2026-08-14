@@ -106,8 +106,8 @@ func releaseRequiresDirect(resolved *model.Resolved) Errors {
 			continue
 		}
 		errs = append(errs, Error{
-			Code:        ErrReleaseRequiresDirect,
-			Application: c.Name,
+			Code:      ErrReleaseRequiresDirect,
+			Component: c.Name,
 			Message: "component " + quoted(c.Name) + " declares a release command, which must finish before this " +
 				"revision's workloads roll, but environment " + quoted(resolved.Environment.Name) +
 				" has delivery mode " + quoted(string(resolved.Environment.Mode)),
@@ -142,8 +142,8 @@ func releaseManifests(
 	name := releaseJobName(c.Name, hash)
 	if len(name) > maxReleaseJobName {
 		return nil, Errors{{
-			Code:        ErrReleaseName,
-			Application: c.Name,
+			Code:      ErrReleaseName,
+			Component: c.Name,
 			Message: "the release Job of component " + quoted(c.Name) + " would be named " + quoted(name) +
 				", which is longer than the 63 characters a Kubernetes object name allows",
 			Remediation: "shorten the component name to at most " +
@@ -156,7 +156,7 @@ func releaseManifests(
 	prov := provenance{
 		project:     resolved.Project,
 		environment: resolved.Environment.Name,
-		application: c.Name,
+		component:   c.Name,
 		namespace:   resolved.Environment.Namespace,
 		specHash:    hash,
 	}

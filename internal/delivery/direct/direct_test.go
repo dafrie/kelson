@@ -205,6 +205,48 @@ func TestApplyConflictIsLoud(t *testing.T) {
 	}
 }
 
+// TestApplyImmutableFieldNamesTheDelete is ADR-0027's operational consequence
+// made legible. Renaming the selector label orphans every Deployment applied
+// before the rename: the API server refuses the apply because spec.selector is
+// immutable, and it will refuse it again on every retry. The generic
+// apply-failed remediation ("fix the spec") is precisely the wrong advice here
+// — the spec is what the object should be — so this failure gets its own code
+// and a remediation that names the delete.
+func TestApplyImmutableFieldNamesTheDelete(t *testing.T) {
+	c := newCluster()
+	a := newAdapter(t, c)
+	c.refusesImmutable("Deployment/"+testNS+"/checkout", "spec.selector")
+
+	_, err := a.Apply(context.Background(), fullSet(t))
+	if err == nil {
+		t.Fatal("expected the apply to fail on the immutable selector")
+	}
+	if !delivery.AsImmutableField(err) {
+		t.Fatalf("expected delivery/immutable-field, got %v", err)
+	}
+	var de delivery.Error
+	if !errors.As(err, &de) {
+		t.Fatalf("expected a structured delivery.Error, got %T", err)
+	}
+	if !strings.Contains(de.Resource, "checkout") {
+		t.Errorf("the refusal must name the resource, got %q", de.Resource)
+	}
+	if de.Field != "spec.selector" {
+		t.Errorf("the refusal must name the stuck field, got %q", de.Field)
+	}
+	if !strings.Contains(de.Remediation, "delete") {
+		t.Errorf("the remediation must name the delete — a retry cannot help; got %q", de.Remediation)
+	}
+	if de.Cause == "" {
+		t.Error("the API server's own words must survive in Cause")
+	}
+	// Not the generic rejection: a caller switching on the code must be able to
+	// tell "your spec is wrong" from "delete this object and deploy again".
+	if delivery.AsApplyFailed(err) {
+		t.Error("an immutable field must not be classified as a generic apply failure")
+	}
+}
+
 // TestPruneRemovesOwnedResourcesOnly covers the happy path of #33 pruning:
 // what kelson applied and no longer declares is deleted, in the reverse of the
 // apply order.

@@ -23,7 +23,7 @@ With dry_run="none" this tool does not return a stream: it runs the deployment t
 
 Preconditions: the project must be stored (put_spec) and declare the environment. Supply image when the spec builds from source and you want a specific tag.
 
-Cost: dry_run="render" is fast. dry_run="none" blocks until the deployment settles or the server's timeout expires (5 minutes by default), so call it once and use wait_for_outcome or diagnose_application to follow up rather than calling it again.
+Cost: dry_run="render" is fast. dry_run="none" blocks until the deployment settles or the server's timeout expires (5 minutes by default), so call it once and use wait_for_outcome or diagnose_component to follow up rather than calling it again.
 
 Every call carries an idempotency key, returned in the answer. If you retry after a timeout, pass the same idempotency_key back so the retry is the same deployment rather than a second one.
 
@@ -125,7 +125,7 @@ func (c *clients) deployEnvironment(ctx context.Context, in deployInput) (*mcpsd
 	if settled == nil && dryRun == kelsonv1alpha1.DryRun_DRY_RUN_NONE {
 		r.section("OUTCOME")
 		r.addf("  the stream ended without a settled event; the deployment's outcome is unknown. " +
-			"Call diagnose_application to read the environment's current state.")
+			"Call diagnose_component to read the environment's current state.")
 	}
 	return text(&r)
 }

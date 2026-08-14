@@ -19,7 +19,7 @@ metadata:
   namespace: checkout-production
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: mailer
+    kelson.dev/component: mailer
     kelson.dev/environment: production
     kelson.dev/project: checkout
   annotations:
@@ -36,7 +36,7 @@ metadata:
   namespace: checkout-production
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: mailer
+    kelson.dev/component: mailer
     kelson.dev/environment: production
     kelson.dev/project: checkout
   annotations:
@@ -67,12 +67,12 @@ metadata:
   namespace: checkout-production
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: worker
+    kelson.dev/component: worker
     kelson.dev/environment: production
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.2.0
-    kelson.dev/spec-hash: sha256:a82c307e45e8dcba3b12100dc806530080d526a0103140467e3c27b0d8c7320a
+    kelson.dev/spec-hash: sha256:e10745de0d7fbc8f642e2c53191abe281eddfbb62f66680d5ea4bbdf0cfd3f0b
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -81,23 +81,23 @@ metadata:
   namespace: checkout-production
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: worker
+    kelson.dev/component: worker
     kelson.dev/environment: production
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.2.0
-    kelson.dev/spec-hash: sha256:a82c307e45e8dcba3b12100dc806530080d526a0103140467e3c27b0d8c7320a
+    kelson.dev/spec-hash: sha256:e10745de0d7fbc8f642e2c53191abe281eddfbb62f66680d5ea4bbdf0cfd3f0b
 spec:
   replicas: 1
   selector:
     matchLabels:
       kelson.dev/project: checkout
-      kelson.dev/application: worker
+      kelson.dev/component: worker
   template:
     metadata:
       labels:
         app.kubernetes.io/managed-by: kelson
-        kelson.dev/application: worker
+        kelson.dev/component: worker
         kelson.dev/environment: production
         kelson.dev/project: checkout
     spec:

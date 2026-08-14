@@ -41,22 +41,22 @@ func promoteTool(c *clients) tool {
 	// Not destructive: a promotion writes a spec field and takes nothing away
 	// from what is currently serving. What it changes only reaches the cluster
 	// when someone deploys, and `deploy` is the tool that carries that warning.
-	def := mutatingTool("promote_application", "Promote an environment", promoteDescription, false)
+	def := mutatingTool("promote_component", "Promote an environment", promoteDescription, false)
 	return tool{
 		def:  def,
 		rpcs: []rpc{rpcPromote},
 		add: func(srv *mcpsdk.Server) {
 			mcpsdk.AddTool(srv, def, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in promoteInput) (*mcpsdk.CallToolResult, any, error) {
-				return c.promoteApplication(ctx, in)
+				return c.promoteComponent(ctx, in)
 			})
 		},
 	}
 }
 
-// promoteApplication composes the Promote RPC. Dry run is first-class and is
+// promoteComponent composes the Promote RPC. Dry run is first-class and is
 // the default: the preview and the write return the same answer shape, so an
 // agent reads what would happen in exactly the form it will read what did.
-func (c *clients) promoteApplication(ctx context.Context, in promoteInput) (*mcpsdk.CallToolResult, any, error) {
+func (c *clients) promoteComponent(ctx context.Context, in promoteInput) (*mcpsdk.CallToolResult, any, error) {
 	dryRun := kelsonv1alpha1.DryRun_DRY_RUN_RENDER
 	if in.Execute {
 		dryRun = kelsonv1alpha1.DryRun_DRY_RUN_NONE

@@ -240,7 +240,7 @@ func TestBuildPrintsThePinnedReferenceLast(t *testing.T) {
 
 // The destination is derived, not configured: repository from the registry
 // prefix plus the project name, tag from project and revision, and one build
-// for the whole Project (model rule P3 shares its image with every application
+// for the whole Project (model rule P3 shares its image with every component
 // that names none).
 func TestBuildDerivesDestinationAndRequest(t *testing.T) {
 	builder := &fakeBuilder{}
@@ -274,8 +274,8 @@ func TestBuildDerivesDestinationAndRequest(t *testing.T) {
 	if req.Project != "shop" || req.Environment != "production" {
 		t.Errorf("Project/Environment = %q/%q", req.Project, req.Environment)
 	}
-	if req.Application != "" {
-		t.Errorf("Application = %q, want empty: one build serves the whole Project", req.Application)
+	if req.Component != "" {
+		t.Errorf("Component = %q, want empty: one build serves the whole Project", req.Component)
 	}
 
 	if target.namespace != "builds" || target.pushSecret != "ghcr-push" {

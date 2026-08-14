@@ -9,7 +9,7 @@ import (
 
 // buildFromSource is the spec shape every project under examples/ that builds
 // its own image has: source + build, no image anywhere. Resolution leaves such
-// applications carrying model.ImageUnresolved.
+// components carrying model.ImageUnresolved.
 func buildFromSource() *model.Resolved {
 	project := &model.Project{
 		TypeMeta: model.TypeMeta{APIVersion: "kelson.dev/v1alpha1", Kind: "Project"},
@@ -56,14 +56,14 @@ func TestRenderRejectsUnresolvedImage(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected renderer.Errors, got %#v", err)
 	}
-	// Both applications are reported: one run lists all the work.
+	// Both components are reported: one run lists all the work.
 	if len(rerrs) != 2 {
-		t.Fatalf("expected one error per application, got %d: %v", len(rerrs), rerrs)
+		t.Fatalf("expected one error per component, got %d: %v", len(rerrs), rerrs)
 	}
 	for i, want := range []string{"web", "worker"} {
 		e := rerrs[i]
-		if e.Code != ErrImageUnresolved || e.Application != want {
-			t.Fatalf("error %d: got %#v, want code %s for application %s", i, e, ErrImageUnresolved, want)
+		if e.Code != ErrImageUnresolved || e.Component != want {
+			t.Fatalf("error %d: got %#v, want code %s for component %s", i, e, ErrImageUnresolved, want)
 		}
 		if e.Remediation == "" {
 			t.Fatalf("error %d has no remediation: %#v", i, e)
@@ -121,12 +121,12 @@ func TestRenderPromotionShape(t *testing.T) {
 	}
 	_, err = Render(staging, gatewayProfile(), nil)
 	rerrs, ok := err.(Errors)
-	if !ok || len(rerrs) != 1 || rerrs[0].Code != ErrImageUnresolved || rerrs[0].Application != "web" {
+	if !ok || len(rerrs) != 1 || rerrs[0].Code != ErrImageUnresolved || rerrs[0].Component != "web" {
 		t.Fatalf("an unpinned environment must still fail with %s, got %#v", ErrImageUnresolved, err)
 	}
 }
 
-// TestRenderRejectsEmptyImage: validation rejects an application with no image
+// TestRenderRejectsEmptyImage: validation rejects a component with no image
 // source, so an empty image reaching the renderer is a caller bug — but it
 // still must not render `image: ""`.
 func TestRenderRejectsEmptyImage(t *testing.T) {
@@ -134,7 +134,7 @@ func TestRenderRejectsEmptyImage(t *testing.T) {
 	resolved.Components[1].Image = ""
 	_, err := Render(resolved, gatewayProfile(), nil)
 	rerrs, ok := err.(Errors)
-	if !ok || len(rerrs) != 1 || rerrs[0].Code != ErrImageUnresolved || rerrs[0].Application != "worker" {
+	if !ok || len(rerrs) != 1 || rerrs[0].Code != ErrImageUnresolved || rerrs[0].Component != "worker" {
 		t.Fatalf("expected one image/unresolved error for worker, got %#v", err)
 	}
 }

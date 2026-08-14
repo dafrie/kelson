@@ -70,8 +70,8 @@ spec:
 		ErrSecretLiteral,     // DATABASE_URL embeds a password
 		ErrUnknownService,    // cache is never declared
 		ErrOutOfRange,        // port 70000
-		ErrDuplicateName,     // two applications named web
-		ErrMutuallyExclusive, // schedule + port on the same application
+		ErrDuplicateName,     // two components named web
+		ErrMutuallyExclusive, // schedule + port on the same component
 	}
 	codes := errs.Codes()
 	for _, w := range want {
@@ -582,7 +582,7 @@ spec:
       schedule: "0 3 * * *"
 `))
 	if len(errs) != 0 {
-		t.Fatalf("cron application must be valid, got %v", errs)
+		t.Fatalf("cron component must be valid, got %v", errs)
 	}
 	if got := docs[0].(*Project).Spec.Components[0].EffectiveKind(); got != ComponentCron {
 		t.Errorf("workload = %q, want cron", got)

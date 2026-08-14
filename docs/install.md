@@ -175,12 +175,12 @@ There are **separate layers**, and removing one never removes another. That sepa
 
 | Layer | What removes it | What it leaves |
 |---|---|---|
-| An application environment kelson deployed | `kelson uninstall --project <p> --env <e>` | everything in the namespace that is not kelson's |
-| The kelson server | `helm uninstall kelson -n kelson-system` | every application kelson deployed, still running |
+| An environment kelson deployed | `kelson uninstall --project <p> --env <e>` | everything in the namespace that is not kelson's |
+| The kelson server | `helm uninstall kelson -n kelson-system` | every workload kelson deployed, still running |
 | A platform component **kelson installed** | `kelson uninstall --component <name>` | every part of it kelson adopted rather than created |
 | A platform component kelson did **not** install | your own tooling — never kelson's | — |
 
-### The applications: `kelson uninstall`
+### The deployed workloads: `kelson uninstall`
 
 ```sh
 kelson uninstall --project checkout --env production

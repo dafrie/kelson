@@ -17,7 +17,7 @@ import (
 // Data components deliberately carry no such label — a managed data service is
 // not owned by a component in this sense (internal/renderer/dataservice.go) —
 // which is why they fall out of [Deployed] without a special case.
-const labelComponent = "kelson.dev/application"
+const labelComponent = "kelson.dev/component"
 
 // Deployed extracts the image each workload component runs, from the rendered
 // manifests a revision recorded.

@@ -113,7 +113,7 @@ func (f CaptureFunc) Capture(ctx context.Context) (clusterprofile.ClusterProfile
 	return f(ctx)
 }
 
-// Target is what a delivery RPC resolved from its spec: which application
+// Target is what a delivery RPC resolved from its spec: which component
 // model, in which mode, against which cluster shape. It mirrors cmd/kelson's
 // deliveryTarget minus the CLI-only fields (kubeconfig and the local history
 // directory) — the server's history is cluster state (ADR-0013 §1).

@@ -133,7 +133,7 @@ func TestWaitTimesOut(t *testing.T) {
 	mustContain(t, out,
 		"TIMEOUT after 1s",
 		"nothing terminal happened in the window",
-		"diagnose_application",
+		"diagnose_component",
 		"status Committed -> Applied",
 	)
 }
@@ -149,5 +149,5 @@ func TestWaitOnAnEmptyScope(t *testing.T) {
 	})
 
 	out := h.call(t, "wait_for_outcome", map[string]any{"project": "nope", "environment": "production"})
-	mustContain(t, out, "STREAM ENDED", "list_applications", "EVENTS (0)")
+	mustContain(t, out, "STREAM ENDED", "list_components", "EVENTS (0)")
 }

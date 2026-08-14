@@ -7,11 +7,13 @@ import (
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	apivalidation "k8s.io/apimachinery/pkg/api/validation"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	k8stesting "k8s.io/client-go/testing"
 )
@@ -35,6 +37,10 @@ type cluster struct {
 	forced   []bool
 	// conflicts maps a resource key to the fields another field manager owns.
 	conflicts map[string]conflict
+	// immutable maps a resource key to the fields the API server refuses to
+	// change on an object that already exists — a Deployment's spec.selector
+	// after ADR-0027 renamed the label it matches on.
+	immutable map[string][]string
 	// events is the interleaved log of applies and release-Job reads. The
 	// release hook's whole contract is about what happens BETWEEN two applies
 	// (issue #104), which an apply-only log cannot show.
@@ -55,6 +61,7 @@ func newCluster(objs ...runtime.Object) *cluster {
 	c := &cluster{
 		dyn:       dynamicfake.NewSimpleDynamicClientWithCustomListKinds(testScheme(), nil, objs...),
 		conflicts: map[string]conflict{},
+		immutable: map[string][]string{},
 	}
 	c.dyn.PrependReactor("patch", "*", c.reactApply)
 	c.dyn.PrependReactor("delete", "*", c.recordDelete)
@@ -130,6 +137,16 @@ func (c *cluster) ownedElsewhere(key, owner string, fields ...string) {
 	c.conflicts[key] = conflict{owner: owner, fields: fields}
 }
 
+// refusesImmutable seeds the 422 a real API server returns when an update
+// touches a field that cannot change on an existing object. The error is built
+// through apierrors.NewInvalid and field.Invalid rather than hand-assembled, so
+// the test asserts against the shape the API server actually sends.
+func (c *cluster) refusesImmutable(key string, fields ...string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.immutable[key] = fields
+}
+
 func (c *cluster) reactApply(action k8stesting.Action) (bool, runtime.Object, error) {
 	pa, ok := action.(k8stesting.PatchActionImpl)
 	if !ok || pa.PatchType != types.ApplyPatchType {
@@ -143,8 +160,16 @@ func (c *cluster) reactApply(action k8stesting.Action) (bool, runtime.Object, er
 
 	c.mu.Lock()
 	conf, conflicted := c.conflicts[key]
+	frozen := c.immutable[key]
 	forced := pa.PatchOptions.Force != nil && *pa.PatchOptions.Force
 	c.mu.Unlock()
+	if len(frozen) > 0 {
+		var errs field.ErrorList
+		for _, f := range frozen {
+			errs = append(errs, field.Invalid(field.NewPath(f), "…", apivalidation.FieldImmutableErrorMsg))
+		}
+		return true, nil, apierrors.NewInvalid(obj.GroupVersionKind().GroupKind(), obj.GetName(), errs)
+	}
 	if conflicted && !forced {
 		causes := make([]metav1.StatusCause, 0, len(conf.fields))
 		for _, f := range conf.fields {

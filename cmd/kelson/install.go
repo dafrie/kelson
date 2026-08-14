@@ -17,7 +17,7 @@ import (
 //
 // # Why it takes a component and not a spec
 //
-// Everything else in this CLI acts on an application. This acts on the
+// Everything else in this CLI acts on a component. This acts on the
 // cluster's platform layer — the operators kelson delegates to (ADR-0005) —
 // which no spec describes and which is shared by every project in the cluster.
 // So the addressing is a component name from one table (internal/delivery/

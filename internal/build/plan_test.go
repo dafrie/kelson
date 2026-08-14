@@ -120,7 +120,7 @@ func TestResolveStrategyPrecedence(t *testing.T) {
 }
 
 // The tag repeats the project name because a kelson build is per-Project and
-// has no single application to name, and it shortens the revision because the
+// has no single component to name, and it shortens the revision because the
 // full commit lives in Request.Revision. Both are load-bearing conventions
 // (docs/build.md), so they are pinned rather than left to drift.
 func TestDestinationTag(t *testing.T) {

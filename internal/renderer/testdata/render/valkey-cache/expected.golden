@@ -44,12 +44,12 @@ metadata:
   namespace: checkout-staging
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: worker
+    kelson.dev/component: worker
     kelson.dev/environment: staging
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.2.0
-    kelson.dev/spec-hash: sha256:c8e3e9b9a1372e5676f7d036282ae9c49f8bd93f76e53749c1939d644c84e46c
+    kelson.dev/spec-hash: sha256:0266350aabb62e50213cf757250d55904afd7d16eb6834deac80072f9b9ed5c2
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -58,23 +58,23 @@ metadata:
   namespace: checkout-staging
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: worker
+    kelson.dev/component: worker
     kelson.dev/environment: staging
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.2.0
-    kelson.dev/spec-hash: sha256:c8e3e9b9a1372e5676f7d036282ae9c49f8bd93f76e53749c1939d644c84e46c
+    kelson.dev/spec-hash: sha256:0266350aabb62e50213cf757250d55904afd7d16eb6834deac80072f9b9ed5c2
 spec:
   replicas: 1
   selector:
     matchLabels:
       kelson.dev/project: checkout
-      kelson.dev/application: worker
+      kelson.dev/component: worker
   template:
     metadata:
       labels:
         app.kubernetes.io/managed-by: kelson
-        kelson.dev/application: worker
+        kelson.dev/component: worker
         kelson.dev/environment: staging
         kelson.dev/project: checkout
     spec:

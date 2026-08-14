@@ -24,7 +24,7 @@ func TestLogsWindowBounds(t *testing.T) {
 	})
 
 	out := h.call(t, "logs_window", map[string]any{
-		"project": "hello", "environment": "production", "application": "web", "tail": 5000,
+		"project": "hello", "environment": "production", "component": "web", "tail": 5000,
 	})
 	mustContain(t, out,
 		"note: tail 5000 was clamped to the tool's cap of 200 lines.",
@@ -53,7 +53,7 @@ func TestLogsWindowNamespaceFallback(t *testing.T) {
 	})
 
 	out := h.call(t, "logs_window", map[string]any{
-		"project": "hello", "environment": "production", "application": "web",
+		"project": "hello", "environment": "production", "component": "web",
 	})
 	mustContain(t, out,
 		"namespace=hello-production",
@@ -65,17 +65,17 @@ func TestLogsWindowNamespaceFallback(t *testing.T) {
 	}
 }
 
-// TestLogsWindowNeedsAnApplication: with no status to pick a workload from and
-// no application named, the tool says what to do instead of querying with an
+// TestLogsWindowNeedsAComponent: with no status to pick a workload from and
+// no component named, the tool says what to do instead of querying with an
 // empty selector.
-func TestLogsWindowNeedsAnApplication(t *testing.T) {
+func TestLogsWindowNeedsAComponent(t *testing.T) {
 	h := start(t, &fakeServer{
 		status: func(*kelsonv1alpha1.StatusRequest) (*kelsonv1alpha1.StatusResponse, error) {
 			return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf("api: no cluster"))
 		},
 	})
 	out := h.callErr(t, "logs_window", map[string]any{"project": "hello", "environment": "production"})
-	mustContain(t, out, "cannot pick a workload", "diagnose_application")
+	mustContain(t, out, "cannot pick a workload", "diagnose_component")
 }
 
 // TestLogsWindowAtTermination: the crash-loop question is a first-class window,
@@ -97,7 +97,7 @@ func TestLogsWindowAtTermination(t *testing.T) {
 		"project": "hello", "environment": "production",
 		"around_termination": true, "match": "panic", "tail": 20,
 	})
-	mustContain(t, out, "application=web", "before termination", `filtered to lines containing "panic"`)
+	mustContain(t, out, "component=web", "before termination", `filtered to lines containing "panic"`)
 	if query.GetAround() == nil || !query.GetAround().GetAtTermination() || query.GetAround().GetLines() != 20 {
 		t.Errorf("around window = %+v, want 20 lines at termination", query.GetAround())
 	}

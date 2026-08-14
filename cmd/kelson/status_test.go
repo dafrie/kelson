@@ -266,7 +266,7 @@ func (s *syncingProbe) EvaluateSecretSync(_ context.Context, namespace, name str
 
 // TestStatusReportsSecretSyncFailures is issue #80's acceptance criterion at
 // the surface a human reads: a Secret that failed to sync is an
-// application-level problem with the cause named, and it is reported above the
+// component-level problem with the cause named, and it is reported above the
 // workloads it broke rather than left for someone to infer from a
 // CreateContainerConfigError.
 func TestStatusReportsSecretSyncFailures(t *testing.T) {

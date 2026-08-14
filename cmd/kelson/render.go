@@ -71,7 +71,7 @@ func runRender(cmd *cobra.Command, opts *renderOptions) error {
 
 // specInput is the spec-loading half of every command that renders: which
 // documents, which environment, which cluster shape, and which image to use
-// for applications the spec builds from source.
+// for components the spec builds from source.
 type specInput struct {
 	files      []string
 	env        string
@@ -90,7 +90,7 @@ type specInput struct {
 //
 // Without an image such a spec used to render `image: "@"` (issue #136); now it
 // fails with image/unresolved.
-const imageFlagUsage = "image reference for applications the spec builds from source, e.g. ghcr.io/acme/app@sha256:abc123 (see `kelson build`)"
+const imageFlagUsage = "image reference for components the spec builds from source, e.g. ghcr.io/acme/app@sha256:abc123 (see `kelson build`)"
 
 // resolveAndRender runs the shared spec pipeline: load the -f spec files,
 // select the environment, resolve and render. It is the single place render
@@ -114,7 +114,7 @@ func resolveAndRender(in specInput, warn io.Writer) (*model.Project, *model.Envi
 	}
 	if in.image != "" {
 		// --image stands in for spec.image, so it is subject to the same
-		// precedence: an application that names its own image still wins
+		// precedence: a component that names its own image still wins
 		// (rule P3, docs/model.md).
 		project.Spec.Image = in.image
 	}

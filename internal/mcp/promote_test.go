@@ -60,7 +60,7 @@ func TestPromotePreviewsByDefault(t *testing.T) {
 		},
 	})
 
-	out := h.call(t, "promote_application", map[string]any{
+	out := h.call(t, "promote_component", map[string]any{
 		"project": "hello", "from_environment": "staging", "to_environment": "production",
 	})
 	mustContain(t, out,
@@ -93,7 +93,7 @@ func TestPromoteExecutes(t *testing.T) {
 		},
 	})
 
-	out := h.call(t, "promote_application", map[string]any{
+	out := h.call(t, "promote_component", map[string]any{
 		"project": "hello", "from_environment": "staging", "to_environment": "production",
 		"components": []any{"web"}, "execute": true, "version": "4710",
 	})
@@ -127,7 +127,7 @@ func TestPromoteReportsFindingsAndSaysNothingWasWritten(t *testing.T) {
 		},
 	})
 
-	out := h.call(t, "promote_application", map[string]any{
+	out := h.call(t, "promote_component", map[string]any{
 		"project": "hello", "from_environment": "staging", "to_environment": "production", "execute": true,
 	})
 	mustContain(t, out,
@@ -157,7 +157,7 @@ func TestPromoteSurfacesTheStructuredRefusal(t *testing.T) {
 		},
 	})
 
-	out := h.callErr(t, "promote_application", map[string]any{
+	out := h.callErr(t, "promote_component", map[string]any{
 		"project": "hello", "from_environment": "staging", "to_environment": "production",
 	})
 	mustContain(t, out,

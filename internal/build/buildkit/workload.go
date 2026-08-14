@@ -55,7 +55,7 @@ const (
 const (
 	labelProject     = "kelson.dev/project"
 	labelEnvironment = "kelson.dev/environment"
-	labelApplication = "kelson.dev/application"
+	labelComponent = "kelson.dev/component"
 )
 
 // withDefaults fills unset parts of the config: the buildkit image and a zero
@@ -88,8 +88,8 @@ func (c Config) Workload(req build.Request) ([]byte, error) {
 	// buildctl command line: it is what the executor turns into
 	// Result.Reference (build.AnnotationImage).
 	annotations := map[string]string{build.AnnotationImage: req.Image}
-	if req.Application != "" {
-		labels[labelApplication] = req.Application
+	if req.Component != "" {
+		labels[labelComponent] = req.Component
 	}
 	if req.Tag != "" {
 		annotations[build.AnnotationTag] = req.Tag
@@ -182,7 +182,7 @@ func validateArgs(args map[string]string) error {
 // the same build reuses the same identity and logs can be correlated.
 func jobName(req build.Request) string {
 	return sanitizeName(strings.Join(
-		[]string{"build", req.Project, req.Application, shortRev(req.Revision)}, "-"))
+		[]string{"build", req.Project, req.Component, shortRev(req.Revision)}, "-"))
 }
 
 // shortRev keeps the name short for the revision part of the Job name.

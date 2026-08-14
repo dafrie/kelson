@@ -19,12 +19,12 @@ metadata:
   namespace: mailroom
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: worker
+    kelson.dev/component: worker
     kelson.dev/environment: production
     kelson.dev/project: mailroom
   annotations:
     kelson.dev/renderer-version: 0.2.0
-    kelson.dev/spec-hash: sha256:2ac1ef9ec5f8f824937dd721c821189929eb8a11e0d2e935e7de9ea10e481434
+    kelson.dev/spec-hash: sha256:34f5b5972e5c9419ea398285ef72d2cc3695a6ed225dd51493c9d0c9ebd52f88
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -33,23 +33,23 @@ metadata:
   namespace: mailroom
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: worker
+    kelson.dev/component: worker
     kelson.dev/environment: production
     kelson.dev/project: mailroom
   annotations:
     kelson.dev/renderer-version: 0.2.0
-    kelson.dev/spec-hash: sha256:2ac1ef9ec5f8f824937dd721c821189929eb8a11e0d2e935e7de9ea10e481434
+    kelson.dev/spec-hash: sha256:34f5b5972e5c9419ea398285ef72d2cc3695a6ed225dd51493c9d0c9ebd52f88
 spec:
   replicas: 2
   selector:
     matchLabels:
       kelson.dev/project: mailroom
-      kelson.dev/application: worker
+      kelson.dev/component: worker
   template:
     metadata:
       labels:
         app.kubernetes.io/managed-by: kelson
-        kelson.dev/application: worker
+        kelson.dev/component: worker
         kelson.dev/environment: production
         kelson.dev/project: mailroom
     spec:
@@ -74,12 +74,12 @@ metadata:
   namespace: mailroom
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: digest
+    kelson.dev/component: digest
     kelson.dev/environment: production
     kelson.dev/project: mailroom
   annotations:
     kelson.dev/renderer-version: 0.2.0
-    kelson.dev/spec-hash: sha256:1b2c34850b336d8ac7e1545c0773af49865c65cd0c45149b07e71e09bc296ad8
+    kelson.dev/spec-hash: sha256:e34f563767f9c9c2968e307d5e79953b9993b8ba8dafe529905b216e535d93ff
 ---
 apiVersion: batch/v1
 kind: CronJob
@@ -88,12 +88,12 @@ metadata:
   namespace: mailroom
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: digest
+    kelson.dev/component: digest
     kelson.dev/environment: production
     kelson.dev/project: mailroom
   annotations:
     kelson.dev/renderer-version: 0.2.0
-    kelson.dev/spec-hash: sha256:1b2c34850b336d8ac7e1545c0773af49865c65cd0c45149b07e71e09bc296ad8
+    kelson.dev/spec-hash: sha256:e34f563767f9c9c2968e307d5e79953b9993b8ba8dafe529905b216e535d93ff
 spec:
   schedule: 30 6 * * 1-5
   jobTemplate:
@@ -102,7 +102,7 @@ spec:
         metadata:
           labels:
             app.kubernetes.io/managed-by: kelson
-            kelson.dev/application: digest
+            kelson.dev/component: digest
             kelson.dev/environment: production
             kelson.dev/project: mailroom
         spec:
@@ -122,12 +122,12 @@ metadata:
   namespace: mailroom
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: retention-sweep
+    kelson.dev/component: retention-sweep
     kelson.dev/environment: production
     kelson.dev/project: mailroom
   annotations:
     kelson.dev/renderer-version: 0.2.0
-    kelson.dev/spec-hash: sha256:ec82651cd42b2feff0ad58ba3d03696141354d9bbc640757c324688efef14990
+    kelson.dev/spec-hash: sha256:d3dfedcde3787e1439ea4065c472a68765ed9d264984cfa3b38d975ff87cc809
 ---
 apiVersion: batch/v1
 kind: CronJob
@@ -136,12 +136,12 @@ metadata:
   namespace: mailroom
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: retention-sweep
+    kelson.dev/component: retention-sweep
     kelson.dev/environment: production
     kelson.dev/project: mailroom
   annotations:
     kelson.dev/renderer-version: 0.2.0
-    kelson.dev/spec-hash: sha256:ec82651cd42b2feff0ad58ba3d03696141354d9bbc640757c324688efef14990
+    kelson.dev/spec-hash: sha256:d3dfedcde3787e1439ea4065c472a68765ed9d264984cfa3b38d975ff87cc809
 spec:
   schedule: 15 2 * * *
   jobTemplate:
@@ -150,7 +150,7 @@ spec:
         metadata:
           labels:
             app.kubernetes.io/managed-by: kelson
-            kelson.dev/application: retention-sweep
+            kelson.dev/component: retention-sweep
             kelson.dev/environment: production
             kelson.dev/project: mailroom
         spec:

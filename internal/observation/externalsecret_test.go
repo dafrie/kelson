@@ -61,7 +61,7 @@ func syncProbe(t *testing.T, objs ...runtime.Object) *Probe {
 }
 
 // TestSecretSyncFailureNamesTheCause is issue #80's acceptance criterion: a
-// failed sync surfaces as an application-level problem with the cause named,
+// failed sync surfaces as a component-level problem with the cause named,
 // not as silence.
 func TestSecretSyncFailureNamesTheCause(t *testing.T) {
 	p := syncProbe(t, externalSecret(testNS, "payments", map[string]any{

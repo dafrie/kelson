@@ -1,4 +1,4 @@
-// Package explain answers "why is this application degraded?" with structured,
+// Package explain answers "why is this component degraded?" with structured,
 // causal data rather than a log dump for a model to guess at (issue #77,
 // ADR-0023).
 //
@@ -168,7 +168,7 @@ func (c Code) rank() int {
 
 // EvidenceKind says what a piece of evidence *is*, so a reader (or a UI) can
 // tell a quoted controller condition from a field reference from the
-// application's own output without parsing the text.
+// component's own output without parsing the text.
 type EvidenceKind string
 
 const (
@@ -293,10 +293,10 @@ type Explanation struct {
 	Truncated []string `json:"truncated,omitempty"`
 }
 
-// LogFn returns a bounded window of one application's most recent output. It is
+// LogFn returns a bounded window of one component's most recent output. It is
 // a function rather than an interface because there is exactly one thing to
 // ask, and a nil one is a caller with no log access — never an error.
-type LogFn func(ctx context.Context, namespace, application string, lines int) ([]observation.Line, error)
+type LogFn func(ctx context.Context, namespace, component string, lines int) ([]observation.Line, error)
 
 // ManifestFn returns the rendered manifests recorded for one revision — the
 // bytes that were applied, not a re-render (#38). It is how the change

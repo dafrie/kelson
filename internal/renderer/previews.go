@@ -18,7 +18,7 @@ import (
 // An Environment with `previews:` renders a ResourceSetInputProvider — which
 // polls the forge and turns each open change request into an input — and a
 // ResourceSet, whose template instantiates an OCIRepository and a Kustomization
-// per input. That template contains no application manifests. It cannot: the
+// per input. That template contains no component manifests. It cannot: the
 // manifests for a preview are rendered concretely, by this same renderer, and
 // published as an OCI artifact the Kustomization applies.
 //

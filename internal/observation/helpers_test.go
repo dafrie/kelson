@@ -25,7 +25,7 @@ func deployment(ns, name string, mutate func(m map[string]any)) *unstructured.Un
 		"spec": map[string]any{
 			"selector": map[string]any{
 				"matchLabels": map[string]any{
-					"kelson.dev/application": testApp,
+					"kelson.dev/component": testApp,
 					"kelson.dev/project":     testProj,
 				},
 			},
@@ -57,7 +57,7 @@ func pod(ns, name string, mutate func(m map[string]any)) *unstructured.Unstructu
 			"name":      name,
 			"namespace": ns,
 			"labels": map[string]any{
-				"kelson.dev/application": testApp,
+				"kelson.dev/component": testApp,
 				"kelson.dev/project":     testProj,
 			},
 		},

@@ -34,7 +34,7 @@ type Manifest struct {
 // deployment, plus the provenance that makes status readback and history
 // possible across modes that do not own the apply step (issues #36, #37).
 type ManifestSet struct {
-	// Project and Environment identify the application model this set renders.
+	// Project and Environment identify the component model this set renders.
 	Project     string
 	Environment string
 

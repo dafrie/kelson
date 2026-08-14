@@ -12,7 +12,7 @@ import (
 	"github.com/dafrie/kelson/internal/redact"
 )
 
-// ExplainService served: "why is this application degraded?" answered with
+// ExplainService served: "why is this component degraded?" answered with
 // structured causes rather than a log dump (issue #77, ADR-0023).
 //
 // # The handler is assembly, and that is the point
@@ -86,17 +86,17 @@ func (s *Server) Explain(ctx context.Context, req *connect.Request[kelsonv1alpha
 // rather than as an error.
 //
 // The window asked for is the crash-loop window: the lines before the container
-// terminated, which is the same query diagnose_application issues and the one
+// terminated, which is the same query diagnose_component issues and the one
 // observation.Around was built for (issue #54).
 func (s *Server) explainLogs() explain.LogFn {
 	if s.logs == nil {
 		return nil
 	}
-	return func(ctx context.Context, namespace, application string, lines int) ([]observation.Line, error) {
+	return func(ctx context.Context, namespace, component string, lines int) ([]observation.Line, error) {
 		res, err := s.logs.Query(ctx, observation.Query{
-			Namespace:   namespace,
-			Application: application,
-			Around:      &observation.Around{Lines: lines, AtTermination: true},
+			Namespace: namespace,
+			Component: component,
+			Around:    &observation.Around{Lines: lines, AtTermination: true},
 		})
 		if err != nil {
 			return nil, err

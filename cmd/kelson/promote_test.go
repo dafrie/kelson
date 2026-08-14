@@ -44,12 +44,12 @@ func promoteManifest(kind, component, image string) delivery.Manifest {
 	var body string
 	if kind == "CronJob" {
 		body = "apiVersion: batch/v1\nkind: CronJob\nmetadata:\n  name: " + component +
-			"\n  namespace: hello-staging\n  labels:\n    kelson.dev/application: " + component +
+			"\n  namespace: hello-staging\n  labels:\n    kelson.dev/component: " + component +
 			"\nspec:\n  jobTemplate:\n    spec:\n      template:\n        spec:\n          containers:\n" +
 			"            - name: " + component + "\n              image: " + image + "\n"
 	} else {
 		body = "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: " + component +
-			"\n  namespace: hello-staging\n  labels:\n    kelson.dev/application: " + component +
+			"\n  namespace: hello-staging\n  labels:\n    kelson.dev/component: " + component +
 			"\nspec:\n  template:\n    spec:\n      containers:\n        - name: " + component +
 			"\n          image: " + image + "\n"
 	}

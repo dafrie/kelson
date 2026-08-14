@@ -49,8 +49,8 @@ func TestHelmRequiresFluxMode(t *testing.T) {
 		if e.Code != ErrHelmRequiresFlux {
 			t.Errorf("mode %q: code = %q, want %q", mode, e.Code, ErrHelmRequiresFlux)
 		}
-		if e.Application != "ingress" {
-			t.Errorf("mode %q: the error must name the component, got %q", mode, e.Application)
+		if e.Component != "ingress" {
+			t.Errorf("mode %q: the error must name the component, got %q", mode, e.Component)
 		}
 		if !strings.Contains(e.Message, string(mode)) && mode != "" {
 			t.Errorf("mode %q: the message must name the mode: %s", mode, e.Message)
@@ -78,7 +78,7 @@ func TestHelmGateReportsEveryComponent(t *testing.T) {
 	if !ok || len(errs) != 2 {
 		t.Fatalf("expected one error per helm component, got %#v", err)
 	}
-	if errs[0].Application != "ingress" || errs[1].Application != "cert-manager" {
+	if errs[0].Component != "ingress" || errs[1].Component != "cert-manager" {
 		t.Fatalf("errors must follow spec order: %v", errs)
 	}
 }

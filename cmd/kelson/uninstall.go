@@ -467,7 +467,7 @@ func printRemovalReport(out *printer, report *install.RemovalReport) {
 func printRemovalBoundary(out *printer, removal *install.Removal) {
 	out.printf("\nStill installed, and not this command's to remove:\n")
 	out.printf("  everything kelson adopted rather than created when it installed %s\n", removal.Component.Name)
-	out.printf("  every application kelson deployed against it — `kelson uninstall --project <p> --env <e>`\n")
+	out.printf("  every component kelson deployed against it — `kelson uninstall --project <p> --env <e>`\n")
 	out.printf("  every other platform component; each one is removed by name\n")
 }
 

@@ -25,9 +25,9 @@ func renderErrorCode(t *testing.T, err error) string {
 	return errs[0].Code
 }
 
-// TestServicesRenderBeforeApplications: a workload must not be applied ahead of
+// TestServicesRenderBeforeComponents: a workload must not be applied ahead of
 // the resource that produces the credentials it references.
-func TestServicesRenderBeforeApplications(t *testing.T) {
+func TestServicesRenderBeforeComponents(t *testing.T) {
 	ms, err := Render(boundFixture(model.PresetHASmall), cnpgProfile(), nil)
 	if err != nil {
 		t.Fatalf("Render failed: %v", err)
@@ -41,7 +41,7 @@ func TestServicesRenderBeforeApplications(t *testing.T) {
 	}
 	for _, m := range ms[2:] {
 		if m.Kind == "Cluster" || m.Kind == "Database" || m.Kind == "ValkeyCluster" {
-			t.Fatalf("a service resource sorted after an application resource: %v", got)
+			t.Fatalf("a service resource sorted after a workload resource: %v", got)
 		}
 	}
 }
@@ -501,7 +501,7 @@ func TestBindingErrors(t *testing.T) {
 		}
 	})
 
-	t.Run("application is named", func(t *testing.T) {
+	t.Run("component is named", func(t *testing.T) {
 		resolved := resolvedFixture()
 		resolved.Components[1].Env = map[string]model.EnvValue{
 			"DATABASE_URL": {From: &model.ServiceBinding{Service: "nope", Key: "uri"}},
@@ -511,8 +511,8 @@ func TestBindingErrors(t *testing.T) {
 		if !ok || len(errs) != 1 {
 			t.Fatalf("expected one structured error, got %#v", err)
 		}
-		if errs[0].Application != "worker" {
-			t.Errorf("error must name the application at fault, got %q", errs[0].Application)
+		if errs[0].Component != "worker" {
+			t.Errorf("error must name the component at fault, got %q", errs[0].Component)
 		}
 	})
 }
@@ -563,7 +563,7 @@ func TestServiceHashIsLocal(t *testing.T) {
 	changed := boundFixture(model.PresetSmall)
 	changed.Components[0].Image = "ghcr.io/acme/checkout:9.9.9"
 	if got := hashOf(changed); got != before {
-		t.Errorf("an application image change moved the database spec-hash:\n%s\n%s", before, got)
+		t.Errorf("a component image change moved the database spec-hash:\n%s\n%s", before, got)
 	}
 
 	represet := boundFixture(model.PresetHASmall)

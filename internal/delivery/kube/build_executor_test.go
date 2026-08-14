@@ -262,7 +262,7 @@ func TestBuildExecutorCleanupFailureIsDistinct(t *testing.T) {
 func TestBuildExecutorSubmitsARenderedPushSecretJob(t *testing.T) {
 	req := build.Request{
 		Project:     "shop",
-		Application: "checkout",
+		Component:   "checkout",
 		Environment: "production",
 		Image:       testRepo,
 		Tag:         testTag,
@@ -332,7 +332,7 @@ func TestBuildExecutorSubmitsARenderedPushSecretJob(t *testing.T) {
 func TestBuildExecutorRunsARenderedBuildpacksJob(t *testing.T) {
 	req := build.Request{
 		Project:     "shop",
-		Application: "checkout",
+		Component:   "checkout",
 		Environment: "production",
 		Revision:    "abc12345",
 		Image:       testRepo,
