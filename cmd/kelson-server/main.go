@@ -74,6 +74,7 @@ import (
 	"github.com/dafrie/kelson/internal/delivery/dryrun"
 	"github.com/dafrie/kelson/internal/delivery/flux"
 	"github.com/dafrie/kelson/internal/delivery/git"
+	"github.com/dafrie/kelson/internal/delivery/install"
 	"github.com/dafrie/kelson/internal/delivery/kube"
 	"github.com/dafrie/kelson/internal/delivery/rollback"
 	"github.com/dafrie/kelson/internal/observation"
@@ -480,6 +481,23 @@ func connectServer(cfg config, attribution *slog.Logger) (*api.Server, *serverst
 		Profile: api.CaptureFunc(func(context.Context) (clusterprofile.ClusterProfile, error) {
 			return detect.FromCluster(cfg.kubeconfig)
 		}),
+		// The installer is rebuilt per request for the reason the delivery
+		// plane is: its REST mapper is discovery-backed and never refreshed,
+		// and installing is exactly the operation that registers new CRDs.
+		Install: func(context.Context) (api.Installer, error) {
+			c, err := kube.Connect(cfg.kubeconfig)
+			if err != nil {
+				return nil, err
+			}
+			return install.New(install.Options{
+				Client: c.Dynamic,
+				Mapper: c.Mapper,
+				Fetch:  install.HTTPFetcher{},
+			})
+		},
+		// The node inventory rides the startup clientset like the state stores
+		// do — nodes and metrics.k8s.io involve no discovery mapper.
+		Nodes:    observation.NodeSource{Typed: cluster.Typed, Dynamic: cluster.Dynamic},
 		Delivery: deliveryConnector(cfg, history),
 		Preview:  previewConnector(cfg),
 		Logs:     api.LogQueryEngine{Engine: logs},

@@ -150,6 +150,14 @@ arrives with no `GatewayClass` and carries no traffic: create a `GatewayClass` n
 `gateway.envoyproxy.io/gatewayclass-controller` and a `Gateway` with your listeners, and routes attach
 once detection reports the class. The command says all of this on the way out.
 
+**The web UI drives the same verbs.** The **Setup** screen (and the Cluster page's
+platform-components section) is `kelson install` served over the API: the same pins table, the same
+detection-first refusals, and the same preview — every object, the pinned version, the verified
+digest — shown before an explicit confirmation applies anything. Because installing writes
+cluster-scoped RBAC and CRDs, the `InstallService` RPCs are administrative: agent credentials are
+refused outright ([ADR-0024](adr/0024-agent-identities.md) §3), exactly as `kelson uninstall
+--component` refuses them.
+
 **One sweep exception.** On a cluster that already routes through an ingress stack,
 `kelson install --all-missing` declines `envoy-gateway` and says why: adding a second routing
 implementation next to the one carrying your traffic is a decision you make by name

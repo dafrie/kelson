@@ -3,6 +3,8 @@ import { ConnectError } from "@connectrpc/connect";
 
 import { clients, fetchHealth, type Health } from "../api/clients";
 import type { ProfileGap } from "../gen/kelson/v1alpha1/profile_pb";
+import { ComponentsChecklist } from "../components/ComponentsChecklist";
+import { NodesSection } from "../components/NodesSection";
 import {
   EmptyState,
   ErrorState,
@@ -77,7 +79,7 @@ export function ClusterPage() {
         <h1>Cluster</h1>
       </div>
       <div className="k-page-sub">
-        <span>server build and detected capabilities</span>
+        <span>server build, nodes, platform components and detected capabilities</span>
       </div>
 
       {state.kind === "loading" ? <LoadingState what="cluster profile" /> : null}
@@ -94,6 +96,26 @@ export function ClusterPage() {
       ) : null}
 
       {state.kind === "ready" ? <Profile data={state.data} /> : null}
+
+      {/* Nodes and components read through their own clients: a failed
+          profile capture must not hide the machine inventory, and vice
+          versa. Each section degrades alone. */}
+      {state.kind === "ready" ? (
+        <>
+          <section className="k-section">
+            <div className="k-eyebrow">Nodes</div>
+            <div className="k-section__body">
+              <NodesSection />
+            </div>
+          </section>
+          <section className="k-section">
+            <div className="k-eyebrow">Platform components</div>
+            <div className="k-section__body">
+              <ComponentsChecklist />
+            </div>
+          </section>
+        </>
+      ) : null}
     </>
   );
 }
