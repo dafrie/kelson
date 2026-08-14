@@ -80,6 +80,21 @@ server:
   # -- Deployment revisions retained per environment (`--keep`).
   keep: 20
 
+  # -- Days of audit records retained (`--audit-retention`), the trail of what
+  # each principal actually did (issue #78, ADR-0026). Records live in
+  # ConfigMaps in the state namespace, one per UTC day, under the same RBAC the
+  # spec and history stores already have — so this needs no extra grant.
+  #
+  # `0` turns the trail off. That is a choice to make deliberately and out loud:
+  # the server says "audit trail: OFF" in its startup banner, because
+  # discovering it by finding no records after an incident is the worst possible
+  # moment to learn it.
+  #
+  # Longer retention than the 120-day maximum is an external sink, not a longer
+  # ring; a bounded ring that pretended to remember a year would be worse than
+  # one that says where its memory ends.
+  auditRetention: 30
+
   # -- Destination registry for builds, e.g. ghcr.io/acme (`--registry`).
   # Empty leaves builds to name their own destination per request.
   registry: ""

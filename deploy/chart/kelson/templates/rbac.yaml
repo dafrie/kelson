@@ -21,11 +21,17 @@ metadata:
     {{- include "kelson.labels" . | nindent 4 }}
 rules:
   # internal/serverstate: the spec store (Get/Create/Update/Delete, List by
-  # label) and the history store (Create, List, Get, Delete when trimming past
-  # --keep). No `watch`: neither store watches, both read on demand, and a verb
-  # nothing calls is a verb that should not be granted. No `patch`: the spec
-  # store does read-modify-Update against a resourceVersion, which is what
-  # makes concurrent writes conflict instead of silently interleaving.
+  # label), the history store (Create, List, Get, Delete when trimming past
+  # --keep), and the audit trail (issue #78, ADR-0026: one ConfigMap per UTC
+  # day, Get and Update to append, List to query, Delete to prune past
+  # --audit-retention). The trail needs no grant of its own — it is the same
+  # verbs on the same resource in the same namespace, which is a large part of
+  # why it is stored this way.
+  #
+  # No `watch`: no store watches, all read on demand, and a verb nothing calls
+  # is a verb that should not be granted. No `patch`: the spec store and the
+  # audit store both do read-modify-Update against a resourceVersion, which is
+  # what makes concurrent writes conflict instead of silently interleaving.
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get", "list", "create", "update", "delete"]
