@@ -311,6 +311,11 @@ func printInstallBoundary(out *printer, plan *install.Plan) {
 		case "cnpg":
 			out.printf("  CloudNativePG is running with no databases. `kind: postgres` components render against\n")
 			out.printf("  it from the next deploy; run `kelson profile` to see the presets it can serve.\n")
+		case "envoy-gateway":
+			out.printf("  Envoy Gateway has no GatewayClass and carries no traffic. Create a GatewayClass naming\n")
+			out.printf("  controller gateway.envoyproxy.io/gatewayclass-controller, and a Gateway with your\n")
+			out.printf("  listeners — which class carries traffic is your decision. Routes render once detection\n")
+			out.printf("  reports the class.\n")
 		}
 	}
 	out.printf("\nRun `kelson profile` to see the cluster as kelson now reads it.\n")

@@ -45,7 +45,7 @@ func routingResources(resolved *model.Resolved, app *model.ResolvedComponent, pr
 func gatewayMissingError(app *model.ResolvedComponent, prov provenance, profile clusterprofile.ClusterProfile) Error {
 	msg := "declares domains (" + strings.Join(app.Domains, ", ") +
 		") but the cluster profile reports no Gateway API; kelson renders Gateway API only and will not fall back to Ingress"
-	remediation := "install a Gateway API implementation (Envoy Gateway is the default candidate) and re-detect the cluster profile, or remove the domains from this application"
+	remediation := "install a Gateway API implementation (`kelson install envoy-gateway` installs Envoy Gateway, the default candidate) and re-detect the cluster profile, or remove the domains from this application"
 	if len(profile.IngressClasses) > 0 {
 		// Detected ingress classes are the most likely reason a user expected
 		// this to work, so say plainly that they are not a substitute (#112).

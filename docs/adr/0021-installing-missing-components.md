@@ -1,6 +1,13 @@
 # ADR-0021: Installing missing platform components — pinned upstream manifests, per-object provenance
 
-- **Status:** Accepted
+- **Status:** Accepted (amended 2026-08-14: `envoy-gateway` moved from a deferred row to a supported
+  one. The deferral's premise was that installing a Gateway API implementation claims a `GatewayClass`
+  beside a cluster's existing routing; the pinned release's published `install.yaml` creates the
+  Gateway API CRDs, the controller and its namespace and **no GatewayClass**, so the install carries no
+  traffic and touches nobody's routing until the user creates one — the same installed-not-configured
+  boundary cert-manager's missing `ClusterIssuer` draws. What survives of the concern is a sweep rule:
+  `--all-missing` declines the row, naming the reason, when detection reports an ingress stack, because
+  adding a second routing implementation is a decision the user makes by naming the component.)
 - **Date:** 2026-08-14
 
 ## Context
@@ -169,14 +176,14 @@ Order is the reverse of the dependency order, and the last two tiers are the one
    section.
 5. The namespace, and only when kelson created it.
 
-### 5. Three components install; two refuse by name
+### 5. Four components install; one refuses by name
 
 | Component | Status | Why |
 |---|---|---|
 | `flux` | installs | flux-operator's pinned `install.yaml`, then one `FluxInstance` |
 | `cert-manager` | installs | pinned `cert-manager.yaml` |
 | `cnpg` | installs | pinned `cnpg-<version>.yaml` |
-| `envoy-gateway` | refuses, names the follow-up | claiming a `GatewayClass` beside a cluster's existing routing has a blast radius detection cannot yet rule out |
+| `envoy-gateway` | installs (since the 2026-08-14 amendment) | pinned `install.yaml`: the Gateway API CRDs plus the controller, and no `GatewayClass` — the class, and therefore any traffic, stays the user's decision. `--all-missing` declines it beside a detected ingress stack; naming it installs it |
 | `external-secrets` | refuses, names the follow-up | upstream publishes a Helm chart and no plain install manifest, and §2 rejected embedding a Helm engine |
 
 A deferred row is a refusal **with a reason and a follow-up**, not an "unknown component" error that
@@ -197,7 +204,8 @@ installing Flux. An install that silently started reconciling a repository would
 nobody asked for.
 
 Nothing else is configured either: no `ClusterIssuer` (which ACME account or CA to trust is not
-kelson's decision), no `SecretStore`, no databases. The command says so on the way out.
+kelson's decision), no `GatewayClass` or `Gateway` (which class carries a cluster's traffic is not
+either), no `SecretStore`, no databases. The command says so on the way out.
 
 ## Rationale
 
@@ -239,8 +247,11 @@ is that both answer a question that stops being answerable one microsecond after
 - **A digest mismatch is a hard refusal**, including when upstream legitimately re-publishes a release
   artifact. The user is stuck until the pin is updated in kelson. Stated plainly in the error, with the
   `curl | sha256sum` command that shows them what changed.
-- **Two of the five named components do not install**, so a cluster missing a Gateway API implementation
-  still needs manual work before kelson can route anything.
+- **One of the five named components does not install** (external-secrets), so the `externalSecrets`
+  secret backend still needs manual work before kelson renders against it.
+- **An installed Envoy Gateway routes nothing until a `GatewayClass` and `Gateway` exist**, and creating
+  them is deliberately not kelson's job. The boundary message says so, but "installed" will still read
+  as "routing works" to somebody, and the gap between the two is a support question waiting to happen.
 - **Removing a component's CRDs deletes custom resources kelson never created.** The preview names each
   one and the prompt counts them, but the capability exists and a `--yes` in a script skips the reading.
 - The removal sweep lists every kind in the cluster's discovery document, which is more API calls than a

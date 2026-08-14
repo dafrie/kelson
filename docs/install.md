@@ -135,7 +135,7 @@ is checkable with `curl` and `sha256sum` before you answer the prompt.
 | `flux` | flux-operator's pinned install manifest, then one `FluxInstance` | the GitOps delivery mode, and the helm-controller `kind: helm` needs |
 | `cert-manager` | cert-manager's pinned install manifest | TLS on routed services |
 | `cnpg` | CloudNativePG's pinned install manifest | every `kind: postgres` component |
-| `envoy-gateway` | *not yet* — refuses and says why | — |
+| `envoy-gateway` | Envoy Gateway's pinned install manifest: the Gateway API CRDs and the controller, **no `GatewayClass`** | HTTP routing: the `HTTPRoute` kelson renders for every service that declares domains |
 | `external-secrets` | *not yet* — refuses and says why | — |
 
 Installing Flux means installing flux-operator and creating a `FluxInstance`. kelson does not vendor
@@ -145,8 +145,17 @@ the FluxInstance names a minor-pinned distribution version and the operator does
 **It installs, it does not configure.** cert-manager arrives with no `ClusterIssuer` — which ACME
 account or CA to trust is your decision, and kelson renders a `Certificate` only once detection reports
 an issuer. The `FluxInstance` sets no sync source, so Flux runs and reconciles nothing until
-`kelson deploy --mode flux` points it somewhere. CloudNativePG arrives with no databases. The command
-says all of this on the way out.
+`kelson deploy --mode flux` points it somewhere. CloudNativePG arrives with no databases. Envoy Gateway
+arrives with no `GatewayClass` and carries no traffic: create a `GatewayClass` naming the controller
+`gateway.envoyproxy.io/gatewayclass-controller` and a `Gateway` with your listeners, and routes attach
+once detection reports the class. The command says all of this on the way out.
+
+**One sweep exception.** On a cluster that already routes through an ingress stack,
+`kelson install --all-missing` declines `envoy-gateway` and says why: adding a second routing
+implementation next to the one carrying your traffic is a decision you make by name
+(`kelson install envoy-gateway`), never one a sweep makes for you. kelson renders Gateway API only
+([ADR-0003](adr/0003-install-model.md), as amended), so until then services that declare domains fail
+to render with `render/gateway-api-missing`.
 
 **It needs network access to the upstream release host.** Without it, the install refuses, names the URL
 it could not reach, and applies nothing — there is no half-installed state. On an air-gapped cluster,
