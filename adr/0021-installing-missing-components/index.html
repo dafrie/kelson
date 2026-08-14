@@ -1,0 +1,265 @@
+<!doctype html><html lang=en dir=ltr class="docs-wrapper plugin-docs plugin-id-default docs-version-current docs-doc-page docs-doc-id-adr/0021-installing-missing-components" data-has-hydrated=false><head><meta charset=UTF-8><meta name=generator content="Docusaurus v3.10.2"><title data-rh=true>ADR-0021: Installing missing platform components — pinned upstream manifests, per-object provenance | kelson</title><meta data-rh=true name=viewport content="width=device-width, initial-scale=1.0"/><meta data-rh=true name=twitter:card content=summary_large_image /><meta data-rh=true property=og:image content=https://dafrie.github.io/kelson/kelson-lockup.svg /><meta data-rh=true name=twitter:image content=https://dafrie.github.io/kelson/kelson-lockup.svg /><meta data-rh=true property=og:url content=https://dafrie.github.io/kelson/adr/0021-installing-missing-components /><meta data-rh=true property=og:locale content=en /><meta data-rh=true name=docusaurus_locale content=en /><meta data-rh=true name=docsearch:language content=en /><meta data-rh=true name=docusaurus_version content=current /><meta data-rh=true name=docusaurus_tag content=docs-default-current /><meta data-rh=true name=docsearch:version content=current /><meta data-rh=true name=docsearch:docusaurus_tag content=docs-default-current /><meta data-rh=true property=og:title content="ADR-0021: Installing missing platform components — pinned upstream manifests, per-object provenance | kelson"/><meta data-rh=true name=description content="- Status envoy-gateway moved from a deferred row to a supported"/><meta data-rh=true property=og:description content="- Status envoy-gateway moved from a deferred row to a supported"/><link data-rh=true rel=icon href=/kelson/kelson-favicon-32.svg /><link data-rh=true rel=canonical href=https://dafrie.github.io/kelson/adr/0021-installing-missing-components /><link data-rh=true rel=alternate href=https://dafrie.github.io/kelson/adr/0021-installing-missing-components hreflang=en /><link data-rh=true rel=alternate href=https://dafrie.github.io/kelson/adr/0021-installing-missing-components hreflang=x-default /><script data-rh=true type=application/ld+json>{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","item":"https://dafrie.github.io/kelson/adr/0021-installing-missing-components","name":"0021 — Installing missing components","position":1}]}</script><link rel=stylesheet href=/kelson/assets/css/styles.c304df04.css /><script src=/kelson/assets/js/runtime~main.6bcfaf32.js defer></script><script src=/kelson/assets/js/main.d393c33f.js defer></script></head><body><svg style="display: none;"><defs>
+<symbol id=theme-svg-external-link viewBox="0 0 24 24"><path fill=currentColor d="M21 13v10h-21v-19h12v2h-10v15h17v-8h2zm3-12h-10.988l4.035 4-6.977 7.07 2.828 2.828 6.977-7.07 4.125 4.172v-11z"/></symbol>
+</defs></svg>
+<script>!function(){var t;document.documentElement.setAttribute("data-theme",t||"dark"),document.documentElement.setAttribute("data-theme-choice",t||"dark")}(),function(){try{for(var[t,e]of new URLSearchParams(window.location.search).entries())if(t.startsWith("docusaurus-data-")){var a=t.replace("docusaurus-data-","data-");document.documentElement.setAttribute(a,e)}}catch(t){}}()</script><div id=__docusaurus><link rel=preload as=image href=/kelson/kelson-mark.svg /><div role=region aria-label="Skip to main content"><a class=skipToContent_fXgn href=#__docusaurus_skipToContent_fallback>Skip to main content</a></div><nav aria-label=Main class="theme-layout-navbar navbar navbar--fixed-top"><div class=navbar__inner><div class="theme-layout-navbar-left navbar__items"><button aria-label="Toggle navigation bar" aria-expanded=false class="navbar__toggle clean-btn" type=button><svg width=30 height=30 viewBox="0 0 30 30" aria-hidden=true><path stroke=currentColor stroke-linecap=round stroke-miterlimit=10 stroke-width=2 d="M4 7h22M4 15h22M4 23h22"/></svg></button><a class=navbar__brand href=/kelson/><div class=navbar__logo><img src=/kelson/kelson-mark.svg alt=kelson class="themedComponent_mlkZ themedComponent--light_NVdE"/><img src=/kelson/kelson-mark.svg alt=kelson class="themedComponent_mlkZ themedComponent--dark_xIcU"/></div><b class="navbar__title text--truncate">kelson</b></a></div><div class="theme-layout-navbar-right navbar__items navbar__items--right"><a aria-current=page class="navbar__item navbar__link navbar__link--active" href=/kelson/adr/0021-installing-missing-components>unreleased</a><a href=https://github.com/dafrie/kelson target=_blank rel="noopener noreferrer" class="navbar__item navbar__link">GitHub<svg width=13.5 height=13.5 aria-label="(opens in new tab)" class=iconExternalLink_nPIU><use href=#theme-svg-external-link /></svg></a><div class=navbarSearchContainer_Bca1></div></div></div><div role=presentation class=navbar-sidebar__backdrop></div></nav><div id=__docusaurus_skipToContent_fallback class="theme-layout-main main-wrapper mainWrapper_z2l0"><div class=docsWrapper_hBAB><button aria-label="Scroll back to top" class="clean-btn theme-back-to-top-button backToTopButton_sjWU" type=button></button><div class=docRoot_UBD9><aside class="theme-doc-sidebar-container docSidebarContainer_YfHR"><div class=sidebarViewport_aRkj><div class=sidebar_njMd><nav aria-label="Docs sidebar" class="menu thin-scrollbar menu_SIkG"><ul class="theme-doc-sidebar-menu menu__list"><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/><span class=linkLabel_WmDU>Home</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/vision><span class=linkLabel_WmDU>Vision</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/install><span class=linkLabel_WmDU>Install</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/local><span class=linkLabel_WmDU>Local (kind)</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/architecture><span class=linkLabel_WmDU>Architecture</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/roadmap><span class=linkLabel_WmDU>Roadmap</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/competitive-analysis><span class=linkLabel_WmDU>Competitive analysis</span></a><li class="theme-doc-sidebar-item-category theme-doc-sidebar-item-category-level-1 menu__list-item"><div class=menu__list-item-collapsible><a class="categoryLink_byQd menu__link menu__link--sublist menu__link--sublist-caret" role=button aria-expanded=true href=/kelson/reference/project><span class=categoryLinkLabel_W154>Reference</span></a></div><ul class=menu__list><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/reference/project><span class=linkLabel_WmDU>Project spec</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/reference/environment><span class=linkLabel_WmDU>Environment spec</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/detection><span class=linkLabel_WmDU>Cluster detection</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/server><span class=linkLabel_WmDU>Server</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/mcp><span class=linkLabel_WmDU>MCP server</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/reference/support-matrix><span class=linkLabel_WmDU>Support matrix</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/e2e><span class=linkLabel_WmDU>E2E harness</span></a></ul><li class="theme-doc-sidebar-item-category theme-doc-sidebar-item-category-level-1 menu__list-item"><div class=menu__list-item-collapsible><a class="categoryLink_byQd menu__link menu__link--sublist menu__link--sublist-caret" role=button aria-expanded=true href=/kelson/model><span class=categoryLinkLabel_W154>Design</span></a></div><ul class=menu__list><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/model><span class=linkLabel_WmDU>Model</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/build><span class=linkLabel_WmDU>Build</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/delivery><span class=linkLabel_WmDU>Delivery</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/secrets><span class=linkLabel_WmDU>Secrets</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/data-services><span class=linkLabel_WmDU>Data services</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/statemachine><span class=linkLabel_WmDU>State machine</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/release-policy><span class=linkLabel_WmDU>Release policy</span></a></ul><li class="theme-doc-sidebar-item-category theme-doc-sidebar-item-category-level-1 menu__list-item"><div class=menu__list-item-collapsible><a class="categoryLink_byQd menu__link menu__link--sublist menu__link--sublist-caret" role=button aria-expanded=true href=/kelson/research/build-strategy-selection><span class=categoryLinkLabel_W154>Research</span></a></div><ul class=menu__list><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/research/build-strategy-selection><span class=linkLabel_WmDU>Build strategy selection</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/research/score-as-input-format><span class=linkLabel_WmDU>Score as an input format</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/research/hierarchy-prior-art><span class=linkLabel_WmDU>Hierarchy prior art</span></a></ul><li class="theme-doc-sidebar-item-category theme-doc-sidebar-item-category-level-1 menu__list-item"><div class=menu__list-item-collapsible><a class="categoryLink_byQd menu__link menu__link--sublist menu__link--sublist-caret menu__link--active" role=button aria-expanded=true href=/kelson/adr/><span class=categoryLinkLabel_W154>ADRs</span></a></div><ul class=menu__list><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/><span class=linkLabel_WmDU>Index</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0001-hybrid-state-model><span class=linkLabel_WmDU>0001 — Hybrid state model</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0002-tech-stack><span class=linkLabel_WmDU>0002 — Tech stack</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0003-install-model><span class=linkLabel_WmDU>0003 — Install model</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0004-licensing><span class=linkLabel_WmDU>0004 — Licensing</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0005-delegate-to-operators><span class=linkLabel_WmDU>0005 — Delegate to operators</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0006-project-application-environment><span class=linkLabel_WmDU>0006 — Project, Application, Environment</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0007-data-services><span class=linkLabel_WmDU>0007 — Data services</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0008-mcp-surface><span class=linkLabel_WmDU>0008 — MCP surface</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0009-secrets><span class=linkLabel_WmDU>0009 — Secrets</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0010-build-strategy><span class=linkLabel_WmDU>0010 — Build strategy</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0011-build-cache><span class=linkLabel_WmDU>0011 — Build cache</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0012-flux-only-gitops><span class=linkLabel_WmDU>0012 — Flux-only GitOps</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0013-server-state-and-api-v0><span class=linkLabel_WmDU>0013 — Server state and API v0</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0014-components><span class=linkLabel_WmDU>0014 — Components</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0015-valkey-operator><span class=linkLabel_WmDU>0015 — Valkey operator</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0016-delivery-flows-v0><span class=linkLabel_WmDU>0016 — Delivery flows v0</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0017-pr-previews><span class=linkLabel_WmDU>0017 — PR previews</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0018-secret-references><span class=linkLabel_WmDU>0018 — Secret references</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0019-release-command-hook><span class=linkLabel_WmDU>0019 — Release command hook</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0020-external-secrets><span class=linkLabel_WmDU>0020 — External secrets</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class="menu__link menu__link--active" aria-current=page tabindex=0 href=/kelson/adr/0021-installing-missing-components><span class=linkLabel_WmDU>0021 — Installing missing components</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0022-sops-age><span class=linkLabel_WmDU>0022 — SOPS + age</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0023-explain-structured-causes><span class=linkLabel_WmDU>0023 — Explain: structured causes</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0024-agent-identities><span class=linkLabel_WmDU>0024 — Agent identities</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0025-agent-policy><span class=linkLabel_WmDU>0025 — Agent policy</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0026-agent-audit-trail><span class=linkLabel_WmDU>0026 — The audit trail</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0027-finish-the-component-rename><span class=linkLabel_WmDU>0027 — Finish the component rename</span></a></ul></ul></nav></div></div></aside><main class=docMainContainer_TBSr><div class="container padding-top--md padding-bottom--lg"><div class=row><div class="col docItemCol_VOVn"><div class=docItemContainer_Djhp><article><nav class="theme-doc-breadcrumbs breadcrumbsContainer_Z_bl" aria-label=Breadcrumbs><ul class=breadcrumbs><li class=breadcrumbs__item><a aria-label="Home page" class=breadcrumbs__link href=/kelson/><svg viewBox="0 0 24 24" class=breadcrumbHomeIcon_YNFT><path d="M10 19v-5h4v5c0 .55.45 1 1 1h3c.55 0 1-.45 1-1v-7h1.7c.46 0 .68-.57.33-.87L12.67 3.6c-.38-.34-.96-.34-1.34 0l-8.36 7.53c-.34.3-.13.87.33.87H5v7c0 .55.45 1 1 1h3c.55 0 1-.45 1-1z" fill=currentColor /></svg></a><li class=breadcrumbs__item><span class=breadcrumbs__link>ADRs</span><li class="breadcrumbs__item breadcrumbs__item--active"><span class=breadcrumbs__link>0021 — Installing missing components</span></ul></nav><div class="tocCollapsible_ETCw theme-doc-toc-mobile tocMobile_ITEo"><button type=button class="clean-btn tocCollapsibleButton_TO0P">On this page</button></div><div class="theme-doc-markdown markdown"><header><h1>ADR-0021: Installing missing platform components — pinned upstream manifests, per-object provenance</h1></header>
+<ul>
+<li class=""><strong>Status:</strong> Accepted (amended 2026-08-14: <code>envoy-gateway</code> moved from a deferred row to a supported
+one. The deferral's premise was that installing a Gateway API implementation claims a <code>GatewayClass</code>
+beside a cluster's existing routing; the pinned release's published <code>install.yaml</code> creates the
+Gateway API CRDs, the controller and its namespace and <strong>no GatewayClass</strong>, so the install carries no
+traffic and touches nobody's routing until the user creates one — the same installed-not-configured
+boundary cert-manager's missing <code>ClusterIssuer</code> draws. What survives of the concern is a sweep rule:
+<code>--all-missing</code> declines the row, naming the reason, when detection reports an ingress stack, because
+adding a second routing implementation is a decision the user makes by naming the component.)</li>
+<li class=""><strong>Date:</strong> 2026-08-14</li>
+</ul>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id=context>Context<a href=#context class=hash-link aria-label="Direct link to Context" title="Direct link to Context" translate=no>​</a></h2>
+<p><a class="" href=/kelson/adr/0003-install-model>ADR-0003</a> states the rule that makes kelson adoptable: <strong>never install what is
+already there.</strong> <a class="" href=/kelson/adr/0005-delegate-to-operators>ADR-0005</a> states the other half in a single sentence
+and then leaves it: platform components "are detected and adopted per ADR-0003, and <strong>optionally
+installed when absent</strong> by referencing upstream charts at a pinned version."</p>
+<p>Detection has existed for a while. The offer has not. Until now a cluster without cert-manager was told
+it could not have TLS and left to work out the rest, and <code>docs/install.md</code> said in as many words that
+installing missing components was "a separate, opt-in story:
+<a href=https://github.com/dafrie/kelson/issues/60 target=_blank rel="noopener noreferrer" class="">#60</a>". This is that story.</p>
+<p>Four things make it a design decision rather than a scripting exercise.</p>
+<p><strong>The Bitnami lesson.</strong> Kubero vendored Bitnami Helm charts for its add-ons. When Broadcom withdrew the
+free catalog in September 2025, working installations broke and the add-on system had to be reworked
+under time pressure. ADR-0005 records the conclusion: depending on someone else's packaging of someone
+else's software puts your users' running systems at the mercy of a vendor decision you have no
+influence over. Whatever kelson does here must not take custody of anybody's packaging.</p>
+<p><strong>flux-operator is AGPL-3.0 and kelson is MIT.</strong> Installing Flux means installing flux-operator and
+creating a <code>FluxInstance</code>, and the integration may only ever be CR-only — no Go module of theirs is
+imported anywhere in this repository (<code>docs/architecture.md</code>, "Living with flux-operator").</p>
+<p><strong>Uninstall just landed</strong> (<a href=https://github.com/dafrie/kelson/issues/59 target=_blank rel="noopener noreferrer" class="">#59</a>) and set the standard for
+what an ownership claim looks like: <code>kelson.dev/namespace-ownership: created|adopted</code>, written by the
+plane that performs the apply, at the one moment the question is answerable, and treated as the sole
+licence to delete. Issue #60's acceptance criterion is the same claim one layer down — <em>uninstall
+removes only components kelson installed, never pre-existing ones</em> — and it must be honest in the same
+way, not merely careful.</p>
+<p><strong>Detection is a tri-state</strong> (<a href=https://github.com/dafrie/kelson/issues/144 target=_blank rel="noopener noreferrer" class="">#144</a>). "It is absent" and
+"we could not look" are different answers, and an installer that treats the second as the first will
+install a second CloudNativePG beside the one it was not allowed to see.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id=decision>Decision<a href=#decision class=hash-link aria-label="Direct link to Decision" title="Direct link to Decision" translate=no>​</a></h2>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=1-kelson-install-component--detection-first-and-a-refusal-is-the-normal-outcome>1. <code>kelson install &lt;component></code> — detection first, and a refusal is the normal outcome<a href=#1-kelson-install-component--detection-first-and-a-refusal-is-the-normal-outcome class=hash-link aria-label="Direct link to 1-kelson-install-component--detection-first-and-a-refusal-is-the-normal-outcome" title="Direct link to 1-kelson-install-component--detection-first-and-a-refusal-is-the-normal-outcome" translate=no>​</a></h3>
+<div class="language-text codeBlockContainer_Ckt0 theme-code-block" style=--prism-color:#9CDCFE;--prism-background-color:#1E1E1E><div class=codeBlockContent_QJqH><pre tabindex=0 class="prism-code language-text codeBlock_bY9V thin-scrollbar" style=color:#9CDCFE;background-color:#1E1E1E><code class=codeBlockLines_e6Vv><div class=token-line style=color:#9CDCFE><span class="token plain">kelson install cert-manager</span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">kelson install flux cnpg --yes</span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">kelson install --all-missing --dry-run</span><br/></div></code></pre></div></div>
+<p>The verb takes component names from one table, never a spec: the platform layer is shared by every
+project in the cluster and no spec describes it. Preview, confirm, apply — the shape <code>kelson uninstall</code>
+established, including that the preview prints whether or not <code>--yes</code> was passed and that a
+non-terminal stdin with no <code>--yes</code> is a refusal rather than an assumed yes. Installing writes
+cluster-scoped RBAC, CRDs and webhook configurations; nothing that wide should be able to happen
+because a pipe answered a question by accident.</p>
+<p>Eligibility is detection's answer and only detection's answer, computed <strong>before a byte is fetched</strong>:</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Detection says<th>What install does<tbody><tr><td>Yes — the component is present<td><strong>Refuse</strong>, naming the version detected. Never upgrade, never install alongside.<tr><td>No — it looked and it is absent<td>Install.<tr><td>Unknown — a profile <code>Gap</code> hid it<td><strong>Refuse</strong>, naming the RBAC permission that would settle it.</table>
+<p>The Unknown row is the one that needed deciding. Installing on an unknown is exactly the guess the
+tri-state exists to prevent, and the failure it produces — a second operator whose cluster-scoped CRDs
+fight the first — is among the worst things a PaaS can do to a cluster it was invited into.</p>
+<p><code>--all-missing</code> drops an already-present component silently (nobody asked about it) and still reports
+every Unknown, because "we could not tell" is precisely what a sweep must not swallow.</p>
+<p>The declarative, non-interactive path is <code>--yes</code> with an explicit component list or <code>--all-missing</code>;
+<code>--dry-run</code> prints the preview and stops. There is no config file and no way to override a pin from
+the command line — see §2.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=2-pinned-upstream-install-manifests-fetched-at-install-time-verified-by-digest>2. Pinned upstream install manifests, fetched at install time, verified by digest<a href=#2-pinned-upstream-install-manifests-fetched-at-install-time-verified-by-digest class=hash-link aria-label="Direct link to 2. Pinned upstream install manifests, fetched at install time, verified by digest" title="Direct link to 2. Pinned upstream install manifests, fetched at install time, verified by digest" translate=no>​</a></h3>
+<p>Each component installs from the install manifest <strong>its own project publishes</strong>, at a version pinned in
+<code>internal/delivery/install/pins.go</code>, fetched over HTTPS at install time and checked against a recorded
+SHA-256 before anything is applied. Nothing is vendored into this repository.</p>
+<p>A row is three facts that must agree — version, URL, digest — plus the profile field whose detection
+Gap hides the component. A drift test fails when they disagree, so a half-updated row cannot merge, and
+the update procedure is two shell commands recorded in the table's own doc comment. This is the pattern
+<code>internal/clusterprofile/support/matrix.go</code> uses for version floors and <code>hack/e2e/lib.sh</code> uses for the
+kind binary and node image: the repository holds the coordinates and the checksum, never the artifact.</p>
+<p><strong>Server-side apply over a Helm engine.</strong> The alternative was to embed Helm and render upstream charts.
+Rejected:</p>
+<ul>
+<li class="">A chart's values schema and image registry are a far larger and less stable surface than a published
+install manifest, and it is the surface the Bitnami incident destroyed.</li>
+<li class="">Embedding Helm means embedding Helm's release state — a second, invisible source of truth about what
+kelson installed, next to the labels this ADR makes authoritative in §3.</li>
+<li class="">kelson already server-side applies for a living (<code>internal/delivery/direct</code>), with field-manager
+conflict detection and no forcing. Applying a manifest reuses that whole discipline. A field another
+manager owns comes back as a conflict, which is the cluster saying <em>something else installed part of
+this</em>, and that is exactly the situation "never modify what kelson did not install" exists for.</li>
+<li class="">SSA is idempotent, so re-running after a partial failure converges rather than compounding.</li>
+</ul>
+<p>The cost is that some components publish no plain manifest — external-secrets is Helm-chart-only, which
+is why §5 defers it rather than pretending otherwise.</p>
+<p><strong>No pin overrides on the command line.</strong> A <code>--version</code> flag would turn the pins table from the source
+of truth into a default, and the digest check into theatre: kelson has no digest for a version nobody
+recorded. Installing a different version is a pull request against the table, which is where the change
+gets reviewed.</p>
+<p><strong>Air-gap honesty.</strong> Fetching at install time means an install needs network access to the upstream
+release host. Without it, kelson refuses, names the URL it could not reach, and applies nothing — every
+component is fetched and verified before any component is applied, so a two-component run cannot end
+with one installed and one unfetchable. The documented alternative is to mirror the manifest and apply
+it yourself; detection then finds the component and kelson adopts it, which is the ADR-0003 path and
+needs no new mechanism.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=3-provenance-is-per-object-decided-at-apply-time-and-it-is-the-only-licence-to-delete>3. Provenance is per object, decided at apply time, and it is the only licence to delete<a href=#3-provenance-is-per-object-decided-at-apply-time-and-it-is-the-only-licence-to-delete class=hash-link aria-label="Direct link to 3. Provenance is per object, decided at apply time, and it is the only licence to delete" title="Direct link to 3. Provenance is per object, decided at apply time, and it is the only licence to delete" translate=no>​</a></h3>
+<div class="language-text codeBlockContainer_Ckt0 theme-code-block" style=--prism-color:#9CDCFE;--prism-background-color:#1E1E1E><div class=codeBlockContent_QJqH><pre tabindex=0 class="prism-code language-text codeBlock_bY9V thin-scrollbar" style=color:#9CDCFE;background-color:#1E1E1E><code class=codeBlockLines_e6Vv><div class=token-line style=color:#9CDCFE><span class="token plain">kelson.dev/installed-component: &lt;name>       label — the selector handle</span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">kelson.dev/installed-version:   &lt;version>    label — the pin kelson applied</span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">kelson.dev/component-ownership: created|adopted   annotation — the licence</span><br/></div></code></pre></div></div>
+<p>Every object in the fetched manifest is read <strong>immediately before its apply</strong>. Absent means this apply
+creates it, and it is stamped <code>created</code>. Present means it was already there — a <code>flux-system</code> namespace
+somebody made by hand, a <code>ClusterRole</code> left by an earlier install — and it is stamped <code>adopted</code>. A read
+that fails is fatal for that component: "could not tell whether this existed" must never resolve to
+<code>created</code>, because <code>created</code> is the licence to delete it later. A re-run never downgrades a <code>created</code>
+object to <code>adopted</code>; the annotation records who brought the object into the world, not who wrote to it
+last.</p>
+<p>Component-level tracking was rejected. "kelson installed cert-manager" is not true of the namespace a
+user created last year, and a removal that took it would be exactly the over-deletion the acceptance
+criterion forbids. Per-object is more bookkeeping and it is the only version that is not a lie.</p>
+<p><code>app.kubernetes.io/managed-by: kelson</code> is <strong>deliberately not stamped</strong>. That label is half of the
+project-scoped uninstall selector (<code>internal/delivery/provenance.go</code>), and a platform component is not
+a project deployment: claiming it there would put cert-manager's ClusterRoles in the same query as an
+application's Deployments. Upstream sets that label for its own purposes too, and taking the field from
+its owner is the silent overwrite <a class="" href=/kelson/adr/0001-hybrid-state-model>ADR-0001</a> forbids.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=4-kelson-uninstall---component-name--the-same-verb-the-same-promise>4. <code>kelson uninstall --component &lt;name></code> — the same verb, the same promise<a href=#4-kelson-uninstall---component-name--the-same-verb-the-same-promise class=hash-link aria-label="Direct link to 4-kelson-uninstall---component-name--the-same-verb-the-same-promise" title="Direct link to 4-kelson-uninstall---component-name--the-same-verb-the-same-promise" translate=no>​</a></h3>
+<p>Removal shares the uninstall verb because it is the same promise at a different layer: kelson removes
+what kelson put there and nothing else. It refuses the project flags (<code>--project</code>, <code>--env</code>,
+<code>--keep-data</code>, <code>--keep-history</code>, …) rather than ignoring them, because a component has no environment,
+no namespace to sweep and no local history, and silently dropping a flag leaves a wrong belief intact.</p>
+<p>The sweep is by label, discovery-driven over <strong>both</strong> scopes — a platform component is mostly
+cluster-scoped, and a sweep that skipped CRDs, ClusterRoles and webhook configurations would leave a
+component's most durable pieces behind while reporting it removed. It reads the cluster and never the
+pinned manifest: a removal must work without network access, and the question is what is live and
+labelled, not what upstream's manifest said at the version kelson happens to pin today.</p>
+<p>Every candidate is re-read immediately before its delete and re-checked against its live label <strong>and</strong>
+its live ownership annotation, with a UID precondition on the delete itself. Anything <code>adopted</code>,
+anything with no annotation, and anything that stopped carrying the label is reported and left standing.</p>
+<p>Order is the reverse of the dependency order, and the last two tiers are the ones that needed thought:</p>
+<ol>
+<li class="">Custom resources of the component (the <code>FluxInstance</code>), so the operator that owns them is still
+running to finalize them.</li>
+<li class="">Workloads. 3. Configuration and RBAC.</li>
+<li class=""><strong>CustomResourceDefinitions</strong>, and the preview names every live custom resource each one takes with
+it. Deleting CloudNativePG's CRDs deletes every <code>Cluster</code> in the cluster — every managed database,
+including ones kelson never rendered. A preview that listed the CRD without saying that would be
+technically complete and practically a trap, which is the same reasoning behind uninstall's <code>DATA</code>
+section.</li>
+<li class="">The namespace, and only when kelson created it.</li>
+</ol>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=5-four-components-install-one-refuses-by-name>5. Four components install; one refuses by name<a href=#5-four-components-install-one-refuses-by-name class=hash-link aria-label="Direct link to 5. Four components install; one refuses by name" title="Direct link to 5. Four components install; one refuses by name" translate=no>​</a></h3>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Component<th>Status<th>Why<tbody><tr><td><code>flux</code><td>installs<td>flux-operator's pinned <code>install.yaml</code>, then one <code>FluxInstance</code><tr><td><code>cert-manager</code><td>installs<td>pinned <code>cert-manager.yaml</code><tr><td><code>cnpg</code><td>installs<td>pinned <code>cnpg-&lt;version>.yaml</code><tr><td><code>envoy-gateway</code><td>installs (since the 2026-08-14 amendment)<td>pinned <code>install.yaml</code>: the Gateway API CRDs plus the controller, and no <code>GatewayClass</code> — the class, and therefore any traffic, stays the user's decision. <code>--all-missing</code> declines it beside a detected ingress stack; naming it installs it<tr><td><code>external-secrets</code><td>refuses, names the follow-up<td>upstream publishes a Helm chart and no plain install manifest, and §2 rejected embedding a Helm engine</table>
+<p>A deferred row is a refusal <strong>with a reason and a follow-up</strong>, not an "unknown component" error that
+leaves the user wondering whether they typed it wrong.</p>
+<p><strong>Installing Flux means installing flux-operator.</strong> kelson applies the operator's own pinned manifest
+and creates one <code>FluxInstance</code> named <code>flux</code> (the CRD's own CEL rule requires that name) through the
+unstructured dynamic client. No Flux manifests are vendored and no install-or-upgrade lifecycle is
+reimplemented — that lifecycle is what flux-operator is for (<a class="" href=/kelson/adr/0016-delivery-flows-v0>ADR-0016</a>).
+The distribution version is pinned to a <strong>minor</strong> (<code>2.9.x</code>): patch upgrades within it are the
+operator's, which kelson explicitly delegates, and a minor bump is an API-surface decision the support
+matrix owns. The controller set includes <code>helm-controller</code>, because <code>kind: helm</code> renders a <code>HelmRelease</code>
+and a FluxInstance may legally install a subset that leaves it out.</p>
+<p>The <code>FluxInstance</code> sets <strong>no <code>spec.sync</code></strong>. Pointing a fresh Flux at a Git repository is a delivery
+decision belonging to <code>kelson deploy --mode flux</code> and to the user's repository layout, not to the act of
+installing Flux. An install that silently started reconciling a repository would be doing something
+nobody asked for.</p>
+<p>Nothing else is configured either: no <code>ClusterIssuer</code> (which ACME account or CA to trust is not
+kelson's decision), no <code>GatewayClass</code> or <code>Gateway</code> (which class carries a cluster's traffic is not
+either), no <code>SecretStore</code>, no databases. The command says so on the way out.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id=rationale>Rationale<a href=#rationale class=hash-link aria-label="Direct link to Rationale" title="Direct link to Rationale" translate=no>​</a></h2>
+<p>The through-line is that every claim kelson makes here is checkable by the person running it. The
+pinned URL and digest are <code>curl</code> and <code>sha256sum</code>. What kelson installed is
+<code>kubectl get -l kelson.dev/installed-component=&lt;name></code>. What kelson may delete is that query narrowed by
+one annotation, and the command prints the selector. None of it requires trusting a description of what
+kelson did.</p>
+<p>Detection-first is what keeps ADR-0003's additive doctrine intact under a verb whose whole job is to add
+things. The refusal on Yes is obvious; the refusal on Unknown is the one that matters, because it is the
+only place the tri-state can be quietly collapsed into a destructive default.</p>
+<p>Per-object provenance costs a read per object and buys the acceptance criterion outright. It is the same
+trade <code>internal/delivery/direct</code> already makes for namespaces, and the reason it is worth making twice
+is that both answer a question that stops being answerable one microsecond after the apply.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id=consequences>Consequences<a href=#consequences class=hash-link aria-label="Direct link to Consequences" title="Direct link to Consequences" translate=no>​</a></h2>
+<p><strong>Positive.</strong></p>
+<ul>
+<li class="">A cluster with nothing can become a cluster kelson renders fully against, in one command, without
+kelson taking custody of anyone's packaging.</li>
+<li class="">Uninstall is honest about ownership at object granularity, so removing a component kelson installed
+cannot take a namespace the user made.</li>
+<li class="">The pins table is one reviewable place with one documented update procedure and a drift test.</li>
+<li class="">No Helm engine, no chart values schema, no second source of truth about what is installed.</li>
+<li class="">The AGPL boundary around flux-operator is structural: the only thing kelson knows about it is a URL
+and a CR shape.</li>
+</ul>
+<p><strong>Negative.</strong></p>
+<ul>
+<li class=""><strong>Installing requires network access to the upstream release host.</strong> Air-gapped clusters cannot use
+this verb at all, and the documented answer — mirror it yourself, kelson will adopt it — is a worse
+experience than a vendored manifest would give. That is the deliberate price of not repeating Kubero's
+September 2025.</li>
+<li class=""><strong>kelson now owns an upgrade cadence it did not before.</strong> Every pinned version ages, and a stale pin
+installs a component older than the one the docs describe. Nothing here upgrades a component kelson
+installed: bumping the pin and re-running applies the new manifest, and whether that is a safe upgrade
+path for every component is untested and unclaimed.</li>
+<li class=""><strong>A digest mismatch is a hard refusal</strong>, including when upstream legitimately re-publishes a release
+artifact. The user is stuck until the pin is updated in kelson. Stated plainly in the error, with the
+<code>curl | sha256sum</code> command that shows them what changed.</li>
+<li class=""><strong>One of the five named components does not install</strong> (external-secrets), so the <code>externalSecrets</code>
+secret backend still needs manual work before kelson renders against it.</li>
+<li class=""><strong>An installed Envoy Gateway routes nothing until a <code>GatewayClass</code> and <code>Gateway</code> exist</strong>, and creating
+them is deliberately not kelson's job. The boundary message says so, but "installed" will still read
+as "routing works" to somebody, and the gap between the two is a support question waiting to happen.</li>
+<li class=""><strong>Removing a component's CRDs deletes custom resources kelson never created.</strong> The preview names each
+one and the prompt counts them, but the capability exists and a <code>--yes</code> in a script skips the reading.</li>
+<li class="">The removal sweep lists every kind in the cluster's discovery document, which is more API calls than a
+fixed list would be. Accepted for the reason <code>internal/delivery/uninstall</code> accepts it: a fixed list
+silently misses whatever the next upstream release adds.</li>
+</ul>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id=revisit-when>Revisit when<a href=#revisit-when class=hash-link aria-label="Direct link to Revisit when" title="Direct link to Revisit when" translate=no>​</a></h2>
+<p>Upstream stops publishing a plain install manifest for a component that installs today — at which point
+the choice is between embedding a chart renderer (re-opening §2) and dropping the component to a
+deferred row. Or when someone needs an air-gapped install badly enough to design a local artifact source
+that keeps the digest check meaningful.</div><footer class="theme-doc-footer docusaurus-mt-lg"><div class="row margin-top--sm theme-doc-footer-edit-meta-row"><div class="col noPrint_WFHX"><a href=https://github.com/dafrie/kelson/edit/main/docs/../docs/adr/0021-installing-missing-components.md target=_blank rel="noopener noreferrer" class=theme-edit-this-page><svg fill=currentColor height=20 width=20 viewBox="0 0 40 40" class=iconEdit_Z9Sw aria-hidden=true><g><path d="m34.5 11.7l-3 3.1-6.3-6.3 3.1-3q0.5-0.5 1.2-0.5t1.1 0.5l3.9 3.9q0.5 0.4 0.5 1.1t-0.5 1.2z m-29.5 17.1l18.4-18.5 6.3 6.3-18.4 18.4h-6.3v-6.2z"/></g></svg>Edit this page</a></div><div class="col lastUpdated_JAkA"><span class=theme-last-updated>Last updated<!-- --> on <b><time datetime=2026-08-14T16:22:22.000Z itemprop=dateModified>Aug 14, 2026</time></b></span></div></div></footer></article><nav class="docusaurus-mt-lg pagination-nav" aria-label="Docs pages"><a class="pagination-nav__link pagination-nav__link--prev" href=/kelson/adr/0020-external-secrets><div class=pagination-nav__sublabel>Previous</div><div class=pagination-nav__label>0020 — External secrets</div></a><a class="pagination-nav__link pagination-nav__link--next" href=/kelson/adr/0022-sops-age><div class=pagination-nav__sublabel>Next</div><div class=pagination-nav__label>0022 — SOPS + age</div></a></nav></div></div><div class="col col--3"><div class="tableOfContents_bqdL thin-scrollbar theme-doc-toc-desktop"><ul class="table-of-contents table-of-contents__left-border"><li><a href=#context class="table-of-contents__link toc-highlight">Context</a><li><a href=#decision class="table-of-contents__link toc-highlight">Decision</a><ul><li><a href=#1-kelson-install-component--detection-first-and-a-refusal-is-the-normal-outcome class="table-of-contents__link toc-highlight">1. <code>kelson install &lt;component></code> — detection first, and a refusal is the normal outcome</a><li><a href=#2-pinned-upstream-install-manifests-fetched-at-install-time-verified-by-digest class="table-of-contents__link toc-highlight">2. Pinned upstream install manifests, fetched at install time, verified by digest</a><li><a href=#3-provenance-is-per-object-decided-at-apply-time-and-it-is-the-only-licence-to-delete class="table-of-contents__link toc-highlight">3. Provenance is per object, decided at apply time, and it is the only licence to delete</a><li><a href=#4-kelson-uninstall---component-name--the-same-verb-the-same-promise class="table-of-contents__link toc-highlight">4. <code>kelson uninstall --component &lt;name></code> — the same verb, the same promise</a><li><a href=#5-four-components-install-one-refuses-by-name class="table-of-contents__link toc-highlight">5. Four components install; one refuses by name</a></ul><li><a href=#rationale class="table-of-contents__link toc-highlight">Rationale</a><li><a href=#consequences class="table-of-contents__link toc-highlight">Consequences</a><li><a href=#revisit-when class="table-of-contents__link toc-highlight">Revisit when</a></ul></div></div></div></div></main></div></div></div><footer class="theme-layout-footer footer footer--dark"><div class="container container-fluid"><div class="row footer__links"><div class="theme-layout-footer-column col footer__col"><div class=footer__title>Docs</div><ul class="footer__items clean-list"><li class=footer__item><a class=footer__link-item href=/kelson/>Overview</a><li class=footer__item><a class=footer__link-item href=/kelson/architecture>Architecture</a><li class=footer__item><a class=footer__link-item href=/kelson/roadmap>Roadmap</a><li class=footer__item><a class=footer__link-item href=/kelson/adr/>ADRs</a></ul></div><div class="theme-layout-footer-column col footer__col"><div class=footer__title>Project</div><ul class="footer__items clean-list"><li class=footer__item><a href=https://github.com/dafrie/kelson target=_blank rel="noopener noreferrer" class=footer__link-item>GitHub<svg width=13.5 height=13.5 aria-label="(opens in new tab)" class=iconExternalLink_nPIU><use href=#theme-svg-external-link /></svg></a><li class=footer__item><a href=https://github.com/dafrie/kelson/issues target=_blank rel="noopener noreferrer" class=footer__link-item>Issues<svg width=13.5 height=13.5 aria-label="(opens in new tab)" class=iconExternalLink_nPIU><use href=#theme-svg-external-link /></svg></a><li class=footer__item><a href=https://github.com/dafrie/kelson/milestones target=_blank rel="noopener noreferrer" class=footer__link-item>Milestones<svg width=13.5 height=13.5 aria-label="(opens in new tab)" class=iconExternalLink_nPIU><use href=#theme-svg-external-link /></svg></a></ul></div></div><div class="footer__bottom text--center"><div class=footer__copyright>MIT. Every feature — SSO, RBAC and audit logs are not paywalled.</div></div></div></footer></div></body>

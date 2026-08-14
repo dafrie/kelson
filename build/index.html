@@ -1,0 +1,454 @@
+<!doctype html><html lang=en dir=ltr class="docs-wrapper plugin-docs plugin-id-default docs-version-current docs-doc-page docs-doc-id-build" data-has-hydrated=false><head><meta charset=UTF-8><meta name=generator content="Docusaurus v3.10.2"><title data-rh=true>Build plane — how kelson turns source into an image | kelson</title><meta data-rh=true name=viewport content="width=device-width, initial-scale=1.0"/><meta data-rh=true name=twitter:card content=summary_large_image /><meta data-rh=true property=og:image content=https://dafrie.github.io/kelson/kelson-lockup.svg /><meta data-rh=true name=twitter:image content=https://dafrie.github.io/kelson/kelson-lockup.svg /><meta data-rh=true property=og:url content=https://dafrie.github.io/kelson/build /><meta data-rh=true property=og:locale content=en /><meta data-rh=true name=docusaurus_locale content=en /><meta data-rh=true name=docsearch:language content=en /><meta data-rh=true name=docusaurus_version content=current /><meta data-rh=true name=docusaurus_tag content=docs-default-current /><meta data-rh=true name=docsearch:version content=current /><meta data-rh=true name=docsearch:docusaurus_tag content=docs-default-current /><meta data-rh=true property=og:title content="Build plane — how kelson turns source into an image | kelson"/><meta data-rh=true name=description content="Reference for kelson build (M4) and for BuildService, the same plane over"/><meta data-rh=true property=og:description content="Reference for kelson build (M4) and for BuildService, the same plane over"/><link data-rh=true rel=icon href=/kelson/kelson-favicon-32.svg /><link data-rh=true rel=canonical href=https://dafrie.github.io/kelson/build /><link data-rh=true rel=alternate href=https://dafrie.github.io/kelson/build hreflang=en /><link data-rh=true rel=alternate href=https://dafrie.github.io/kelson/build hreflang=x-default /><script data-rh=true type=application/ld+json>{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","item":"https://dafrie.github.io/kelson/build","name":"Build","position":1}]}</script><link rel=stylesheet href=/kelson/assets/css/styles.c304df04.css /><script src=/kelson/assets/js/runtime~main.6bcfaf32.js defer></script><script src=/kelson/assets/js/main.d393c33f.js defer></script></head><body><svg style="display: none;"><defs>
+<symbol id=theme-svg-external-link viewBox="0 0 24 24"><path fill=currentColor d="M21 13v10h-21v-19h12v2h-10v15h17v-8h2zm3-12h-10.988l4.035 4-6.977 7.07 2.828 2.828 6.977-7.07 4.125 4.172v-11z"/></symbol>
+</defs></svg>
+<script>!function(){var t;document.documentElement.setAttribute("data-theme",t||"dark"),document.documentElement.setAttribute("data-theme-choice",t||"dark")}(),function(){try{for(var[t,e]of new URLSearchParams(window.location.search).entries())if(t.startsWith("docusaurus-data-")){var a=t.replace("docusaurus-data-","data-");document.documentElement.setAttribute(a,e)}}catch(t){}}()</script><div id=__docusaurus><link rel=preload as=image href=/kelson/kelson-mark.svg /><div role=region aria-label="Skip to main content"><a class=skipToContent_fXgn href=#__docusaurus_skipToContent_fallback>Skip to main content</a></div><nav aria-label=Main class="theme-layout-navbar navbar navbar--fixed-top"><div class=navbar__inner><div class="theme-layout-navbar-left navbar__items"><button aria-label="Toggle navigation bar" aria-expanded=false class="navbar__toggle clean-btn" type=button><svg width=30 height=30 viewBox="0 0 30 30" aria-hidden=true><path stroke=currentColor stroke-linecap=round stroke-miterlimit=10 stroke-width=2 d="M4 7h22M4 15h22M4 23h22"/></svg></button><a class=navbar__brand href=/kelson/><div class=navbar__logo><img src=/kelson/kelson-mark.svg alt=kelson class="themedComponent_mlkZ themedComponent--light_NVdE"/><img src=/kelson/kelson-mark.svg alt=kelson class="themedComponent_mlkZ themedComponent--dark_xIcU"/></div><b class="navbar__title text--truncate">kelson</b></a></div><div class="theme-layout-navbar-right navbar__items navbar__items--right"><a aria-current=page class="navbar__item navbar__link navbar__link--active" href=/kelson/build>unreleased</a><a href=https://github.com/dafrie/kelson target=_blank rel="noopener noreferrer" class="navbar__item navbar__link">GitHub<svg width=13.5 height=13.5 aria-label="(opens in new tab)" class=iconExternalLink_nPIU><use href=#theme-svg-external-link /></svg></a><div class=navbarSearchContainer_Bca1></div></div></div><div role=presentation class=navbar-sidebar__backdrop></div></nav><div id=__docusaurus_skipToContent_fallback class="theme-layout-main main-wrapper mainWrapper_z2l0"><div class=docsWrapper_hBAB><button aria-label="Scroll back to top" class="clean-btn theme-back-to-top-button backToTopButton_sjWU" type=button></button><div class=docRoot_UBD9><aside class="theme-doc-sidebar-container docSidebarContainer_YfHR"><div class=sidebarViewport_aRkj><div class=sidebar_njMd><nav aria-label="Docs sidebar" class="menu thin-scrollbar menu_SIkG"><ul class="theme-doc-sidebar-menu menu__list"><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/><span class=linkLabel_WmDU>Home</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/vision><span class=linkLabel_WmDU>Vision</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/install><span class=linkLabel_WmDU>Install</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/local><span class=linkLabel_WmDU>Local (kind)</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/architecture><span class=linkLabel_WmDU>Architecture</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/roadmap><span class=linkLabel_WmDU>Roadmap</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/competitive-analysis><span class=linkLabel_WmDU>Competitive analysis</span></a><li class="theme-doc-sidebar-item-category theme-doc-sidebar-item-category-level-1 menu__list-item"><div class=menu__list-item-collapsible><a class="categoryLink_byQd menu__link menu__link--sublist menu__link--sublist-caret" role=button aria-expanded=true href=/kelson/reference/project><span class=categoryLinkLabel_W154>Reference</span></a></div><ul class=menu__list><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/reference/project><span class=linkLabel_WmDU>Project spec</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/reference/environment><span class=linkLabel_WmDU>Environment spec</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/detection><span class=linkLabel_WmDU>Cluster detection</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/server><span class=linkLabel_WmDU>Server</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/mcp><span class=linkLabel_WmDU>MCP server</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/reference/support-matrix><span class=linkLabel_WmDU>Support matrix</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/e2e><span class=linkLabel_WmDU>E2E harness</span></a></ul><li class="theme-doc-sidebar-item-category theme-doc-sidebar-item-category-level-1 menu__list-item"><div class=menu__list-item-collapsible><a class="categoryLink_byQd menu__link menu__link--sublist menu__link--sublist-caret menu__link--active" role=button aria-expanded=true href=/kelson/model><span class=categoryLinkLabel_W154>Design</span></a></div><ul class=menu__list><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/model><span class=linkLabel_WmDU>Model</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class="menu__link menu__link--active" aria-current=page tabindex=0 href=/kelson/build><span class=linkLabel_WmDU>Build</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/delivery><span class=linkLabel_WmDU>Delivery</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/secrets><span class=linkLabel_WmDU>Secrets</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/data-services><span class=linkLabel_WmDU>Data services</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/statemachine><span class=linkLabel_WmDU>State machine</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/release-policy><span class=linkLabel_WmDU>Release policy</span></a></ul><li class="theme-doc-sidebar-item-category theme-doc-sidebar-item-category-level-1 menu__list-item"><div class=menu__list-item-collapsible><a class="categoryLink_byQd menu__link menu__link--sublist menu__link--sublist-caret" role=button aria-expanded=true href=/kelson/research/build-strategy-selection><span class=categoryLinkLabel_W154>Research</span></a></div><ul class=menu__list><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/research/build-strategy-selection><span class=linkLabel_WmDU>Build strategy selection</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/research/score-as-input-format><span class=linkLabel_WmDU>Score as an input format</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/research/hierarchy-prior-art><span class=linkLabel_WmDU>Hierarchy prior art</span></a></ul><li class="theme-doc-sidebar-item-category theme-doc-sidebar-item-category-level-1 menu__list-item"><div class=menu__list-item-collapsible><a class="categoryLink_byQd menu__link menu__link--sublist menu__link--sublist-caret" role=button aria-expanded=true href=/kelson/adr/><span class=categoryLinkLabel_W154>ADRs</span></a></div><ul class=menu__list><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/><span class=linkLabel_WmDU>Index</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0001-hybrid-state-model><span class=linkLabel_WmDU>0001 — Hybrid state model</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0002-tech-stack><span class=linkLabel_WmDU>0002 — Tech stack</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0003-install-model><span class=linkLabel_WmDU>0003 — Install model</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0004-licensing><span class=linkLabel_WmDU>0004 — Licensing</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0005-delegate-to-operators><span class=linkLabel_WmDU>0005 — Delegate to operators</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0006-project-application-environment><span class=linkLabel_WmDU>0006 — Project, Application, Environment</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0007-data-services><span class=linkLabel_WmDU>0007 — Data services</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0008-mcp-surface><span class=linkLabel_WmDU>0008 — MCP surface</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0009-secrets><span class=linkLabel_WmDU>0009 — Secrets</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0010-build-strategy><span class=linkLabel_WmDU>0010 — Build strategy</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0011-build-cache><span class=linkLabel_WmDU>0011 — Build cache</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0012-flux-only-gitops><span class=linkLabel_WmDU>0012 — Flux-only GitOps</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0013-server-state-and-api-v0><span class=linkLabel_WmDU>0013 — Server state and API v0</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0014-components><span class=linkLabel_WmDU>0014 — Components</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0015-valkey-operator><span class=linkLabel_WmDU>0015 — Valkey operator</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0016-delivery-flows-v0><span class=linkLabel_WmDU>0016 — Delivery flows v0</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0017-pr-previews><span class=linkLabel_WmDU>0017 — PR previews</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0018-secret-references><span class=linkLabel_WmDU>0018 — Secret references</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0019-release-command-hook><span class=linkLabel_WmDU>0019 — Release command hook</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0020-external-secrets><span class=linkLabel_WmDU>0020 — External secrets</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0021-installing-missing-components><span class=linkLabel_WmDU>0021 — Installing missing components</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0022-sops-age><span class=linkLabel_WmDU>0022 — SOPS + age</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0023-explain-structured-causes><span class=linkLabel_WmDU>0023 — Explain: structured causes</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0024-agent-identities><span class=linkLabel_WmDU>0024 — Agent identities</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0025-agent-policy><span class=linkLabel_WmDU>0025 — Agent policy</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0026-agent-audit-trail><span class=linkLabel_WmDU>0026 — The audit trail</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0027-finish-the-component-rename><span class=linkLabel_WmDU>0027 — Finish the component rename</span></a></ul></ul></nav></div></div></aside><main class=docMainContainer_TBSr><div class="container padding-top--md padding-bottom--lg"><div class=row><div class="col docItemCol_VOVn"><div class=docItemContainer_Djhp><article><nav class="theme-doc-breadcrumbs breadcrumbsContainer_Z_bl" aria-label=Breadcrumbs><ul class=breadcrumbs><li class=breadcrumbs__item><a aria-label="Home page" class=breadcrumbs__link href=/kelson/><svg viewBox="0 0 24 24" class=breadcrumbHomeIcon_YNFT><path d="M10 19v-5h4v5c0 .55.45 1 1 1h3c.55 0 1-.45 1-1v-7h1.7c.46 0 .68-.57.33-.87L12.67 3.6c-.38-.34-.96-.34-1.34 0l-8.36 7.53c-.34.3-.13.87.33.87H5v7c0 .55.45 1 1 1h3c.55 0 1-.45 1-1z" fill=currentColor /></svg></a><li class=breadcrumbs__item><span class=breadcrumbs__link>Design</span><li class="breadcrumbs__item breadcrumbs__item--active"><span class=breadcrumbs__link>Build</span></ul></nav><div class="tocCollapsible_ETCw theme-doc-toc-mobile tocMobile_ITEo"><button type=button class="clean-btn tocCollapsibleButton_TO0P">On this page</button></div><div class="theme-doc-markdown markdown"><header><h1>Build plane — how kelson turns source into an image</h1></header>
+<p>Reference for <code>kelson build</code> (M4) and for <code>BuildService</code>, the same plane over
+the API (<a href=https://github.com/dafrie/kelson/issues/54 target=_blank rel="noopener noreferrer" class="">#54</a>). Implements issues <a href=https://github.com/dafrie/kelson/issues/48 target=_blank rel="noopener noreferrer" class="">#48</a>, <a href=https://github.com/dafrie/kelson/issues/49 target=_blank rel="noopener noreferrer" class="">#49</a> and <a href=https://github.com/dafrie/kelson/issues/51 target=_blank rel="noopener noreferrer" class="">#51</a>; the strategy decision
+is <a class="" href=/kelson/adr/0010-build-strategy>ADR-0010</a>.</p>
+<p>A kelson Project can name a git repository instead of an image. <code>kelson build</code>
+is what turns that repository into a digest-pinned image reference, which
+<code>kelson render</code>, <code>kelson diff</code> and <code>kelson deploy</code> then consume through
+<code>--image</code>.</p>
+<div class="language-sh codeBlockContainer_Ckt0 theme-code-block" style=--prism-color:#9CDCFE;--prism-background-color:#1E1E1E><div class=codeBlockContent_QJqH><pre tabindex=0 class="prism-code language-sh codeBlock_bY9V thin-scrollbar" style=color:#9CDCFE;background-color:#1E1E1E><code class=codeBlockLines_e6Vv><div class=token-line style=color:#9CDCFE><span class="token plain">kelson build </span><span class="token parameter variable" style="color:rgb(156, 220, 254)">-f</span><span class="token plain"> project.yaml </span><span class="token parameter variable" style="color:rgb(156, 220, 254)">--registry</span><span class="token plain"> ghcr.io/acme --push-secret ghcr-push</span><br/></div></code></pre></div></div>
+<p>The last line of stdout is the reference, so the two commands compose:</p>
+<div class="language-sh codeBlockContainer_Ckt0 theme-code-block" style=--prism-color:#9CDCFE;--prism-background-color:#1E1E1E><div class=codeBlockContent_QJqH><pre tabindex=0 class="prism-code language-sh codeBlock_bY9V thin-scrollbar" style=color:#9CDCFE;background-color:#1E1E1E><code class=codeBlockLines_e6Vv><div class=token-line style=color:#9CDCFE><span class="token assign-left variable" style="color:rgb(156, 220, 254)">IMAGE</span><span class="token operator" style="color:rgb(212, 212, 212)">=</span><span class="token variable" style="color:rgb(156, 220, 254)">$(</span><span class="token variable" style="color:rgb(156, 220, 254)">kelson build </span><span class="token variable parameter variable" style="color:rgb(156, 220, 254)">-f</span><span class="token variable" style="color:rgb(156, 220, 254)"> project.yaml </span><span class="token variable parameter variable" style="color:rgb(156, 220, 254)">--registry</span><span class="token variable" style="color:rgb(156, 220, 254)"> ghcr.io/acme </span><span class="token variable operator" style="color:rgb(212, 212, 212)">|</span><span class="token variable" style="color:rgb(156, 220, 254)"> </span><span class="token variable function" style="color:rgb(220, 220, 170)">tail</span><span class="token variable" style="color:rgb(156, 220, 254)"> </span><span class="token variable parameter variable" style="color:rgb(156, 220, 254)">-1</span><span class="token variable" style="color:rgb(156, 220, 254)">)</span><span class="token plain"></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">kelson deploy </span><span class="token parameter variable" style="color:rgb(156, 220, 254)">-f</span><span class="token plain"> project.yaml </span><span class="token parameter variable" style="color:rgb(156, 220, 254)">-f</span><span class="token plain"> production.yaml </span><span class="token parameter variable" style="color:rgb(156, 220, 254)">--env</span><span class="token plain"> production </span><span class="token parameter variable" style="color:rgb(156, 220, 254)">--image</span><span class="token plain"> </span><span class="token string" style="color:rgb(206, 145, 120)">"</span><span class="token string variable" style="color:rgb(156, 220, 254)">$IMAGE</span><span class="token string" style="color:rgb(206, 145, 120)">"</span><br/></div></code></pre></div></div>
+<p>That pipeline is the whole integration. There is deliberately no <code>kelson deploy --build</code>: it would need six extra flags on <code>deploy</code>, all inert unless <code>--build</code>
+were passed, to replace a shell pipeline that already works.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id=builds-run-in-the-cluster-rootless>Builds run in the cluster, rootless<a href=#builds-run-in-the-cluster-rootless class=hash-link aria-label="Direct link to Builds run in the cluster, rootless" title="Direct link to Builds run in the cluster, rootless" translate=no>​</a></h2>
+<p>A build is a Kubernetes <code>Job</code> in the build namespace, not a local <code>docker build</code>. kelson never needs a Docker daemon, and the machine running the CLI
+never needs to be able to build the image.</p>
+<p>The Job has two steps, whichever strategy runs:</p>
+<ol>
+<li class="">an <strong>init container</strong> clones the source at the resolved commit, depth 1, into
+an <code>emptyDir</code> workspace;</li>
+<li class="">the <strong>build container</strong> builds it and pushes:
+<ul>
+<li class=""><strong>dockerfile</strong> runs <a href=https://github.com/moby/buildkit target=_blank rel="noopener noreferrer" class="">BuildKit</a>'s
+<code>*-rootless</code> image — <code>buildkitd</code> in the background, then <code>buildctl build --frontend dockerfile.v0</code>;</li>
+<li class=""><strong>buildpacks</strong> runs a <a href=https://buildpacks.io target=_blank rel="noopener noreferrer" class="">Cloud Native Buildpacks</a>
+builder image and its <code>/cnb/lifecycle/creator</code>, which detects the app's
+language from the workspace, picks the buildpacks and exports the image.</li>
+</ul>
+</li>
+</ol>
+<p><strong>No privileged container is involved, and that is a tested property, not an
+intention.</strong> <code>TestWorkloadBuildIsNotPrivileged</code> and
+<code>TestWorkloadLifecycleIsNotPrivileged</code> assert <code>runAsNonRoot: true</code>,
+<code>allowPrivilegeEscalation: false</code>, <code>capabilities.drop: [ALL]</code>, and no
+<code>CAP_SYS_ADMIN</code> anywhere in the rendered manifest. Running privileged builders
+in a shared cluster is what issue #48 rules out, so the rootless posture is the
+acceptance criterion rather than a configuration choice, and it is the same
+criterion for both drivers.</p>
+<p>Cloning inside the pod rather than uploading a context keeps the control plane
+out of the data path: kelson never streams a source tree through itself, and a
+large repository costs the build pod's bandwidth instead of the server's.</p>
+<p>The Job is deleted when the build finishes, in every outcome. Success, failure
+and timeout are classified apart — a build that exceeded
+<code>activeDeadlineSeconds</code> reports as a timeout, not as a generic failure.</p>
+<p><strong>One executor serves both drivers.</strong> Nothing in it is strategy-specific: it
+submits the Job, streams whichever container the Job declares, and reads what
+was pushed from the Job's own <code>kelson.dev/image</code> and <code>kelson.dev/tag</code>
+annotations rather than out of a builder's command line. buildctl spells the
+destination <code>--output name=…</code> and the lifecycle spells it <code>-image …</code>; an
+executor that scraped either would have needed a second parser for the second
+strategy.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id=the-destination---registry-and-one-image-per-project>The destination: <code>--registry</code> and one image per Project<a href=#the-destination---registry-and-one-image-per-project class=hash-link aria-label="Direct link to the-destination---registry-and-one-image-per-project" title="Direct link to the-destination---registry-and-one-image-per-project" translate=no>​</a></h2>
+<p>Nothing in the spec says where an image is pushed, and that is on purpose. The
+registry is infrastructure configuration, not application description: the same
+Project must build against a team's <code>ghcr.io/acme</code> and against a kind cluster's
+<code>localhost:5000</code>. ADR-0010 already keeps build configuration out of the spec;
+this is the same boundary from the registry side.</p>
+<p>So the destination arrives as a flag:</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th><th><tbody><tr><td><code>--registry ghcr.io/acme</code><td>required; <code>KELSON_REGISTRY</code> supplies the default<tr><td>repository<td><code>&lt;registry>/&lt;project></code> — e.g. <code>ghcr.io/acme/shop</code><tr><td>tag<td><code>&lt;project>-&lt;project>-&lt;short revision></code> — e.g. <code>shop-shop-0123456789ab</code><tr><td>reference<td><code>&lt;repository>@sha256:…</code> — what the command prints</table>
+<p><strong>One repository per Project, not per Component.</strong> The source is
+project-level (<code>spec.source</code>), so the build is too. Model rule P3 resolves an
+Component's image to its own <code>image:</code> if it has one and to the Project's
+otherwise, which means one built image feeds every component that does not
+name one. One build, one repository, one digest pinned into all of them.</p>
+<p>The tag repeats the project name because <code>registry.Tag</code> takes
+<code>(project, component, revision)</code> and a project-level build has no single
+component to put in the middle slot. Naming the first component there would
+read as "this image belongs to <code>web</code>", which is exactly what it does not mean;
+repeating the project is redundant but true. Nothing depends on the tag —
+reproducibility comes from the digest, and the tag exists so a human reading a
+registry listing can tell what they are looking at.</p>
+<p><strong>The result is always digest-pinned.</strong> The executor scrapes the pushed digest
+out of the build's output and returns <code>repository@sha256:…</code>; the command
+refuses a result that is not pinned. A mutable tag in a rendered manifest would
+break the guarantee that the same commit deploys the same thing, which is the
+one thing the build exists to provide (issue #51).</p>
+<p>For BuildKit that digest is on its own push line. The lifecycle does not print
+one — it announces <code>*** Images (&lt;id>)</code> in prose and states the digest as data
+only in <code>report.toml</code>, inside a pod that is deleted when the Job finishes — so
+the buildpacks build reads its own report and echoes
+<code>kelson: pushed &lt;repository>@sha256:…</code> as its last line. A report with no
+digest fails the build rather than reporting success with nothing to deploy.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id=plain-http-registries>Plain-HTTP registries<a href=#plain-http-registries class=hash-link aria-label="Direct link to Plain-HTTP registries" title="Direct link to Plain-HTTP registries" translate=no>​</a></h2>
+<p>A local registry has no TLS: kind's <code>localhost:5000</code>, or an in-cluster registry
+reached by its Service name. Neither builder will talk plain HTTP to a host it
+was not told about, and neither should — silently downgrading because a TLS
+handshake failed is how a push credential ends up on the wire in clear.</p>
+<p>So the exception is named, per host, by whoever runs the build:</p>
+<div class="language-sh codeBlockContainer_Ckt0 theme-code-block" style=--prism-color:#9CDCFE;--prism-background-color:#1E1E1E><div class=codeBlockContent_QJqH><pre tabindex=0 class="prism-code language-sh codeBlock_bY9V thin-scrollbar" style=color:#9CDCFE;background-color:#1E1E1E><code class=codeBlockLines_e6Vv><div class=token-line style=color:#9CDCFE><span class="token plain">kelson build </span><span class="token parameter variable" style="color:rgb(156, 220, 254)">-f</span><span class="token plain"> project.yaml </span><span class="token parameter variable" style="color:rgb(156, 220, 254)">--registry</span><span class="token plain"> localhost:5000 </span><span class="token punctuation" style="color:rgb(212, 212, 212)">\</span><span class="token plain"></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">  --insecure-registries localhost:5000</span><br/></div></code></pre></div></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th><th><tbody><tr><td><code>--insecure-registries host[:port],…</code><td>CLI and server; <code>KELSON_INSECURE_REGISTRIES</code> supplies the default for both<tr><td><code>server.insecureRegistries: [localhost:5000]</code><td>the Helm value that renders the server's flag</table>
+<p>Only the listed hosts are affected. A registry that was not named is reached
+exactly as before, and an entry carrying a scheme (<code>http://…</code>) or a repository
+path is refused at parse time — it would match no image, and the push would
+then fail on TLS with nothing pointing at the typo.</p>
+<p>It is an operator knob and never a request field. A caller who could name a
+registry insecure could make the server push a credential in clear to a host of
+their choosing.</p>
+<p>The mechanism differs per driver, because the two tools disagree about what
+"insecure" means:</p>
+<ul>
+<li class=""><strong>BuildKit</strong> gets a generated <code>buildkitd</code> config, <code>[registry."host"] http = true</code>, loaded with <code>--config</code>. <code>http = true</code> is deliberately <em>not</em> paired with
+<code>insecure = true</code>: buildkit's resolver forces HTTPS for a registry marked
+insecure and cannot fall back, so the pair breaks the very registry this
+exists to reach (<a href=https://github.com/moby/buildkit/issues/5872 target=_blank rel="noopener noreferrer" class="">moby/buildkit#5872</a>).
+The exporter's own <code>registry.insecure=true</code> is added as well, but only when
+the <em>destination</em> was listed; it covers a registry serving TLS the build
+cannot verify and does not decide the scheme.</li>
+<li class=""><strong>The CNB lifecycle</strong> gets <code>CNB_INSECURE_REGISTRIES</code>, comma-separated — the
+input the <a href=https://github.com/buildpacks/spec/blob/main/platform.md target=_blank rel="noopener noreferrer" class="">platform spec</a>
+defines for <code>creator</code> (<code>-insecure-registry</code>, <code>CNB_INSECURE_REGISTRIES</code>), which
+the lifecycle splits on commas. kelson passes the variable rather than the
+flags because the input first exists in lifecycle <strong>v0.18.0</strong>: an older
+lifecycle exits on an unknown flag, but ignores a variable it does not read,
+which fails as "the push could not use TLS" instead of "flag provided but not
+defined". The default builder is an unpinned Paketo tag, so which lifecycle a
+build actually gets is Paketo's to say, not kelson's.</li>
+</ul>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id=push-credentials>Push credentials<a href=#push-credentials class=hash-link aria-label="Direct link to Push credentials" title="Direct link to Push credentials" translate=no>​</a></h2>
+<p><code>--push-secret &lt;name></code> names an <strong>existing</strong>
+<code>kubernetes.io/dockerconfigjson</code> Secret in the build namespace. kelson does not
+create it, does not read it, and never writes a credential into a manifest —
+credentials are references, never values (<a class="" href=/kelson/adr/0009-secrets>ADR-0009</a>).</p>
+<p>The mechanism is a file mount, because both builders authenticate a <em>push</em>
+through the Docker CLI's config file, not through a Kubernetes
+<code>imagePullSecret</code>. An <code>imagePullSecret</code> on the build pod would do nothing here.
+So the Secret's <code>.dockerconfigjson</code> key is projected as <code>config.json</code> and
+<code>DOCKER_CONFIG</code> points the builder at that directory — <code>/home/user/.docker</code>
+for the rootless BuildKit image, <code>/home/cnb/.docker</code> for a CNB builder, each
+being that image's own home. The clone init container sees neither the mount
+nor the variable.</p>
+<p>The projection is read-only in both cases. Its mode differs: <code>0400</code> under
+BuildKit, <code>0444</code> under the lifecycle, because a Secret volume's files are owned
+by root and the lifecycle runs as uid 1000, so a <code>0400</code> projection would be
+unreadable by the process that needs it.</p>
+<p>Creating the Secret is out of scope, and one command already does it:</p>
+<div class="language-sh codeBlockContainer_Ckt0 theme-code-block" style=--prism-color:#9CDCFE;--prism-background-color:#1E1E1E><div class=codeBlockContent_QJqH><pre tabindex=0 class="prism-code language-sh codeBlock_bY9V thin-scrollbar" style=color:#9CDCFE;background-color:#1E1E1E><code class=codeBlockLines_e6Vv><div class=token-line style=color:#9CDCFE><span class="token plain">kubectl create secret docker-registry ghcr-push </span><span class="token punctuation" style="color:rgb(212, 212, 212)">\</span><span class="token plain"></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">  </span><span class="token parameter variable" style="color:rgb(156, 220, 254)">--namespace</span><span class="token plain"> shop-production </span><span class="token punctuation" style="color:rgb(212, 212, 212)">\</span><span class="token plain"></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">  --docker-server</span><span class="token operator" style="color:rgb(212, 212, 212)">=</span><span class="token plain">ghcr.io </span><span class="token punctuation" style="color:rgb(212, 212, 212)">\</span><span class="token plain"></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">  --docker-username</span><span class="token operator" style="color:rgb(212, 212, 212)">=</span><span class="token string" style="color:rgb(206, 145, 120)">"</span><span class="token string variable" style="color:rgb(156, 220, 254)">$GITHUB_USER</span><span class="token string" style="color:rgb(206, 145, 120)">"</span><span class="token plain"> </span><span class="token punctuation" style="color:rgb(212, 212, 212)">\</span><span class="token plain"></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">  --docker-password</span><span class="token operator" style="color:rgb(212, 212, 212)">=</span><span class="token string" style="color:rgb(206, 145, 120)">"</span><span class="token string variable" style="color:rgb(156, 220, 254)">$GITHUB_TOKEN</span><span class="token string" style="color:rgb(206, 145, 120)">"</span><br/></div></code></pre></div></div>
+<p>Omitting <code>--push-secret</code> means an unauthenticated push. That is correct for a
+cluster-internal registry and fails at push time for anything else.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id=build-time-secrets>Build-time secrets<a href=#build-time-secrets class=hash-link aria-label="Direct link to Build-time secrets" title="Direct link to Build-time secrets" translate=no>​</a></h2>
+<p>A credential the <em>build itself</em> needs — a private npm token, a corporate CA —
+goes through a <strong>BuildKit secret mount</strong>, never a build argument and never an
+image layer (<a class="" href=/kelson/adr/0009-secrets>ADR-0009</a>, issue #117):</p>
+<div class="language-dockerfile codeBlockContainer_Ckt0 theme-code-block" style=--prism-color:#9CDCFE;--prism-background-color:#1E1E1E><div class=codeBlockContent_QJqH><pre tabindex=0 class="prism-code language-dockerfile codeBlock_bY9V thin-scrollbar" style=color:#9CDCFE;background-color:#1E1E1E><code class=codeBlockLines_e6Vv><div class=token-line style=color:#9CDCFE><span class="token plain">RUN --mount=type=secret,id=npm-token \</span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">    npm config set //registry.npmjs.org/:_authToken="$(cat /run/secrets/npm-token)" && npm ci</span><br/></div></code></pre></div></div>
+<p>The executor projects one key of an existing Kubernetes Secret per mount
+(<code>buildkit.Config.Secrets</code>), read-only and mode <code>0400</code>, and points <code>buildctl</code> at
+it with <code>--secret id=…,src=…</code>. Only the Secret's <em>name</em> enters the rendered Job:
+kelson never holds the value, so it cannot leak it. The mount exists for the
+duration of one <code>RUN</code> on a tmpfs and is not committed to a layer.</p>
+<p>A <strong>build argument</strong> whose name looks like a credential (<code>NPM_TOKEN</code>,
+<code>DB_PASSWORD</code>, <code>…_API_KEY</code>) is refused rather than redacted. A build arg is
+recorded in the image's own history and in the Job's command line, so by the
+time output could be cleaned up the value is already in the pushed image,
+readable by anyone who can pull it. This is the documented gap in Coolify that
+ADR-0009 names.</p>
+<p>There is no spec field or CLI flag for build secrets yet — the reference model
+is <a href=https://github.com/dafrie/kelson/issues/79 target=_blank rel="noopener noreferrer" class="">#79</a>. What exists today is the
+executor-level mount, so the safe path is already the only path when it lands.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id=strategy-selection>Strategy selection<a href=#strategy-selection class=hash-link aria-label="Direct link to Strategy selection" title="Direct link to Strategy selection" translate=no>​</a></h2>
+<p>Precedence is <a class="" href=/kelson/adr/0010-build-strategy>ADR-0010</a>'s, unchanged:</p>
+<ol>
+<li class="">an explicit <code>spec.build.strategy</code> always wins — <code>none</code> means "use <code>image:</code>,
+build nothing";</li>
+<li class="">a <code>Dockerfile</code> in the source (or at <code>spec.build.dockerfile</code>) selects
+<strong>dockerfile</strong>;</li>
+<li class="">otherwise <strong>buildpacks</strong>.</li>
+</ol>
+<p>Both build (<a href=https://github.com/dafrie/kelson/issues/48 target=_blank rel="noopener noreferrer" class="">#48</a>, <a href=https://github.com/dafrie/kelson/issues/49 target=_blank rel="noopener noreferrer" class="">#49</a>). The resolved strategy is what selects the driver, and
+it is resolved once, by the function <code>kelson build</code> and <code>BuildService</code> share, so
+the two cannot disagree about what a spec selects.</p>
+<p><strong><code>none</code></strong> is the one answer that is a refusal: the spec asked for nothing to be
+built, and the reason is <code>build/nothing-to-build</code>.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=buildpacks>Buildpacks<a href=#buildpacks class=hash-link aria-label="Direct link to Buildpacks" title="Direct link to Buildpacks" translate=no>​</a></h3>
+<p>No Dockerfile, no build configuration, an image anyway — the zero-config default
+ADR-0010 chose. The lifecycle reads the workspace, picks the buildpacks that
+match the language, and reports what it chose in output the build streams back.
+kelson supplies the source and the parameters and re-implements none of that
+detection.</p>
+<p>The builder image, the run image and any extra buildpacks are <strong>driver
+configuration</strong>, not spec: <code>buildpacks.Config</code> carries them, defaulting to
+Paketo's <code>builder-jammy-base</code> / <code>run-jammy-base</code> pair. "Configure buildpacks"
+means setting that config, never teaching the kelson spec a builder DSL —
+ADR-0010 forbids the DSL, and <code>spec.build</code> has exactly two fields for that
+reason.</p>
+<p><code>rebase</code> — patching a built image onto a new run image without rebuilding the
+application — exists on the driver (<code>Driver.Rebase</code>, digest-pinned on both
+sides, failing closed without an injected rebaser) and has no CLI or RPC yet.
+Neither surface injects a rebaser, because a rebaser needs an OCI registry
+client that the build plane's lint allow-list forbids and neither command has a
+rebase verb to hang it on. It is also not a complete CVE story: rebase replaces
+compatible run-image layers, and a vulnerable dependency in the application's
+own layers still needs a rebuild.</p>
+<p>There is no cache, so every buildpacks build is cold — including the
+lifecycle's own <code>analyze</code>/<code>restore</code> reuse, which needs a previous app image the
+driver does not point it at (<a href=https://github.com/dafrie/kelson/issues/52 target=_blank rel="noopener noreferrer" class="">#52</a>, <a class="" href=/kelson/adr/0011-build-cache>ADR-0011</a>).</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=auto-needs-a-local-checkout><code>auto</code> needs a local checkout<a href=#auto-needs-a-local-checkout class=hash-link aria-label="Direct link to auto-needs-a-local-checkout" title="Direct link to auto-needs-a-local-checkout" translate=no>​</a></h3>
+<p>Detection reads the source tree. For a remote repository the CLI has no tree to
+read — the tree only exists inside the build pod, after the clone. So:</p>
+<div class="language-sh codeBlockContainer_Ckt0 theme-code-block" style=--prism-color:#9CDCFE;--prism-background-color:#1E1E1E><div class=codeBlockContent_QJqH><pre tabindex=0 class="prism-code language-sh codeBlock_bY9V thin-scrollbar" style=color:#9CDCFE;background-color:#1E1E1E><code class=codeBlockLines_e6Vv><div class=token-line style=color:#9CDCFE><span class="token comment" style="color:rgb(106, 153, 85)"># auto-detection over a local checkout</span><span class="token plain"></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">kelson build </span><span class="token parameter variable" style="color:rgb(156, 220, 254)">-f</span><span class="token plain"> project.yaml </span><span class="token parameter variable" style="color:rgb(156, 220, 254)">--registry</span><span class="token plain"> ghcr.io/acme </span><span class="token parameter variable" style="color:rgb(156, 220, 254)">-C</span><span class="token plain"> </span><span class="token builtin class-name" style="color:rgb(78, 201, 176)">.</span><span class="token plain"></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain" style=display:inline-block></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain"></span><span class="token comment" style="color:rgb(106, 153, 85)"># no checkout needed: the spec names the strategy</span><span class="token plain"></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain"></span><span class="token comment" style="color:rgb(106, 153, 85)">#   spec.build.strategy: dockerfile</span><span class="token plain"></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">kelson build </span><span class="token parameter variable" style="color:rgb(156, 220, 254)">-f</span><span class="token plain"> project.yaml </span><span class="token parameter variable" style="color:rgb(156, 220, 254)">--registry</span><span class="token plain"> ghcr.io/acme</span><br/></div></code></pre></div></div>
+<p>Without <code>-C</code> and without an explicit strategy, <code>auto</code> fails with reason
+<code>build/detection-needs-source</code> and says which of the two fixes to apply.
+Guessing "probably a Dockerfile" would be exactly the magic ADR-0010 exists to
+avoid. Detecting inside the cluster before choosing a driver is tracked by
+<a href=https://github.com/dafrie/kelson/issues/50 target=_blank rel="noopener noreferrer" class="">#50</a>.</p>
+<p><code>-C</code> is used <strong>only</strong> for detection. The build still clones the remote
+repository at the resolved commit; a dirty local checkout does not reach the
+image.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id=revisions>Revisions<a href=#revisions class=hash-link aria-label="Direct link to Revisions" title="Direct link to Revisions" translate=no>​</a></h2>
+<p><code>--ref</code> takes a branch, a tag or a commit; without it, <code>spec.source.ref</code> is
+used, and without that, the repository's default branch.</p>
+<p>Anything that is not already a 40-character commit is resolved once, up front,
+with the <code>git ls-remote</code> question — no clone, no working tree. A branch wins
+over a tag of the same name (git's own precedence) and an annotated tag
+resolves to the commit it points at, not to the tag object.</p>
+<p>Resolving once is the point: the image tag, the recorded
+<code>build.Request.Revision</code>, the <code>kelson.dev/revision</code> annotation on the Job and
+the commit the build pod checks out are then all the same string. A branch
+resolved separately by each of them could disagree, and "built from main" is
+not a record of anything.</p>
+<p>Reading the source repository reuses the delivery credential
+(<code>KELSON_GIT_TOKEN</code>); a public repository needs none.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id=command-surface>Command surface<a href=#command-surface class=hash-link aria-label="Direct link to Command surface" title="Direct link to Command surface" translate=no>​</a></h2>
+<div class="language-text codeBlockContainer_Ckt0 theme-code-block" style=--prism-color:#9CDCFE;--prism-background-color:#1E1E1E><div class=codeBlockContent_QJqH><pre tabindex=0 class="prism-code language-text codeBlock_bY9V thin-scrollbar" style=color:#9CDCFE;background-color:#1E1E1E><code class=codeBlockLines_e6Vv><div class=token-line style=color:#9CDCFE><span class="token plain">kelson build -f spec.yaml [--env &lt;name>] --registry &lt;prefix></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">             [--push-secret &lt;name>] [--insecure-registries &lt;hosts>]</span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">             [--ref &lt;git-ref>] [-C &lt;dir>]</span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">             [--namespace &lt;ns>] [--kubeconfig &lt;path>] [--timeout 30m]</span><br/></div></code></pre></div></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Flag<th>Meaning<tbody><tr><td><code>-f</code>, <code>--file</code><td>spec documents, repeatable (required)<tr><td><code>--env</code><td>which Environment; optional when the input holds exactly one<tr><td><code>--registry</code><td>destination registry and namespace; <code>KELSON_REGISTRY</code> is the default<tr><td><code>--push-secret</code><td>existing dockerconfigjson Secret authenticating the push<tr><td><code>--insecure-registries</code><td>comma-separated hosts served over plain HTTP; <code>KELSON_INSECURE_REGISTRIES</code> is the default<tr><td><code>--ref</code><td>branch, tag or commit to build<tr><td><code>-C</code>, <code>--source-dir</code><td>local checkout, used only to detect the strategy<tr><td><code>--namespace</code><td>namespace for the build Job; defaults to the environment's namespace<tr><td><code>--kubeconfig</code><td>cluster credentials; the usual precedence chain<tr><td><code>--timeout</code><td>budget for clone, build and push; default 30m</table>
+<p><strong>Output.</strong> The build log streams to stdout as it is produced. The plan (chosen
+strategy and why, source and resolved commit, destination) and the deploy hint
+go to stderr, so the last line of stdout is the digest-pinned reference and
+nothing else. A failed build exits 1 with the executor's classified error.</p>
+<p>A build needs no <code>--profile</code> and does no rendering: it reads <code>spec.source</code>,
+<code>spec.build</code> and the Environment's identity, and nothing a ClusterProfile
+decides.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id=the-same-build-over-the-api>The same build over the API<a href=#the-same-build-over-the-api class=hash-link aria-label="Direct link to The same build over the API" title="Direct link to The same build over the API" translate=no>​</a></h2>
+<p><code>kelson-server</code> serves the identical pipeline as <code>BuildService.Build</code>
+(<a class="" href=/kelson/adr/0013-server-state-and-api-v0>ADR-0013</a>, issue <a href=https://github.com/dafrie/kelson/issues/54 target=_blank rel="noopener noreferrer" class="">#54</a>), because a
+browser has no kubeconfig and the UI's create-from-a-git-repository path
+(<a href=https://github.com/dafrie/kelson/issues/63 target=_blank rel="noopener noreferrer" class="">#63</a>) has to reach the build plane somehow.</p>
+<p>The stream is three events: <code>Started</code> once the strategy and the ref are
+resolved to settled facts (strategy, image repository, tag, revision), <code>Log</code>
+chunks carrying the build's raw output while the Job runs, and <code>Finished</code> with
+the digest-pinned reference. A failed build is a ConnectRPC error with the same
+<code>build/*</code> codes the CLI prints — it produced no image, so there is no result
+message that could honestly describe one.</p>
+<p>The destination is the server's configuration rather than each caller's:</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Flag<th>Meaning<tbody><tr><td><code>--registry</code><td>default destination prefix; <code>KELSON_REGISTRY</code> supplies it<tr><td><code>--push-secret</code><td>default push credential, by name<tr><td><code>--build-namespace</code><td>where build Jobs run; empty keeps the environment's own namespace, as in the CLI<tr><td><code>--insecure-registries</code><td>hosts served over plain HTTP; <code>KELSON_INSECURE_REGISTRIES</code>, or <code>server.insecureRegistries</code> in the chart</table>
+<p>A request may override the registry and the push secret, because where an image
+is pushed is not application description. It may <strong>not</strong> override the strategy:
+that is the spec's, and a per-request override would put build configuration in
+the caller's hands, which is what ADR-0010 forbids. There is no
+<code>idempotency_key</code> either — a build is named from the resolved commit, so
+re-running one is already a replay.</p>
+<p>Two limits are the server's own and are documented on the RPC rather than
+discovered at runtime:</p>
+<ul>
+<li class=""><strong><code>auto</code> cannot be detected server-side at all.</strong> Detection reads a source
+tree, the server has none, and there is no server-side equivalent of <code>-C</code>. A
+spec that leaves the strategy to <code>auto</code> fails with
+<code>build/detection-needs-source</code> and says to set <code>spec.build.strategy</code>. This is
+why the UI's create form offers <code>dockerfile</code> and not <code>auto</code> (<a href=https://github.com/dafrie/kelson/issues/50 target=_blank rel="noopener noreferrer" class="">#50</a> is the fix).</li>
+<li class=""><strong>Cancelling the stream does not cancel the build.</strong> It stops the server
+watching. The executor returns as soon as its context is done, before the
+branch that deletes the Job, so the Job keeps running, finishes or hits its
+<code>activeDeadlineSeconds</code>, and is left in the build namespace for an operator to
+find. "I cancelled the build" and "the build stopped" are different facts.</li>
+</ul>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id=structure>Structure<a href=#structure class=hash-link aria-label="Direct link to Structure" title="Direct link to Structure" translate=no>​</a></h2>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Package<th>Role<tbody><tr><td><code>internal/build</code><td>the <code>Request</code> / <code>Result</code> / <code>Builder</code> contract, the workload annotations and the shared clone script, plus the pure build plan (strategy resolution, destination tag, ref classification) both callers share<tr><td><code>internal/build/buildkit</code><td>the Dockerfile driver; <code>Config.Workload</code> is a <strong>pure</strong> <code>(Request, Config) → Job YAML</code><tr><td><code>internal/build/buildpacks</code><td>the buildpacks driver, the same shape, plus <code>Rebase</code> behind a <code>Rebaser</code> seam<tr><td><code>internal/build/detect</code><td>strategy detection over an <code>fs.FS</code>, with a typed reason and the evidence path<tr><td><code>internal/build/registry</code><td>reference parsing, digest pinning, tag and destination derivation, credential references, the insecure-registry list<tr><td><code>internal/delivery/kube</code><td><code>BuildExecutor</code>: submits the Job, streams pod logs, classifies the outcome, parses the digest — for either driver<tr><td><code>internal/delivery/git</code><td><code>RemoteResolver</code>: <code>ls-remote</code> ref resolution<tr><td><code>cmd/kelson</code><td><code>kelson build</code>: flags, spec, and the <code>buildConnector</code> seam, where the resolved strategy picks a driver<tr><td><code>internal/api</code><td><code>BuildService.Build</code>: the same plan over the wire, behind the <code>BuildConnector</code> seam</table>
+<p>The split is the depguard allow-lists (<code>.golangci.yml</code>), not taste.
+<code>internal/build</code> may not import client-go, so the cluster-facing half of each
+driver lives behind its <code>Cluster</code> interface and is implemented in
+<code>internal/delivery/kube</code>; one <code>BuildExecutor</code> satisfies both structurally.
+<code>cmd/kelson</code> may import neither client-go nor go-git, so it consumes both
+through <code>buildConnector</code> — which is also why every test of the command runs
+with no cluster and no network. <code>internal/api</code> may not import client-go either,
+which is why the resolved strategy travels to the connector on <code>BuildTarget</code>
+and the driver is constructed in <code>cmd/kelson-server</code>.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id=not-here-yet>Not here yet<a href=#not-here-yet class=hash-link aria-label="Direct link to Not here yet" title="Direct link to Not here yet" translate=no>​</a></h2>
+<ul>
+<li class=""><strong>In-cluster strategy detection</strong> — <a href=https://github.com/dafrie/kelson/issues/50 target=_blank rel="noopener noreferrer" class="">#50</a>; today <code>auto</code> needs <code>-C</code>, and a
+server has no equivalent.</li>
+<li class=""><strong>Build caching</strong> — <a href=https://github.com/dafrie/kelson/issues/52 target=_blank rel="noopener noreferrer" class="">#52</a>, <a class="" href=/kelson/adr/0011-build-cache>ADR-0011</a>. Every build
+is cold, under either strategy.</li>
+<li class=""><strong><code>rebase</code> as a command</strong> — the driver has it, no CLI or RPC calls it, and
+nothing injects a rebaser. See above.</li>
+<li class=""><strong>Multi-platform builds</strong> — <code>build.Request.Platforms</code> reaches <code>buildctl</code>, but
+no flag sets it, and the lifecycle is not given it at all.</li>
+<li class=""><strong>Build-time secrets under buildpacks</strong> — <code>buildkit.Config.Secrets</code> mounts
+them for a Dockerfile build; the lifecycle has no equivalent wired here.</li>
+<li class=""><strong>Live verification</strong> — the build path has no end-to-end coverage yet; it
+belongs to the e2e harness (<a href=https://github.com/dafrie/kelson/issues/86 target=_blank rel="noopener noreferrer" class="">#86</a>), which is where a real registry and a real
+cluster exist. See <a class="" href=/kelson/e2e>docs/e2e.md</a>.</li>
+</ul></div><footer class="theme-doc-footer docusaurus-mt-lg"><div class="row margin-top--sm theme-doc-footer-edit-meta-row"><div class="col noPrint_WFHX"><a href=https://github.com/dafrie/kelson/edit/main/docs/../docs/build.md target=_blank rel="noopener noreferrer" class=theme-edit-this-page><svg fill=currentColor height=20 width=20 viewBox="0 0 40 40" class=iconEdit_Z9Sw aria-hidden=true><g><path d="m34.5 11.7l-3 3.1-6.3-6.3 3.1-3q0.5-0.5 1.2-0.5t1.1 0.5l3.9 3.9q0.5 0.4 0.5 1.1t-0.5 1.2z m-29.5 17.1l18.4-18.5 6.3 6.3-18.4 18.4h-6.3v-6.2z"/></g></svg>Edit this page</a></div><div class="col lastUpdated_JAkA"><span class=theme-last-updated>Last updated<!-- --> on <b><time datetime=2026-08-14T16:22:22.000Z itemprop=dateModified>Aug 14, 2026</time></b></span></div></div></footer></article><nav class="docusaurus-mt-lg pagination-nav" aria-label="Docs pages"><a class="pagination-nav__link pagination-nav__link--prev" href=/kelson/model><div class=pagination-nav__sublabel>Previous</div><div class=pagination-nav__label>Model</div></a><a class="pagination-nav__link pagination-nav__link--next" href=/kelson/delivery><div class=pagination-nav__sublabel>Next</div><div class=pagination-nav__label>Delivery</div></a></nav></div></div><div class="col col--3"><div class="tableOfContents_bqdL thin-scrollbar theme-doc-toc-desktop"><ul class="table-of-contents table-of-contents__left-border"><li><a href=#builds-run-in-the-cluster-rootless class="table-of-contents__link toc-highlight">Builds run in the cluster, rootless</a><li><a href=#the-destination---registry-and-one-image-per-project class="table-of-contents__link toc-highlight">The destination: <code>--registry</code> and one image per Project</a><li><a href=#plain-http-registries class="table-of-contents__link toc-highlight">Plain-HTTP registries</a><li><a href=#push-credentials class="table-of-contents__link toc-highlight">Push credentials</a><li><a href=#build-time-secrets class="table-of-contents__link toc-highlight">Build-time secrets</a><li><a href=#strategy-selection class="table-of-contents__link toc-highlight">Strategy selection</a><ul><li><a href=#buildpacks class="table-of-contents__link toc-highlight">Buildpacks</a><li><a href=#auto-needs-a-local-checkout class="table-of-contents__link toc-highlight"><code>auto</code> needs a local checkout</a></ul><li><a href=#revisions class="table-of-contents__link toc-highlight">Revisions</a><li><a href=#command-surface class="table-of-contents__link toc-highlight">Command surface</a><li><a href=#the-same-build-over-the-api class="table-of-contents__link toc-highlight">The same build over the API</a><li><a href=#structure class="table-of-contents__link toc-highlight">Structure</a><li><a href=#not-here-yet class="table-of-contents__link toc-highlight">Not here yet</a></ul></div></div></div></div></main></div></div></div><footer class="theme-layout-footer footer footer--dark"><div class="container container-fluid"><div class="row footer__links"><div class="theme-layout-footer-column col footer__col"><div class=footer__title>Docs</div><ul class="footer__items clean-list"><li class=footer__item><a class=footer__link-item href=/kelson/>Overview</a><li class=footer__item><a class=footer__link-item href=/kelson/architecture>Architecture</a><li class=footer__item><a class=footer__link-item href=/kelson/roadmap>Roadmap</a><li class=footer__item><a class=footer__link-item href=/kelson/adr/>ADRs</a></ul></div><div class="theme-layout-footer-column col footer__col"><div class=footer__title>Project</div><ul class="footer__items clean-list"><li class=footer__item><a href=https://github.com/dafrie/kelson target=_blank rel="noopener noreferrer" class=footer__link-item>GitHub<svg width=13.5 height=13.5 aria-label="(opens in new tab)" class=iconExternalLink_nPIU><use href=#theme-svg-external-link /></svg></a><li class=footer__item><a href=https://github.com/dafrie/kelson/issues target=_blank rel="noopener noreferrer" class=footer__link-item>Issues<svg width=13.5 height=13.5 aria-label="(opens in new tab)" class=iconExternalLink_nPIU><use href=#theme-svg-external-link /></svg></a><li class=footer__item><a href=https://github.com/dafrie/kelson/milestones target=_blank rel="noopener noreferrer" class=footer__link-item>Milestones<svg width=13.5 height=13.5 aria-label="(opens in new tab)" class=iconExternalLink_nPIU><use href=#theme-svg-external-link /></svg></a></ul></div></div><div class="footer__bottom text--center"><div class=footer__copyright>MIT. Every feature — SSO, RBAC and audit logs are not paywalled.</div></div></div></footer></div></body>

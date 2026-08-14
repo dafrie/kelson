@@ -1,0 +1,260 @@
+<!doctype html><html lang=en dir=ltr class="docs-wrapper plugin-docs plugin-id-default docs-version-current docs-doc-page docs-doc-id-adr/0013-server-state-and-api-v0" data-has-hydrated=false><head><meta charset=UTF-8><meta name=generator content="Docusaurus v3.10.2"><title data-rh=true>ADR-0013: Server state lives in the cluster; API v0 shape | kelson</title><meta data-rh=true name=viewport content="width=device-width, initial-scale=1.0"/><meta data-rh=true name=twitter:card content=summary_large_image /><meta data-rh=true property=og:image content=https://dafrie.github.io/kelson/kelson-lockup.svg /><meta data-rh=true name=twitter:image content=https://dafrie.github.io/kelson/kelson-lockup.svg /><meta data-rh=true property=og:url content=https://dafrie.github.io/kelson/adr/0013-server-state-and-api-v0 /><meta data-rh=true property=og:locale content=en /><meta data-rh=true name=docusaurus_locale content=en /><meta data-rh=true name=docsearch:language content=en /><meta data-rh=true name=docusaurus_version content=current /><meta data-rh=true name=docusaurus_tag content=docs-default-current /><meta data-rh=true name=docsearch:version content=current /><meta data-rh=true name=docsearch:docusaurus_tag content=docs-default-current /><meta data-rh=true property=og:title content="ADR-0013: Server state lives in the cluster; API v0 shape | kelson"/><meta data-rh=true name=description content="- Status EventService added as the sixth service — the watch"/><meta data-rh=true property=og:description content="- Status EventService added as the sixth service — the watch"/><link data-rh=true rel=icon href=/kelson/kelson-favicon-32.svg /><link data-rh=true rel=canonical href=https://dafrie.github.io/kelson/adr/0013-server-state-and-api-v0 /><link data-rh=true rel=alternate href=https://dafrie.github.io/kelson/adr/0013-server-state-and-api-v0 hreflang=en /><link data-rh=true rel=alternate href=https://dafrie.github.io/kelson/adr/0013-server-state-and-api-v0 hreflang=x-default /><script data-rh=true type=application/ld+json>{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","item":"https://dafrie.github.io/kelson/adr/0013-server-state-and-api-v0","name":"0013 — Server state and API v0","position":1}]}</script><link rel=stylesheet href=/kelson/assets/css/styles.c304df04.css /><script src=/kelson/assets/js/runtime~main.6bcfaf32.js defer></script><script src=/kelson/assets/js/main.d393c33f.js defer></script></head><body><svg style="display: none;"><defs>
+<symbol id=theme-svg-external-link viewBox="0 0 24 24"><path fill=currentColor d="M21 13v10h-21v-19h12v2h-10v15h17v-8h2zm3-12h-10.988l4.035 4-6.977 7.07 2.828 2.828 6.977-7.07 4.125 4.172v-11z"/></symbol>
+</defs></svg>
+<script>!function(){var t;document.documentElement.setAttribute("data-theme",t||"dark"),document.documentElement.setAttribute("data-theme-choice",t||"dark")}(),function(){try{for(var[t,e]of new URLSearchParams(window.location.search).entries())if(t.startsWith("docusaurus-data-")){var a=t.replace("docusaurus-data-","data-");document.documentElement.setAttribute(a,e)}}catch(t){}}()</script><div id=__docusaurus><link rel=preload as=image href=/kelson/kelson-mark.svg /><div role=region aria-label="Skip to main content"><a class=skipToContent_fXgn href=#__docusaurus_skipToContent_fallback>Skip to main content</a></div><nav aria-label=Main class="theme-layout-navbar navbar navbar--fixed-top"><div class=navbar__inner><div class="theme-layout-navbar-left navbar__items"><button aria-label="Toggle navigation bar" aria-expanded=false class="navbar__toggle clean-btn" type=button><svg width=30 height=30 viewBox="0 0 30 30" aria-hidden=true><path stroke=currentColor stroke-linecap=round stroke-miterlimit=10 stroke-width=2 d="M4 7h22M4 15h22M4 23h22"/></svg></button><a class=navbar__brand href=/kelson/><div class=navbar__logo><img src=/kelson/kelson-mark.svg alt=kelson class="themedComponent_mlkZ themedComponent--light_NVdE"/><img src=/kelson/kelson-mark.svg alt=kelson class="themedComponent_mlkZ themedComponent--dark_xIcU"/></div><b class="navbar__title text--truncate">kelson</b></a></div><div class="theme-layout-navbar-right navbar__items navbar__items--right"><a aria-current=page class="navbar__item navbar__link navbar__link--active" href=/kelson/adr/0013-server-state-and-api-v0>unreleased</a><a href=https://github.com/dafrie/kelson target=_blank rel="noopener noreferrer" class="navbar__item navbar__link">GitHub<svg width=13.5 height=13.5 aria-label="(opens in new tab)" class=iconExternalLink_nPIU><use href=#theme-svg-external-link /></svg></a><div class=navbarSearchContainer_Bca1></div></div></div><div role=presentation class=navbar-sidebar__backdrop></div></nav><div id=__docusaurus_skipToContent_fallback class="theme-layout-main main-wrapper mainWrapper_z2l0"><div class=docsWrapper_hBAB><button aria-label="Scroll back to top" class="clean-btn theme-back-to-top-button backToTopButton_sjWU" type=button></button><div class=docRoot_UBD9><aside class="theme-doc-sidebar-container docSidebarContainer_YfHR"><div class=sidebarViewport_aRkj><div class=sidebar_njMd><nav aria-label="Docs sidebar" class="menu thin-scrollbar menu_SIkG"><ul class="theme-doc-sidebar-menu menu__list"><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/><span class=linkLabel_WmDU>Home</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/vision><span class=linkLabel_WmDU>Vision</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/install><span class=linkLabel_WmDU>Install</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/local><span class=linkLabel_WmDU>Local (kind)</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/architecture><span class=linkLabel_WmDU>Architecture</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/roadmap><span class=linkLabel_WmDU>Roadmap</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/competitive-analysis><span class=linkLabel_WmDU>Competitive analysis</span></a><li class="theme-doc-sidebar-item-category theme-doc-sidebar-item-category-level-1 menu__list-item"><div class=menu__list-item-collapsible><a class="categoryLink_byQd menu__link menu__link--sublist menu__link--sublist-caret" role=button aria-expanded=true href=/kelson/reference/project><span class=categoryLinkLabel_W154>Reference</span></a></div><ul class=menu__list><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/reference/project><span class=linkLabel_WmDU>Project spec</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/reference/environment><span class=linkLabel_WmDU>Environment spec</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/detection><span class=linkLabel_WmDU>Cluster detection</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/server><span class=linkLabel_WmDU>Server</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/mcp><span class=linkLabel_WmDU>MCP server</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/reference/support-matrix><span class=linkLabel_WmDU>Support matrix</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/e2e><span class=linkLabel_WmDU>E2E harness</span></a></ul><li class="theme-doc-sidebar-item-category theme-doc-sidebar-item-category-level-1 menu__list-item"><div class=menu__list-item-collapsible><a class="categoryLink_byQd menu__link menu__link--sublist menu__link--sublist-caret" role=button aria-expanded=true href=/kelson/model><span class=categoryLinkLabel_W154>Design</span></a></div><ul class=menu__list><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/model><span class=linkLabel_WmDU>Model</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/build><span class=linkLabel_WmDU>Build</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/delivery><span class=linkLabel_WmDU>Delivery</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/secrets><span class=linkLabel_WmDU>Secrets</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/data-services><span class=linkLabel_WmDU>Data services</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/statemachine><span class=linkLabel_WmDU>State machine</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/release-policy><span class=linkLabel_WmDU>Release policy</span></a></ul><li class="theme-doc-sidebar-item-category theme-doc-sidebar-item-category-level-1 menu__list-item"><div class=menu__list-item-collapsible><a class="categoryLink_byQd menu__link menu__link--sublist menu__link--sublist-caret" role=button aria-expanded=true href=/kelson/research/build-strategy-selection><span class=categoryLinkLabel_W154>Research</span></a></div><ul class=menu__list><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/research/build-strategy-selection><span class=linkLabel_WmDU>Build strategy selection</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/research/score-as-input-format><span class=linkLabel_WmDU>Score as an input format</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/research/hierarchy-prior-art><span class=linkLabel_WmDU>Hierarchy prior art</span></a></ul><li class="theme-doc-sidebar-item-category theme-doc-sidebar-item-category-level-1 menu__list-item"><div class=menu__list-item-collapsible><a class="categoryLink_byQd menu__link menu__link--sublist menu__link--sublist-caret menu__link--active" role=button aria-expanded=true href=/kelson/adr/><span class=categoryLinkLabel_W154>ADRs</span></a></div><ul class=menu__list><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/><span class=linkLabel_WmDU>Index</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0001-hybrid-state-model><span class=linkLabel_WmDU>0001 — Hybrid state model</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0002-tech-stack><span class=linkLabel_WmDU>0002 — Tech stack</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0003-install-model><span class=linkLabel_WmDU>0003 — Install model</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0004-licensing><span class=linkLabel_WmDU>0004 — Licensing</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0005-delegate-to-operators><span class=linkLabel_WmDU>0005 — Delegate to operators</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0006-project-application-environment><span class=linkLabel_WmDU>0006 — Project, Application, Environment</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0007-data-services><span class=linkLabel_WmDU>0007 — Data services</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0008-mcp-surface><span class=linkLabel_WmDU>0008 — MCP surface</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0009-secrets><span class=linkLabel_WmDU>0009 — Secrets</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0010-build-strategy><span class=linkLabel_WmDU>0010 — Build strategy</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0011-build-cache><span class=linkLabel_WmDU>0011 — Build cache</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0012-flux-only-gitops><span class=linkLabel_WmDU>0012 — Flux-only GitOps</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class="menu__link menu__link--active" aria-current=page tabindex=0 href=/kelson/adr/0013-server-state-and-api-v0><span class=linkLabel_WmDU>0013 — Server state and API v0</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0014-components><span class=linkLabel_WmDU>0014 — Components</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0015-valkey-operator><span class=linkLabel_WmDU>0015 — Valkey operator</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0016-delivery-flows-v0><span class=linkLabel_WmDU>0016 — Delivery flows v0</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0017-pr-previews><span class=linkLabel_WmDU>0017 — PR previews</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0018-secret-references><span class=linkLabel_WmDU>0018 — Secret references</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0019-release-command-hook><span class=linkLabel_WmDU>0019 — Release command hook</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0020-external-secrets><span class=linkLabel_WmDU>0020 — External secrets</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0021-installing-missing-components><span class=linkLabel_WmDU>0021 — Installing missing components</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0022-sops-age><span class=linkLabel_WmDU>0022 — SOPS + age</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0023-explain-structured-causes><span class=linkLabel_WmDU>0023 — Explain: structured causes</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0024-agent-identities><span class=linkLabel_WmDU>0024 — Agent identities</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0025-agent-policy><span class=linkLabel_WmDU>0025 — Agent policy</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0026-agent-audit-trail><span class=linkLabel_WmDU>0026 — The audit trail</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0027-finish-the-component-rename><span class=linkLabel_WmDU>0027 — Finish the component rename</span></a></ul></ul></nav></div></div></aside><main class=docMainContainer_TBSr><div class="container padding-top--md padding-bottom--lg"><div class=row><div class="col docItemCol_VOVn"><div class=docItemContainer_Djhp><article><nav class="theme-doc-breadcrumbs breadcrumbsContainer_Z_bl" aria-label=Breadcrumbs><ul class=breadcrumbs><li class=breadcrumbs__item><a aria-label="Home page" class=breadcrumbs__link href=/kelson/><svg viewBox="0 0 24 24" class=breadcrumbHomeIcon_YNFT><path d="M10 19v-5h4v5c0 .55.45 1 1 1h3c.55 0 1-.45 1-1v-7h1.7c.46 0 .68-.57.33-.87L12.67 3.6c-.38-.34-.96-.34-1.34 0l-8.36 7.53c-.34.3-.13.87.33.87H5v7c0 .55.45 1 1 1h3c.55 0 1-.45 1-1z" fill=currentColor /></svg></a><li class=breadcrumbs__item><span class=breadcrumbs__link>ADRs</span><li class="breadcrumbs__item breadcrumbs__item--active"><span class=breadcrumbs__link>0013 — Server state and API v0</span></ul></nav><div class="tocCollapsible_ETCw theme-doc-toc-mobile tocMobile_ITEo"><button type=button class="clean-btn tocCollapsibleButton_TO0P">On this page</button></div><div class="theme-doc-markdown markdown"><header><h1>ADR-0013: Server state lives in the cluster; API v0 shape</h1></header>
+<ul>
+<li class=""><strong>Status:</strong> Proposed (amended 2026-08-13: <code>EventService</code> added as the sixth service — the watch
+stream of <a href=https://github.com/dafrie/kelson/issues/76 target=_blank rel="noopener noreferrer" class="">#76</a>. It adds no new state and no new seam;
+it observes through the same DeliveryConnector and health evaluator the Status RPC uses, so §1's
+"the process holds no state" is unchanged: the retained event window is a cache a restart is
+allowed to lose, and says so with a Resync.)
+(Amended 2026-08-13: <code>BuildService</code> added as the seventh service — the build plane of
+<a href=https://github.com/dafrie/kelson/issues/48 target=_blank rel="noopener noreferrer" class="">#48</a>/<a href=https://github.com/dafrie/kelson/issues/54 target=_blank rel="noopener noreferrer" class="">#54</a>
+over the schema. It adds no new state: a build produces an image in a registry, not a record in the
+server, and the build Job is the cluster's. It does add a seam, <code>BuildConnector</code>, which is the same
+shape as <code>DeliveryConnector</code> and for the same reason — the executor needs client-go, which §4's
+fence keeps out of this plane.)</li>
+<li class=""><strong>Date:</strong> 2026-08-13</li>
+</ul>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id=context>Context<a href=#context class=hash-link aria-label="Direct link to Context" title="Direct link to Context" translate=no>​</a></h2>
+<p><a class="" href=/kelson/adr/0002-tech-stack>ADR-0002</a> decided the transport (ConnectRPC, one schema producing gRPC and
+HTTP/JSON) and <a class="" href=/kelson/adr/0008-mcp-surface>ADR-0008</a> decided the parity rule (capability parity, task-shaped
+MCP tools on top). Neither decided two things #139 cannot proceed without:</p>
+<ol>
+<li class="">
+<p><strong>Where server state lives.</strong> The direct adapter's history journal is local-filesystem JSONL
+(<code>internal/delivery/direct/history.go</code>) — right for a CLI, wrong for a multi-client server. The
+review that produced #139 flagged this as needs-ADR. The same question applies to specs: a server
+that "serves existing capabilities" could stay stateless and take specs in every request (the CLI's
+<code>-f</code> model over HTTP), or own a spec store and become the source of truth clients converge on.</p>
+</li>
+<li class="">
+<p><strong>The v0 surface.</strong> Which capabilities the first server release exposes, and what its trust model is
+while the threat model (#84) and agent identities (M7) do not exist yet.</p>
+</li>
+</ol>
+<p>Decisions taken with the project owner, 2026-08-13: the server <strong>stores specs</strong> (not stateless),
+history is <strong>in-cluster from day one</strong> (no local server state), the v0 surface is the <strong>full working
+set</strong> (render, diff, profile, deploy, status, rollback, log streaming), and v0 auth is <strong>loopback-only,
+no authentication</strong>.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id=decision>Decision<a href=#decision class=hash-link aria-label="Direct link to Decision" title="Direct link to Decision" translate=no>​</a></h2>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=1-all-server-state-is-cluster-state-the-server-itself-is-stateless>1. All server state is cluster state; the server itself is stateless<a href=#1-all-server-state-is-cluster-state-the-server-itself-is-stateless class=hash-link aria-label="Direct link to 1. All server state is cluster state; the server itself is stateless" title="Direct link to 1. All server state is cluster state; the server itself is stateless" translate=no>​</a></h3>
+<p>Specs and deployment history are stored as <strong>ConfigMaps in the namespace the server runs against</strong>
+(default <code>kelson-system</code>, flag-configurable), carrying the standard kelson provenance labels. The
+<code>kelson-server</code> process holds no state a restart or a second replica would lose or fork.</p>
+<p><strong>Not a CRD.</strong> <a class="" href=/kelson/adr/0003-install-model>ADR-0003</a>'s additive-install doctrine means the server must work
+against a cluster where kelson has installed nothing: ConfigMaps need no CRD registration, no
+admission wiring, and plain namespaced RBAC (<code>get/list/watch/create/update/delete configmaps</code> in one
+namespace) is the entire permission footprint. A CRD-based store is the natural successor <strong>when the
+controller exists</strong> (M13+) and is explicitly the migration target recorded here — the store is behind
+an interface precisely so that swap does not touch handlers.</p>
+<p><strong>Optimistic concurrency is Kubernetes resourceVersion.</strong> #69 requires optimistic concurrency on spec
+version. Rather than inventing a version counter and a store to keep it in, spec writes carry the
+ConfigMap's <code>resourceVersion</code> through the API as an opaque <code>version</code> string; a conflicting write fails
+server-side apply the same way any Kubernetes conflict does and surfaces as a structured
+<code>store/version-conflict</code> error. What Kubernetes already guarantees, kelson does not reimplement.</p>
+<p><strong>Layout.</strong></p>
+<ul>
+<li class="">Spec store: one ConfigMap per project — <code>kelson-spec-&lt;project></code> — holding the authored YAML
+documents verbatim (<code>project.yaml</code>, one key per environment). The server stores what the user wrote,
+not a normalized form: the spec is the user's document, round-trips must be byte-faithful, and
+validation happens on write with the full structured-error taxonomy (<code>schema/*</code> codes, line/column
+positions).</li>
+<li class="">History store: one ConfigMap per revision — <code>kelson-hist-&lt;project>-&lt;env>-&lt;revision></code> — containing
+the journal record (JSON) and the rendered manifests (gzipped, base64). Labels
+<code>kelson.dev/project</code>, <code>kelson.dev/environment</code>, <code>kelson.dev/revision</code> make listing a label query.
+Retention mirrors the JSONL store (<code>DefaultKeep = 20</code>, newest kept, pruned on append). A rendered
+set that cannot fit a ConfigMap after compression (1 MiB etcd limit) fails the deploy with a
+structured error rather than storing a truncated history — a history that lies is worse than none.</li>
+</ul>
+<p><strong>The seam.</strong> <code>internal/delivery/direct</code> gains a <code>History</code> interface (the six methods of today's
+<code>*Store</code>: Append/List/Latest/Get/Rendered/NextRevision); the JSONL <code>Store</code> keeps implementing it for
+the CLI, and the cluster-backed implementation lives with the other cluster-facing code. The CLI
+changes not at all: local JSONL remains correct for a single-user tool. The CLI and the server
+therefore have <strong>different history stores by design</strong> — deploys made through one are not visible in
+the other's history. That is honest (they are different actors) but worth revisiting when agent
+identities (M7) give deploys an attributable author regardless of entry point.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=2-v0-api-surface-the-full-working-set-one-schema-structured-errors-on-the-wire>2. v0 API surface: the full working set, one schema, structured errors on the wire<a href=#2-v0-api-surface-the-full-working-set-one-schema-structured-errors-on-the-wire class=hash-link aria-label="Direct link to 2. v0 API surface: the full working set, one schema, structured errors on the wire" title="Direct link to 2. v0 API surface: the full working set, one schema, structured errors on the wire" translate=no>​</a></h3>
+<p>Seven services under <code>kelson.v1alpha1</code> (details in <code>proto/kelson/v1alpha1/</code>):</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Service<th>RPCs<th>Notes<tbody><tr><td><code>SpecService</code><td>PutSpec, GetSpec, ListSpecs, DeleteSpec<td>The store; Put validates and returns structured errors; optimistic concurrency via <code>version</code><tr><td><code>RenderService</code><td>Render, Diff<td>Pure calls; spec by store reference <strong>or</strong> inline documents (the CLI's <code>-f</code> mode remains a peer)<tr><td><code>ProfileService</code><td>GetProfile<td>Live capture against the server's cluster; gaps are data, not warnings on a side channel<tr><td><code>DeployService</code><td>Deploy, Status, Rollback, History<td>Deploy/Rollback are server-streaming: each state-machine transition is an event; the final event carries the settled state<tr><td><code>LogService</code><td>Query, Follow<td>First consumer of <code>observation/logquery</code>; Query is bounded (the engine's <code>requireBound</code>), Follow is the deliberate unbounded stream<tr><td><code>EventService</code><td>Watch<td>Server-streaming watch over (project, environment) scopes (#76). Cursors resume within a bounded in-memory window; past it the server sends <code>Resync</code> (relist via Status) rather than pretending to durable history<tr><td><code>BuildService</code><td>Build<td>Server-streaming in-cluster build (#48, #54): <code>Started</code>, raw build output as <code>Log</code> chunks, <code>Finished</code> with the digest-pinned reference. The strategy stays the spec's (ADR-0010) so there is no override field; the destination is the server's configuration (<code>--registry</code>, <code>--push-secret</code>), overridable per request because where an image is pushed is not application description</table>
+<p><strong>Every mutating RPC</strong> (PutSpec, DeleteSpec, Deploy, Rollback) carries <code>dry_run</code>
+(<code>DRY_RUN_UNSPECIFIED | NONE | RENDER | SERVER</code>) and <code>idempotency_key</code>, per #69. Idempotency in v0 is
+scoped honestly: keys are recorded in the state ConfigMaps' annotations and a replayed key returns the
+recorded outcome; there is no distributed dedup beyond what one namespace's ConfigMaps provide.</p>
+<p><code>BuildService.Build</code> carries neither, and the reason is worth stating rather than filing as an
+exception. A dry-run rung would have nothing to do: a build renders no manifests and has no
+server-side apply to preview, and "validate the spec without building" is <code>PutSpec</code> at
+<code>dry_run=RENDER</code>. An idempotency key would have nothing to deduplicate: the image is named from the
+resolved commit, so a replayed build pushes the same content to the same tag and resolves to the same
+digest, and the executor's Job name is itself a function of the request, so a concurrent duplicate
+adopts the running Job. Adding either field to look consistent would be adding a field that lies.</p>
+<p><strong>One wire error shape.</strong> The three plane vocabularies (<code>model.Error</code>, <code>renderer.Error</code>,
+<code>delivery.Error</code>) map onto a single <code>kelson.v1alpha1.Error</code> message — the union of their fields
+(code, resource, field, application, overlay, target, message, remediation, docs_url, line, column,
+cause) — attached as ConnectRPC error details. Codes pass through verbatim (<code>schema/not-implemented</code>,
+<code>image/unresolved</code>, <code>delivery/apply-failed</code>, …) plus a small <code>store/*</code> vocabulary for the state layer
+(<code>store/version-conflict</code>, <code>store/not-found</code>, <code>store/too-large</code>). Agents branch on codes; the wire
+must not invent a second taxonomy.</p>
+<p><strong>Streaming is ConnectRPC server-streaming.</strong> Deploy events are <code>statemachine.State</code> snapshots
+(phase, stuck, cause, answer) — the same transitions the CLI prints, so <code>kelson deploy</code> and a future
+UI cannot disagree about what a phase means (issue #37's rule, now enforced at the API boundary).</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=3-v0-trust-model-loopback-no-auth-no-pretense>3. v0 trust model: loopback, no auth, no pretense<a href=#3-v0-trust-model-loopback-no-auth-no-pretense class=hash-link aria-label="Direct link to 3. v0 trust model: loopback, no auth, no pretense" title="Direct link to 3. v0 trust model: loopback, no auth, no pretense" translate=no>​</a></h3>
+<p>The server binds <code>127.0.0.1</code> by default and refuses a non-loopback <code>--listen</code> without an explicit
+<code>--insecure-bind</code> flag. No authentication, no TLS, in v0. This is not a security posture; it is the
+absence of one, stated loudly, gated to localhost, and tracked by the threat model (#84) which owns
+deciding the real answer (mTLS, tokens, or K8s TokenReview). The schema reserves nothing for auth —
+retrofitting an auth header does not break a Protobuf contract.</p>
+<h4 class="anchor anchorTargetStickyNavbar_Vzrq" id=amendment-2026-08-13-a-single-shared-password-interim-part-of-84>Amendment, 2026-08-13: a single shared password (interim, part of #84)<a href=#amendment-2026-08-13-a-single-shared-password-interim-part-of-84 class=hash-link aria-label="Direct link to Amendment, 2026-08-13: a single shared password (interim, part of #84)" title="Direct link to Amendment, 2026-08-13: a single shared password (interim, part of #84)" translate=no>​</a></h4>
+<p>Owner decision, taken when the UI (M6) made "no authentication at all" untenable for anyone running
+kelson anywhere but their own laptop. This is explicitly the <strong>interim</strong> cut of #84 and not its
+design; #84 still owns the real answer.</p>
+<p><strong>The decision.</strong> Someone with a kube context already has RBAC-mediated access to the cluster, so the
+CLI needs nothing and does not change: it talks to the cluster directly, and the cluster's RBAC is
+the access control. Click/web users get a normal username + password login against a <strong>single shared
+password</strong>. Project-level team auth (OIDC and the rest) is later.</p>
+<p><strong>Usernames are not identities.</strong> The login accepts any username and verifies only the password. The
+name is signed into the session and displayed, so the login feels like a login and a future audit
+trail has somewhere to grow — but nothing checks it, nothing authorizes on it, and this ADR says so
+rather than letting the presence of a name imply a principal. Agent identities are #74.</p>
+<p><strong>Sessions are signed tokens, not server state.</strong> §1's rule ("the process holds no state a restart or
+a second replica would lose or fork") applies to sessions too, so there is no session store. A session
+is an HMAC-SHA256 token whose signing key is derived from the password and a <strong>per-process random
+salt</strong>: every restart mints a new key and invalidates every outstanding session. That is a real cost —
+a server restart logs everyone out — and it is accepted rather than papered over, because the
+alternative is either a store §1 forbids or a key on disk that turns "rotate the password" into a
+second operation. There is no revocation list because there is nothing to revoke in.</p>
+<p>Browsers carry the token in an <code>HttpOnly</code>, <code>SameSite=Lax</code> cookie (<code>kelson_session</code>, <code>Secure</code> when the
+request arrived over TLS). Non-browser clients — kelson-mcp, curl, scripts — send the shared password
+directly as <code>Authorization: Bearer</code>. <strong>One secret, two transports</strong>, rather than a second credential
+nobody could rotate independently anyway. <code>/healthz</code> stays open; a probe holds no credential.</p>
+<p><code>GET /auth/session</code> answers a deliberate <strong>tri-state</strong>: <code>204</code> authentication is disabled · <code>200 {username}</code> you have a session · <code>401</code> log in. Two states would force a client to conflate "no
+password is configured" with "you are not logged in", and a UI doing that would show a login form no
+password could satisfy.</p>
+<p><strong>The bind gate splits on the password, not on the flag.</strong> A non-loopback <code>--listen</code>:</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th><th>no password<th>password set<tbody><tr><td>without <code>--insecure-bind</code><td><strong>refused</strong>, naming #84 and both ways out<td><strong>allowed, with a warning</strong><tr><td>with <code>--insecure-bind</code><td>allowed, with a warning<td>allowed, with a warning</table>
+<p>The password is what changed the fact on the ground, so it is what lifts the refusal. The warning does
+not lift: <strong>there is still no TLS</strong>, so a password crossing a network in clear is a password anyone on
+the path has, and the text says to put a TLS-terminating proxy in front. <code>--insecure-bind</code> survives as
+the escape hatch for a private network the operator has reasoned about, and it still warns every start.</p>
+<p><strong>What this is not.</strong> Not TLS, not per-user identity, not authorization, not a defence against anyone
+who can read the process's environment. It raises the floor from <em>anything that can reach the port is
+the operator</em> to <em>a caller must hold the shared secret</em>, which is the difference between a UI that can
+be deployed and one that cannot. The schema is untouched, exactly as the paragraph above predicted:
+authentication arrived as an HTTP header and a cookie, and no Protobuf contract moved.</p>
+<p>Details and operational guidance: <a class="" href=/kelson/server>the server</a>.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=4-codegen-follows-the-repos-committed-and-drift-tested-convention>4. Codegen follows the repo's committed-and-drift-tested convention<a href=#4-codegen-follows-the-repos-committed-and-drift-tested-convention class=hash-link aria-label="Direct link to 4. Codegen follows the repo's committed-and-drift-tested convention" title="Direct link to 4. Codegen follows the repo's committed-and-drift-tested convention" translate=no>​</a></h3>
+<p><code>buf</code> generates Go (<code>protoc-gen-go</code> + <code>protoc-gen-connect-go</code>) into <code>internal/api/gen/</code>; generated
+code is <strong>committed</strong>, like <code>schema/*.json</code> and <code>docs/reference/*</code>, with a drift test guarding it.
+<code>buf breaking</code> joins CI when the schema first ships in a release (the compatibility promise starts at
+the first tag that serves it, not before). The TypeScript client is deliberately <strong>not</strong> generated in
+v0 — <code>buf.gen.yaml</code> carries the commented config so M6 turns it on rather than designs it.</p>
+<p>The depguard fence extends rather than loosens: a new <code>api</code> rule for <code>**/internal/api/**</code> and
+<code>**/cmd/kelson-server/**</code> allows <code>connectrpc.com/connect</code>, <code>google.golang.org/protobuf</code> and
+<code>net/http</code> alongside stdlib and kelson itself; the cluster-backed stores live under the existing
+cluster-facing rule's paths. The <code>main</code> rule — and with it the renderer's and model's isolation —
+is untouched.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id=rationale>Rationale<a href=#rationale class=hash-link aria-label="Direct link to Rationale" title="Direct link to Rationale" translate=no>​</a></h2>
+<p><strong>Stateless server over stateful.</strong> Every alternative for history (embedded DB, server-local JSONL)
+makes the server a single point of state that backup, HA and multi-replica stories then have to
+solve. The cluster is already the system of record for everything kelson deploys; making it the
+system of record for what kelson <em>did</em> means <code>kubectl get configmaps -l kelson.dev/project=x</code> is the
+audit trail, RBAC is the access control, and killing the pod loses nothing.</p>
+<p><strong>ConfigMaps over CRD now, CRD later.</strong> The strongest argument for a CRD — typed schema, watchable,
+kubectl-native — is also an argument for the controller that does not exist yet (#133 was deferred on
+exactly this ground). Choosing ConfigMaps now and CRD-behind-the-same-interface later costs one
+interface; choosing CRD now costs an install step that <a class="" href=/kelson/adr/0003-install-model>ADR-0003</a> promises not
+to require.</p>
+<p><strong>Spec store returns what you stored.</strong> Storing raw documents (not parsed state) keeps Git mode
+coherent: in Git mode the repository stays the source of truth (ADR-0001), and a server-stored spec
+is a working copy the API validated — the delivery adapter still commits to Git. The two-homes
+problem ADR-0002 rejected for CRDs would reappear if the server normalized specs into its own model.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id=consequences>Consequences<a href=#consequences class=hash-link aria-label="Direct link to Consequences" title="Direct link to Consequences" translate=no>​</a></h2>
+<p><strong>Positive.</strong></p>
+<ul>
+<li class="">A <code>kelson-server</code> restart or second replica needs no migration, no volume, no leader election for v0.</li>
+<li class="">Optimistic concurrency, listing, retention and audit come from Kubernetes primitives, not new code.</li>
+<li class="">The CLI keeps working offline-ish (local JSONL, no server required) — the server is additive.</li>
+<li class="">One error taxonomy end to end; agents branch on the same codes at every entry point.</li>
+</ul>
+<p><strong>Negative.</strong></p>
+<ul>
+<li class="">CLI-made and server-made deploy history are separate stores; nothing merges them in v0.</li>
+<li class="">ConfigMap size bounds rendered-history retention; very large rendered sets degrade to
+fail-loudly-on-append. The CRD successor inherits the same etcd limit — the real fix (external blob
+store) is deliberately out of scope until something needs it.</li>
+<li class="">Idempotency keys are namespace-scoped annotations, not a real dedup store; two servers pointed at
+different namespaces do not share them.</li>
+<li class="">Without a password the server must not be exposed beyond loopback until #84 lands — a documented
+sharp edge. With one (the 2026-08-13 amendment) it may be, at the cost of a server restart logging
+every web client out: sessions are signed with a per-process key rather than stored.</li>
+</ul>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id=revisit-when>Revisit when<a href=#revisit-when class=hash-link aria-label="Direct link to Revisit when" title="Direct link to Revisit when" translate=no>​</a></h2>
+<p>The controller exists (CRD store supersedes ConfigMaps behind the same interface); #84 decides the
+real authn/z and supersedes the 2026-08-13 amendment above;
+M6 turns on TypeScript client generation; or real usage shows spec round-tripping through ConfigMaps
+hits the size or update-frequency limits of etcd.</div><footer class="theme-doc-footer docusaurus-mt-lg"><div class="row margin-top--sm theme-doc-footer-edit-meta-row"><div class="col noPrint_WFHX"><a href=https://github.com/dafrie/kelson/edit/main/docs/../docs/adr/0013-server-state-and-api-v0.md target=_blank rel="noopener noreferrer" class=theme-edit-this-page><svg fill=currentColor height=20 width=20 viewBox="0 0 40 40" class=iconEdit_Z9Sw aria-hidden=true><g><path d="m34.5 11.7l-3 3.1-6.3-6.3 3.1-3q0.5-0.5 1.2-0.5t1.1 0.5l3.9 3.9q0.5 0.4 0.5 1.1t-0.5 1.2z m-29.5 17.1l18.4-18.5 6.3 6.3-18.4 18.4h-6.3v-6.2z"/></g></svg>Edit this page</a></div><div class="col lastUpdated_JAkA"><span class=theme-last-updated>Last updated<!-- --> on <b><time datetime=2026-08-14T16:22:22.000Z itemprop=dateModified>Aug 14, 2026</time></b></span></div></div></footer></article><nav class="docusaurus-mt-lg pagination-nav" aria-label="Docs pages"><a class="pagination-nav__link pagination-nav__link--prev" href=/kelson/adr/0012-flux-only-gitops><div class=pagination-nav__sublabel>Previous</div><div class=pagination-nav__label>0012 — Flux-only GitOps</div></a><a class="pagination-nav__link pagination-nav__link--next" href=/kelson/adr/0014-components><div class=pagination-nav__sublabel>Next</div><div class=pagination-nav__label>0014 — Components</div></a></nav></div></div><div class="col col--3"><div class="tableOfContents_bqdL thin-scrollbar theme-doc-toc-desktop"><ul class="table-of-contents table-of-contents__left-border"><li><a href=#context class="table-of-contents__link toc-highlight">Context</a><li><a href=#decision class="table-of-contents__link toc-highlight">Decision</a><ul><li><a href=#1-all-server-state-is-cluster-state-the-server-itself-is-stateless class="table-of-contents__link toc-highlight">1. All server state is cluster state; the server itself is stateless</a><li><a href=#2-v0-api-surface-the-full-working-set-one-schema-structured-errors-on-the-wire class="table-of-contents__link toc-highlight">2. v0 API surface: the full working set, one schema, structured errors on the wire</a><li><a href=#3-v0-trust-model-loopback-no-auth-no-pretense class="table-of-contents__link toc-highlight">3. v0 trust model: loopback, no auth, no pretense</a><li><a href=#4-codegen-follows-the-repos-committed-and-drift-tested-convention class="table-of-contents__link toc-highlight">4. Codegen follows the repo's committed-and-drift-tested convention</a></ul><li><a href=#rationale class="table-of-contents__link toc-highlight">Rationale</a><li><a href=#consequences class="table-of-contents__link toc-highlight">Consequences</a><li><a href=#revisit-when class="table-of-contents__link toc-highlight">Revisit when</a></ul></div></div></div></div></main></div></div></div><footer class="theme-layout-footer footer footer--dark"><div class="container container-fluid"><div class="row footer__links"><div class="theme-layout-footer-column col footer__col"><div class=footer__title>Docs</div><ul class="footer__items clean-list"><li class=footer__item><a class=footer__link-item href=/kelson/>Overview</a><li class=footer__item><a class=footer__link-item href=/kelson/architecture>Architecture</a><li class=footer__item><a class=footer__link-item href=/kelson/roadmap>Roadmap</a><li class=footer__item><a class=footer__link-item href=/kelson/adr/>ADRs</a></ul></div><div class="theme-layout-footer-column col footer__col"><div class=footer__title>Project</div><ul class="footer__items clean-list"><li class=footer__item><a href=https://github.com/dafrie/kelson target=_blank rel="noopener noreferrer" class=footer__link-item>GitHub<svg width=13.5 height=13.5 aria-label="(opens in new tab)" class=iconExternalLink_nPIU><use href=#theme-svg-external-link /></svg></a><li class=footer__item><a href=https://github.com/dafrie/kelson/issues target=_blank rel="noopener noreferrer" class=footer__link-item>Issues<svg width=13.5 height=13.5 aria-label="(opens in new tab)" class=iconExternalLink_nPIU><use href=#theme-svg-external-link /></svg></a><li class=footer__item><a href=https://github.com/dafrie/kelson/milestones target=_blank rel="noopener noreferrer" class=footer__link-item>Milestones<svg width=13.5 height=13.5 aria-label="(opens in new tab)" class=iconExternalLink_nPIU><use href=#theme-svg-external-link /></svg></a></ul></div></div><div class="footer__bottom text--center"><div class=footer__copyright>MIT. Every feature — SSO, RBAC and audit logs are not paywalled.</div></div></div></footer></div></body>

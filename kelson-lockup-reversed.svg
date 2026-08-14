@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 120" width="400" height="120">
+  <g fill="none" stroke="#0FA36B" stroke-width="9" stroke-linecap="round" transform="translate(10 12) scale(0.8)">
+  <path d="M22 26 L22 56 A38 38 0 0 0 98 56 L98 26"></path>
+  <path d="M60 74 L60 100"></path>
+  <path d="M30 84 L90 84"></path>
+  </g>
+  <text x="128" y="76" font-family="Space Grotesk, Helvetica, Arial, sans-serif" font-size="54" font-weight="600" letter-spacing="-1" fill="#FFFFFF">kelson</text>
+</svg>

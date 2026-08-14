@@ -1,0 +1,211 @@
+<!doctype html><html lang=en dir=ltr class="docs-wrapper plugin-docs plugin-id-default docs-version-current docs-doc-page docs-doc-id-adr/0007-data-services" data-has-hydrated=false><head><meta charset=UTF-8><meta name=generator content="Docusaurus v3.10.2"><title data-rh=true>ADR-0007: Data services — presets, delegation and branching | kelson</title><meta data-rh=true name=viewport content="width=device-width, initial-scale=1.0"/><meta data-rh=true name=twitter:card content=summary_large_image /><meta data-rh=true property=og:image content=https://dafrie.github.io/kelson/kelson-lockup.svg /><meta data-rh=true name=twitter:image content=https://dafrie.github.io/kelson/kelson-lockup.svg /><meta data-rh=true property=og:url content=https://dafrie.github.io/kelson/adr/0007-data-services /><meta data-rh=true property=og:locale content=en /><meta data-rh=true name=docusaurus_locale content=en /><meta data-rh=true name=docsearch:language content=en /><meta data-rh=true name=docusaurus_version content=current /><meta data-rh=true name=docusaurus_tag content=docs-default-current /><meta data-rh=true name=docsearch:version content=current /><meta data-rh=true name=docsearch:docusaurus_tag content=docs-default-current /><meta data-rh=true property=og:title content="ADR-0007: Data services — presets, delegation and branching | kelson"/><meta data-rh=true name=description content='- Status "plan" is renamed to "preset" — it is a topology preset, not a paid tier; rename tracked in #146. Branching and Valkey moved to v0.2/M9b. Amended 2026-08-13, owner decision: the shared preset is deferred — it was this ADR&apos;s cost optimization, never an ask, and dedicated clusters per postgres component are simpler, work today including bindings, and the pod cost is acceptable at this stage; dedicated-per-component is the model for now, and #93 tracks any return of shared. Backups are also deferred — "Backups are configured once" below does not render yet; when they land, the near path is CloudNativePG&apos;s declarative volumeSnapshot-based Backup/ScheduledBackup on snapshot-capable storage, which kelson already detects (#91), with object-store WAL archiving as a later addition (#94-#96).)'/><meta data-rh=true property=og:description content='- Status "plan" is renamed to "preset" — it is a topology preset, not a paid tier; rename tracked in #146. Branching and Valkey moved to v0.2/M9b. Amended 2026-08-13, owner decision: the shared preset is deferred — it was this ADR&apos;s cost optimization, never an ask, and dedicated clusters per postgres component are simpler, work today including bindings, and the pod cost is acceptable at this stage; dedicated-per-component is the model for now, and #93 tracks any return of shared. Backups are also deferred — "Backups are configured once" below does not render yet; when they land, the near path is CloudNativePG&apos;s declarative volumeSnapshot-based Backup/ScheduledBackup on snapshot-capable storage, which kelson already detects (#91), with object-store WAL archiving as a later addition (#94-#96).)'/><link data-rh=true rel=icon href=/kelson/kelson-favicon-32.svg /><link data-rh=true rel=canonical href=https://dafrie.github.io/kelson/adr/0007-data-services /><link data-rh=true rel=alternate href=https://dafrie.github.io/kelson/adr/0007-data-services hreflang=en /><link data-rh=true rel=alternate href=https://dafrie.github.io/kelson/adr/0007-data-services hreflang=x-default /><script data-rh=true type=application/ld+json>{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","item":"https://dafrie.github.io/kelson/adr/0007-data-services","name":"0007 — Data services","position":1}]}</script><link rel=stylesheet href=/kelson/assets/css/styles.c304df04.css /><script src=/kelson/assets/js/runtime~main.6bcfaf32.js defer></script><script src=/kelson/assets/js/main.d393c33f.js defer></script></head><body><svg style="display: none;"><defs>
+<symbol id=theme-svg-external-link viewBox="0 0 24 24"><path fill=currentColor d="M21 13v10h-21v-19h12v2h-10v15h17v-8h2zm3-12h-10.988l4.035 4-6.977 7.07 2.828 2.828 6.977-7.07 4.125 4.172v-11z"/></symbol>
+</defs></svg>
+<script>!function(){var t;document.documentElement.setAttribute("data-theme",t||"dark"),document.documentElement.setAttribute("data-theme-choice",t||"dark")}(),function(){try{for(var[t,e]of new URLSearchParams(window.location.search).entries())if(t.startsWith("docusaurus-data-")){var a=t.replace("docusaurus-data-","data-");document.documentElement.setAttribute(a,e)}}catch(t){}}()</script><div id=__docusaurus><link rel=preload as=image href=/kelson/kelson-mark.svg /><div role=region aria-label="Skip to main content"><a class=skipToContent_fXgn href=#__docusaurus_skipToContent_fallback>Skip to main content</a></div><nav aria-label=Main class="theme-layout-navbar navbar navbar--fixed-top"><div class=navbar__inner><div class="theme-layout-navbar-left navbar__items"><button aria-label="Toggle navigation bar" aria-expanded=false class="navbar__toggle clean-btn" type=button><svg width=30 height=30 viewBox="0 0 30 30" aria-hidden=true><path stroke=currentColor stroke-linecap=round stroke-miterlimit=10 stroke-width=2 d="M4 7h22M4 15h22M4 23h22"/></svg></button><a class=navbar__brand href=/kelson/><div class=navbar__logo><img src=/kelson/kelson-mark.svg alt=kelson class="themedComponent_mlkZ themedComponent--light_NVdE"/><img src=/kelson/kelson-mark.svg alt=kelson class="themedComponent_mlkZ themedComponent--dark_xIcU"/></div><b class="navbar__title text--truncate">kelson</b></a></div><div class="theme-layout-navbar-right navbar__items navbar__items--right"><a aria-current=page class="navbar__item navbar__link navbar__link--active" href=/kelson/adr/0007-data-services>unreleased</a><a href=https://github.com/dafrie/kelson target=_blank rel="noopener noreferrer" class="navbar__item navbar__link">GitHub<svg width=13.5 height=13.5 aria-label="(opens in new tab)" class=iconExternalLink_nPIU><use href=#theme-svg-external-link /></svg></a><div class=navbarSearchContainer_Bca1></div></div></div><div role=presentation class=navbar-sidebar__backdrop></div></nav><div id=__docusaurus_skipToContent_fallback class="theme-layout-main main-wrapper mainWrapper_z2l0"><div class=docsWrapper_hBAB><button aria-label="Scroll back to top" class="clean-btn theme-back-to-top-button backToTopButton_sjWU" type=button></button><div class=docRoot_UBD9><aside class="theme-doc-sidebar-container docSidebarContainer_YfHR"><div class=sidebarViewport_aRkj><div class=sidebar_njMd><nav aria-label="Docs sidebar" class="menu thin-scrollbar menu_SIkG"><ul class="theme-doc-sidebar-menu menu__list"><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/><span class=linkLabel_WmDU>Home</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/vision><span class=linkLabel_WmDU>Vision</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/install><span class=linkLabel_WmDU>Install</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/local><span class=linkLabel_WmDU>Local (kind)</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/architecture><span class=linkLabel_WmDU>Architecture</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/roadmap><span class=linkLabel_WmDU>Roadmap</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/competitive-analysis><span class=linkLabel_WmDU>Competitive analysis</span></a><li class="theme-doc-sidebar-item-category theme-doc-sidebar-item-category-level-1 menu__list-item"><div class=menu__list-item-collapsible><a class="categoryLink_byQd menu__link menu__link--sublist menu__link--sublist-caret" role=button aria-expanded=true href=/kelson/reference/project><span class=categoryLinkLabel_W154>Reference</span></a></div><ul class=menu__list><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/reference/project><span class=linkLabel_WmDU>Project spec</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/reference/environment><span class=linkLabel_WmDU>Environment spec</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/detection><span class=linkLabel_WmDU>Cluster detection</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/server><span class=linkLabel_WmDU>Server</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/mcp><span class=linkLabel_WmDU>MCP server</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/reference/support-matrix><span class=linkLabel_WmDU>Support matrix</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/e2e><span class=linkLabel_WmDU>E2E harness</span></a></ul><li class="theme-doc-sidebar-item-category theme-doc-sidebar-item-category-level-1 menu__list-item"><div class=menu__list-item-collapsible><a class="categoryLink_byQd menu__link menu__link--sublist menu__link--sublist-caret" role=button aria-expanded=true href=/kelson/model><span class=categoryLinkLabel_W154>Design</span></a></div><ul class=menu__list><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/model><span class=linkLabel_WmDU>Model</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/build><span class=linkLabel_WmDU>Build</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/delivery><span class=linkLabel_WmDU>Delivery</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/secrets><span class=linkLabel_WmDU>Secrets</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/data-services><span class=linkLabel_WmDU>Data services</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/statemachine><span class=linkLabel_WmDU>State machine</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/release-policy><span class=linkLabel_WmDU>Release policy</span></a></ul><li class="theme-doc-sidebar-item-category theme-doc-sidebar-item-category-level-1 menu__list-item"><div class=menu__list-item-collapsible><a class="categoryLink_byQd menu__link menu__link--sublist menu__link--sublist-caret" role=button aria-expanded=true href=/kelson/research/build-strategy-selection><span class=categoryLinkLabel_W154>Research</span></a></div><ul class=menu__list><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/research/build-strategy-selection><span class=linkLabel_WmDU>Build strategy selection</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/research/score-as-input-format><span class=linkLabel_WmDU>Score as an input format</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/research/hierarchy-prior-art><span class=linkLabel_WmDU>Hierarchy prior art</span></a></ul><li class="theme-doc-sidebar-item-category theme-doc-sidebar-item-category-level-1 menu__list-item"><div class=menu__list-item-collapsible><a class="categoryLink_byQd menu__link menu__link--sublist menu__link--sublist-caret menu__link--active" role=button aria-expanded=true href=/kelson/adr/><span class=categoryLinkLabel_W154>ADRs</span></a></div><ul class=menu__list><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/><span class=linkLabel_WmDU>Index</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0001-hybrid-state-model><span class=linkLabel_WmDU>0001 — Hybrid state model</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0002-tech-stack><span class=linkLabel_WmDU>0002 — Tech stack</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0003-install-model><span class=linkLabel_WmDU>0003 — Install model</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0004-licensing><span class=linkLabel_WmDU>0004 — Licensing</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0005-delegate-to-operators><span class=linkLabel_WmDU>0005 — Delegate to operators</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0006-project-application-environment><span class=linkLabel_WmDU>0006 — Project, Application, Environment</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class="menu__link menu__link--active" aria-current=page tabindex=0 href=/kelson/adr/0007-data-services><span class=linkLabel_WmDU>0007 — Data services</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0008-mcp-surface><span class=linkLabel_WmDU>0008 — MCP surface</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0009-secrets><span class=linkLabel_WmDU>0009 — Secrets</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0010-build-strategy><span class=linkLabel_WmDU>0010 — Build strategy</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0011-build-cache><span class=linkLabel_WmDU>0011 — Build cache</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0012-flux-only-gitops><span class=linkLabel_WmDU>0012 — Flux-only GitOps</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0013-server-state-and-api-v0><span class=linkLabel_WmDU>0013 — Server state and API v0</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0014-components><span class=linkLabel_WmDU>0014 — Components</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0015-valkey-operator><span class=linkLabel_WmDU>0015 — Valkey operator</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0016-delivery-flows-v0><span class=linkLabel_WmDU>0016 — Delivery flows v0</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0017-pr-previews><span class=linkLabel_WmDU>0017 — PR previews</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0018-secret-references><span class=linkLabel_WmDU>0018 — Secret references</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0019-release-command-hook><span class=linkLabel_WmDU>0019 — Release command hook</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0020-external-secrets><span class=linkLabel_WmDU>0020 — External secrets</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0021-installing-missing-components><span class=linkLabel_WmDU>0021 — Installing missing components</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0022-sops-age><span class=linkLabel_WmDU>0022 — SOPS + age</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0023-explain-structured-causes><span class=linkLabel_WmDU>0023 — Explain: structured causes</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0024-agent-identities><span class=linkLabel_WmDU>0024 — Agent identities</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0025-agent-policy><span class=linkLabel_WmDU>0025 — Agent policy</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0026-agent-audit-trail><span class=linkLabel_WmDU>0026 — The audit trail</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0027-finish-the-component-rename><span class=linkLabel_WmDU>0027 — Finish the component rename</span></a></ul></ul></nav></div></div></aside><main class=docMainContainer_TBSr><div class="container padding-top--md padding-bottom--lg"><div class=row><div class="col docItemCol_VOVn"><div class=docItemContainer_Djhp><article><nav class="theme-doc-breadcrumbs breadcrumbsContainer_Z_bl" aria-label=Breadcrumbs><ul class=breadcrumbs><li class=breadcrumbs__item><a aria-label="Home page" class=breadcrumbs__link href=/kelson/><svg viewBox="0 0 24 24" class=breadcrumbHomeIcon_YNFT><path d="M10 19v-5h4v5c0 .55.45 1 1 1h3c.55 0 1-.45 1-1v-7h1.7c.46 0 .68-.57.33-.87L12.67 3.6c-.38-.34-.96-.34-1.34 0l-8.36 7.53c-.34.3-.13.87.33.87H5v7c0 .55.45 1 1 1h3c.55 0 1-.45 1-1z" fill=currentColor /></svg></a><li class=breadcrumbs__item><span class=breadcrumbs__link>ADRs</span><li class="breadcrumbs__item breadcrumbs__item--active"><span class=breadcrumbs__link>0007 — Data services</span></ul></nav><div class="tocCollapsible_ETCw theme-doc-toc-mobile tocMobile_ITEo"><button type=button class="clean-btn tocCollapsibleButton_TO0P">On this page</button></div><div class="theme-doc-markdown markdown"><header><h1>ADR-0007: Data services — presets, delegation and branching</h1></header>
+<ul>
+<li class=""><strong>Status:</strong> Accepted (amended 2026-08-12: "plan" is renamed to "preset" — it is a topology preset, not a paid tier; rename tracked in <a href=https://github.com/dafrie/kelson/issues/146 target=_blank rel="noopener noreferrer" class="">#146</a>. Branching and Valkey moved to v0.2/M9b. Amended 2026-08-13, owner decision: the <code>shared</code> preset is deferred — it was this ADR's cost optimization, never an ask, and dedicated clusters per postgres component are simpler, work today including bindings, and the pod cost is acceptable at this stage; dedicated-per-component is the model for now, and <a href=https://github.com/dafrie/kelson/issues/93 target=_blank rel="noopener noreferrer" class="">#93</a> tracks any return of <code>shared</code>. Backups are also deferred — "Backups are configured once" below does not render yet; when they land, the near path is CloudNativePG's declarative volumeSnapshot-based <code>Backup</code>/<code>ScheduledBackup</code> on snapshot-capable storage, which kelson already detects (<a href=https://github.com/dafrie/kelson/issues/91 target=_blank rel="noopener noreferrer" class="">#91</a>), with object-store WAL archiving as a later addition (<a href=https://github.com/dafrie/kelson/issues/94 target=_blank rel="noopener noreferrer" class="">#94</a>-<a href=https://github.com/dafrie/kelson/issues/96 target=_blank rel="noopener noreferrer" class="">#96</a>).)</li>
+<li class=""><strong>Date:</strong> 2026-08-11</li>
+</ul>
+<blockquote>
+<p><strong>Implementation reference:</strong> <a class="" href=/kelson/data-services>docs/data-services.md</a> carries the decisions
+this ADR left to implementation — the CloudNativePG fields each preset renders, the sizing
+defaults and their rationale, the safe-transition table, and where the capability verdict is
+enforced (<a href=https://github.com/dafrie/kelson/issues/89 target=_blank rel="noopener noreferrer" class="">#89</a>). This ADR stays the decision record.</p>
+</blockquote>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id=context>Context<a href=#context class=hash-link aria-label="Direct link to Context" title="Direct link to Context" translate=no>​</a></h2>
+<p>Managed databases are the feature people ask about first, and the one this category serves worst.</p>
+<p>Coolify runs a standalone Postgres container with a PVC and backs it up by <code>docker exec</code> into the
+container and piping <code>pg_dump</code> to S3. No replication, no HA, no point-in-time recovery — the recovery point
+is however long since the last dump. Backups are configured per database, so three databases means setting
+it up three times. Kubero's add-ons are explicitly not HA-ready, and its vendored Bitnami charts broke when
+the catalog was withdrawn.</p>
+<p>CloudNativePG solves the hard parts properly, and <a class="" href=/kelson/adr/0005-delegate-to-operators>ADR-0005</a> already commits
+to delegating rather than reimplementing. Two questions remain: what topology a database service gets, and
+how preview environments get data.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=the-topology-problem>The topology problem<a href=#the-topology-problem class=hash-link aria-label="Direct link to The topology problem" title="Direct link to The topology problem" translate=no>​</a></h3>
+<p>CNPG's own guidance is one database per cluster. From the maintainers: <em>"Not supporting multiple databases
+was a design decision taken to push a '1 database per cluster' approach."</em> The reasoning is microservice
+data ownership and blast radius.</p>
+<p>That is right for production and unaffordable everywhere else. A CNPG instance needs roughly 512Mi in
+practice; HA is three of them.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Setup<th>10 apps × 3 envs<th>Pods<th>RAM<tbody><tr><td>Dedicated cluster each<td>30 clusters<td>30<td>~15 GB<tr><td>Dedicated, HA in prod<td>30 clusters<td>50<td>~25 GB<tr><td>Shared dev/staging, dedicated prod<td>12 clusters<td>12<td>~6 GB</table>
+<p><a class="" href=/kelson/adr/0003-install-model>ADR-0003</a> commits to someone starting on a bare VPS. Five apps with dedicated
+clusters is 2.5 GB of Postgres before any application code runs.</p>
+<p>CNPG 1.25 shipped a <code>Database</code> CRD for declarative database creation, with schemas and extensions added in
+1.26. So multiple databases per cluster is supported, just not the recommended shape.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=the-branching-problem>The branching problem<a href=#the-branching-problem class=hash-link aria-label="Direct link to The branching problem" title="Direct link to The branching problem" translate=no>​</a></h3>
+<p>CSI snapshots are PVC-level, and a CNPG cluster's PVC is the whole cluster. <strong>A single database cannot be
+branched out of a shared cluster.</strong> Branching means snapshotting a dedicated source cluster and
+bootstrapping a new dedicated cluster from it.</p>
+<p>Neon branches in about a second regardless of size because its storage is log-structured and
+LSN-addressed. That is a different storage engine, not Postgres on a PVC, and it is not reproducible here.</p>
+<p>Whether a snapshot is cheap depends entirely on the driver. Ceph RBD, ZFS and LVM-thin give thin
+copy-on-write clones. EBS, GCE PD and Azure Disk give a full-size volume restored lazily. <strong>k3s ships
+local-path, which has no snapshot driver at all.</strong></p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id=decision>Decision<a href=#decision class=hash-link aria-label="Direct link to Decision" title="Direct link to Decision" translate=no>​</a></h2>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=presets-determine-topology>Presets determine topology<a href=#presets-determine-topology class=hash-link aria-label="Direct link to Presets determine topology" title="Direct link to Presets determine topology" translate=no>​</a></h3>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Preset<th>Topology<th>Branchable<th>Cost<tbody><tr><td><code>shared</code><td><code>Database</code> CRD in a shared cluster<td>no<td>no pod<tr><td><code>small</code><td>dedicated cluster, 1 instance<td>yes<td>1 pod + PVC<tr><td><code>ha-small</code>, <code>ha-medium</code><td>dedicated, 3 instances, synchronous<td>as source<td>3 pods<tr><td><code>branch</code><td>dedicated, bootstrapped from a source<td>is a branch<td>1 pod + PVC</table>
+<p>Preset is an <strong>Environment-level override</strong>. One Project spec, <code>shared</code> in development and <code>ha-small</code> in
+production. This falls out of <a class="" href=/kelson/adr/0006-project-application-environment>ADR-0006</a>.</p>
+<p>We follow CNPG's guidance where it matters and deviate knowingly where it doesn't, documenting why.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=branching-degrades-rather-than-disappearing>Branching degrades rather than disappearing<a href=#branching-degrades-rather-than-disappearing class=hash-link aria-label="Direct link to Branching degrades rather than disappearing" title="Direct link to Branching degrades rather than disappearing" translate=no>​</a></h3>
+<p>kelson picks the best available mechanism from <code>ClusterProfile</code> and <strong>reports which one it used</strong>.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Mechanism<th>Requires<th>Speed<th>Storage<tbody><tr><td>Thin snapshot clone<td>Ceph RBD, ZFS, LVM-thin<td>seconds<td>thin<tr><td>Full snapshot clone<td>EBS, GCE PD, Azure Disk<td>minutes<td>full size<tr><td>Backup restore with PITR<td>object store configured<td>minutes to hours<td>full size<tr><td>Logical dump and restore<td>nothing<td>slow<td>full size<tr><td>Empty plus migrations<td>nothing<td>seconds<td>minimal</table>
+<p>Backup-restore as the universal fallback is what makes this shippable rather than a Ceph-only feature.
+PITR also means branching from a point in time, not only from now.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=branching-production-is-allowed-opt-in-and-audited>Branching production is allowed, opt-in and audited<a href=#branching-production-is-allowed-opt-in-and-audited class=hash-link aria-label="Direct link to Branching production is allowed, opt-in and audited" title="Direct link to Branching production is allowed, opt-in and audited" translate=no>​</a></h3>
+<p>A production database is marked branchable by an operator. Branching one is an audited action with a TTL
+and automatic destruction. This enables the use case that justifies the feature: <strong>branch production as of
+ten minutes ago, run the migration against it, see what breaks.</strong></p>
+<p>kelson does not attempt to anonymise data and will not claim to. Teams that need anonymisation supply a
+post-bootstrap SQL transform.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=preview-databases-default-by-capability>Preview databases default by capability<a href=#preview-databases-default-by-capability class=hash-link aria-label="Direct link to Preview databases default by capability" title="Direct link to Preview databases default by capability" translate=no>​</a></h3>
+<p>Branch from staging where fast branching is available, empty plus migrations where it is not. An explicit
+project setting always wins. This keeps twenty open pull requests from becoming twenty full-size restores
+on a cluster whose storage cannot snapshot cheaply.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=backups-are-configured-once>Backups are configured once<a href=#backups-are-configured-once class=hash-link aria-label="Direct link to Backups are configured once" title="Direct link to Backups are configured once" translate=no>​</a></h3>
+<p>The object store destination is set per environment, not per database. Every non-preview database gets
+continuous WAL archiving and PITR through CNPG automatically. This is the direct answer to Coolify's
+configure-it-three-times model.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=retention-is-asymmetric>Retention is asymmetric<a href=#retention-is-asymmetric class=hash-link aria-label="Direct link to Retention is asymmetric" title="Direct link to Retention is asymmetric" translate=no>​</a></h3>
+<p>Persistent environments <strong>retain</strong> data when a service is removed from a spec, and require an explicit
+destructive action to delete. Preview environments <strong>destroy</strong> on close.</p>
+<p>Accidentally dropping a production database because someone edited a YAML file is the worst failure this
+feature can have, and the default must make it impossible rather than merely unlikely.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=engines>Engines<a href=#engines class=hash-link aria-label="Direct link to Engines" title="Direct link to Engines" translate=no>​</a></h3>
+<p>PostgreSQL and Valkey are the managed types in the first cut. MySQL is deferred: the operator landscape is
+materially weaker than CNPG, and three half-supported engines is worse than two done properly.</p>
+<p>Per <a class="" href=/kelson/adr/0005-delegate-to-operators>ADR-0005</a>, "deferred" means no <em>managed</em> MySQL type. Anyone can install
+a MySQL chart and bind to it today — they just get no presets, backups or branching, and kelson makes no
+durability claim about it.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id=consequences>Consequences<a href=#consequences class=hash-link aria-label="Direct link to Consequences" title="Direct link to Consequences" translate=no>​</a></h2>
+<p><strong>Positive.</strong></p>
+<ul>
+<li class="">Production-grade Postgres from the first release: HA, failover, PITR, tested restore.</li>
+<li class="">Usable on a single small node, which the dedicated-cluster-only model would rule out.</li>
+<li class="">Branching is a real capability across all storage backends, fast where storage allows.</li>
+<li class="">Migration testing against production-shaped data is something nothing else in this category offers.</li>
+<li class="">Removing kelson leaves working CNPG clusters, consistent with <a class="" href=/kelson/adr/0001-hybrid-state-model>ADR-0001</a>.</li>
+</ul>
+<p><strong>Negative.</strong></p>
+<ul>
+<li class="">Two provisioning and binding paths, shared and dedicated. Real complexity, accepted for the resource
+math above.</li>
+<li class="">kelson inherits CNPG's upgrade cadence and CRD version skew.</li>
+<li class="">Branching quality varies by storage class, so the same feature behaves differently across clusters. This
+must be surfaced explicitly, never silently.</li>
+<li class=""><code>kelson up</code> defaults to local-path, so the bootstrap path gets slow branching until a user opts into a
+snapshot-capable storage class. This is a known weak spot in the first-run experience.</li>
+<li class="">Branching production is a genuine data-protection risk that we mitigate with policy and audit rather
+than eliminate.</li>
+<li class="">Preview databases need migrations to run before the application starts, which pulls the release-command
+hook earlier than planned.</li>
+</ul>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id=revisit-when>Revisit when<a href=#revisit-when class=hash-link aria-label="Direct link to Revisit when" title="Direct link to Revisit when" translate=no>​</a></h2>
+<p>Storage-class variance in branching produces enough support load to justify kelson installing a
+snapshot-capable storage class by default, or MySQL demand outweighs the cost of a weaker operator.</div><footer class="theme-doc-footer docusaurus-mt-lg"><div class="row margin-top--sm theme-doc-footer-edit-meta-row"><div class="col noPrint_WFHX"><a href=https://github.com/dafrie/kelson/edit/main/docs/../docs/adr/0007-data-services.md target=_blank rel="noopener noreferrer" class=theme-edit-this-page><svg fill=currentColor height=20 width=20 viewBox="0 0 40 40" class=iconEdit_Z9Sw aria-hidden=true><g><path d="m34.5 11.7l-3 3.1-6.3-6.3 3.1-3q0.5-0.5 1.2-0.5t1.1 0.5l3.9 3.9q0.5 0.4 0.5 1.1t-0.5 1.2z m-29.5 17.1l18.4-18.5 6.3 6.3-18.4 18.4h-6.3v-6.2z"/></g></svg>Edit this page</a></div><div class="col lastUpdated_JAkA"><span class=theme-last-updated>Last updated<!-- --> on <b><time datetime=2026-08-14T16:22:22.000Z itemprop=dateModified>Aug 14, 2026</time></b></span></div></div></footer></article><nav class="docusaurus-mt-lg pagination-nav" aria-label="Docs pages"><a class="pagination-nav__link pagination-nav__link--prev" href=/kelson/adr/0006-project-application-environment><div class=pagination-nav__sublabel>Previous</div><div class=pagination-nav__label>0006 — Project, Application, Environment</div></a><a class="pagination-nav__link pagination-nav__link--next" href=/kelson/adr/0008-mcp-surface><div class=pagination-nav__sublabel>Next</div><div class=pagination-nav__label>0008 — MCP surface</div></a></nav></div></div><div class="col col--3"><div class="tableOfContents_bqdL thin-scrollbar theme-doc-toc-desktop"><ul class="table-of-contents table-of-contents__left-border"><li><a href=#context class="table-of-contents__link toc-highlight">Context</a><ul><li><a href=#the-topology-problem class="table-of-contents__link toc-highlight">The topology problem</a><li><a href=#the-branching-problem class="table-of-contents__link toc-highlight">The branching problem</a></ul><li><a href=#decision class="table-of-contents__link toc-highlight">Decision</a><ul><li><a href=#presets-determine-topology class="table-of-contents__link toc-highlight">Presets determine topology</a><li><a href=#branching-degrades-rather-than-disappearing class="table-of-contents__link toc-highlight">Branching degrades rather than disappearing</a><li><a href=#branching-production-is-allowed-opt-in-and-audited class="table-of-contents__link toc-highlight">Branching production is allowed, opt-in and audited</a><li><a href=#preview-databases-default-by-capability class="table-of-contents__link toc-highlight">Preview databases default by capability</a><li><a href=#backups-are-configured-once class="table-of-contents__link toc-highlight">Backups are configured once</a><li><a href=#retention-is-asymmetric class="table-of-contents__link toc-highlight">Retention is asymmetric</a><li><a href=#engines class="table-of-contents__link toc-highlight">Engines</a></ul><li><a href=#consequences class="table-of-contents__link toc-highlight">Consequences</a><li><a href=#revisit-when class="table-of-contents__link toc-highlight">Revisit when</a></ul></div></div></div></div></main></div></div></div><footer class="theme-layout-footer footer footer--dark"><div class="container container-fluid"><div class="row footer__links"><div class="theme-layout-footer-column col footer__col"><div class=footer__title>Docs</div><ul class="footer__items clean-list"><li class=footer__item><a class=footer__link-item href=/kelson/>Overview</a><li class=footer__item><a class=footer__link-item href=/kelson/architecture>Architecture</a><li class=footer__item><a class=footer__link-item href=/kelson/roadmap>Roadmap</a><li class=footer__item><a class=footer__link-item href=/kelson/adr/>ADRs</a></ul></div><div class="theme-layout-footer-column col footer__col"><div class=footer__title>Project</div><ul class="footer__items clean-list"><li class=footer__item><a href=https://github.com/dafrie/kelson target=_blank rel="noopener noreferrer" class=footer__link-item>GitHub<svg width=13.5 height=13.5 aria-label="(opens in new tab)" class=iconExternalLink_nPIU><use href=#theme-svg-external-link /></svg></a><li class=footer__item><a href=https://github.com/dafrie/kelson/issues target=_blank rel="noopener noreferrer" class=footer__link-item>Issues<svg width=13.5 height=13.5 aria-label="(opens in new tab)" class=iconExternalLink_nPIU><use href=#theme-svg-external-link /></svg></a><li class=footer__item><a href=https://github.com/dafrie/kelson/milestones target=_blank rel="noopener noreferrer" class=footer__link-item>Milestones<svg width=13.5 height=13.5 aria-label="(opens in new tab)" class=iconExternalLink_nPIU><use href=#theme-svg-external-link /></svg></a></ul></div></div><div class="footer__bottom text--center"><div class=footer__copyright>MIT. Every feature — SSO, RBAC and audit logs are not paywalled.</div></div></div></footer></div></body>

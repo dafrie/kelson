@@ -1,0 +1,128 @@
+# Release pipeline — issue #21.
+#
+# Triggered by a version tag `vX.Y.Z` (see docs/release-policy.md). Builds the
+# web UI into the server's embed directory, runs goreleaser to build binaries
+# and a container image, opens a draft GitHub release, and pushes the image to
+# ghcr.io/dafrie/kelson-server.
+#
+# Cosign image signing is stubbed below — it is installed but the sign step is
+# not wired. Enable it as part of the supply-chain work (issue #85), where
+# keyless signing, the verifier policy and the artifact attestation story all
+# land together.
+
+name: release
+
+# Two ways in, one pipeline:
+#   - push a tag `vX.Y.Z` (the documented path, docs/release-policy.md), or
+#   - workflow_dispatch with the tag as input, for automation that can open
+#     PRs but cannot push tags. The dispatch path creates the tag at the
+#     dispatched ref if it does not exist yet, using the workflow's own token
+#     (contents: write below). A tag created that way does not re-trigger the
+#     push path — GitHub suppresses workflow-to-workflow events — so the run
+#     that created it carries the release itself.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (vX.Y.Z). Created at the dispatched ref if it does not exist yet."
+        required: true
+        type: string
+
+permissions:
+  contents: write   # goreleaser writes the GitHub release
+  packages: write   # push to ghcr.io
+  id-token: write   # reserved for cosign keyless signing (issue #85)
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # goreleaser needs full history for the changelog
+
+      # The dispatch path: make the input tag exist, then stand on it, so the
+      # rest of the pipeline sees exactly what a tag push would have given it.
+      - name: ensure tag (workflow_dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = context.payload.inputs.tag;
+            if (!/^v\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(tag)) {
+              core.setFailed(`tag ${tag} is not a vX.Y.Z version (docs/release-policy.md)`);
+              return;
+            }
+            try {
+              await github.rest.git.getRef({ ...context.repo, ref: `tags/${tag}` });
+              core.info(`tag ${tag} already exists; releasing it as-is`);
+            } catch (e) {
+              if (e.status !== 404) throw e;
+              await github.rest.git.createRef({ ...context.repo, ref: `refs/tags/${tag}`, sha: context.sha });
+              core.info(`created tag ${tag} at ${context.sha}`);
+            }
+
+      - name: checkout tag (workflow_dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          git fetch --tags --force origin
+          git checkout "refs/tags/${{ inputs.tag }}"
+
+      - name: setup go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+
+      - name: setup node
+        uses: actions/setup-node@v4
+        with:
+          # LTS, and at or above the floor ui/package.json's `engines` sets.
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      # goreleaser compiles Go and nothing else, so whatever is in the embed
+      # directory when it starts is what the released binaries and the image
+      # carry. Without this step every release would ship the placeholder page
+      # instead of the UI (internal/webui/webui.go). The copy lands in a
+      # gitignored directory, so the tree stays clean and goreleaser's
+      # dirty-state check still passes.
+      - name: build the web UI into the embed directory
+        run: make ui
+
+      - name: login to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: install cosign
+        uses: sigstore/cosign-installer@v3
+        # cosign is installed so the version is pinned and the binary is
+        # available for manual signing during the transition. The automated
+        # sign step below is intentionally not enabled yet — see issue #85.
+
+      # - name: sign container images (issue #85)
+      #   if: ${{ false }}
+      #   run: |
+      #     cosign sign --yes \
+      #       ghcr.io/dafrie/kelson-server:${{ github.ref_name }}-amd64 \
+      #       ghcr.io/dafrie/kelson-server:${{ github.ref_name }}-arm64
+      #   env:
+      #     COSIGN_EXPERIMENTAL: 1
+      #   # TODO(issue #85): enable once keyless signing, the attestation
+      #   # policy and the verification story are reviewed together.
+
+      - name: goreleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

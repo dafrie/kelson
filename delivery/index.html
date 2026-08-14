@@ -1,0 +1,241 @@
+<!doctype html><html lang=en dir=ltr class="docs-wrapper plugin-docs plugin-id-default docs-version-current docs-doc-page docs-doc-id-delivery" data-has-hydrated=false><head><meta charset=UTF-8><meta name=generator content="Docusaurus v3.10.2"><title data-rh=true>Delivery plane — adapter interface and concurrency | kelson</title><meta data-rh=true name=viewport content="width=device-width, initial-scale=1.0"/><meta data-rh=true name=twitter:card content=summary_large_image /><meta data-rh=true property=og:image content=https://dafrie.github.io/kelson/kelson-lockup.svg /><meta data-rh=true name=twitter:image content=https://dafrie.github.io/kelson/kelson-lockup.svg /><meta data-rh=true property=og:url content=https://dafrie.github.io/kelson/delivery /><meta data-rh=true property=og:locale content=en /><meta data-rh=true name=docusaurus_locale content=en /><meta data-rh=true name=docsearch:language content=en /><meta data-rh=true name=docusaurus_version content=current /><meta data-rh=true name=docusaurus_tag content=docs-default-current /><meta data-rh=true name=docsearch:version content=current /><meta data-rh=true name=docsearch:docusaurus_tag content=docs-default-current /><meta data-rh=true property=og:title content="Delivery plane — adapter interface and concurrency | kelson"/><meta data-rh=true name=description content="Design reference for the delivery plane (M2). Implements issues #32, #38, #40."/><meta data-rh=true property=og:description content="Design reference for the delivery plane (M2). Implements issues #32, #38, #40."/><link data-rh=true rel=icon href=/kelson/kelson-favicon-32.svg /><link data-rh=true rel=canonical href=https://dafrie.github.io/kelson/delivery /><link data-rh=true rel=alternate href=https://dafrie.github.io/kelson/delivery hreflang=en /><link data-rh=true rel=alternate href=https://dafrie.github.io/kelson/delivery hreflang=x-default /><script data-rh=true type=application/ld+json>{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","item":"https://dafrie.github.io/kelson/delivery","name":"Delivery","position":1}]}</script><link rel=stylesheet href=/kelson/assets/css/styles.c304df04.css /><script src=/kelson/assets/js/runtime~main.6bcfaf32.js defer></script><script src=/kelson/assets/js/main.d393c33f.js defer></script></head><body><svg style="display: none;"><defs>
+<symbol id=theme-svg-external-link viewBox="0 0 24 24"><path fill=currentColor d="M21 13v10h-21v-19h12v2h-10v15h17v-8h2zm3-12h-10.988l4.035 4-6.977 7.07 2.828 2.828 6.977-7.07 4.125 4.172v-11z"/></symbol>
+</defs></svg>
+<script>!function(){var t;document.documentElement.setAttribute("data-theme",t||"dark"),document.documentElement.setAttribute("data-theme-choice",t||"dark")}(),function(){try{for(var[t,e]of new URLSearchParams(window.location.search).entries())if(t.startsWith("docusaurus-data-")){var a=t.replace("docusaurus-data-","data-");document.documentElement.setAttribute(a,e)}}catch(t){}}()</script><div id=__docusaurus><link rel=preload as=image href=/kelson/kelson-mark.svg /><div role=region aria-label="Skip to main content"><a class=skipToContent_fXgn href=#__docusaurus_skipToContent_fallback>Skip to main content</a></div><nav aria-label=Main class="theme-layout-navbar navbar navbar--fixed-top"><div class=navbar__inner><div class="theme-layout-navbar-left navbar__items"><button aria-label="Toggle navigation bar" aria-expanded=false class="navbar__toggle clean-btn" type=button><svg width=30 height=30 viewBox="0 0 30 30" aria-hidden=true><path stroke=currentColor stroke-linecap=round stroke-miterlimit=10 stroke-width=2 d="M4 7h22M4 15h22M4 23h22"/></svg></button><a class=navbar__brand href=/kelson/><div class=navbar__logo><img src=/kelson/kelson-mark.svg alt=kelson class="themedComponent_mlkZ themedComponent--light_NVdE"/><img src=/kelson/kelson-mark.svg alt=kelson class="themedComponent_mlkZ themedComponent--dark_xIcU"/></div><b class="navbar__title text--truncate">kelson</b></a></div><div class="theme-layout-navbar-right navbar__items navbar__items--right"><a aria-current=page class="navbar__item navbar__link navbar__link--active" href=/kelson/delivery>unreleased</a><a href=https://github.com/dafrie/kelson target=_blank rel="noopener noreferrer" class="navbar__item navbar__link">GitHub<svg width=13.5 height=13.5 aria-label="(opens in new tab)" class=iconExternalLink_nPIU><use href=#theme-svg-external-link /></svg></a><div class=navbarSearchContainer_Bca1></div></div></div><div role=presentation class=navbar-sidebar__backdrop></div></nav><div id=__docusaurus_skipToContent_fallback class="theme-layout-main main-wrapper mainWrapper_z2l0"><div class=docsWrapper_hBAB><button aria-label="Scroll back to top" class="clean-btn theme-back-to-top-button backToTopButton_sjWU" type=button></button><div class=docRoot_UBD9><aside class="theme-doc-sidebar-container docSidebarContainer_YfHR"><div class=sidebarViewport_aRkj><div class=sidebar_njMd><nav aria-label="Docs sidebar" class="menu thin-scrollbar menu_SIkG"><ul class="theme-doc-sidebar-menu menu__list"><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/><span class=linkLabel_WmDU>Home</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/vision><span class=linkLabel_WmDU>Vision</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/install><span class=linkLabel_WmDU>Install</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/local><span class=linkLabel_WmDU>Local (kind)</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/architecture><span class=linkLabel_WmDU>Architecture</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/roadmap><span class=linkLabel_WmDU>Roadmap</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/competitive-analysis><span class=linkLabel_WmDU>Competitive analysis</span></a><li class="theme-doc-sidebar-item-category theme-doc-sidebar-item-category-level-1 menu__list-item"><div class=menu__list-item-collapsible><a class="categoryLink_byQd menu__link menu__link--sublist menu__link--sublist-caret" role=button aria-expanded=true href=/kelson/reference/project><span class=categoryLinkLabel_W154>Reference</span></a></div><ul class=menu__list><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/reference/project><span class=linkLabel_WmDU>Project spec</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/reference/environment><span class=linkLabel_WmDU>Environment spec</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/detection><span class=linkLabel_WmDU>Cluster detection</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/server><span class=linkLabel_WmDU>Server</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/mcp><span class=linkLabel_WmDU>MCP server</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/reference/support-matrix><span class=linkLabel_WmDU>Support matrix</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/e2e><span class=linkLabel_WmDU>E2E harness</span></a></ul><li class="theme-doc-sidebar-item-category theme-doc-sidebar-item-category-level-1 menu__list-item"><div class=menu__list-item-collapsible><a class="categoryLink_byQd menu__link menu__link--sublist menu__link--sublist-caret menu__link--active" role=button aria-expanded=true href=/kelson/model><span class=categoryLinkLabel_W154>Design</span></a></div><ul class=menu__list><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/model><span class=linkLabel_WmDU>Model</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/build><span class=linkLabel_WmDU>Build</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class="menu__link menu__link--active" aria-current=page tabindex=0 href=/kelson/delivery><span class=linkLabel_WmDU>Delivery</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/secrets><span class=linkLabel_WmDU>Secrets</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/data-services><span class=linkLabel_WmDU>Data services</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/statemachine><span class=linkLabel_WmDU>State machine</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/release-policy><span class=linkLabel_WmDU>Release policy</span></a></ul><li class="theme-doc-sidebar-item-category theme-doc-sidebar-item-category-level-1 menu__list-item"><div class=menu__list-item-collapsible><a class="categoryLink_byQd menu__link menu__link--sublist menu__link--sublist-caret" role=button aria-expanded=true href=/kelson/research/build-strategy-selection><span class=categoryLinkLabel_W154>Research</span></a></div><ul class=menu__list><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/research/build-strategy-selection><span class=linkLabel_WmDU>Build strategy selection</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/research/score-as-input-format><span class=linkLabel_WmDU>Score as an input format</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/research/hierarchy-prior-art><span class=linkLabel_WmDU>Hierarchy prior art</span></a></ul><li class="theme-doc-sidebar-item-category theme-doc-sidebar-item-category-level-1 menu__list-item"><div class=menu__list-item-collapsible><a class="categoryLink_byQd menu__link menu__link--sublist menu__link--sublist-caret" role=button aria-expanded=true href=/kelson/adr/><span class=categoryLinkLabel_W154>ADRs</span></a></div><ul class=menu__list><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/><span class=linkLabel_WmDU>Index</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0001-hybrid-state-model><span class=linkLabel_WmDU>0001 — Hybrid state model</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0002-tech-stack><span class=linkLabel_WmDU>0002 — Tech stack</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0003-install-model><span class=linkLabel_WmDU>0003 — Install model</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0004-licensing><span class=linkLabel_WmDU>0004 — Licensing</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0005-delegate-to-operators><span class=linkLabel_WmDU>0005 — Delegate to operators</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0006-project-application-environment><span class=linkLabel_WmDU>0006 — Project, Application, Environment</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0007-data-services><span class=linkLabel_WmDU>0007 — Data services</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0008-mcp-surface><span class=linkLabel_WmDU>0008 — MCP surface</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0009-secrets><span class=linkLabel_WmDU>0009 — Secrets</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0010-build-strategy><span class=linkLabel_WmDU>0010 — Build strategy</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0011-build-cache><span class=linkLabel_WmDU>0011 — Build cache</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0012-flux-only-gitops><span class=linkLabel_WmDU>0012 — Flux-only GitOps</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0013-server-state-and-api-v0><span class=linkLabel_WmDU>0013 — Server state and API v0</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0014-components><span class=linkLabel_WmDU>0014 — Components</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0015-valkey-operator><span class=linkLabel_WmDU>0015 — Valkey operator</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0016-delivery-flows-v0><span class=linkLabel_WmDU>0016 — Delivery flows v0</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0017-pr-previews><span class=linkLabel_WmDU>0017 — PR previews</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0018-secret-references><span class=linkLabel_WmDU>0018 — Secret references</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0019-release-command-hook><span class=linkLabel_WmDU>0019 — Release command hook</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0020-external-secrets><span class=linkLabel_WmDU>0020 — External secrets</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0021-installing-missing-components><span class=linkLabel_WmDU>0021 — Installing missing components</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0022-sops-age><span class=linkLabel_WmDU>0022 — SOPS + age</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0023-explain-structured-causes><span class=linkLabel_WmDU>0023 — Explain: structured causes</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0024-agent-identities><span class=linkLabel_WmDU>0024 — Agent identities</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0025-agent-policy><span class=linkLabel_WmDU>0025 — Agent policy</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0026-agent-audit-trail><span class=linkLabel_WmDU>0026 — The audit trail</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0027-finish-the-component-rename><span class=linkLabel_WmDU>0027 — Finish the component rename</span></a></ul></ul></nav></div></div></aside><main class=docMainContainer_TBSr><div class="container padding-top--md padding-bottom--lg"><div class=row><div class="col docItemCol_VOVn"><div class=docItemContainer_Djhp><article><nav class="theme-doc-breadcrumbs breadcrumbsContainer_Z_bl" aria-label=Breadcrumbs><ul class=breadcrumbs><li class=breadcrumbs__item><a aria-label="Home page" class=breadcrumbs__link href=/kelson/><svg viewBox="0 0 24 24" class=breadcrumbHomeIcon_YNFT><path d="M10 19v-5h4v5c0 .55.45 1 1 1h3c.55 0 1-.45 1-1v-7h1.7c.46 0 .68-.57.33-.87L12.67 3.6c-.38-.34-.96-.34-1.34 0l-8.36 7.53c-.34.3-.13.87.33.87H5v7c0 .55.45 1 1 1h3c.55 0 1-.45 1-1z" fill=currentColor /></svg></a><li class=breadcrumbs__item><span class=breadcrumbs__link>Design</span><li class="breadcrumbs__item breadcrumbs__item--active"><span class=breadcrumbs__link>Delivery</span></ul></nav><div class="tocCollapsible_ETCw theme-doc-toc-mobile tocMobile_ITEo"><button type=button class="clean-btn tocCollapsibleButton_TO0P">On this page</button></div><div class="theme-doc-markdown markdown"><header><h1>Delivery plane — adapter interface and concurrency</h1></header>
+<p>Design reference for the delivery plane (M2). Implements issues #32, #38, #40.
+The load-bearing rule — <strong>adapters never influence rendering</strong> — is stated in
+<a class="" href=/kelson/adr/0001-hybrid-state-model>ADR-0001</a> and enforced by the package
+structure: the renderer is a pure function; <code>internal/delivery</code> only ever
+receives already-rendered manifests.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id=the-adapter-interface>The adapter interface<a href=#the-adapter-interface class=hash-link aria-label="Direct link to The adapter interface" title="Direct link to The adapter interface" translate=no>​</a></h2>
+<p>Three concepts, mirrored in <code>internal/delivery</code>:</p>
+<ul>
+<li class=""><strong><code>Adapter</code></strong> — one delivery mode's last mile: <code>Apply</code>, <code>Status</code>, <code>History</code>,
+<code>Rollback</code>.</li>
+<li class=""><strong><code>Capabilities</code></strong> — negotiation, so callers know up front whether PRs,
+git or rollback are supported (<code>SupportsPR</code>, <code>RequiresGit</code>,
+<code>SupportsRollback</code>).</li>
+<li class=""><strong><code>Registry</code></strong> — per-environment adapter selection by delivery mode
+(<code>direct</code> / <code>flux</code>; the <code>argocd</code> adapter is removed per
+<a class="" href=/kelson/adr/0012-flux-only-gitops>ADR-0012</a>, and the seam is where it would
+return).</li>
+</ul>
+<p>A further adapter requires: implement <code>Adapter</code>, register it. No renderer
+changes. That is the acceptance test for #32 and it is structural, not
+aspirational.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=status-one-state-machine-three-answers>Status: one state machine, three answers<a href=#status-one-state-machine-three-answers class=hash-link aria-label="Direct link to Status: one state machine, three answers" title="Direct link to Status: one state machine, three answers" translate=no>​</a></h3>
+<p>The deployment state machine (issue #37):</p>
+<div class="language-text codeBlockContainer_Ckt0 theme-code-block" style=--prism-color:#9CDCFE;--prism-background-color:#1E1E1E><div class=codeBlockContent_QJqH><pre tabindex=0 class="prism-code language-text codeBlock_bY9V thin-scrollbar" style=color:#9CDCFE;background-color:#1E1E1E><code class=codeBlockLines_e6Vv><div class=token-line style=color:#9CDCFE><span class="token plain">Proposed ──► Committed(sha) ──► Reconciling ──► Applied ──► Healthy</span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">                     │                         │</span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">                     └──► Rejected             └──► Degraded</span><br/></div></code></pre></div></div>
+<p>Adapters report their observation; the state machine owns transitions. The
+three answers that must never be confused:</p>
+<ol>
+<li class=""><strong>not picked up yet</strong> (<code>Committed</code>, no progress) — keep waiting, or report
+a stuck state with a cause after a timeout.</li>
+<li class=""><strong>rejected</strong> (<code>Rejected</code>) — the reconciler processed the change and refused
+it; name the cause.</li>
+<li class=""><strong>applied but unhealthy</strong> (<code>Degraded</code>) — it is live and wrong; surface
+health detail.</li>
+</ol>
+<p>Every failure transition carries a <code>Cause</code> naming the responsible component
+and the reason. The engine, the transition table, provenance correlation and
+the timeout policy are specified in <a class="" href=/kelson/statemachine>the state machine</a>
+(<code>internal/delivery/statemachine</code>); adapters plug into it by implementing a
+single watch-based <code>Source</code>.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=the-release-barrier-in-direct-mode>The release barrier in direct mode<a href=#the-release-barrier-in-direct-mode class=hash-link aria-label="Direct link to The release barrier in direct mode" title="Direct link to The release barrier in direct mode" translate=no>​</a></h3>
+<p>A rendered set is <em>ordered</em> — namespaces first, then the data services and charts, then the release
+Job of any component that declares one, then the workloads — and order is all a set of manifests can
+express (<a href=https://github.com/dafrie/kelson/issues/89 target=_blank rel="noopener noreferrer" class="">#89</a>). Applying a Job before a Deployment does
+not mean the Job finished first.</p>
+<p>The direct adapter therefore <strong>stops</strong> at the release Job
+(<a href=https://github.com/dafrie/kelson/issues/104 target=_blank rel="noopener noreferrer" class="">#104</a>, <a class="" href=/kelson/adr/0019-release-command-hook>ADR-0019</a>):
+it applies everything up to and including the Job, polls the Job to a terminal state, and only then
+applies the rest of the set. It is the one point in the apply loop where the adapter waits, and it is
+bounded twice over — by the Job's own <code>activeDeadlineSeconds</code>, and by the caller's context (the
+<code>--timeout</code> of <code>kelson deploy</code>).</p>
+<p>Three consequences, all of them the point:</p>
+<ul>
+<li class=""><strong>A failed migration fails the deploy before anything rolls.</strong> No workload of the new revision is
+applied, no history entry is recorded, nothing is pruned — so the previous revision keeps serving.
+The error is <code>delivery/release-failed</code>, naming the Job and carrying the tail of its pod's output.</li>
+<li class=""><strong>The wait is visible.</strong> The adapter reports the Job through <code>Options.Progress</code> in the same
+<code>delivery.Status</code> shape the state machine consumes: <code>Reconciling</code> while it runs, <code>Rejected</code> when it
+fails, with the Job in <code>Cause</code> and in <code>Detail["releaseJob"]</code>. No new phase — see the ADR.</li>
+<li class=""><strong>A rollback does not re-run it.</strong> Rolling the workload back does not roll a migration back, so
+re-running the old revision's release command would only repeat work the database has already done.</li>
+</ul>
+<p><strong>Flux mode refuses the field rather than pretending.</strong> kelson commits files and a <code>Kustomization</code>
+kelson does not own applies them in one pass; there is no commit that says "and stop here until this
+Job is Complete". Rendering it anyway would produce migrations that run beside the rollout instead of
+before it, so <code>release:</code> in a non-direct environment is a render error
+(<code>render/release-requires-direct</code>) with the gap named in the message.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=history-uniform-across-modes>History, uniform across modes<a href=#history-uniform-across-modes class=hash-link aria-label="Direct link to History, uniform across modes" title="Direct link to History, uniform across modes" translate=no>​</a></h3>
+<p>Direct mode keeps a rendered-history store (issue #38); Git modes derive
+history from the repository. Both surface through the same <code>History() []Entry</code>
+API so the CLI/UI/API see one shape. <code>kelson eject --to-git</code> later replays
+that history rather than exporting it.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=promotion-is-not-a-delivery-operation>Promotion is not a delivery operation<a href=#promotion-is-not-a-delivery-operation class=hash-link aria-label="Direct link to Promotion is not a delivery operation" title="Direct link to Promotion is not a delivery operation" translate=no>​</a></h3>
+<p>Moving a known-good image from one environment to another is an <em>authoring</em> change, not a mode of
+delivery: it edits the target Environment's per-component image pin and then takes the ordinary deploy
+path, whichever adapter that environment uses. No adapter knows what a promotion is, and none needs to
+(<a class="" href=/kelson/adr/0016-delivery-flows-v0>ADR-0016</a>; the field is documented in
+<a class="" href=/kelson/model#promotion>the model</a>).</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id=preview-admission-rejections-and-what-the-dry-run-cannot-see-45>Preview: admission rejections and what the dry-run cannot see (#45)<a href=#preview-admission-rejections-and-what-the-dry-run-cannot-see-45 class=hash-link aria-label="Direct link to Preview: admission rejections and what the dry-run cannot see (#45)" title="Direct link to Preview: admission rejections and what the dry-run cannot see (#45)" translate=no>​</a></h2>
+<p>A server-side dry-run (<code>kelson diff --dry-run=server</code>, <code>internal/delivery/dryrun</code>)
+is not kelson's model of what the API server would do — it is the API server's
+own answer, and that answer includes admission control. A dry-run apply runs the
+cluster's <code>ValidatingAdmissionPolicy</code> objects and its validating webhooks, so a
+Kyverno, Gatekeeper or plain-webhook denial arrives at preview time. It is
+reported as a structured finding, never as a generic apply failure, and never
+left to appear at deploy time after a preview that read clean.</p>
+<p>Each denial becomes a <code>diff.PolicyViolation</code> carrying:</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>field<th>what it holds<tbody><tr><td><code>code</code><td><code>policy/webhook-denied</code>, <code>policy/admission-policy-denied</code>, <code>policy/validation-failed</code>, <code>policy/audit-finding</code><tr><td><code>policy</code> / <code>rule</code><td>the policy, constraint or webhook name the server named — for a <code>ValidatingAdmissionPolicy</code>, the policy and its binding<tr><td><code>resource</code>, <code>path</code><td>what was rejected, and the field where the server pointed at one<tr><td><code>message</code><td>the server's own words, verbatim: the policy author wrote that sentence for this moment<tr><td><code>remediation</code><td>the object to go and read (<code>kubectl get clusterpolicy …</code>, <code>kubectl get constraints …</code>, <code>kubectl get validatingadmissionpolicy …</code>, <code>kubectl get validatingwebhookconfigurations …</code>)<tr><td><code>enforcement</code><td><code>enforce</code> (a veto, a blocker) or <code>audit</code> (a policy-report finding, a warning)</table>
+<p>Parsing is conservative. Each engine formats its rejection as prose rather than
+as a protocol, so the recognisers match the shapes those engines actually write;
+a message that merely mentions a webhook, or says a request was denied without
+the denial shape, is <strong>not</strong> attributed to anything. An unattributable rejection
+is reported as unvalidated with the server's message intact — kelson never
+invents a policy name for an agent or a human to go chasing.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=the-honesty-boundary>The honesty boundary<a href=#the-honesty-boundary class=hash-link aria-label="Direct link to The honesty boundary" title="Direct link to The honesty boundary" translate=no>​</a></h3>
+<p>A dry-run does not reach every check, and the preview says so rather than
+implying a coverage it does not have. Two cases, both reported as
+<code>diff.Unvalidated</code> with a <code>reason</code>:</p>
+<ul>
+<li class=""><strong><code>dry-run-unsupported</code></strong> — a webhook whose <code>sideEffects</code> is neither <code>None</code>
+nor <code>NoneOnDryRun</code> is never called for a dry-run request. With
+<code>failurePolicy: Fail</code> the API server fails the request outright; that failure
+names the webhook and is reported as a gap, not as a rejection.</li>
+<li class=""><strong><code>webhook-excludes-dry-run</code></strong> — the same webhook with <code>failurePolicy: Ignore</code>
+is skipped <em>silently</em>: the dry-run succeeds and the preview would otherwise
+look like a complete verdict. So the preview lists the cluster's
+<code>ValidatingWebhookConfigurations</code> and reports each unreachable webhook that
+could match the batch. The match is coarse (group/version/resource);
+<code>namespaceSelector</code> and <code>objectSelector</code> are not evaluated, so this
+over-reports rather than under-reports. The read is best-effort — a caller
+without permission gets no gap entries, never a failed preview — and the grant
+is in <code>deploy/rbac/detect-clusterrole.yaml</code>.</li>
+</ul>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=preview-of-a-helm-component>Preview of a helm component<a href=#preview-of-a-helm-component class=hash-link aria-label="Direct link to Preview of a helm component" title="Direct link to Preview of a helm component" translate=no>​</a></h3>
+<p>One component type previews less than the rest, and it says so rather than looking complete.</p>
+<p>A <code>kind: helm</code> component renders two resources — a chart source and a <code>HelmRelease</code> — and nothing else
+(<a class="" href=/kelson/model#helm-components-a-chart-delegated>the model</a>,
+<a class="" href=/kelson/adr/0016-delivery-flows-v0>ADR-0016</a>). <strong>The preview therefore shows the <code>HelmRelease</code> changing:
+the chart, the version and the values. It never shows the workloads the chart produces.</strong> A chart
+upgrade that rewrites every manifest it ships appears as one changed <code>version:</code> line, and a reviewer
+approving it is approving a version number, not a set of manifests.</p>
+<p>This is a documented v0 downgrade, taken deliberately, and it is worth being blunt about why it cannot
+simply be fixed here. Expanding a chart means fetching it and running <code>helm template</code> against it, which
+is network I/O — the one thing the renderer may never do
+(<a class="" href=/kelson/adr/0001-hybrid-state-model>ADR-0001</a>, <a href=https://github.com/dafrie/kelson/issues/20 target=_blank rel="noopener noreferrer" class="">#20</a>) — so a
+manifest-level chart preview is not a renderer feature that was skipped. The upgrade path is an
+<strong>advisory server-side</strong> <code>helm template</code>: server-side because it needs to fetch the chart, advisory
+because it is a second opinion about what the cluster will do rather than the rendered truth every other
+diff shows. It changes the preview and not the delegation.</p>
+<p>Two consequences follow, and neither is a defect in the diff:</p>
+<ul>
+<li class=""><strong>Nothing is missing from the diff.</strong> The two resources kelson owns are diffed exactly the way every
+other resource is, including under a server-side dry-run. What is absent from the diff is absent from
+kelson's inventory too — the chart's objects are helm-controller's, created under Helm's own release
+ownership, never pruned or adopted by kelson.</li>
+<li class=""><strong>Drift inside the release is helm-controller's.</strong> It has its own drift detection and its own
+reconcile interval; kelson does not police that layer and does not report on it.</li>
+</ul>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=exit-semantics>Exit semantics<a href=#exit-semantics class=hash-link aria-label="Direct link to Exit semantics" title="Direct link to Exit semantics" translate=no>​</a></h3>
+<p><code>kelson diff</code> exit codes and the Diff RPC's <code>exit_semantics</code> are the same
+contract, and both call <code>diff.Blocked</code> rather than restating it:</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>code<th>meaning<tbody><tr><td>0<td>no changes<tr><td>2<td>changes present<tr><td>3<td>blocked: an enforce-mode violation, or an unvalidated resource whose prerequisite is genuinely absent (<code>reason</code> <code>missing-prerequisite</code> or <code>unattributed-rejection</code>)</table>
+<p>A coverage gap is deliberately <strong>not</strong> a blocker. Nothing rejected anything, so
+failing a pipeline on it would punish a hole in the preview as if it were a
+verdict — but it is always printed and always present in the JSON, because an
+incomplete preview must never read as a clean one.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id=optimistic-concurrency-40>Optimistic concurrency (#40)<a href=#optimistic-concurrency-40 class=hash-link aria-label="Direct link to Optimistic concurrency (#40)" title="Direct link to Optimistic concurrency (#40)" translate=no>​</a></h2>
+<p>Concurrent edits — agent vs human, or a hand-edit in Git mode vs a commit —
+must conflict loudly, never last-write-wins.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=spec-versioning>Spec versioning<a href=#spec-versioning class=hash-link aria-label="Direct link to Spec versioning" title="Direct link to Spec versioning" translate=no>​</a></h3>
+<p>The authoring plane carries a version per spec document. The API accepts an
+expected version on writes; a mismatch returns <code>delivery/conflict</code> with both
+the expected and the observed version, plus the field that diverged.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=git-mode>Git mode<a href=#git-mode class=hash-link aria-label="Direct link to Git mode" title="Direct link to Git mode" translate=no>​</a></h3>
+<p>Read-modify-write against the latest HEAD. kelson never renders from cached
+state. If HEAD moved between read and write, the write fails with a conflict
+rather than being force-pushed.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=which-operations-may-retry-automatically>Which operations may retry automatically<a href=#which-operations-may-retry-automatically class=hash-link aria-label="Direct link to Which operations may retry automatically" title="Direct link to Which operations may retry automatically" translate=no>​</a></h3>
+<ul>
+<li class=""><strong>May retry</strong>: applying an unchanged manifest set (idempotent), a git commit
+that lost a race before touching the remote, a rollback to the current
+revision.</li>
+<li class=""><strong>Must surface</strong>: a spec write that conflicts, a PR merge conflict, a
+server-side apply that conflicts on a field owned by another controller.
+These are the "discard human intent invisibly" failures and always go to the
+user as a structured <code>delivery/conflict</code> error.</li>
+</ul>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id=when-a-field-cannot-change-in-place-deliveryimmutable-field>When a field cannot change in place (<code>delivery/immutable-field</code>)<a href=#when-a-field-cannot-change-in-place-deliveryimmutable-field class=hash-link aria-label="Direct link to when-a-field-cannot-change-in-place-deliveryimmutable-field" title="Direct link to when-a-field-cannot-change-in-place-deliveryimmutable-field" translate=no>​</a></h2>
+<p>Some fields are immutable once an object exists — most consequentially a
+Deployment's <code>spec.selector</code>. An apply that changes one is rejected by the API
+server with a 422, and it will be rejected identically on every retry: there is
+no edit that reaches the new value, because the live object is what has to go.</p>
+<p>The direct adapter classifies that rejection as <code>delivery/immutable-field</code>
+rather than the generic <code>delivery/apply-failed</code>, names the stuck field, carries
+the API server's own words in <code>cause</code>, and gives the only remediation that
+works:</p>
+<div class="language-text codeBlockContainer_Ckt0 theme-code-block" style=--prism-color:#9CDCFE;--prism-background-color:#1E1E1E><div class=codeBlockContent_QJqH><pre tabindex=0 class="prism-code language-text codeBlock_bY9V thin-scrollbar" style=color:#9CDCFE;background-color:#1E1E1E><code class=codeBlockLines_e6Vv><div class=token-line style=color:#9CDCFE><span class="token plain">Deployment/checkout-production/web [delivery/immutable-field] the API server</span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">refuses the update: spec.selector cannot change on an existing object: delete</span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">Deployment/checkout-production/web and deploy again — re-deploying without</span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">deleting fails the same way, and there is no in-place edit that reaches the new</span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">value</span><br/></div></code></pre></div></div>
+<p>The code exists because the generic remediation ("fix the spec, then
+re-deploy") is actively wrong here: the spec is what the object <em>should</em> be.
+<a class="" href=/kelson/adr/0027-finish-the-component-rename>ADR-0027</a> is the change that made this
+reachable — it renamed the selector label, so any workload deployed before it
+must be deleted and redeployed. Deleting the whole environment
+(<code>kelson uninstall --project &lt;p> --env &lt;e></code>) and deploying again does the same
+job for more than one workload.</div><footer class="theme-doc-footer docusaurus-mt-lg"><div class="row margin-top--sm theme-doc-footer-edit-meta-row"><div class="col noPrint_WFHX"><a href=https://github.com/dafrie/kelson/edit/main/docs/../docs/delivery.md target=_blank rel="noopener noreferrer" class=theme-edit-this-page><svg fill=currentColor height=20 width=20 viewBox="0 0 40 40" class=iconEdit_Z9Sw aria-hidden=true><g><path d="m34.5 11.7l-3 3.1-6.3-6.3 3.1-3q0.5-0.5 1.2-0.5t1.1 0.5l3.9 3.9q0.5 0.4 0.5 1.1t-0.5 1.2z m-29.5 17.1l18.4-18.5 6.3 6.3-18.4 18.4h-6.3v-6.2z"/></g></svg>Edit this page</a></div><div class="col lastUpdated_JAkA"><span class=theme-last-updated>Last updated<!-- --> on <b><time datetime=2026-08-14T16:22:22.000Z itemprop=dateModified>Aug 14, 2026</time></b></span></div></div></footer></article><nav class="docusaurus-mt-lg pagination-nav" aria-label="Docs pages"><a class="pagination-nav__link pagination-nav__link--prev" href=/kelson/build><div class=pagination-nav__sublabel>Previous</div><div class=pagination-nav__label>Build</div></a><a class="pagination-nav__link pagination-nav__link--next" href=/kelson/secrets><div class=pagination-nav__sublabel>Next</div><div class=pagination-nav__label>Secrets</div></a></nav></div></div><div class="col col--3"><div class="tableOfContents_bqdL thin-scrollbar theme-doc-toc-desktop"><ul class="table-of-contents table-of-contents__left-border"><li><a href=#the-adapter-interface class="table-of-contents__link toc-highlight">The adapter interface</a><ul><li><a href=#status-one-state-machine-three-answers class="table-of-contents__link toc-highlight">Status: one state machine, three answers</a><li><a href=#the-release-barrier-in-direct-mode class="table-of-contents__link toc-highlight">The release barrier in direct mode</a><li><a href=#history-uniform-across-modes class="table-of-contents__link toc-highlight">History, uniform across modes</a><li><a href=#promotion-is-not-a-delivery-operation class="table-of-contents__link toc-highlight">Promotion is not a delivery operation</a></ul><li><a href=#preview-admission-rejections-and-what-the-dry-run-cannot-see-45 class="table-of-contents__link toc-highlight">Preview: admission rejections and what the dry-run cannot see (#45)</a><ul><li><a href=#the-honesty-boundary class="table-of-contents__link toc-highlight">The honesty boundary</a><li><a href=#preview-of-a-helm-component class="table-of-contents__link toc-highlight">Preview of a helm component</a><li><a href=#exit-semantics class="table-of-contents__link toc-highlight">Exit semantics</a></ul><li><a href=#optimistic-concurrency-40 class="table-of-contents__link toc-highlight">Optimistic concurrency (#40)</a><ul><li><a href=#spec-versioning class="table-of-contents__link toc-highlight">Spec versioning</a><li><a href=#git-mode class="table-of-contents__link toc-highlight">Git mode</a><li><a href=#which-operations-may-retry-automatically class="table-of-contents__link toc-highlight">Which operations may retry automatically</a></ul><li><a href=#when-a-field-cannot-change-in-place-deliveryimmutable-field class="table-of-contents__link toc-highlight">When a field cannot change in place (<code>delivery/immutable-field</code>)</a></ul></div></div></div></div></main></div></div></div><footer class="theme-layout-footer footer footer--dark"><div class="container container-fluid"><div class="row footer__links"><div class="theme-layout-footer-column col footer__col"><div class=footer__title>Docs</div><ul class="footer__items clean-list"><li class=footer__item><a class=footer__link-item href=/kelson/>Overview</a><li class=footer__item><a class=footer__link-item href=/kelson/architecture>Architecture</a><li class=footer__item><a class=footer__link-item href=/kelson/roadmap>Roadmap</a><li class=footer__item><a class=footer__link-item href=/kelson/adr/>ADRs</a></ul></div><div class="theme-layout-footer-column col footer__col"><div class=footer__title>Project</div><ul class="footer__items clean-list"><li class=footer__item><a href=https://github.com/dafrie/kelson target=_blank rel="noopener noreferrer" class=footer__link-item>GitHub<svg width=13.5 height=13.5 aria-label="(opens in new tab)" class=iconExternalLink_nPIU><use href=#theme-svg-external-link /></svg></a><li class=footer__item><a href=https://github.com/dafrie/kelson/issues target=_blank rel="noopener noreferrer" class=footer__link-item>Issues<svg width=13.5 height=13.5 aria-label="(opens in new tab)" class=iconExternalLink_nPIU><use href=#theme-svg-external-link /></svg></a><li class=footer__item><a href=https://github.com/dafrie/kelson/milestones target=_blank rel="noopener noreferrer" class=footer__link-item>Milestones<svg width=13.5 height=13.5 aria-label="(opens in new tab)" class=iconExternalLink_nPIU><use href=#theme-svg-external-link /></svg></a></ul></div></div><div class="footer__bottom text--center"><div class=footer__copyright>MIT. Every feature — SSO, RBAC and audit logs are not paywalled.</div></div></div></footer></div></body>

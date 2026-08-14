@@ -1,0 +1,830 @@
+<!doctype html><html lang=en dir=ltr class="docs-wrapper plugin-docs plugin-id-default docs-version-current docs-doc-page docs-doc-id-data-services" data-has-hydrated=false><head><meta charset=UTF-8><meta name=generator content="Docusaurus v3.10.2"><title data-rh=true>Data services — preset topologies, sizing and capability rules | kelson</title><meta data-rh=true name=viewport content="width=device-width, initial-scale=1.0"/><meta data-rh=true name=twitter:card content=summary_large_image /><meta data-rh=true property=og:image content=https://dafrie.github.io/kelson/kelson-lockup.svg /><meta data-rh=true name=twitter:image content=https://dafrie.github.io/kelson/kelson-lockup.svg /><meta data-rh=true property=og:url content=https://dafrie.github.io/kelson/data-services /><meta data-rh=true property=og:locale content=en /><meta data-rh=true name=docusaurus_locale content=en /><meta data-rh=true name=docsearch:language content=en /><meta data-rh=true name=docusaurus_version content=current /><meta data-rh=true name=docusaurus_tag content=docs-default-current /><meta data-rh=true name=docsearch:version content=current /><meta data-rh=true name=docsearch:docusaurus_tag content=docs-default-current /><meta data-rh=true property=og:title content="Data services — preset topologies, sizing and capability rules | kelson"/><meta data-rh=true name=description content="Implementation reference for M9 · Data services (epic"/><meta data-rh=true property=og:description content="Implementation reference for M9 · Data services (epic"/><link data-rh=true rel=icon href=/kelson/kelson-favicon-32.svg /><link data-rh=true rel=canonical href=https://dafrie.github.io/kelson/data-services /><link data-rh=true rel=alternate href=https://dafrie.github.io/kelson/data-services hreflang=en /><link data-rh=true rel=alternate href=https://dafrie.github.io/kelson/data-services hreflang=x-default /><script data-rh=true type=application/ld+json>{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","item":"https://dafrie.github.io/kelson/data-services","name":"Data services","position":1}]}</script><link rel=stylesheet href=/kelson/assets/css/styles.c304df04.css /><script src=/kelson/assets/js/runtime~main.6bcfaf32.js defer></script><script src=/kelson/assets/js/main.d393c33f.js defer></script></head><body><svg style="display: none;"><defs>
+<symbol id=theme-svg-external-link viewBox="0 0 24 24"><path fill=currentColor d="M21 13v10h-21v-19h12v2h-10v15h17v-8h2zm3-12h-10.988l4.035 4-6.977 7.07 2.828 2.828 6.977-7.07 4.125 4.172v-11z"/></symbol>
+</defs></svg>
+<script>!function(){var t;document.documentElement.setAttribute("data-theme",t||"dark"),document.documentElement.setAttribute("data-theme-choice",t||"dark")}(),function(){try{for(var[t,e]of new URLSearchParams(window.location.search).entries())if(t.startsWith("docusaurus-data-")){var a=t.replace("docusaurus-data-","data-");document.documentElement.setAttribute(a,e)}}catch(t){}}()</script><div id=__docusaurus><link rel=preload as=image href=/kelson/kelson-mark.svg /><div role=region aria-label="Skip to main content"><a class=skipToContent_fXgn href=#__docusaurus_skipToContent_fallback>Skip to main content</a></div><nav aria-label=Main class="theme-layout-navbar navbar navbar--fixed-top"><div class=navbar__inner><div class="theme-layout-navbar-left navbar__items"><button aria-label="Toggle navigation bar" aria-expanded=false class="navbar__toggle clean-btn" type=button><svg width=30 height=30 viewBox="0 0 30 30" aria-hidden=true><path stroke=currentColor stroke-linecap=round stroke-miterlimit=10 stroke-width=2 d="M4 7h22M4 15h22M4 23h22"/></svg></button><a class=navbar__brand href=/kelson/><div class=navbar__logo><img src=/kelson/kelson-mark.svg alt=kelson class="themedComponent_mlkZ themedComponent--light_NVdE"/><img src=/kelson/kelson-mark.svg alt=kelson class="themedComponent_mlkZ themedComponent--dark_xIcU"/></div><b class="navbar__title text--truncate">kelson</b></a></div><div class="theme-layout-navbar-right navbar__items navbar__items--right"><a aria-current=page class="navbar__item navbar__link navbar__link--active" href=/kelson/data-services>unreleased</a><a href=https://github.com/dafrie/kelson target=_blank rel="noopener noreferrer" class="navbar__item navbar__link">GitHub<svg width=13.5 height=13.5 aria-label="(opens in new tab)" class=iconExternalLink_nPIU><use href=#theme-svg-external-link /></svg></a><div class=navbarSearchContainer_Bca1></div></div></div><div role=presentation class=navbar-sidebar__backdrop></div></nav><div id=__docusaurus_skipToContent_fallback class="theme-layout-main main-wrapper mainWrapper_z2l0"><div class=docsWrapper_hBAB><button aria-label="Scroll back to top" class="clean-btn theme-back-to-top-button backToTopButton_sjWU" type=button></button><div class=docRoot_UBD9><aside class="theme-doc-sidebar-container docSidebarContainer_YfHR"><div class=sidebarViewport_aRkj><div class=sidebar_njMd><nav aria-label="Docs sidebar" class="menu thin-scrollbar menu_SIkG"><ul class="theme-doc-sidebar-menu menu__list"><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/><span class=linkLabel_WmDU>Home</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/vision><span class=linkLabel_WmDU>Vision</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/install><span class=linkLabel_WmDU>Install</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/local><span class=linkLabel_WmDU>Local (kind)</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/architecture><span class=linkLabel_WmDU>Architecture</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/roadmap><span class=linkLabel_WmDU>Roadmap</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-1 menu__list-item"><a class=menu__link href=/kelson/competitive-analysis><span class=linkLabel_WmDU>Competitive analysis</span></a><li class="theme-doc-sidebar-item-category theme-doc-sidebar-item-category-level-1 menu__list-item"><div class=menu__list-item-collapsible><a class="categoryLink_byQd menu__link menu__link--sublist menu__link--sublist-caret" role=button aria-expanded=true href=/kelson/reference/project><span class=categoryLinkLabel_W154>Reference</span></a></div><ul class=menu__list><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/reference/project><span class=linkLabel_WmDU>Project spec</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/reference/environment><span class=linkLabel_WmDU>Environment spec</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/detection><span class=linkLabel_WmDU>Cluster detection</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/server><span class=linkLabel_WmDU>Server</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/mcp><span class=linkLabel_WmDU>MCP server</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/reference/support-matrix><span class=linkLabel_WmDU>Support matrix</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/e2e><span class=linkLabel_WmDU>E2E harness</span></a></ul><li class="theme-doc-sidebar-item-category theme-doc-sidebar-item-category-level-1 menu__list-item"><div class=menu__list-item-collapsible><a class="categoryLink_byQd menu__link menu__link--sublist menu__link--sublist-caret menu__link--active" role=button aria-expanded=true href=/kelson/model><span class=categoryLinkLabel_W154>Design</span></a></div><ul class=menu__list><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/model><span class=linkLabel_WmDU>Model</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/build><span class=linkLabel_WmDU>Build</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/delivery><span class=linkLabel_WmDU>Delivery</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/secrets><span class=linkLabel_WmDU>Secrets</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class="menu__link menu__link--active" aria-current=page tabindex=0 href=/kelson/data-services><span class=linkLabel_WmDU>Data services</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/statemachine><span class=linkLabel_WmDU>State machine</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/release-policy><span class=linkLabel_WmDU>Release policy</span></a></ul><li class="theme-doc-sidebar-item-category theme-doc-sidebar-item-category-level-1 menu__list-item"><div class=menu__list-item-collapsible><a class="categoryLink_byQd menu__link menu__link--sublist menu__link--sublist-caret" role=button aria-expanded=true href=/kelson/research/build-strategy-selection><span class=categoryLinkLabel_W154>Research</span></a></div><ul class=menu__list><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/research/build-strategy-selection><span class=linkLabel_WmDU>Build strategy selection</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/research/score-as-input-format><span class=linkLabel_WmDU>Score as an input format</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/research/hierarchy-prior-art><span class=linkLabel_WmDU>Hierarchy prior art</span></a></ul><li class="theme-doc-sidebar-item-category theme-doc-sidebar-item-category-level-1 menu__list-item"><div class=menu__list-item-collapsible><a class="categoryLink_byQd menu__link menu__link--sublist menu__link--sublist-caret" role=button aria-expanded=true href=/kelson/adr/><span class=categoryLinkLabel_W154>ADRs</span></a></div><ul class=menu__list><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/><span class=linkLabel_WmDU>Index</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0001-hybrid-state-model><span class=linkLabel_WmDU>0001 — Hybrid state model</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0002-tech-stack><span class=linkLabel_WmDU>0002 — Tech stack</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0003-install-model><span class=linkLabel_WmDU>0003 — Install model</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0004-licensing><span class=linkLabel_WmDU>0004 — Licensing</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0005-delegate-to-operators><span class=linkLabel_WmDU>0005 — Delegate to operators</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0006-project-application-environment><span class=linkLabel_WmDU>0006 — Project, Application, Environment</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0007-data-services><span class=linkLabel_WmDU>0007 — Data services</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0008-mcp-surface><span class=linkLabel_WmDU>0008 — MCP surface</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0009-secrets><span class=linkLabel_WmDU>0009 — Secrets</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0010-build-strategy><span class=linkLabel_WmDU>0010 — Build strategy</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0011-build-cache><span class=linkLabel_WmDU>0011 — Build cache</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0012-flux-only-gitops><span class=linkLabel_WmDU>0012 — Flux-only GitOps</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0013-server-state-and-api-v0><span class=linkLabel_WmDU>0013 — Server state and API v0</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0014-components><span class=linkLabel_WmDU>0014 — Components</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0015-valkey-operator><span class=linkLabel_WmDU>0015 — Valkey operator</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0016-delivery-flows-v0><span class=linkLabel_WmDU>0016 — Delivery flows v0</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0017-pr-previews><span class=linkLabel_WmDU>0017 — PR previews</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0018-secret-references><span class=linkLabel_WmDU>0018 — Secret references</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0019-release-command-hook><span class=linkLabel_WmDU>0019 — Release command hook</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0020-external-secrets><span class=linkLabel_WmDU>0020 — External secrets</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0021-installing-missing-components><span class=linkLabel_WmDU>0021 — Installing missing components</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0022-sops-age><span class=linkLabel_WmDU>0022 — SOPS + age</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0023-explain-structured-causes><span class=linkLabel_WmDU>0023 — Explain: structured causes</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0024-agent-identities><span class=linkLabel_WmDU>0024 — Agent identities</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0025-agent-policy><span class=linkLabel_WmDU>0025 — Agent policy</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0026-agent-audit-trail><span class=linkLabel_WmDU>0026 — The audit trail</span></a><li class="theme-doc-sidebar-item-link theme-doc-sidebar-item-link-level-2 menu__list-item"><a class=menu__link tabindex=0 href=/kelson/adr/0027-finish-the-component-rename><span class=linkLabel_WmDU>0027 — Finish the component rename</span></a></ul></ul></nav></div></div></aside><main class=docMainContainer_TBSr><div class="container padding-top--md padding-bottom--lg"><div class=row><div class="col docItemCol_VOVn"><div class=docItemContainer_Djhp><article><nav class="theme-doc-breadcrumbs breadcrumbsContainer_Z_bl" aria-label=Breadcrumbs><ul class=breadcrumbs><li class=breadcrumbs__item><a aria-label="Home page" class=breadcrumbs__link href=/kelson/><svg viewBox="0 0 24 24" class=breadcrumbHomeIcon_YNFT><path d="M10 19v-5h4v5c0 .55.45 1 1 1h3c.55 0 1-.45 1-1v-7h1.7c.46 0 .68-.57.33-.87L12.67 3.6c-.38-.34-.96-.34-1.34 0l-8.36 7.53c-.34.3-.13.87.33.87H5v7c0 .55.45 1 1 1h3c.55 0 1-.45 1-1z" fill=currentColor /></svg></a><li class=breadcrumbs__item><span class=breadcrumbs__link>Design</span><li class="breadcrumbs__item breadcrumbs__item--active"><span class=breadcrumbs__link>Data services</span></ul></nav><div class="tocCollapsible_ETCw theme-doc-toc-mobile tocMobile_ITEo"><button type=button class="clean-btn tocCollapsibleButton_TO0P">On this page</button></div><div class="theme-doc-markdown markdown"><header><h1>Data services — preset topologies, sizing and capability rules</h1></header>
+<p>Implementation reference for M9 · Data services (epic
+<a href=https://github.com/dafrie/kelson/issues/10 target=_blank rel="noopener noreferrer" class="">#10</a>), completing the design decisions
+<a href=https://github.com/dafrie/kelson/issues/89 target=_blank rel="noopener noreferrer" class="">#89</a> left open, and for <code>kind: valkey</code>
+(<a href=https://github.com/dafrie/kelson/issues/98 target=_blank rel="noopener noreferrer" class="">#98</a>).</p>
+<p><a class="" href=/kelson/adr/0007-data-services>ADR-0007</a> is the decision record: it settled <em>that</em> presets
+determine topology, that branching degrades rather than disappearing, and that retention is
+asymmetric. <a class="" href=/kelson/adr/0015-valkey-operator>ADR-0015</a> settles which Valkey operator
+<code>kind: valkey</code> delegates to. This page settles the rest — which operator fields each preset
+renders, what the sizing defaults are and why, which preset changes are safe, and where the
+capability verdict is enforced. Where an ADR and this page disagree, the ADR wins and this
+page is the bug.</p>
+<p>Two kinds, two operators, one set of rules. <code>kind: postgres</code> renders CloudNativePG resources
+and <code>kind: valkey</code> renders a <code>ValkeyCluster</code>; everything below that is shared — the preset
+vocabulary, the naming rule, the provenance stamps, the render ordering, and the tri-state
+capability check. The <a href=#valkey class="">Valkey</a> section states only what differs, and it differs more
+than the shared parts suggest.</p>
+<p><strong>Not on this page: <code>kind: helm</code>.</strong> It delegates to an operator the same way these do
+(<a class="" href=/kelson/adr/0005-delegate-to-operators>ADR-0005</a>) and it is deliberately not a data service — it has no
+preset, nothing binds to it, and what it installs is the chart's business rather than kelson's. It is
+documented with the model (<a class="" href=/kelson/model#helm-components-a-chart-delegated>helm components</a>,
+<a class="" href=/kelson/adr/0016-delivery-flows-v0>ADR-0016</a>).</p>
+<p><strong>Baseline.</strong> kelson targets the latest CloudNativePG release (owner decision, 2026-08-13,
+recorded in <code>internal/clusterprofile/postgres</code>). The declarative surface — <code>Cluster .spec.managed.roles</code>, the <code>Database</code> CRD, declarative schemas and extensions — is relied on
+with no imperative fallback. An older operator is not a global refusal but a per-capability
+answer; see <a href=#validation-versus-capability class="">Validation versus capability</a>.</p>
+<p>Every CloudNativePG field named below was checked against the <code>release-1.30</code> API types
+(<code>api/v1/cluster_types.go</code>, <code>api/v1/database_types.go</code>) and the matching <code>docs/src</code> pages, not
+against memory. Field names that surprised us are called out where they appear.</p>
+<hr/>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id=preset--topology>Preset → topology<a href=#preset--topology class=hash-link aria-label="Direct link to Preset → topology" title="Direct link to Preset → topology" translate=no>​</a></h2>
+<p>The preset vocabulary is shared by both data kinds, which is what makes <code>preset: small</code> mean
+the same thing whichever engine reads it. Two of its five members are not topologies a cache
+has, and those refuse for <code>kind: valkey</code> with a cache-specific reason.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Preset<th><code>kind: postgres</code><th><code>kind: valkey</code><tbody><tr><td><code>shared</code><td><strong>deferred</strong> (<a href=https://github.com/dafrie/kelson/issues/93 target=_blank rel="noopener noreferrer" class="">#93</a>)<td><strong>deferred</strong>, same decision<tr><td><code>small</code><td>dedicated <code>Cluster</code>, 1 instance<td><code>ValkeyCluster</code>, 1 shard, no replica<tr><td><code>ha-small</code><td>dedicated <code>Cluster</code>, 3 instances, synchronous<td><code>ValkeyCluster</code>, 3 shards × 1 replica<tr><td><code>ha-medium</code><td>dedicated <code>Cluster</code>, 3 instances, synchronous<td><code>ValkeyCluster</code>, 3 shards × 1 replica, larger<tr><td><code>branch</code><td><strong>nothing yet</strong> (<a href=https://github.com/dafrie/kelson/issues/99 target=_blank rel="noopener noreferrer" class="">#99</a>)<td><strong>refused</strong>: a cache has no durable state to branch from</table>
+<p><code>branch</code> validates and renders a structured not-implemented error naming
+<a href=https://github.com/dafrie/kelson/issues/99 target=_blank rel="noopener noreferrer" class="">#99</a>. Branching needs a source cluster, a snapshot
+mechanism chosen from the profile and a TTL; none of that exists, and rendering an ordinary
+empty <code>small</code> cluster for it would be the silent-success failure
+<a href=https://github.com/dafrie/kelson/issues/141 target=_blank rel="noopener noreferrer" class="">#141</a> exists to prevent.</p>
+<p><strong><code>shared</code> is deferred (owner decision, 2026-08-13, <a class="" href=/kelson/adr/0007-data-services>ADR-0007</a>).</strong>
+It rendered a <code>Database</code> CR into a kelson-owned shared cluster until the owner reconsidered:
+the shared cluster was ADR-0007's cost optimization for the resource math of many small
+databases, never something anyone asked for, and the dedicated presets are simpler, work
+today including bindings, and cost one pod — acceptable at this stage. <code>preset: shared</code>
+validates (the vocabulary survives) and renders the same structured not-implemented error
+shape as <code>branch</code>, naming #93 and suggesting <code>preset: small</code>. <a href=https://github.com/dafrie/kelson/issues/93 target=_blank rel="noopener noreferrer" class="">#93</a>
+tracks any return of the preset; the rendering it used to do — the <code>Database</code> CR into
+<code>kelson-data</code>, the namespace convention, the credential-distribution gap — is preserved in
+git history rather than repeated here.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=the-dedicated-presets-kind-postgres>The dedicated presets (<code>kind: postgres</code>)<a href=#the-dedicated-presets-kind-postgres class=hash-link aria-label="Direct link to the-dedicated-presets-kind-postgres" title="Direct link to the-dedicated-presets-kind-postgres" translate=no>​</a></h3>
+<p>One <code>postgresql.cnpg.io/v1</code> <code>Cluster</code> per data component, named <code>&lt;project>-&lt;environment>-&lt;component></code>
+in the environment's namespace.</p>
+<div class="language-yaml codeBlockContainer_Ckt0 theme-code-block" style=--prism-color:#9CDCFE;--prism-background-color:#1E1E1E><div class=codeBlockContent_QJqH><pre tabindex=0 class="prism-code language-yaml codeBlock_bY9V thin-scrollbar" style=color:#9CDCFE;background-color:#1E1E1E><code class=codeBlockLines_e6Vv><div class=token-line style=color:#9CDCFE><span class="token key atrule">apiVersion</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> postgresql.cnpg.io/v1</span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain"></span><span class="token key atrule">kind</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> Cluster</span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain"></span><span class="token key atrule">metadata</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">  </span><span class="token key atrule">name</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> checkout</span><span class="token punctuation" style="color:rgb(212, 212, 212)">-</span><span class="token plain">production</span><span class="token punctuation" style="color:rgb(212, 212, 212)">-</span><span class="token plain">db</span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">  </span><span class="token key atrule">namespace</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> checkout</span><span class="token punctuation" style="color:rgb(212, 212, 212)">-</span><span class="token plain">prod</span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain"></span><span class="token key atrule">spec</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">  </span><span class="token key atrule">instances</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> </span><span class="token number" style="color:rgb(181, 206, 168)">3</span><span class="token plain"></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">  </span><span class="token key atrule">minSyncReplicas</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> </span><span class="token number" style="color:rgb(181, 206, 168)">1</span><span class="token plain"></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">  </span><span class="token key atrule">maxSyncReplicas</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> </span><span class="token number" style="color:rgb(181, 206, 168)">1</span><span class="token plain"></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">  </span><span class="token key atrule">storage</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">    </span><span class="token key atrule">size</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> 5Gi</span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">  </span><span class="token key atrule">resources</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">    </span><span class="token key atrule">requests</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> </span><span class="token punctuation" style="color:rgb(212, 212, 212)">{</span><span class="token key atrule">cpu</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> 500m</span><span class="token punctuation" style="color:rgb(212, 212, 212)">,</span><span class="token plain"> </span><span class="token key atrule">memory</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> 1Gi</span><span class="token punctuation" style="color:rgb(212, 212, 212)">}</span><span class="token plain"></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">    </span><span class="token key atrule">limits</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> </span><span class="token punctuation" style="color:rgb(212, 212, 212)">{</span><span class="token key atrule">memory</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> 1Gi</span><span class="token punctuation" style="color:rgb(212, 212, 212)">}</span><span class="token plain"></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">  </span><span class="token key atrule">bootstrap</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">    </span><span class="token key atrule">initdb</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">      </span><span class="token key atrule">database</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> app</span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">      </span><span class="token key atrule">owner</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> app</span><br/></div></code></pre></div></div>
+<p><strong>Why <code>bootstrap.initdb</code> and not <code>managed.roles</code>.</strong> CloudNativePG's <code>initdb</code> bootstrap creates
+the application database and its owning role <em>and generates their credentials</em>, publishing them
+as a <code>basic-auth</code> Secret named <code>&lt;cluster>-app</code>. <code>.spec.managed.roles</code> does not: a managed role
+with a password requires a <code>passwordSecret</code> the author supplies, and the renderer cannot invent
+a password — it is a pure function with no random source (<a class="" href=/kelson/adr/0001-hybrid-state-model>ADR-0001</a>,
+<a href=https://github.com/dafrie/kelson/issues/20 target=_blank rel="noopener noreferrer" class="">#20</a>). So the owner role kelson binds workloads
+to is the <code>initdb</code> owner, and <code>managed.roles</code> enters only when a spec needs <em>more</em> than the
+owner role — a read-only reporting user, a migration role with different privileges. Nothing in
+the spec model expresses that yet, so nothing renders it yet; the capability is still required
+of the cluster (<code>postgres.CapabilityManagedRoles</code>) because the presets that will use it are the
+same presets.</p>
+<p><code>database</code> and <code>owner</code> are both <code>app</code>, CNPG's own defaults, written explicitly rather than left
+to the defaulting webhook: a manifest that states the database name is one a reviewer can read.
+The database is named per cluster, not per project, because the cluster is already
+project-scoped by name and namespace — one database per cluster is CNPG's guidance and the
+dedicated presets follow it exactly.</p>
+<p><strong>Synchronous replication</strong> on the HA presets uses <code>minSyncReplicas: 1</code> / <code>maxSyncReplicas: 1</code>.
+CloudNativePG 1.24 introduced a newer stanza, <code>.spec.postgresql.synchronous</code> with
+<code>method</code>/<code>number</code>/<code>dataDurability</code>, and calls the two older fields legacy — but does <em>not</em>
+remove them, and they remain fully supported in 1.30. kelson's declared support floor for
+<code>cnpg</code> is 1.23.0 (<code>internal/clusterprofile/support</code>, degradation <code>refuse</code>), which is below the
+release that added the newer stanza, so writing it would refuse clusters the support matrix
+promises to serve. The legacy fields are the ones that work across kelson's whole declared
+range. Moving to <code>.spec.postgresql.synchronous</code> is a follow-up for whenever that floor rises
+past 1.24, not a v0 decision.</p>
+<p><code>maxSyncReplicas</code> must stay below <code>instances</code>; 1 of 3 means one standby must confirm each
+commit and the cluster still accepts writes after losing one replica. <code>minSyncReplicas: 1</code>
+keeps that guarantee from silently degrading to asynchronous.</p>
+<p><strong>Storage class is deliberately unset.</strong> <code>spec.storage.storageClass</code> is optional and CNPG falls
+back to the cluster default. kelson could read <code>ClusterProfile.StorageClasses</code> and name the
+default explicitly, but that would bake a detection snapshot into a manifest that outlives it,
+and it is the <em>branching</em> verdict — not provisioning — that actually depends on which class was
+used (<a href=https://github.com/dafrie/kelson/issues/91 target=_blank rel="noopener noreferrer" class="">#91</a>, <a href=https://github.com/dafrie/kelson/issues/108 target=_blank rel="noopener noreferrer" class="">#108</a>).</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=the-shared-preset-deferred--the-design-it-would-need-if-it-returns>The shared preset, deferred — the design it would need if it returns<a href=#the-shared-preset-deferred--the-design-it-would-need-if-it-returns class=hash-link aria-label="Direct link to The shared preset, deferred — the design it would need if it returns" title="Direct link to The shared preset, deferred — the design it would need if it returns" translate=no>​</a></h3>
+<p><strong>This section describes what kelson no longer renders.</strong> <code>preset: shared</code> is deferred (owner
+decision, 2026-08-13, <a class="" href=/kelson/adr/0007-data-services>ADR-0007</a>): the shared cluster was ADR-0007's
+cost optimization, never something anyone asked for, and dedicated clusters per postgres
+component are simpler, work today including bindings, and the pod cost is acceptable at this
+stage. What follows is preserved as the design record for whoever picks
+<a href=https://github.com/dafrie/kelson/issues/93 target=_blank rel="noopener noreferrer" class="">#93</a> back up, not as current behaviour; the
+rendering code itself is in git history.</p>
+<p><code>shared</code> would render one <code>Database</code> CR and no cluster: the shared cluster would be kelson-owned
+infrastructure provisioned once per environment tier by
+<a href=https://github.com/dafrie/kelson/issues/93 target=_blank rel="noopener noreferrer" class="">#93</a>, not per project. ADR-0007's resource
+arithmetic (10 apps × 3 environments → 12 clusters) only works if <code>shared</code> means <em>one cluster
+for every development database in the installation</em>, so the shared cluster cannot live in a
+project's namespace.</p>
+<p><strong>CloudNativePG's <code>Database.spec.cluster</code> is a <code>corev1.LocalObjectReference</code></strong> — verified in
+<code>api/v1/database_types.go</code>, where it carries only a <code>name</code> and is additionally marked immutable
+after creation. There is no namespace field and no cross-namespace form. A <code>Database</code> must
+therefore live in the same namespace as the <code>Cluster</code> it targets.</p>
+<p>So the <code>Database</code> CR renders into the shared cluster's namespace, not the project's:</p>
+<div class="language-yaml codeBlockContainer_Ckt0 theme-code-block" style=--prism-color:#9CDCFE;--prism-background-color:#1E1E1E><div class=codeBlockContent_QJqH><pre tabindex=0 class="prism-code language-yaml codeBlock_bY9V thin-scrollbar" style=color:#9CDCFE;background-color:#1E1E1E><code class=codeBlockLines_e6Vv><div class=token-line style=color:#9CDCFE><span class="token key atrule">apiVersion</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> postgresql.cnpg.io/v1</span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain"></span><span class="token key atrule">kind</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> Database</span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain"></span><span class="token key atrule">metadata</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">  </span><span class="token key atrule">name</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> checkout</span><span class="token punctuation" style="color:rgb(212, 212, 212)">-</span><span class="token plain">development</span><span class="token punctuation" style="color:rgb(212, 212, 212)">-</span><span class="token plain">db</span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">  </span><span class="token key atrule">namespace</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> kelson</span><span class="token punctuation" style="color:rgb(212, 212, 212)">-</span><span class="token plain">data</span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain"></span><span class="token key atrule">spec</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">  </span><span class="token key atrule">cluster</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">    </span><span class="token key atrule">name</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> kelson</span><span class="token punctuation" style="color:rgb(212, 212, 212)">-</span><span class="token plain">shared</span><span class="token punctuation" style="color:rgb(212, 212, 212)">-</span><span class="token plain">development</span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">  </span><span class="token key atrule">name</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> checkout</span><span class="token punctuation" style="color:rgb(212, 212, 212)">-</span><span class="token plain">development</span><span class="token punctuation" style="color:rgb(212, 212, 212)">-</span><span class="token plain">db</span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">  </span><span class="token key atrule">owner</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> checkout</span><span class="token punctuation" style="color:rgb(212, 212, 212)">-</span><span class="token plain">development</span><span class="token punctuation" style="color:rgb(212, 212, 212)">-</span><span class="token plain">db</span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">  </span><span class="token key atrule">databaseReclaimPolicy</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> retain</span><br/></div></code></pre></div></div>
+<ul>
+<li class=""><strong>Namespace <code>kelson-data</code>, cluster <code>kelson-shared-&lt;environment></code>.</strong> The environment name is
+the only pure input that identifies the tier, so it is what the convention is built from; two
+projects' <code>development</code> environments share one cluster, which is the point. #93 owns making
+both real and may make them configurable.</li>
+<li class=""><strong><code>metadata.name</code>, <code>spec.name</code> and <code>spec.owner</code> are all <code>&lt;project>-&lt;environment>-&lt;component></code>.</strong>
+In a cluster shared across projects, a database called <code>db</code> collides on the first collision;
+the qualified name is what makes the shared topology safe. The same name is used for the
+dedicated presets' <code>Cluster</code> so there is one naming rule rather than two.</li>
+<li class=""><strong><code>databaseReclaimPolicy: retain</code></strong> is CNPG's default, written explicitly because it <em>is</em>
+ADR-0007's asymmetric-retention promise: removing a service from a spec must never drop a
+database.</li>
+</ul>
+<p>Provenance labels and annotations are stamped exactly as on every other resource, including
+<code>kelson.dev/project</code> and <code>kelson.dev/environment</code> — which is how a human looking at
+<code>kelson-data</code> can tell whose database is whose, and how <code>kelson uninstall</code> finds them. It deletes
+them last of all, in its own <code>DATA</code> section of the preview, naming the PersistentVolumeClaims
+CloudNativePG will garbage-collect with the <code>Cluster</code> (<a class="" href=/kelson/install>installing</a>, "Uninstalling").</p>
+<p><strong>What <code>shared</code> did not do even while it rendered: credentials.</strong> The <code>Database</code> CRD creates a
+database, not a role, and generates no Secret. The owner role and its password would live in the
+shared cluster, and the Secret holding them would live in <code>kelson-data</code> — while the workload
+that needs it runs in the project's namespace. Kubernetes Secrets are namespaced and a pod
+cannot <code>secretKeyRef</code> across a namespace boundary, so binding to a <code>shared</code> service needed a
+credential <em>distribution</em> step (a role provisioned in the shared cluster, its Secret projected
+into the consuming namespace) that belonged to #93 and never existed — every binding refused.
+Now the preset itself refuses before rendering anything, for the same reason and the same issue,
+so this credential gap is moot until #93 revisits the preset, not only the binding.</p>
+<hr/>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id=sizing-defaults>Sizing defaults<a href=#sizing-defaults class=hash-link aria-label="Direct link to Sizing defaults" title="Direct link to Sizing defaults" translate=no>​</a></h2>
+<p><strong><code>kind: postgres</code>.</strong> The cache table is under <a href=#cache-sizing class="">Cache sizing</a>.</p>
+<p>The preset <strong>is</strong> the sizing. There is no <code>resources:</code> override on a service in v0 — see
+<a href=#tuning-without-leaving-the-preset-model class="">Tuning</a>. That holds for both kinds.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Preset<th>Instances<th>CPU request<th>Memory request<th>Memory limit<th>Storage<th>Sync replicas<tbody><tr><td><code>shared</code><td>—<td>—<td>—<td>—<td>—<td>—<tr><td><code>small</code><td>1<td><code>500m</code><td><code>1Gi</code><td><code>1Gi</code><td><code>5Gi</code><td>none<tr><td><code>ha-small</code><td>3<td><code>500m</code><td><code>1Gi</code><td><code>1Gi</code><td><code>5Gi</code><td>min 1, max 1<tr><td><code>ha-medium</code><td>3<td><code>2</code><td><code>4Gi</code><td><code>4Gi</code><td><code>20Gi</code><td>min 1, max 1</table>
+<p><strong>Memory: 1Gi for the small tier.</strong> ADR-0007 measured a CNPG instance at roughly 512Mi in
+practice. Requesting exactly that leaves nothing for <code>shared_buffers</code>, page cache or a vacuum
+that has work to do, and the first real query pattern evicts everything. 1Gi is the smallest
+number that is not immediately a support ticket, and it keeps the ADR's arithmetic honest: five
+<code>small</code> databases still fit in 5Gi on a bare VPS.</p>
+<p><strong>Memory limit equals the request; there is no CPU limit.</strong> A Postgres process that exceeds its
+memory limit is OOM-killed, which for a primary is a failover — so the limit is set where the
+request is, and the pod is not allowed to grow into memory the node cannot honour. CPU is the
+opposite case: throttling a database at a limit turns a slow query into a slow <em>cluster</em>,
+including the replication and health traffic that decides whether a failover happens. Requests
+guarantee the floor; the burst above it is free and worth having.</p>
+<p><strong>Storage: 5Gi small, 20Gi medium.</strong> <code>spec.storage.size</code> cannot be decreased — CNPG says so in
+the field's own documentation and enforces it — so a default that is too large is a permanent
+cost and one that is too small is a resize. 5Gi is roughly a year of a small application's data
+plus WAL headroom, and ten of them is 50Gi, which a modest VPS has. Growing is a one-line spec
+change CNPG reapplies to the PVCs.</p>
+<p><strong><code>ha-medium</code> at 2 CPU / 4Gi / 20Gi</strong> is the "this is the production database" tier: enough
+shared buffers to hold a working set of a few gigabytes, and CPU headroom for a rebuild or a
+bulk migration without starving the replicas.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=tuning-without-leaving-the-preset-model>Tuning without leaving the preset model<a href=#tuning-without-leaving-the-preset-model class=hash-link aria-label="Direct link to Tuning without leaving the preset model" title="Direct link to Tuning without leaving the preset model" translate=no>​</a></h3>
+<p><strong>v0 answer: there is none.</strong> The preset is the sizing, and a service has exactly three
+authored fields (<code>name</code>, <code>type</code>, <code>preset</code>). This is a deliberate refusal to invent spec surface
+before the shape of the requests is known.</p>
+<p>The reasoning is the same one that made presets a good idea. A <code>resources:</code> block on a service
+recreates the decision the preset exists to make, and it recreates it in the place where the
+user has the least information — the number that matters for Postgres is rarely the container's
+memory limit but <code>shared_buffers</code>, <code>work_mem</code>, <code>max_connections</code> and the relationship between
+them. A partial override (<code>memory</code> set, <code>instances</code> not) also silently turns a named topology
+into an unnamed one, which breaks the transition table below.</p>
+<p>A future <code>resources:</code> override, or additional presets, is a spec change with its own issue and
+its own migration story. Until then, an application that has genuinely outgrown <code>ha-medium</code> uses
+the escape hatch of record: an overlay patch against the rendered <code>Cluster</code>
+(<a class="" href=/kelson/model>docs/model.md</a>, rule P6). That is visible, reviewable, and does not pretend the
+preset still describes what is running.</p>
+<hr/>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id=safe-preset-transitions>Safe preset transitions<a href=#safe-preset-transitions class=hash-link aria-label="Direct link to Safe preset transitions" title="Direct link to Safe preset transitions" translate=no>​</a></h2>
+<p><strong><code>kind: postgres</code>.</strong> Every cache transition is safe and none of them preserves anything: a
+kelson cache holds nothing durable, so changing a preset re-tunes it in place where only
+<code>maxmemory</code> moved, and otherwise reshards it and starts it cold. There is no table to write
+because there is no data to lose.</p>
+<p>Preset is an Environment-level override (ADR-0007, rule P5), so changing one is a two-character
+spec edit. For a database these are not equally cheap.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>From → to<th>Verdict<th>What happens<tbody><tr><td><code>small</code> → <code>ha-small</code><td><strong>safe, in place</strong><td><code>instances: 1 → 3</code>; CNPG clones the primary into two standbys and turns on synchronous replication. No downtime, no data movement by kelson.<tr><td><code>ha-small</code> → <code>ha-medium</code><td><strong>safe, in place</strong><td>Resource requests grow and the PVCs are resized upward. Rolling restart per instance.<tr><td><code>ha-medium</code> → <code>ha-small</code><td><strong>safe, lossy of headroom</strong><td>Requests shrink; <strong>storage does not</strong> — <code>spec.storage.size</code> cannot be decreased, so the PVCs stay at the larger size and the cost stays with them.<tr><td><code>ha-*</code> → <code>small</code><td><strong>safe, lossy of replicas</strong><td><code>instances: 3 → 1</code>; the standbys and their PVCs are removed and synchronous replication stops. The data survives on the primary; the <em>availability</em> does not, and neither does the read capacity.<tr><td><code>shared</code> → any dedicated<td><strong>moot while deferred</strong> (<a href=https://github.com/dafrie/kelson/issues/93 target=_blank rel="noopener noreferrer" class="">#93</a>)<td><code>shared</code> does not render, so there is nothing to migrate away from. Were it to return: different cluster, different storage, so the database would have to be dumped and restored, or replicated and cut over. <a href=https://github.com/dafrie/kelson/issues/105 target=_blank rel="noopener noreferrer" class="">#105</a>.<tr><td>any dedicated → <code>shared</code><td><strong>moot while deferred</strong> (<a href=https://github.com/dafrie/kelson/issues/93 target=_blank rel="noopener noreferrer" class="">#93</a>)<td>Same reason, in reverse: <code>shared</code> refuses to render, so nothing can transition onto it. Were it to return: same migration, plus a name change — the database becomes <code>&lt;project>-&lt;environment>-&lt;component></code> inside the shared cluster instead of <code>app</code> inside its own.<tr><td>anything → <code>branch</code><td><strong>not a transition</strong><td>A branch is a <em>new</em> service bootstrapped from a source, with a TTL and a lifecycle of its own (ADR-0007). Rewriting an existing service's preset to <code>branch</code> is not a topology change, it is a different object. <a href=https://github.com/dafrie/kelson/issues/99 target=_blank rel="noopener noreferrer" class="">#99</a>.</table>
+<p><strong>What is enforced today: nothing beyond validation and the capability check.</strong> The renderer is
+pure and stateless — it sees the spec it is asked to render, not the one that is already
+deployed — so it cannot tell an in-place bump from a migration. The place that <em>can</em> is the
+preview/diff plane, which compares rendered output against live state; a <code>shared</code> → <code>small</code>
+edit shows up there as a <code>Database</code> deleted and a <code>Cluster</code> created, which is at least visible.
+Turning that into a refusal with a named migration path is #105's job, and this table is the
+specification it should implement.</p>
+<hr/>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id=backups>Backups<a href=#backups class=hash-link aria-label="Direct link to Backups" title="Direct link to Backups" translate=no>​</a></h2>
+<p><strong><code>kind: postgres</code>.</strong> A cache has nothing durable to back up, and that is a design decision
+rather than a gap — see <a href=#persistence-is-off-and-what-a-durable-store-would-take class="">Persistence is off</a>.</p>
+<p>Deferred — "coming soon" (owner decision, 2026-08-13, <a class="" href=/kelson/adr/0007-data-services>ADR-0007</a>).
+Nothing here renders yet: no <code>Backup</code>, no <code>ScheduledBackup</code>, no WAL archiving, no PITR.
+<a href=https://github.com/dafrie/kelson/issues/94 target=_blank rel="noopener noreferrer" class="">#94</a>-<a href=https://github.com/dafrie/kelson/issues/96 target=_blank rel="noopener noreferrer" class="">#96</a>
+track it.</p>
+<p>The near path, when it lands, is CloudNativePG's declarative volumeSnapshot-based <code>Backup</code> and
+<code>ScheduledBackup</code> resources on snapshot-capable storage — the same storage-class detection
+<code>internal/clusterprofile/storage</code> already does for branching
+(<a href=https://github.com/dafrie/kelson/issues/91 target=_blank rel="noopener noreferrer" class="">#91</a>) feeds directly into whether a cluster can be
+offered scheduled snapshot backups, so that detection work is not duplicated. Object-store WAL
+archiving and continuous PITR, the fuller promise ADR-0007's "Backups are configured once"
+describes, is a later addition once the snapshot path is in place.</p>
+<hr/>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id=valkey>Valkey<a href=#valkey class=hash-link aria-label="Direct link to Valkey" title="Direct link to Valkey" translate=no>​</a></h2>
+<p><code>kind: valkey</code> renders one <code>valkey.io/v1alpha1</code> <code>ValkeyCluster</code> per component, delegated to
+<a href=https://github.com/valkey-io/valkey-operator target=_blank rel="noopener noreferrer" class="">valkey-io/valkey-operator</a> —
+<a class="" href=/kelson/adr/0015-valkey-operator>ADR-0015</a> records why that operator and not one of the four
+alternatives, and states the negatives as plainly as this page does.</p>
+<div class="language-yaml codeBlockContainer_Ckt0 theme-code-block" style=--prism-color:#9CDCFE;--prism-background-color:#1E1E1E><div class=codeBlockContent_QJqH><pre tabindex=0 class="prism-code language-yaml codeBlock_bY9V thin-scrollbar" style=color:#9CDCFE;background-color:#1E1E1E><code class=codeBlockLines_e6Vv><div class=token-line style=color:#9CDCFE><span class="token key atrule">apiVersion</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> valkey.io/v1alpha1</span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain"></span><span class="token key atrule">kind</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> ValkeyCluster</span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain"></span><span class="token key atrule">metadata</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">  </span><span class="token key atrule">name</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> checkout</span><span class="token punctuation" style="color:rgb(212, 212, 212)">-</span><span class="token plain">production</span><span class="token punctuation" style="color:rgb(212, 212, 212)">-</span><span class="token plain">cache</span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">  </span><span class="token key atrule">namespace</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> checkout</span><span class="token punctuation" style="color:rgb(212, 212, 212)">-</span><span class="token plain">prod</span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain"></span><span class="token key atrule">spec</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">  </span><span class="token key atrule">shards</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> </span><span class="token number" style="color:rgb(181, 206, 168)">1</span><span class="token plain"></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">  </span><span class="token key atrule">replicas</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> </span><span class="token number" style="color:rgb(181, 206, 168)">0</span><span class="token plain"></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">  </span><span class="token key atrule">resources</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">    </span><span class="token key atrule">requests</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> </span><span class="token punctuation" style="color:rgb(212, 212, 212)">{</span><span class="token key atrule">cpu</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> 250m</span><span class="token punctuation" style="color:rgb(212, 212, 212)">,</span><span class="token plain"> </span><span class="token key atrule">memory</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> 512Mi</span><span class="token punctuation" style="color:rgb(212, 212, 212)">}</span><span class="token plain"></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">    </span><span class="token key atrule">limits</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> </span><span class="token punctuation" style="color:rgb(212, 212, 212)">{</span><span class="token key atrule">memory</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> 512Mi</span><span class="token punctuation" style="color:rgb(212, 212, 212)">}</span><span class="token plain"></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">  </span><span class="token key atrule">config</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">    </span><span class="token key atrule">maxmemory</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> 384mb</span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">    </span><span class="token key atrule">maxmemory-policy</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> allkeys</span><span class="token punctuation" style="color:rgb(212, 212, 212)">-</span><span class="token plain">lru</span><br/></div></code></pre></div></div>
+<p>That is the whole manifest. The Service, the ConfigMap, the per-pod <code>ValkeyNode</code> resources, the
+PodDisruptionBudget and the ACL file are the operator's; kelson writes the topology request and
+the two settings that decide what a full cache does.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=cache-sizing>Cache sizing<a href=#cache-sizing class=hash-link aria-label="Direct link to Cache sizing" title="Direct link to Cache sizing" translate=no>​</a></h3>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Preset<th>Shards<th>Replicas per shard<th>Pods<th>CPU request<th>Memory request<th>Memory limit<th><code>maxmemory</code><tbody><tr><td><code>small</code><td>1<td>0<td>1<td><code>250m</code><td><code>512Mi</code><td><code>512Mi</code><td><code>384mb</code><tr><td><code>ha-small</code><td>3<td>1<td>6<td><code>250m</code><td><code>512Mi</code><td><code>512Mi</code><td><code>384mb</code><tr><td><code>ha-medium</code><td>3<td>1<td>6<td><code>1</code><td><code>2Gi</code><td><code>2Gi</code><td><code>1536mb</code></table>
+<p><strong><code>maxmemory</code> is 75% of the container's memory limit, and the two numbers must never be the
+same one.</strong> <code>maxmemory</code> bounds the dataset. The process also needs room for replication
+buffers, client output buffers, the copy-on-write pages a background save touches, and
+allocator fragmentation, none of which that number counts. Setting <code>maxmemory</code> <em>at</em> the
+container limit means the pod is OOM-killed exactly when the eviction policy was supposed to
+start doing its job — the failure mode the setting exists to prevent, arriving on schedule.
+<code>mb</code> in a Valkey config is binary, so <code>384mb</code> is 384 MiB and <code>1536mb</code> is 1.5 GiB.</p>
+<p><strong><code>maxmemory-policy: allkeys-lru</code>, not the default.</strong> Valkey's default is <code>noeviction</code>: a full
+cache starts returning errors on writes, which surfaces in the application as an outage caused
+by a component whose entire promise was that losing it is cheap. <code>allkeys-lru</code> evicts the least
+recently used key instead, across the whole keyspace rather than only the keys someone
+remembered to set a TTL on. A cache that silently forgets is behaving correctly; a cache that
+refuses writes is not.</p>
+<p>Both keys are on the operator's live-settable allow-list, so a preset change re-tunes a running
+cache with <code>CONFIG SET</code> rather than rolling its pods.</p>
+<p><strong>Memory limit equals the request, and there is no CPU limit</strong> — the same reasoning as the
+Postgres presets, one step milder. An OOM-killed cache node is a cold cache rather than a
+failover, but CPU throttling still turns a slow cache into slow <em>everything that waits on it</em>.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=why-an-ha-cache-is-six-pods>Why an HA cache is six pods<a href=#why-an-ha-cache-is-six-pods class=hash-link aria-label="Direct link to Why an HA cache is six pods" title="Direct link to Why an HA cache is six pods" translate=no>​</a></h3>
+<p>This is the number that surprises people, and it is not a sizing choice.</p>
+<p>The operator always runs Valkey in cluster mode (<code>cluster-enabled yes</code>, from its own base
+config). In cluster mode a failover is decided by a <strong>vote among primaries</strong>. With a single
+primary there is no quorum left to hold a vote once it dies, so a one-shard cache with one
+replica would have a replica and no automatic failover — a promise kelson would be making on
+the operator's behalf and the operator would not keep. Three shards is the smallest topology
+where the vote can happen, so it is what <code>ha-small</code> and <code>ha-medium</code> render.</p>
+<p>The consequence for applications: <strong><code>ha-*</code> needs a cluster-aware client.</strong> Three shards means
+the keyspace is split, and a plain client that does not follow <code>MOVED</code> redirects will fail on
+two thirds of its keys. <code>small</code> is a single shard holding all 16384 slots, so no redirect is
+ever issued and any Redis-compatible client works unchanged. Most mainstream clients
+(<code>ioredis</code>, <code>go-redis</code>, <code>redis-py</code>, Lettuce) have a cluster mode; turning it on is the cost of
+<code>ha-*</code>.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=persistence-is-off-and-what-a-durable-store-would-take>Persistence is off, and what a durable store would take<a href=#persistence-is-off-and-what-a-durable-store-would-take class=hash-link aria-label="Direct link to Persistence is off, and what a durable store would take" title="Direct link to Persistence is off, and what a durable store would take" translate=no>​</a></h3>
+<p><strong>A kelson valkey component is a cache.</strong> <code>spec.persistence</code> is not rendered at any preset, so
+the operator gives each node an <code>emptyDir</code> instead of a PersistentVolumeClaim. A pod restart, a
+node drain, a rollback, a preset change that rolls the pods — each of these starts the cache
+empty and it refills from whatever it is a cache of. <a href=https://github.com/dafrie/kelson/issues/98 target=_blank rel="noopener noreferrer" class="">#98</a>
+frames that as the point rather than a limitation, and it is why the whole data-protection
+apparatus around <code>kind: postgres</code> — backups, PITR, restore drills, branching — has no
+counterpart here.</p>
+<p><strong>If you are using it as a durable store, say so and do not use this.</strong> Queues, sessions,
+rate-limit counters that must survive a deploy, anything whose loss is an incident rather than
+a latency spike — none of that is covered by a component kelson renders with persistence off,
+and no amount of it working in staging changes that. The honest options are:</p>
+<ul>
+<li class=""><strong><code>kind: postgres</code>.</strong> A queue or a session table in Postgres is durable, backed up, and
+already bound the same way. This is the right answer far more often than it looks.</li>
+<li class=""><strong>An overlay patch against the rendered <code>ValkeyCluster</code></strong> (<a class="" href=/kelson/model>model.md</a>, rule P6),
+adding <code>spec.persistence</code> with a size and a storage class. That is visible and reviewable,
+and it also makes it explicit that you have left the preset model — kelson still renders
+<code>maxmemory-policy: allkeys-lru</code>, which for a store means keys are silently evicted under
+memory pressure, so a patch that adds persistence and does not also change the eviction
+policy has bought durability for data it is still allowed to throw away.</li>
+</ul>
+<p>A first-class durable Valkey type is not a flag on this one; it is a different type with a
+different ADR.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=authentication-auth-and-two-commands>Authentication: <code>auth:</code> and two commands<a href=#authentication-auth-and-two-commands class=hash-link aria-label="Direct link to authentication-auth-and-two-commands" title="Direct link to authentication-auth-and-two-commands" translate=no>​</a></h3>
+<p><strong>A cache has no password unless you give it one.</strong> Without <code>auth:</code>, anything that can reach the
+cache's Service in its namespace can read and write it — kelson renders no <code>users:</code>, so Valkey's
+own <code>default</code> user stays in place with <code>nopass</code>, and kelson renders no NetworkPolicy either, so
+the namespace is the whole boundary. That was ADR-0015's largest negative and it is still the
+behaviour of a component that says nothing.</p>
+<p><code>auth:</code> is how a component says something. It is two lines in the spec and one command before
+the first apply:</p>
+<div class="language-sh codeBlockContainer_Ckt0 theme-code-block" style=--prism-color:#9CDCFE;--prism-background-color:#1E1E1E><div class=codeBlockContent_QJqH><pre tabindex=0 class="prism-code language-sh codeBlock_bY9V thin-scrollbar" style=color:#9CDCFE;background-color:#1E1E1E><code class=codeBlockLines_e6Vv><div class=token-line style=color:#9CDCFE><span class="token plain">kelson secret </span><span class="token builtin class-name" style="color:rgb(78, 201, 176)">set</span><span class="token plain"> cache-auth </span><span class="token parameter variable" style="color:rgb(156, 220, 254)">--project</span><span class="token plain"> checkout </span><span class="token parameter variable" style="color:rgb(156, 220, 254)">--env</span><span class="token plain"> staging --from-stdin password</span><br/></div></code></pre></div></div>
+<div class="language-yaml codeBlockContainer_Ckt0 theme-code-block" style=--prism-color:#9CDCFE;--prism-background-color:#1E1E1E><div class=codeBlockContent_QJqH><pre tabindex=0 class="prism-code language-yaml codeBlock_bY9V thin-scrollbar" style=color:#9CDCFE;background-color:#1E1E1E><code class=codeBlockLines_e6Vv><div class=token-line style=color:#9CDCFE><span class="token key atrule">components</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">  </span><span class="token punctuation" style="color:rgb(212, 212, 212)">-</span><span class="token plain"> </span><span class="token key atrule">name</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> cache</span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">    </span><span class="token key atrule">kind</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> valkey</span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">    </span><span class="token key atrule">preset</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> small</span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">    </span><span class="token key atrule">auth</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> </span><span class="token punctuation" style="color:rgb(212, 212, 212)">{</span><span class="token plain"> </span><span class="token key atrule">secret</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> cache</span><span class="token punctuation" style="color:rgb(212, 212, 212)">-</span><span class="token plain">auth</span><span class="token punctuation" style="color:rgb(212, 212, 212)">,</span><span class="token plain"> </span><span class="token key atrule">key</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> password </span><span class="token punctuation" style="color:rgb(212, 212, 212)">}</span><span class="token plain">   </span><span class="token comment" style="color:rgb(106, 153, 85)"># a name and a key, never a value</span><br/></div></code></pre></div></div>
+<p><code>--from-stdin password</code> reads the value from stdin so it never reaches your shell history;
+<code>password=&lt;value></code> inline works too, and so does
+<code>kubectl -n checkout-staging create secret generic cache-auth --from-literal=password=…</code> on a
+machine with kubectl and no kelson. The Secret lives in the environment's namespace, so <strong>the
+same two spec lines are a different Secret in every environment</strong> — write one per environment
+under the same name and nothing in the Project changes.</p>
+<p>That one name then reaches two places in the rendered set, and the password itself reaches
+neither:</p>
+<div class="language-yaml codeBlockContainer_Ckt0 theme-code-block" style=--prism-color:#9CDCFE;--prism-background-color:#1E1E1E><div class=codeBlockContent_QJqH><pre tabindex=0 class="prism-code language-yaml codeBlock_bY9V thin-scrollbar" style=color:#9CDCFE;background-color:#1E1E1E><code class=codeBlockLines_e6Vv><div class=token-line style=color:#9CDCFE><span class="token key atrule">spec</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">  </span><span class="token key atrule">users</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">    </span><span class="token punctuation" style="color:rgb(212, 212, 212)">-</span><span class="token plain"> </span><span class="token key atrule">name</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> default</span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">      </span><span class="token key atrule">passwordSecret</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">        </span><span class="token key atrule">name</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> cache</span><span class="token punctuation" style="color:rgb(212, 212, 212)">-</span><span class="token plain">auth</span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">        </span><span class="token key atrule">keys</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> </span><span class="token punctuation" style="color:rgb(212, 212, 212)">[</span><span class="token plain">password</span><span class="token punctuation" style="color:rgb(212, 212, 212)">]</span><span class="token plain"></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">      </span><span class="token key atrule">keys</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain">     </span><span class="token punctuation" style="color:rgb(212, 212, 212)">{</span><span class="token key atrule">readWrite</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> </span><span class="token punctuation" style="color:rgb(212, 212, 212)">[</span><span class="token string" style="color:rgb(206, 145, 120)">"*"</span><span class="token punctuation" style="color:rgb(212, 212, 212)">]</span><span class="token punctuation" style="color:rgb(212, 212, 212)">}</span><span class="token plain"></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">      </span><span class="token key atrule">channels</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> </span><span class="token punctuation" style="color:rgb(212, 212, 212)">{</span><span class="token key atrule">patterns</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain">  </span><span class="token punctuation" style="color:rgb(212, 212, 212)">[</span><span class="token string" style="color:rgb(206, 145, 120)">"*"</span><span class="token punctuation" style="color:rgb(212, 212, 212)">]</span><span class="token punctuation" style="color:rgb(212, 212, 212)">}</span><span class="token plain"></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">      </span><span class="token key atrule">commands</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> </span><span class="token punctuation" style="color:rgb(212, 212, 212)">{</span><span class="token key atrule">allow</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain">     </span><span class="token punctuation" style="color:rgb(212, 212, 212)">[</span><span class="token string" style="color:rgb(206, 145, 120)">"@all"</span><span class="token punctuation" style="color:rgb(212, 212, 212)">]</span><span class="token punctuation" style="color:rgb(212, 212, 212)">}</span><br/></div></code></pre></div></div>
+<div class="language-yaml codeBlockContainer_Ckt0 theme-code-block" style=--prism-color:#9CDCFE;--prism-background-color:#1E1E1E><div class=codeBlockContent_QJqH><pre tabindex=0 class="prism-code language-yaml codeBlock_bY9V thin-scrollbar" style=color:#9CDCFE;background-color:#1E1E1E><code class=codeBlockLines_e6Vv><div class=token-line style=color:#9CDCFE><span class="token key atrule">env</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">  </span><span class="token punctuation" style="color:rgb(212, 212, 212)">-</span><span class="token plain"> </span><span class="token key atrule">name</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> CACHE_PASSWORD</span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">    </span><span class="token key atrule">valueFrom</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"></span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">      </span><span class="token key atrule">secretKeyRef</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> </span><span class="token punctuation" style="color:rgb(212, 212, 212)">{</span><span class="token key atrule">name</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> cache</span><span class="token punctuation" style="color:rgb(212, 212, 212)">-</span><span class="token plain">auth</span><span class="token punctuation" style="color:rgb(212, 212, 212)">,</span><span class="token plain"> </span><span class="token key atrule">key</span><span class="token punctuation" style="color:rgb(212, 212, 212)">:</span><span class="token plain"> password</span><span class="token punctuation" style="color:rgb(212, 212, 212)">}</span><br/></div></code></pre></div></div>
+<p>The operator reads the Secret, SHA-256-hashes whatever it finds and writes the hash into the ACL
+file it mounts into every node; the kubelet projects the same key into the workload. kelson
+reads it in neither direction — it cannot, being pure (<a class="" href=/kelson/adr/0001-hybrid-state-model>ADR-0001</a>)
+— which is what makes this the reference model of <a class="" href=/kelson/adr/0018-secret-references>ADR-0018</a> rather
+than a second mechanism beside it. <code>auth:</code> is a <code>SecretRef</code>, the same type an env value's
+<code>{secret, key}</code> decodes into, with the same validation.</p>
+<p>Three consequences worth knowing before you use it:</p>
+<ul>
+<li class=""><strong>It redefines <code>default</code>, it does not add a user.</strong> An ACL file that never mentions <code>default</code>
+leaves the built-in <code>on nopass ~* &* +@all</code> exactly as it was, so a <em>new</em> user would add a
+password nobody is obliged to use and the cache would still be open. Redefining <code>default</code> is
+the edit that closes the hole. The permissions written are the ones <code>default</code> already had — all
+keys, all channels, all commands — restated because an ACL line replaces a user's rules rather
+than adding to them. The change is authentication and nothing else.</li>
+<li class=""><strong>The value's format is free.</strong> The operator hashes plaintext; a value that is already a
+<code>#</code>-prefixed 64-character SHA-256 digest is used as-is. <code>kelson secret set</code> needs no special
+shape, and nothing has to hash anything on kelson's side.</li>
+<li class=""><strong>The Secret must exist before the cluster reconciles.</strong> With <code>auth:</code> set and the Secret or the
+key missing, the operator refuses to build the ACL (<code>no password or reference found</code>, or
+<code>missing password key in secret</code>) and the cache does not become ready. kelson cannot check this
+— validation has no cluster and the renderer must not read one — so the order is: write the
+Secret, then apply. Adding <code>auth:</code> to a cache that is already running is applied live with
+<code>ACL LOAD</code> and does not roll its pods.</li>
+</ul>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=cache-bindings>Cache bindings<a href=#cache-bindings class=hash-link aria-label="Direct link to Cache bindings" title="Direct link to Cache bindings" translate=no>​</a></h3>
+<p><code>model.ServiceKeys</code> declares four keys for <code>kind: valkey</code>. Three are <strong>plain env values</strong>; the
+fourth is a <code>secretKeyRef</code> when the component declares <code>auth:</code> and a structured refusal when it
+does not:</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>kelson key<th>Rendered value<tbody><tr><td><code>host</code><td><code>valkey-&lt;cluster>.&lt;namespace>.svc</code><tr><td><code>port</code><td><code>"6379"</code><tr><td><code>uri</code><td><code>redis://valkey-&lt;cluster>.&lt;namespace>.svc:6379</code> — <strong>no password, ever</strong><tr><td><code>password</code><td><code>secretKeyRef{name: &lt;auth.secret>, key: &lt;auth.key>}</code>, or a structured error naming <code>auth:</code> and <code>kelson secret set</code> when the component has none</table>
+<p><code>valkey-&lt;cluster></code> is the headless Service the operator creates. Plain values rather than a
+Secret because a Service name and a port are not credentials: ADR-0009 forbids a <em>secret</em> in a
+spec, and minting a Secret to hold a hostname would obey the letter of that while making the
+manifest harder to read.</p>
+<p><strong>The URI never carries the password, and this does not change when <code>auth:</code> is set.</strong>
+<code>redis://:&lt;password>@host:6379</code> would be a credential written into a container's <code>env[].value</code>,
+in a manifest that is diffed, previewed, stored in the delivery repository and read back through
+the API — precisely the thing ADR-0009 forbids and ADR-0018 makes structurally impossible. So
+<code>uri</code> stays the address form at every setting, and <strong>an authenticated client assembles its
+connection from the parts</strong>: bind <code>host</code>, <code>port</code> and <code>password</code> (or <code>uri</code> <em>and</em> <code>password</code>, which
+every mainstream client accepts as a URL plus a separate credential option) and hand them to the
+client constructor. There is no spelling for a URI with the password in it, which is the same
+reason there is no string interpolation in an env value.</p>
+<p><strong>The URI scheme is <code>redis://</code> on purpose.</strong> Valkey is wire- and URL-compatible with Redis, and
+<code>redis://</code> is what the client library an application already has will parse. Emitting
+<code>valkey://</code> would name the product correctly and be rejected by most of them, which is the
+wrong trade for a value whose only job is to be handed to a client constructor.</p>
+<p><strong>There is no <code>username</code> key</strong>, and <code>auth:</code> is why there does not have to be one: the user kelson
+renders is <code>default</code>, so <code>AUTH &lt;password></code> authenticates it and no client needs to be told a name.</p>
+<p><strong><code>auth:</code> is <code>kind: valkey</code> only.</strong> On <code>kind: postgres</code> it is refused
+(<code>schema/mutually-exclusive</code>): CloudNativePG's <code>initdb</code> bootstrap <em>generates</em> the application
+user and its password and publishes them as <code>&lt;cluster>-app</code>, so a Secret an author wrote would be
+a second credential the database never accepts. Bind <code>password</code> there and kelson points the
+<code>secretKeyRef</code> at the one the operator made. On a workload or a <code>kind: helm</code> component it is
+refused too, and the remediation names the spelling that does work in those places — an env value
+written <code>{secret: &lt;name>, key: &lt;key>}</code>.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=naming>Naming<a href=#naming class=hash-link aria-label="Direct link to Naming" title="Direct link to Naming" translate=no>​</a></h3>
+<p>The same <code>&lt;project>-&lt;environment>-&lt;component></code> rule as everything else, capped at <strong>37</strong>
+characters rather than 53. The operator derives <code>internal-&lt;cluster>-system-passwords</code> for its
+own system users, which is 26 characters of prefix and suffix around the name kelson chose, and
+the result still has to fit the 63-character DNS label limit. A longer name is a structured
+render error, not a manifest the API server rejects with an arithmetic complaint.</p>
+<hr/>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id=validation-versus-capability>Validation versus capability<a href=#validation-versus-capability class=hash-link aria-label="Direct link to Validation versus capability" title="Direct link to Validation versus capability" translate=no>​</a></h2>
+<p>A preset is a request; whether a cluster can serve it is a separate question with <strong>three</strong>
+answers, not two (<a href=https://github.com/dafrie/kelson/issues/144 target=_blank rel="noopener noreferrer" class=""><code>clusterprofile.Outcome</code></a>).
+<code>postgres.SupportsPreset(profile, preset)</code> gives the verdict for a database and names the
+capability that decided it; <code>valkey.SupportsPreset</code> is the same function against the other
+operator, and the two are independent — a cluster can host a cache and not a database, or the
+reverse, and each refusal names its own operator and its own install path.</p>
+<p>The valkey capability table has two entries where the postgres one has four, and both of them
+are a served CRD rather than a version floor: <code>valkeyclusters.valkey.io</code> is the API kelson
+writes, and <code>valkeynodes.valkey.io</code> is what the operator materialises each pod through. They
+are separate answers because a partially applied CRD set serves the first and not the second,
+which means the manifest is accepted, no error is reported, and no pod is ever created — the
+silent half-success a capability check exists to catch.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=the-check-runs-in-the-renderer-not-in-validation>The check runs in the renderer, not in validation<a href=#the-check-runs-in-the-renderer-not-in-validation class=hash-link aria-label="Direct link to The check runs in the renderer, not in validation" title="Direct link to The check runs in the renderer, not in validation" translate=no>​</a></h3>
+<p><code>model.Validate*</code> has no <code>ClusterProfile</code> — deliberately, because a spec is valid or invalid on
+its own terms and the same spec is meant to target several clusters. The capability question
+cannot be answered there without handing the authoring plane a cluster, which is the boundary
+<a class="" href=/kelson/adr/0001-hybrid-state-model>ADR-0001</a> draws.</p>
+<p>So the check lives in <code>internal/renderer</code>, which already takes a <code>ClusterProfile</code>, and fails
+with a structured render error in the same family as <code>render/gateway-api-missing</code>. #89's
+acceptance criterion — <em>"requesting a plan the cluster cannot support fails at validation with
+the reason"</em> — is read as <strong>fails before anything is applied, with the reason</strong>: every surface
+that can reach a cluster (<code>kelson render</code>, <code>diff</code>, <code>deploy</code>, the ConnectRPC API, the MCP tools)
+goes through <code>Render</code>, so no path exists that accepts an unsupportable preset and finds out
+later. What the reading gives up is a profile-free <code>kelson validate</code> catching it, which it could
+never honestly have done.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=outcome--behaviour>Outcome → behaviour<a href=#outcome--behaviour class=hash-link aria-label="Direct link to Outcome → behaviour" title="Direct link to Outcome → behaviour" translate=no>​</a></h3>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Verdict<th>Renderer behaviour<tbody><tr><td><strong>Yes</strong><td>Render. The operator is present and meets every capability the preset needs.<tr><td><strong>No</strong><td>Refuse: <code>render/postgres-unsupported</code> or <code>render/valkey-unsupported</code>, naming the blocking capability, the version floor, the detected version, and the remediation (always <em>upgrade the operator you have</em> — both operators are cluster-scoped and a second install fights the first). Two codes rather than one because the remediation is a different operator, and a caller switching on the code should not have to parse prose to tell which.<tr><td><strong>Unknown</strong><td><strong>Render.</strong></table>
+<p><strong>Unknown renders, and that is the whole point of having three outcomes.</strong> Unknown means the
+operator's version could not be read, or CNPG sat behind a detection gap — a probe without RBAC
+to list deployments, a profile written by hand. It does not mean the capability is absent. A
+zero <code>ClusterProfile</code> is the extreme case: nobody looked at anything.</p>
+<p>Refusing on Unknown would make every hand-written profile and every under-permissioned probe
+into a refusal for a cluster that very likely works, and would teach people to write
+capabilities into profiles to get past kelson rather than because they checked. Rendering on
+Unknown costs an apply-time failure from the API server — <code>no matches for kind "Cluster"</code>, or a
+field the operator does not know — which is a real, specific error from the component that
+actually knows the answer, arriving before anything is running.</p>
+<p>The asymmetry is the tri-state discipline: <strong>Unknown is not No.</strong> A No is a fact we established
+(no CNPG at all, a version below the floor, a CRD the API server does not serve) and refusing on
+it is honest. An Unknown is an absence of evidence and refusing on it would be a claim we cannot
+make.</p>
+<p>The renderer has no side channel for a warning — it returns manifests or errors, and adding a
+third return value would put advisory prose in the path of every caller including the golden
+harness. Surfacing "rendered, but the profile could not confirm CNPG" belongs to the callers
+that already report profile findings: <code>kelson diff</code>'s preview, which reports unvalidated
+resources, and the profile report itself, which lists gaps with the permission that would close
+them. Nothing rendered is hidden; nothing rendered is claimed to be verified either.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id=binding-keys>Binding keys<a href=#binding-keys class=hash-link aria-label="Direct link to Binding keys" title="Direct link to Binding keys" translate=no>​</a></h3>
+<p>A workload component binds to a data component by key: <code>env: {DATABASE_URL: {from: {service: db, key: uri}}}</code>.
+Validation checks the key against <code>model.ServiceKeys</code>; the renderer resolves it against the
+bound service, in one of three ways. A <strong>credential</strong> becomes a <code>secretKeyRef</code> against a Secret
+the operator generated — for postgres, <code>&lt;cluster>-app</code> (type <code>basic-auth</code>). A <strong>connection
+detail that is not a credential</strong> becomes a plain value, which is how a cache's address binds. A
+key the kind declares that the service genuinely cannot supply is
+<code>render/binding-unavailable-key</code>, with the reason rather than a list of alternatives that does
+not contain the answer — today that is exactly one key, and only in one configuration:
+<a href=#authentication-auth-and-two-commands class="">a cache's <code>password</code> when the component declares no <code>auth:</code></a>.
+With <code>auth:</code> set it is a credential like any other, and the Secret it resolves against is one the
+author named rather than one an operator generated — the first binding where those two differ.</p>
+<p><strong>A binding is one of the two reference forms, not a separate mechanism.</strong> The other is
+<code>{secret: &lt;name>, key: &lt;key>}</code>, which names a Secret kelson does not manage
+(<a class="" href=/kelson/adr/0018-secret-references>ADR-0018</a>, <a class="" href=/kelson/model#secrets-references-never-literals>docs/model.md</a>).
+Both are mappings in an env value, both render into the same <code>valueFrom.secretKeyRef</code> through
+the same function, and neither can carry a value. What differs is who names the Secret: a
+binding names a <em>component</em> and kelson derives the Secret its operator generates; a reference
+names the Secret directly. So a credential that is not a data service kelson manages — an API
+key, an SMTP password — is written the same way, in the same map, beside the binding.</p>
+<p>The postgres mapping follows.</p>
+<p>CNPG's key names are not kelson's. The mapping, read from <code>pkg/specs/secrets.go</code> in
+<code>release-1.30</code>:</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>kelson key<th>CNPG key in <code>&lt;cluster>-app</code><tbody><tr><td><code>uri</code><td><code>uri</code><tr><td><code>host</code><td><code>host</code><tr><td><code>port</code><td><code>port</code><tr><td><code>database</code><td><strong><code>dbname</code></strong><tr><td><code>username</code><td><code>username</code><tr><td><code>password</code><td><code>password</code></table>
+<p>CNPG also writes <code>user</code>, <code>pgpass</code>, <code>jdbc-uri</code>, <code>fqdn-uri</code> and <code>fqdn-jdbc-uri</code>. These are not
+exposed as kelson keys: <code>user</code> duplicates <code>username</code>, <code>pgpass</code> is a file format rather than a
+value, and the JDBC and FQDN forms are worth adding when something asks for them rather than
+guessed at now. A key kelson does not map is a structured render error listing the keys that
+exist, so the failure names the fix.</p>
+<p><code>uri</code> and <code>fqdn-uri</code> differ in the host they embed — <code>&lt;cluster>-rw.&lt;namespace>:5432</code> versus the
+fully qualified <code>…svc.&lt;cluster-domain></code>. <code>uri</code> is the right default inside one cluster and the
+one kelson maps.</p>
+<hr/>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id=what-renders-in-what-order>What renders, in what order<a href=#what-renders-in-what-order class=hash-link aria-label="Direct link to What renders, in what order" title="Direct link to What renders, in what order" translate=no>​</a></h2>
+<p>For each data component, in spec order, <strong>after the Namespace and before any workload</strong> — a
+workload that binds to a data component should not be applied before the resource that produces
+its credentials. The one <code>spec.components</code> list of <a class="" href=/kelson/adr/0014-components>ADR-0014</a> does not
+change this: the data components render first whatever position the author gave them in the list,
+because ordering is the only sequencing a rendered set can express.</p>
+<div class="language-text codeBlockContainer_Ckt0 theme-code-block" style=--prism-color:#9CDCFE;--prism-background-color:#1E1E1E><div class=codeBlockContent_QJqH><pre tabindex=0 class="prism-code language-text codeBlock_bY9V thin-scrollbar" style=color:#9CDCFE;background-color:#1E1E1E><code class=codeBlockLines_e6Vv><div class=token-line style=color:#9CDCFE><span class="token plain">Namespace</span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">  postgresql.cnpg.io/v1 Cluster        (kind: postgres, small | ha-small | ha-medium)</span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">  valkey.io/v1alpha1 ValkeyCluster     (kind: valkey,   small | ha-small | ha-medium)</span><br/></div><div class=token-line style=color:#9CDCFE><span class="token plain">  ServiceAccount / Service / Deployment / … per workload component</span><br/></div></code></pre></div></div>
+<p>(<code>shared</code> would have rendered a <code>postgresql.cnpg.io/v1 Database</code> here; it is deferred — see
+<a href=#preset--topology class="">Preset → topology</a>.)</p>
+<p>Ordering is advisory rather than a guarantee — nothing waits for the cluster to be ready, and a
+workload whose database is still bootstrapping will crash-loop until it is. That is the same
+deal every other resource in the set gets, and it is visible in <code>kelson status</code>.</p>
+<p>Names are <code>&lt;project>-&lt;environment>-&lt;component></code>, capped at 53 characters for <code>kind: postgres</code>
+and 37 for <code>kind: valkey</code>. CloudNativePG derives its own object names from the cluster's —
+<code>&lt;cluster>-app</code>, <code>&lt;cluster>-superuser</code>, <code>&lt;cluster>-rw</code>, <code>&lt;cluster>-1</code> — and the longest suffix
+(<code>-superuser</code>, ten characters) has to fit inside the 63-character DNS label limit; the Valkey
+operator's longest derivation is <code>internal-&lt;cluster>-system-passwords</code>, which is 26. Two caps
+rather than one because the operators derive different names, not because there are two
+opinions about names. A longer name is a structured render error rather than a resource the API
+server rejects with an arithmetic complaint.</p>
+<p>Provenance is identical to every other rendered resource: <code>app.kubernetes.io/managed-by</code>,
+<code>kelson.dev/project</code>, <code>kelson.dev/environment</code>, <code>kelson.dev/renderer-version</code> and a
+<code>kelson.dev/spec-hash</code> computed over the data component's own resolved input, so an unrelated edit
+elsewhere in the spec does not churn the database's annotation.</p>
+<p>Data components carry no <code>kelson.dev/component</code> label and render no ServiceAccount of their own.
+They are not owned by one workload — that is what makes them bindable by several — and the identity
+their pods run under is the operator's to create, not kelson's
+(<a class="" href=/kelson/adr/0005-delegate-to-operators>ADR-0005</a>, <a class="" href=/kelson/adr/0014-components>ADR-0014</a> decision D).</p>
+<hr/>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id=status>Status<a href=#status class=hash-link aria-label="Direct link to Status" title="Direct link to Status" translate=no>​</a></h2>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<table><thead><tr><th>Piece<th>State<tbody><tr><td><code>small</code>, <code>ha-small</code>, <code>ha-medium</code> → <code>Cluster</code><td>rendered<tr><td>bindings against a dedicated preset<td>rendered (<code>secretKeyRef</code> → <code>&lt;cluster>-app</code>)<tr><td><code>preset: shared</code><td><strong>deferred, structured error</strong> on both kinds, <a href=https://github.com/dafrie/kelson/issues/93 target=_blank rel="noopener noreferrer" class="">#93</a> (owner decision, 2026-08-13)<tr><td><code>preset: branch</code><td><strong>structured error</strong>, <a href=https://github.com/dafrie/kelson/issues/99 target=_blank rel="noopener noreferrer" class="">#99</a>; refused for <code>kind: valkey</code> as not a cache topology<tr><td><code>kind: valkey</code> <code>small</code>, <code>ha-small</code>, <code>ha-medium</code> → <code>ValkeyCluster</code><td>rendered (<a class="" href=/kelson/adr/0015-valkey-operator>ADR-0015</a>)<tr><td>bindings against a cache<td>rendered as plain values (<code>uri</code>, <code>host</code>, <code>port</code>)<tr><td><code>auth: {secret, key}</code> on <code>kind: valkey</code> → <code>spec.users[]</code><td>rendered (<a class="" href=/kelson/adr/0015-valkey-operator#amendment-2026-08-14--auth-a-cache-with-a-password>ADR-0015 amendment</a>, <a href=https://github.com/dafrie/kelson/issues/98 target=_blank rel="noopener noreferrer" class="">#98</a>)<tr><td>a cache's <code>password</code> binding<td><code>secretKeyRef</code> against the <code>auth:</code> Secret; <strong>structured error</strong> naming <code>auth:</code> when the component declares none<tr><td><code>auth:</code> on postgres, on a workload, on a chart<td><strong>structured error</strong> <code>schema/mutually-exclusive</code>, each naming what to write instead<tr><td>a URI with the password in it<td><strong>not authorable and never rendered</strong> — <code>uri</code> is the address form at every setting (ADR-0009, ADR-0018)<tr><td>valkey persistence, TLS, per-application ACL users, external access<td>not authorable; the operator supports them, kelson renders only the <code>default</code> user and only when <code>auth:</code> is set<tr><td>backups, WAL archiving, PITR<td>deferred, <a href=https://github.com/dafrie/kelson/issues/94 target=_blank rel="noopener noreferrer" class="">#94</a>-<a href=https://github.com/dafrie/kelson/issues/96 target=_blank rel="noopener noreferrer" class="">#96</a>; see <a href=#backups class="">Backups</a>. No counterpart for <code>kind: valkey</code> — it has nothing durable to back up<tr><td>declarative schemas and extensions<td>not authorable; the capability is judged, nothing consumes it<tr><td>preset transitions beyond rendering<td>not enforced, <a href=https://github.com/dafrie/kelson/issues/105 target=_blank rel="noopener noreferrer" class="">#105</a></table>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id=sources>Sources<a href=#sources class=hash-link aria-label="Direct link to Sources" title="Direct link to Sources" translate=no>​</a></h2>
+<p>CloudNativePG <code>release-1.30</code>, read directly rather than from memory:</p>
+<ul>
+<li class=""><code>api/v1/cluster_types.go</code> — <code>instances</code>, <code>minSyncReplicas</code>, <code>maxSyncReplicas</code>, <code>storage</code>
+(<code>size</code>, <code>storageClass</code>, "Size cannot be decreased"), <code>resources</code>, <code>bootstrap</code>, <code>managed</code>.</li>
+<li class=""><code>api/v1/database_types.go</code> — <code>spec.cluster</code> as <code>corev1.LocalObjectReference</code> and immutable,
+<code>spec.name</code>, <code>spec.owner</code>, <code>spec.ensure</code>, <code>spec.databaseReclaimPolicy</code> (default <code>retain</code>),
+<code>spec.schemas</code>, <code>spec.extensions</code>.</li>
+<li class=""><code>pkg/specs/secrets.go</code> — the exact <code>StringData</code> keys of the generated <code>&lt;cluster>-app</code> Secret.</li>
+<li class=""><code>docs/src/declarative_database_management.md</code>, <code>docs/src/bootstrap.md</code>,
+<code>docs/src/applications.md</code>, <code>docs/src/replication.md</code>.</li>
+</ul>
+<p>valkey-io/valkey-operator, read the same way at <code>main</code> and at tag <code>v0.5.0</code>:</p>
+<ul>
+<li class=""><code>api/v1alpha1/valkeycluster_types.go</code> — <code>shards</code>, <code>replicas</code> ("replicas for each shard
+group"), <code>resources</code>, <code>users</code>, <code>config</code> ("additional Valkey configuration parameters"),
+<code>persistence</code>, <code>exporter</code>, <code>podDisruptionBudget</code>, <code>networking</code>, in that field order.</li>
+<li class=""><code>api/v1alpha1/persistence_types.go</code> — <code>PersistenceSpec</code> is a pointer, so an omitted
+<code>persistence</code> is no PVC at all.</li>
+<li class=""><code>api/v1alpha1/valkeyacls_types.go</code> — <code>UserAclSpec</code> (<code>name</code>, <code>enabled</code> defaulting to true,
+<code>passwordSecret</code>, <code>nopass</code>, <code>resetpass</code>, <code>commands</code>, <code>keys</code>, <code>channels</code>, <code>permissions</code>) and
+<code>PasswordSecretSpec</code> (<code>name</code>, <code>keys []string</code>), with the one validation rule: a username may
+not start with <code>_</code>. <code>docs/valkeycluster.md#users</code> is the field reference for the same shape.</li>
+<li class=""><code>internal/controller/users.go</code> — <code>PasswordSecretSpec.Name</code> defaults to <code>&lt;cluster>-users</code> and
+<code>Keys</code> to the username; a Secret's value is SHA-256-hashed unless it is already a
+<code>#</code>-prefixed 64-hex digest; a missing Secret or key fails the reconcile; the Secret is only
+ever <em>read</em>, and the only generated one is <code>internal-&lt;cluster>-system-passwords</code>, for the
+operator's own <code>_</code>-prefixed system users. <code>buildUserAcl</code> is the exact ACL line each user
+becomes, which is how <code>keys</code>/<code>channels</code>/<code>commands</code> were checked to reproduce <code>default</code>'s own
+<code>~* &* +@all</code>.</li>
+<li class=""><code>internal/controller/valkeynode_resources.go</code> — the probes authenticate as <code>_operator</code> with
+<code>VALKEY_USER</code>/<code>VALKEYCLI_AUTH</code>, not as <code>default</code>, so giving <code>default</code> a password does not
+break the operator's own health checks.</li>
+<li class=""><code>internal/controller/config.go</code> — <code>cluster-enabled yes</code> in the base config, and the
+live-settable allow-list containing <code>maxmemory</code> and <code>maxmemory-policy</code>.</li>
+<li class=""><code>internal/controller/valkeycluster_controller.go</code> — the headless <code>valkey-&lt;cluster></code> Service
+on port 6379, and <code>getSystemPasswordSecretName</code>, which is where the 37-character name cap
+comes from.</li>
+<li class=""><code>docs/quickstart.md</code>, <code>docs/valkeynode-design.md</code>, <code>README.md</code> (the early-development
+notice).</li>
+</ul></div><footer class="theme-doc-footer docusaurus-mt-lg"><div class="row margin-top--sm theme-doc-footer-edit-meta-row"><div class="col noPrint_WFHX"><a href=https://github.com/dafrie/kelson/edit/main/docs/../docs/data-services.md target=_blank rel="noopener noreferrer" class=theme-edit-this-page><svg fill=currentColor height=20 width=20 viewBox="0 0 40 40" class=iconEdit_Z9Sw aria-hidden=true><g><path d="m34.5 11.7l-3 3.1-6.3-6.3 3.1-3q0.5-0.5 1.2-0.5t1.1 0.5l3.9 3.9q0.5 0.4 0.5 1.1t-0.5 1.2z m-29.5 17.1l18.4-18.5 6.3 6.3-18.4 18.4h-6.3v-6.2z"/></g></svg>Edit this page</a></div><div class="col lastUpdated_JAkA"><span class=theme-last-updated>Last updated<!-- --> on <b><time datetime=2026-08-14T16:22:22.000Z itemprop=dateModified>Aug 14, 2026</time></b></span></div></div></footer></article><nav class="docusaurus-mt-lg pagination-nav" aria-label="Docs pages"><a class="pagination-nav__link pagination-nav__link--prev" href=/kelson/secrets><div class=pagination-nav__sublabel>Previous</div><div class=pagination-nav__label>Secrets</div></a><a class="pagination-nav__link pagination-nav__link--next" href=/kelson/statemachine><div class=pagination-nav__sublabel>Next</div><div class=pagination-nav__label>State machine</div></a></nav></div></div><div class="col col--3"><div class="tableOfContents_bqdL thin-scrollbar theme-doc-toc-desktop"><ul class="table-of-contents table-of-contents__left-border"><li><a href=#preset--topology class="table-of-contents__link toc-highlight">Preset → topology</a><ul><li><a href=#the-dedicated-presets-kind-postgres class="table-of-contents__link toc-highlight">The dedicated presets (<code>kind: postgres</code>)</a><li><a href=#the-shared-preset-deferred--the-design-it-would-need-if-it-returns class="table-of-contents__link toc-highlight">The shared preset, deferred — the design it would need if it returns</a></ul><li><a href=#sizing-defaults class="table-of-contents__link toc-highlight">Sizing defaults</a><ul><li><a href=#tuning-without-leaving-the-preset-model class="table-of-contents__link toc-highlight">Tuning without leaving the preset model</a></ul><li><a href=#safe-preset-transitions class="table-of-contents__link toc-highlight">Safe preset transitions</a><li><a href=#backups class="table-of-contents__link toc-highlight">Backups</a><li><a href=#valkey class="table-of-contents__link toc-highlight">Valkey</a><ul><li><a href=#cache-sizing class="table-of-contents__link toc-highlight">Cache sizing</a><li><a href=#why-an-ha-cache-is-six-pods class="table-of-contents__link toc-highlight">Why an HA cache is six pods</a><li><a href=#persistence-is-off-and-what-a-durable-store-would-take class="table-of-contents__link toc-highlight">Persistence is off, and what a durable store would take</a><li><a href=#authentication-auth-and-two-commands class="table-of-contents__link toc-highlight">Authentication: <code>auth:</code> and two commands</a><li><a href=#cache-bindings class="table-of-contents__link toc-highlight">Cache bindings</a><li><a href=#naming class="table-of-contents__link toc-highlight">Naming</a></ul><li><a href=#validation-versus-capability class="table-of-contents__link toc-highlight">Validation versus capability</a><ul><li><a href=#the-check-runs-in-the-renderer-not-in-validation class="table-of-contents__link toc-highlight">The check runs in the renderer, not in validation</a><li><a href=#outcome--behaviour class="table-of-contents__link toc-highlight">Outcome → behaviour</a><li><a href=#binding-keys class="table-of-contents__link toc-highlight">Binding keys</a></ul><li><a href=#what-renders-in-what-order class="table-of-contents__link toc-highlight">What renders, in what order</a><li><a href=#status class="table-of-contents__link toc-highlight">Status</a><li><a href=#sources class="table-of-contents__link toc-highlight">Sources</a></ul></div></div></div></div></main></div></div></div><footer class="theme-layout-footer footer footer--dark"><div class="container container-fluid"><div class="row footer__links"><div class="theme-layout-footer-column col footer__col"><div class=footer__title>Docs</div><ul class="footer__items clean-list"><li class=footer__item><a class=footer__link-item href=/kelson/>Overview</a><li class=footer__item><a class=footer__link-item href=/kelson/architecture>Architecture</a><li class=footer__item><a class=footer__link-item href=/kelson/roadmap>Roadmap</a><li class=footer__item><a class=footer__link-item href=/kelson/adr/>ADRs</a></ul></div><div class="theme-layout-footer-column col footer__col"><div class=footer__title>Project</div><ul class="footer__items clean-list"><li class=footer__item><a href=https://github.com/dafrie/kelson target=_blank rel="noopener noreferrer" class=footer__link-item>GitHub<svg width=13.5 height=13.5 aria-label="(opens in new tab)" class=iconExternalLink_nPIU><use href=#theme-svg-external-link /></svg></a><li class=footer__item><a href=https://github.com/dafrie/kelson/issues target=_blank rel="noopener noreferrer" class=footer__link-item>Issues<svg width=13.5 height=13.5 aria-label="(opens in new tab)" class=iconExternalLink_nPIU><use href=#theme-svg-external-link /></svg></a><li class=footer__item><a href=https://github.com/dafrie/kelson/milestones target=_blank rel="noopener noreferrer" class=footer__link-item>Milestones<svg width=13.5 height=13.5 aria-label="(opens in new tab)" class=iconExternalLink_nPIU><use href=#theme-svg-external-link /></svg></a></ul></div></div><div class="footer__bottom text--center"><div class=footer__copyright>MIT. Every feature — SSO, RBAC and audit logs are not paywalled.</div></div></div></footer></div></body>
