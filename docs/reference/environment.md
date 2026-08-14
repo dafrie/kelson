@@ -97,9 +97,12 @@ This reference is **generated** from the committed JSON Schema [`schema/environm
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `agents` | string enum `"allow"`, `"propose-only"` | no | `"propose-only"` |  |
+| `agents` | string enum `"allow"`, `"propose-only"` | no | `"allow"` | what an agent may do here unsupervised; propose-only refuses every live mutation |
 | `deployers` | array of string | no |  |  |
-| `require` | array of string | no |  | guards that must hold before deploy; only dry-run is defined |
+| `forbid` | array of string | no |  | agents only; operations refused to agents here — one of deploy / rollback / promote / build / secret-set / secret-delete / spec-write / spec-delete |
+| `maxReplicas` | integer min 1 | no |  | agents only; the highest replica count an agent may deploy in this environment |
+| `protect` | array of string | no |  | agents only; components an agent may not delete or scale to zero |
+| `require` | array of string | no |  | guards that must hold before an agent deploy; only dry-run is defined |
 
 #### `spec.previews`
 

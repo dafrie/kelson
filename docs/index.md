@@ -17,7 +17,7 @@ kelson doesn't wrap Kubernetes in new concepts. It generates Kubernetes.
 - **Uninstalling doesn't break anything.** `kelson uninstall` removes one environment's resources and nothing else; `helm uninstall` removes the server and leaves your applications running ([installing](install.md)).
 - **You see what will happen first.** Three preview levels: a rendered diff, a server-side dry-run, an ephemeral live environment.
 - **It adopts what you already run.** Detects Gateway API, cert-manager, external-secrets, Prometheus, CloudNativePG and Flux, and renders to fit. Routing is Gateway API only.
-- **Agents get guardrails, not just tools** *(designed; lands with M7)*. Every mutation supports dry-run; production defaults to propose-only.
+- **Agents get guardrails, not just tools.** Every mutation supports dry-run, and per-environment policy says what an agent may do unsupervised — `propose-only`, replica ceilings, protected components, forbidden operations — enforced server-side from the stored spec ([agent policy](server.md#agent-policy-what-agents-may-do-in-this-environment)).
 - **It doesn't reimplement operators.** CloudNativePG, Strimzi, cert-manager, external-secrets.
 
 ## Docs

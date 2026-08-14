@@ -99,14 +99,34 @@
                 "allow",
                 "propose-only"
               ],
-              "default": "propose-only"
+              "description": "what an agent may do here unsupervised; propose-only refuses every live mutation",
+              "default": "allow"
             },
             "require": {
               "items": {
                 "type": "string"
               },
               "type": "array",
-              "description": "guards that must hold before deploy; only dry-run is defined"
+              "description": "guards that must hold before an agent deploy; only dry-run is defined"
+            },
+            "maxReplicas": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "agents only; the highest replica count an agent may deploy in this environment"
+            },
+            "protect": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array",
+              "description": "agents only; components an agent may not delete or scale to zero"
+            },
+            "forbid": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array",
+              "description": "agents only; operations refused to agents here — one of deploy / rollback / promote / build / secret-set / secret-delete / spec-write / spec-delete"
             },
             "deployers": {
               "items": {

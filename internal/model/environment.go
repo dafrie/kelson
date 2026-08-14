@@ -113,7 +113,7 @@ type GitTarget struct {
 }
 
 // AgentMode governs what agents may do unsupervised in this Environment
-// (docs/architecture.md, agent principals).
+// (ADR-0025, issue #75).
 type AgentMode string
 
 const (
@@ -121,16 +121,115 @@ const (
 	AgentsProposeOnly AgentMode = "propose-only"
 )
 
-// Policy carries deployment authorization for humans and agents.
+// AgentOperation names one mutating thing an agent can ask kelson-server to do.
+// It is the vocabulary of `policy.forbid`, and it is deliberately coarse: one
+// name per mutating RPC, so a reader of a spec can tell what a `forbid:` entry
+// switches off without reading the schema (ADR-0025 §4).
+type AgentOperation string
+
+const (
+	AgentOpDeploy       AgentOperation = "deploy"
+	AgentOpRollback     AgentOperation = "rollback"
+	AgentOpPromote      AgentOperation = "promote"
+	AgentOpBuild        AgentOperation = "build"
+	AgentOpSecretSet    AgentOperation = "secret-set"
+	AgentOpSecretDelete AgentOperation = "secret-delete"
+	AgentOpSpecWrite    AgentOperation = "spec-write"
+	AgentOpSpecDelete   AgentOperation = "spec-delete"
+)
+
+// AgentOperations is every operation `policy.forbid` accepts, in the order an
+// error message lists them. internal/api pins its own RPC table against this
+// list, so an operation added here without an enforcement point fails a test
+// rather than becoming a word the spec accepts and nothing reads.
+func AgentOperations() []AgentOperation {
+	return []AgentOperation{
+		AgentOpDeploy, AgentOpRollback, AgentOpPromote, AgentOpBuild,
+		AgentOpSecretSet, AgentOpSecretDelete, AgentOpSpecWrite, AgentOpSpecDelete,
+	}
+}
+
+// PolicyRequireDryRun is the one requirement `policy.require` defines: an agent
+// mutation must have passed kelson's own server-side dry-run in the same
+// request before it is applied.
+const PolicyRequireDryRun = "dry-run"
+
+// Policy carries deployment authorization for humans and agents. Everything in
+// it except `deployers` is *agent* policy: it narrows what an agent principal
+// may do in this environment unsupervised, and it never restricts a human
+// (ADR-0025).
+//
+// Every field is opt-in and restricts only what it names. An environment that
+// declares no policy — or a policy that leaves a field unset — narrows nothing,
+// because the credential an operator issued is already the deliberate grant
+// (ADR-0024 §3) and a guardrail nobody wrote down is one nobody can audit.
 type Policy struct {
-	// Agents defaults to propose-only: agent changes open pull requests.
-	// require: [dry-run] obliges a dry-run before applying.
-	Agents  AgentMode `yaml:"agents,omitempty" json:"agents,omitempty" jsonschema:"default=propose-only,enum=allow,enum=propose-only"`
-	Require []string  `yaml:"require,omitempty" json:"require,omitempty" jsonschema:"description=guards that must hold before deploy; only dry-run is defined"`
+	// Agents is what an agent may do here without a human in the loop.
+	// `propose-only` refuses every live mutation and answers with the
+	// escalation path instead.
+	Agents AgentMode `yaml:"agents,omitempty" json:"agents,omitempty" jsonschema:"default=allow,enum=allow,enum=propose-only,description=what an agent may do here unsupervised; propose-only refuses every live mutation"`
+
+	// Require lists the guards that must hold before an agent mutation is
+	// applied. `dry-run` obliges the server to run its own dry-run first and
+	// to refuse a change the dry-run says would be rejected.
+	Require []string `yaml:"require,omitempty" json:"require,omitempty" jsonschema:"description=guards that must hold before an agent deploy; only dry-run is defined"`
+
+	// MaxReplicas caps the replica count of any workload an agent deploys
+	// here. It is a pointer so `maxReplicas: 0` is representable and can be
+	// refused: zero would read as "no replicas at all", which is a scale-down
+	// switch disguised as a ceiling.
+	MaxReplicas *int `yaml:"maxReplicas,omitempty" json:"maxReplicas,omitempty" jsonschema:"minimum=1,description=agents only; the highest replica count an agent may deploy in this environment"`
+
+	// Protect names components an agent may neither remove from the spec nor
+	// scale to zero. It is the blast-radius rule for the components whose loss
+	// is not a rollback away — a database, a queue, a cache holding sessions.
+	Protect []string `yaml:"protect,omitempty" json:"protect,omitempty" jsonschema:"description=agents only; components an agent may not delete or scale to zero"`
+
+	// Forbid switches off named operations for agents in this environment.
+	Forbid []AgentOperation `yaml:"forbid,omitempty" json:"forbid,omitempty" jsonschema:"description=agents only; operations refused to agents here — one of deploy / rollback / promote / build / secret-set / secret-delete / spec-write / spec-delete"`
 
 	// Deployers lists subjects allowed to deploy; empty means the Project's
-	// owning team.
+	// owning team. It is about humans, so #75 does not implement it — see the
+	// gate row in notimplemented.go.
 	Deployers []string `yaml:"deployers,omitempty" json:"deployers,omitempty"`
+}
+
+// AllowsUnsupervised reports whether an agent may change this environment's
+// state without a human. It is the `propose-only` test, written as a method so
+// that "unset means allow" is decided in one place.
+func (p Policy) AllowsUnsupervised() bool {
+	return p.Agents != AgentsProposeOnly
+}
+
+// Forbids reports whether this policy switches op off for agents.
+func (p Policy) Forbids(op AgentOperation) bool {
+	for _, f := range p.Forbid {
+		if f == op {
+			return true
+		}
+	}
+	return false
+}
+
+// RequiresDryRun reports whether an agent mutation here must pass kelson's own
+// dry-run before it is applied.
+func (p Policy) RequiresDryRun() bool {
+	for _, r := range p.Require {
+		if r == PolicyRequireDryRun {
+			return true
+		}
+	}
+	return false
+}
+
+// Protects reports whether component is on this policy's protected list.
+func (p Policy) Protects(component string) bool {
+	for _, name := range p.Protect {
+		if name == component {
+			return true
+		}
+	}
+	return false
 }
 
 // SecretBackend selects where secret values live (ADR-0009). The schema

@@ -11,14 +11,13 @@ import (
 // P2 (replicas/resources), P3 (image), P4 (delivery/policy/secrets chain),
 // P5 (service presets), P6 (overlays).
 //
-// It deliberately keeps the fields issue #141 still gates — a policy default
-// and a secret backend. Precedence over them is real behaviour the resolver
-// implements, and M7/M8 land by deleting a gate row, not by rebuilding
-// resolution. So these cases load through loadPairUnvalidated and call the
-// unexported resolve; the gate itself is covered in coverage_test.go. The
-// services and bindings here no longer need that treatment — they validate
-// since #89 — but they stay in the same document because P5 is exercised
-// alongside every other rule.
+// It deliberately keeps fields issue #141 gated at one time or another — a
+// policy default and a secret backend. Precedence over them was real behaviour
+// the resolver implemented before anything consumed them, which is why landing
+// a milestone has twice been a matter of deleting a gate row rather than
+// rebuilding resolution (#89 for data services, ADR-0025 for `policy:`). These
+// cases load through loadPairUnvalidated and call the unexported resolve; the
+// gate itself is covered in coverage_test.go.
 const precedenceProject = `
 apiVersion: kelson.dev/v1alpha1
 kind: Project
@@ -314,8 +313,11 @@ spec:
 	if r.Environment.Mode != DeliveryDirect {
 		t.Errorf("built-in delivery default = %q, want direct", r.Environment.Mode)
 	}
-	if r.Environment.Policy.Agents != AgentsProposeOnly {
-		t.Errorf("built-in agents default = %q, want propose-only", r.Environment.Policy.Agents)
+	// An environment that says nothing about agents narrows nothing: the
+	// credential an operator issued is the grant, and every guardrail in
+	// `policy:` is opt-in (ADR-0025 §3).
+	if r.Environment.Policy.Agents != AgentsAllow {
+		t.Errorf("built-in agents default = %q, want allow", r.Environment.Policy.Agents)
 	}
 	if r.Environment.Secrets.Backend != SecretsCluster {
 		t.Errorf("built-in secrets default = %q, want cluster", r.Environment.Secrets.Backend)

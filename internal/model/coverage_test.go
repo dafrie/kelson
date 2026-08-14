@@ -79,6 +79,11 @@ var renderedFields = map[string]map[string]string{
 		"$.spec.components[].env.*.key":                 "renderer: secretKeyRef key within that Secret (ADR-0018)",
 
 		"$.spec.defaults.deliveryMode":            "resolve P4 → internal/delivery: adapter selection",
+		"$.spec.defaults.policy.agents":           "resolve P4 → internal/api: propose-only refuses every agent mutation server-side (ADR-0025)",
+		"$.spec.defaults.policy.require":          "resolve P4 → internal/api: require: [dry-run] obliges the server-side dry-run before an agent deploy applies (ADR-0025)",
+		"$.spec.defaults.policy.maxReplicas":      "resolve P4 → internal/api: the replica ceiling an agent deploy is checked against (ADR-0025)",
+		"$.spec.defaults.policy.protect":          "resolve P4 → internal/api: components an agent may not remove or scale to zero (ADR-0025)",
+		"$.spec.defaults.policy.forbid":           "resolve P4 → internal/api: operations refused to agents in this environment (ADR-0025)",
 		"$.spec.defaults.secrets.backend":         "resolve P4 → renderer: selects the reference mechanism; cluster renders secretKeyRefs, externalSecrets also renders an ExternalSecret per referenced Secret, sops adds the Kustomization decryption block and requires flux (ADR-0022)",
 		"$.spec.defaults.secrets.store":           "resolve P4 → renderer: ExternalSecret spec.secretStoreRef, resolved against the ClusterProfile's stores (ADR-0020)",
 		"$.spec.defaults.secrets.refreshInterval": "resolve P4 → renderer: ExternalSecret spec.refreshInterval (default 1h, ADR-0020)",
@@ -117,6 +122,12 @@ var renderedFields = map[string]map[string]string{
 		"$.spec.previews.skip.labels":          "renderer: ResourceSetInputProvider spec.skip.labels",
 		"$.spec.previews.artifacts.repository": "renderer: the per-preview OCIRepository url in the ResourceSet template",
 		"$.spec.previews.artifacts.secretRef":  "renderer: the per-preview OCIRepository secretRef.name in the ResourceSet template",
+
+		"$.spec.policy.agents":      "internal/api: propose-only refuses every agent mutation server-side (ADR-0025)",
+		"$.spec.policy.require":     "internal/api: require: [dry-run] obliges the server-side dry-run before an agent deploy applies (ADR-0025)",
+		"$.spec.policy.maxReplicas": "internal/api: the replica ceiling an agent deploy is checked against (ADR-0025)",
+		"$.spec.policy.protect":     "internal/api: components an agent may not remove or scale to zero (ADR-0025)",
+		"$.spec.policy.forbid":      "internal/api: operations refused to agents in this environment (ADR-0025)",
 
 		"$.spec.delivery.mode":       "internal/delivery: adapter selection",
 		"$.spec.delivery.git.repo":   "internal/delivery/git: deployment repository",
@@ -237,20 +248,20 @@ spec:
     - {name: web, port: 8080}
     - {name: triage, kind: agent, tools: [search, deploy]}`,
 
-	KindProject + " $.spec.defaults.policy": `
+	KindProject + " $.spec.defaults.policy.deployers": `
 spec:
   image: i:1
   components:
     - {name: web, port: 8080}
   defaults:
-    policy: {agents: allow}`,
+    policy: {agents: allow, deployers: [platform-team]}`,
 
 	KindEnvironment + " $.spec.cluster": `
 spec:
   project: p
   cluster: prod-eu`,
 
-	KindEnvironment + " $.spec.policy": `
+	KindEnvironment + " $.spec.policy.deployers": `
 spec:
   project: p
   policy: {agents: allow, require: [dry-run], deployers: [team]}`,

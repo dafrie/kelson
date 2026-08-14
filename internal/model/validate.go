@@ -471,9 +471,16 @@ func (v *validator) overlay(field string, o Overlay) {
 	}
 }
 
+// policy checks the shape of a policy block: the enums, the ceiling and the
+// names. Whether a protected component exists is a cross-document question and
+// lives in [ValidateEnvironment] and [validateProject], where the Project's
+// component list is in hand.
 func (v *validator) policy(field string, p *Policy) {
 	if p == nil {
 		return
+	}
+	if len(p.Deployers) > 0 {
+		v.gate(field+".deployers", field+".deployers")
 	}
 	switch p.Agents {
 	case "", AgentsAllow, AgentsProposeOnly:
@@ -483,11 +490,61 @@ func (v *validator) policy(field string, p *Policy) {
 			fmt.Sprintf("valid values: %s, %s", AgentsAllow, AgentsProposeOnly))
 	}
 	for i, req := range p.Require {
-		if req != "dry-run" {
+		if req != PolicyRequireDryRun {
 			v.err(ErrInvalidEnum, fmt.Sprintf("%s.require[%d]", field, i),
 				fmt.Sprintf("unknown requirement %q", req),
 				"only dry-run is defined today; add new requirements via the schema, not ad hoc strings")
 		}
+	}
+	// A ceiling of zero is refused rather than read as "no replicas": the one
+	// spelling an author might reach for to mean "unlimited" would otherwise be
+	// the strictest setting there is, and it would read as a ceiling while
+	// acting as an off switch.
+	if p.MaxReplicas != nil && *p.MaxReplicas < 1 {
+		v.err(ErrOutOfRange, field+".maxReplicas",
+			fmt.Sprintf("maxReplicas is %d; a ceiling below 1 forbids every deploy rather than capping one", *p.MaxReplicas),
+			"set maxReplicas to the highest replica count an agent may deploy here, or remove it for no ceiling")
+	}
+	for i, name := range p.Protect {
+		v.name(fmt.Sprintf("%s.protect[%d]", field, i), name, "component")
+	}
+	known := map[AgentOperation]bool{}
+	for _, op := range AgentOperations() {
+		known[op] = true
+	}
+	for i, op := range p.Forbid {
+		if known[op] {
+			continue
+		}
+		names := make([]string, 0, len(AgentOperations()))
+		for _, valid := range AgentOperations() {
+			names = append(names, string(valid))
+		}
+		v.err(ErrInvalidEnum, fmt.Sprintf("%s.forbid[%d]", field, i),
+			fmt.Sprintf("unknown operation %q", op),
+			"valid operations: "+strings.Join(names, ", "))
+	}
+}
+
+// protectedComponents is the cross-document half of `policy.protect`: a
+// protected name must be a component the Project declares. A typo there would
+// protect nothing and say nothing, which is the silence issue #141 exists to
+// prevent — and it would do it on the one field whose whole job is to stop an
+// agent removing something.
+func (v *validator) protectedComponents(field string, p *Policy, declared map[string]ComponentKind, project string) {
+	if p == nil {
+		return
+	}
+	for i, name := range p.Protect {
+		if name == "" {
+			continue
+		}
+		if _, ok := declared[name]; ok {
+			continue
+		}
+		v.err(ErrUnknownComponent, fmt.Sprintf("%s.protect[%d]", field, i),
+			fmt.Sprintf("policy protects component %q, which project %q does not declare", name, project),
+			"protect a component the project declares, or remove the entry — a protected name that matches nothing protects nothing")
 	}
 }
 
@@ -1358,10 +1415,15 @@ func validateProject(p *Project, v *validator) {
 				fmt.Sprintf("unknown delivery mode %q", d.DeliveryMode),
 				"valid modes: direct, flux, argocd")
 		}
-		if d.Policy != nil {
-			v.gate("$.spec.defaults.policy", "$.spec.defaults.policy")
-		}
 		v.policy("$.spec.defaults.policy", d.Policy)
+		// The Project's own components are in this document, so the
+		// cross-reference `protect:` needs is available here rather than in
+		// ValidateEnvironment.
+		declared := map[string]ComponentKind{}
+		for _, c := range s.Components {
+			declared[c.Name] = c.EffectiveKind()
+		}
+		v.protectedComponents("$.spec.defaults.policy", d.Policy, declared, p.Metadata.Name)
 		v.secrets("$.spec.defaults.secrets", d.Secrets)
 	}
 
@@ -1396,9 +1458,6 @@ func validateEnvironmentShape(e *Environment, v *validator) {
 	}
 
 	v.delivery("$.spec.delivery", s.Delivery)
-	if s.Policy != nil {
-		v.gate("$.spec.policy", "$.spec.policy")
-	}
 	v.policy("$.spec.policy", s.Policy)
 	v.secrets("$.spec.secrets", s.Secrets)
 	v.previews("$.spec.previews", s.Previews)
@@ -1552,6 +1611,7 @@ func ValidateEnvironment(e *Environment, p *Project) Errors {
 	for _, c := range p.Spec.Components {
 		kinds[c.Name] = c.EffectiveKind()
 	}
+	v.protectedComponents("$.spec.policy", e.Spec.Policy, kinds, p.Metadata.Name)
 
 	for i, ov := range e.Spec.Components {
 		if ov.Name == "" {

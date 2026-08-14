@@ -27,8 +27,11 @@ milestone that will implement the field.
 | Field | Rejected until |
 |---|---|
 | `Project.spec.components[].tools` (`kind: agent`) | M7 · Agent surface & MCP ([#75](https://github.com/dafrie/kelson/issues/75)) |
-| `Project.spec.defaults.policy`, `Environment.spec.policy` | M7 · Agent surface & MCP |
+| `Project.spec.defaults.policy.deployers`, `Environment.spec.policy.deployers` | M11 · Teams, RBAC & multi-tenancy |
 | `Environment.spec.cluster` | M10 · Environments & promotion |
+
+The rest of `policy:` is enforced as of [ADR-0025](adr/0025-agent-policy.md) — `deployers` stays gated
+because it is about human subjects, which kelson does not model yet.
 
 The gate lives in validation only: `internal/model/notimplemented.go` holds the table, and
 `internal/model/coverage_test.go` fails the build if a new spec field is neither consumed nor gated.
@@ -208,12 +211,13 @@ wins over the Project `defaults` value; otherwise the Project default; otherwise
 | Field | Built-in default |
 |---|---|
 | `delivery.mode` | `direct` |
-| `policy.agents`  | `propose-only` |
+| `policy.agents`  | `allow` |
 | `policy.require` | none |
 | `secrets.backend`| `cluster` |
 
 These values never merge across the boundary: there is no "strictest of both" arithmetic. If production
-must stay propose-only, that is written on the production Environment. `delivery.git` exists only on
+must stay propose-only, that is written on the production Environment — every guardrail under
+`policy:` is opt-in and therefore visible in the spec (ADR-0025). `delivery.git` exists only on
 Environments (a Project-level Git target for deployments would be meaningless; every environment needs
 its own repo/branch/path).
 
@@ -265,7 +269,8 @@ Three consequences worth stating before they surprise anyone:
   promotes to it.
 - **Promotion gates nothing.** There is no approval step, no ordering between environments, no
   "production may only receive what staging ran", and no automatic promotion. The gate is wherever spec
-  edits are already gated: pull request review in Flux mode, and `policy` when M7 lands.
+  edits are already gated: pull request review in Flux mode, and — for agents — `spec.policy`
+  ([ADR-0025](adr/0025-agent-policy.md)), which can refuse a promotion into an environment outright.
 
 ### The porcelain
 
@@ -1083,10 +1088,13 @@ spec:
       repo: git@github.com:acme/deploy.git
       branch: main
       path: checkout/production
-  policy:                            # whole block rejected until M7 (#141)
-    agents: propose-only             # allow | propose-only
+  policy:                            # agent guardrails, enforced server-side (ADR-0025)
+    agents: propose-only             # allow | propose-only; default allow
     require: [dry-run]               # only dry-run is defined today
-    deployers: [team-platform]       # who may deploy; default: the Project's team
+    maxReplicas: 5                   # the largest an agent may scale a workload here
+    protect: [db]                    # components an agent may not remove or scale to zero
+    forbid: [secret-set]             # deploy|rollback|promote|build|secret-set|secret-delete|spec-write|spec-delete
+    deployers: [team-platform]       # who may deploy; still rejected until M11 (#141)
   secrets:
     backend: cluster                 # cluster | externalSecrets | sops
     store: vault-backend             # externalSecrets only; optional when the cluster offers one store
@@ -1137,7 +1145,7 @@ spec:
   namespace: hello-dev
 ```
 
-Defaults fill the rest: direct delivery, propose-only agents, cluster secrets, one replica.
+Defaults fill the rest: direct delivery, no agent guardrails, cluster secrets, one replica.
 
 ## Validation (issue #28)
 

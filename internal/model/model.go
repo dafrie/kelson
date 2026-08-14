@@ -45,8 +45,9 @@
 // Per-Component replicas/resources, the Environment preset override on a data
 // component and the Environment-scoped concerns (delivery, policy, secrets)
 // are taken whole from the innermost scope that sets them; delivery/policy/
-// secrets fall back to Project defaults, then to built-in defaults (direct,
-// propose-only, cluster). Overlays concatenate Project-first.
+// secrets fall back to Project defaults, then to built-in defaults (direct
+// delivery, no agent restrictions, cluster secrets). Overlays concatenate
+// Project-first.
 //
 // # Constraints
 //

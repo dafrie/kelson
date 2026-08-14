@@ -52,6 +52,19 @@ func (s *Server) PutSpec(ctx context.Context, req *connect.Request[kelsonv1alpha
 	if s.specs == nil {
 		return nil, unimplemented("the spec store")
 	}
+
+	// Agent policy (ADR-0025), and the reason it is on a *spec* write at all:
+	// the desired state of a propose-only environment includes the line that
+	// says it is propose-only. An agent that could rewrite production's
+	// document could set `agents: allow` and then deploy, which would make
+	// every other refusal in this file advisory. Every stored environment is
+	// checked against the policy the store holds for it *now*, never against
+	// the one in the incoming documents — see guardStored for why the check
+	// cannot be narrowed to the environments the request names.
+	if err := s.guardStored(ctx, model.AgentOpSpecWrite, spec.project.Metadata.Name); err != nil {
+		return nil, err
+	}
+
 	stored, err := s.specs.Put(ctx, spec.project.Metadata.Name, serverstate.Documents{
 		Project:      docs.GetProject(),
 		Environments: docs.GetEnvironments(),
@@ -125,6 +138,11 @@ func (s *Server) ListSpecs(ctx context.Context, _ *connect.Request[kelsonv1alpha
 func (s *Server) DeleteSpec(ctx context.Context, req *connect.Request[kelsonv1alpha1.DeleteSpecRequest]) (*connect.Response[kelsonv1alpha1.DeleteSpecResponse], error) {
 	if s.specs == nil {
 		return nil, unimplemented("the spec store")
+	}
+	// Deleting the project deletes every environment's desired state at once,
+	// so every stored environment's policy gets a say.
+	if err := s.guardStored(ctx, model.AgentOpSpecDelete, req.Msg.GetProject()); err != nil {
+		return nil, err
 	}
 	err := s.specs.Delete(ctx, req.Msg.GetProject(), serverstate.DeleteOptions{
 		ExpectedVersion: req.Msg.GetVersion(),

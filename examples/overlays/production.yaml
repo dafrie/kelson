@@ -18,7 +18,10 @@ spec:
       branch: main
       path: streaming/production
 
-  # `policy: {agents: propose-only}` returns with M7 (#141).
+  # Agent guardrails for this environment (ADR-0025). Humans are unaffected.
+  policy:
+    agents: propose-only
+    protect: [transcoder]
 
   components:
     - name: transcoder

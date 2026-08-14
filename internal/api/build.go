@@ -11,6 +11,7 @@ import (
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
 	"github.com/dafrie/kelson/internal/build"
 	"github.com/dafrie/kelson/internal/build/registry"
+	"github.com/dafrie/kelson/internal/model"
 	"github.com/dafrie/kelson/internal/redact"
 )
 
@@ -47,9 +48,6 @@ const logChunkBuffer = 8
 // failure is a ConnectRPC error rather than a fourth event, because a failed
 // build produced no image and there is nothing for a result message to say.
 func (s *Server) Build(ctx context.Context, req *connect.Request[kelsonv1alpha1.BuildRequest], stream *connect.ServerStream[kelsonv1alpha1.BuildResponse]) error {
-	if s.build == nil {
-		return unimplemented("in-cluster builds")
-	}
 	msg := req.Msg
 
 	// resolve, not renderSpec: a build reads spec.source, spec.build and the
@@ -59,6 +57,19 @@ func (s *Server) Build(ctx context.Context, req *connect.Request[kelsonv1alpha1.
 	project, environment, resolved, err := s.resolve(ctx, msg.GetSpec(), msg.GetEnvironment(), "")
 	if err != nil {
 		return failRequest(err)
+	}
+
+	// Agent policy (ADR-0025). A build changes no environment — it puts an
+	// artifact in a registry — so `propose-only` does not refuse it and
+	// `forbid: [build]` is the rule that does, which is why the guard runs
+	// unconditionally here and there is no dry-run rung to exempt.
+	if _, err := s.guard(ctx, model.AgentOpBuild, project.Metadata.Name, environment.Metadata.Name); err != nil {
+		return err
+	}
+	// After the guard, for the reason SetSecret states: a refusal must not
+	// depend on whether this server happens to have the seam.
+	if s.build == nil {
+		return unimplemented("in-cluster builds")
 	}
 
 	source := project.Spec.Source
