@@ -8,7 +8,9 @@ import {
   capabilityDetail,
   capabilityHeadline,
   capabilityStatus,
+  cnpgLine,
   confidenceWhy,
+  helmControllerLine,
   parseCapability,
   primaryClass,
   snapshotDriverLine,
@@ -49,7 +51,10 @@ export function CapabilityPanel() {
     [yaml],
   );
   const gaps = (profile.data?.gaps ?? []).filter(
-    (gap) => gap.field.startsWith("storageClasses") || gap.field.startsWith("cnpg"),
+    (gap) =>
+      gap.field.startsWith("storageClasses") ||
+      gap.field.startsWith("cnpg") ||
+      gap.field.startsWith("helmController"),
   );
   const primary = primaryClass(capability.classes);
 
@@ -70,7 +75,13 @@ export function CapabilityPanel() {
 
       {profile.data !== undefined ? (
         <>
-          <p className="k-cap__operator">{operatorLine(capability.cnpg)}</p>
+          <p className="k-cap__operator">{cnpgLine(capability.cnpg)}</p>
+          {/* The other operator a rendered manifest is delegated to (#107).
+              Same shape of statement as the line above: what kelson emits, and
+              what has to be running for it to become anything. */}
+          <p className="k-cap__operator">
+            {helmControllerLine(capability.helmController)}
+          </p>
 
           {capability.classes.length === 0 ? (
             <p className="k-env__note">
@@ -150,20 +161,3 @@ function GapRow({ gap }: { gap: ProfileGap }) {
   );
 }
 
-/**
- * CloudNativePG is the prerequisite for every postgres component (ADR-0005),
- * and its absence is a finding worth stating here: kelson renders the Cluster,
- * the operator is what turns it into a database.
- */
-function operatorLine(cnpg: { version: string; namespace: string } | undefined): string {
-  if (cnpg === undefined) {
-    return (
-      "CloudNativePG: not detected. kelson renders the Cluster manifest either way — " +
-      "an operator that is absent, or that detection could not see, shows up as an apply-time " +
-      "error from the API server rather than as a database."
-    );
-  }
-  const version = cnpg.version === "" ? "version unknown" : cnpg.version;
-  const where = cnpg.namespace === "" ? "" : `, in ${cnpg.namespace}`;
-  return `CloudNativePG: detected (${version}${where}).`;
-}

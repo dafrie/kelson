@@ -288,7 +288,10 @@ the profile travels as its canonical document, not as proto fields — and phras
 the answer at the point of use: *"Fast branching unavailable — your storage
 class (local-path) has no snapshot driver."* The confidence is shown rather than
 hidden, because `unknown` is not `none` and a reader told "we could not tell"
-can go and look.
+can go and look. It states two operator findings in the same shape for the same
+reason — CloudNativePG, without which a rendered `Cluster` is just a manifest,
+and Flux's helm-controller, without which a rendered `HelmRelease` installs
+nothing ([ADR-0016](../docs/adr/0016-delivery-flows-v0.md)).
 
 Both parsers (`parse.ts` for the spec, `capability.ts` for the profile) sit on
 `miniyaml.ts`, which reads block mappings, block sequences and one-line flow

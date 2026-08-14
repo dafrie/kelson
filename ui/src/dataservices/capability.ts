@@ -46,7 +46,7 @@ export interface StorageClassCapability {
   confidence: CloneConfidence;
 }
 
-/** The CloudNativePG finding: the operator every postgres component needs. */
+/** An operator finding: the version and where it runs, as the profile records it. */
 export interface OperatorFinding {
   version: string;
   namespace: string;
@@ -56,6 +56,15 @@ export interface StorageCapability {
   classes: StorageClassCapability[];
   /** Undefined when the profile records no CloudNativePG at all. */
   cnpg: OperatorFinding | undefined;
+  /**
+   * Flux's helm-controller (ADR-0016), undefined when the profile records none.
+   *
+   * A separate finding from Flux itself, because a Flux installation need not
+   * include it — flux-operator's FluxInstance takes a components subset — so a
+   * cluster can be running Flux and still have nothing to reconcile a
+   * HelmRelease (internal/clusterprofile/clusterprofile.go: HelmController).
+   */
+  helmController: OperatorFinding | undefined;
 }
 
 /**
@@ -78,13 +87,32 @@ export function parseCapability(profileYaml: string): StorageCapability {
     confidence: asConfidence(item.get("cloneConfidence")),
   }));
 
-  const cnpg = mappingFields(profileYaml, "cnpg");
   return {
     classes,
-    cnpg:
-      cnpg === undefined
-        ? undefined
-        : { version: cnpg.get("version") ?? "", namespace: cnpg.get("namespace") ?? "" },
+    cnpg: operatorFinding(profileYaml, "cnpg"),
+    helmController: operatorFinding(profileYaml, "helmController"),
+  };
+}
+
+/**
+ * One operator's finding, or undefined when the profile records none.
+ *
+ * The absent case is a nil pointer on the Go side, which marshals to nothing at
+ * all — so a missing key means "not detected", never "detected with no
+ * version". The `crds:` list under either key is a nested block (or a flow
+ * sequence) and is not read here: what it answers is whether the API server
+ * serves the kind, which is the judgement packages' question
+ * (internal/clusterprofile/helm), not this panel's.
+ */
+function operatorFinding(
+  profileYaml: string,
+  key: string,
+): OperatorFinding | undefined {
+  const fields = mappingFields(profileYaml, key);
+  if (fields === undefined) return undefined;
+  return {
+    version: fields.get("version") ?? "",
+    namespace: fields.get("namespace") ?? "",
   };
 }
 
@@ -198,6 +226,55 @@ export function snapshotDriverLine(sc: StorageClassCapability): string {
   return sc.volumeSnapshotClass === ""
     ? `snapshot driver: ${sc.snapshotDriver}`
     : `snapshot driver: ${sc.snapshotDriver} (VolumeSnapshotClass ${sc.volumeSnapshotClass})`;
+}
+
+/**
+ * CloudNativePG is the prerequisite for every postgres component (ADR-0005),
+ * and its absence is a finding worth stating here: kelson renders the Cluster,
+ * the operator is what turns it into a database.
+ */
+export function cnpgLine(cnpg: OperatorFinding | undefined): string {
+  if (cnpg === undefined) {
+    return (
+      "CloudNativePG: not detected. kelson renders the Cluster manifest either way — " +
+      "an operator that is absent, or that detection could not see, shows up as an apply-time " +
+      "error from the API server rather than as a database."
+    );
+  }
+  return `CloudNativePG: detected (${where(cnpg)}).`;
+}
+
+/**
+ * helm-controller is the same kind of statement for a `kind: helm` component
+ * (ADR-0016, issue #107): kelson renders a HelmRelease and delegates the chart,
+ * so what matters is whether the controller that reconciles it is there.
+ *
+ * Phrased like the CloudNativePG line above and for the same reason — both are
+ * "kelson renders the manifest either way, and this is what makes it do
+ * something" — and, like it, this reports detection rather than a verdict.
+ * Whether a *particular* chart component will work is
+ * internal/clusterprofile/helm's judgement, which reads the served CRDs and the
+ * source-controller finding too.
+ */
+export function helmControllerLine(helm: OperatorFinding | undefined): string {
+  if (helm === undefined) {
+    return (
+      "helm-controller: not detected. A `kind: helm` component renders a HelmRelease either way — " +
+      "with no controller to reconcile it, the cluster accepts the manifest and installs nothing."
+    );
+  }
+  return `helm-controller: detected (${where(helm)}). A \`kind: helm\` component has something to reconcile it.`;
+}
+
+/**
+ * An operator's version and namespace, in the parenthetical both lines use. An
+ * empty version is "installed, version unknown" — a real state the profile
+ * records (internal/clusterprofile: "must not be read as too old") — and it is
+ * named rather than left out, because a blank parenthesis reads as a bug.
+ */
+function where(finding: OperatorFinding): string {
+  const version = finding.version === "" ? "version unknown" : finding.version;
+  return finding.namespace === "" ? version : `${version}, in ${finding.namespace}`;
 }
 
 /**

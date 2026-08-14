@@ -4,7 +4,9 @@ import {
   capabilityDetail,
   capabilityHeadline,
   capabilityStatus,
+  cnpgLine,
   confidenceWhy,
+  helmControllerLine,
   parseCapability,
   primaryClass,
   snapshotDriverLine,
@@ -41,6 +43,14 @@ cnpg:
     crds:
         - clusters
         - databases
+flux:
+    version: 2.6.4
+    namespace: flux-system
+helmController:
+    version: 1.3.0
+    namespace: flux-system
+    crds:
+        - helmreleases
 incomplete:
     - field: storageClasses
       reason: no permission to list volumesnapshotclasses
@@ -81,6 +91,13 @@ describe("parseCapability", () => {
     expect(capability.classes[1]?.snapshotDriver).toBe("rbd.csi.ceph.com");
     // The nested `crds:` sequence must not leak into the operator's fields.
     expect(capability.cnpg).toEqual({ version: "1.30.0", namespace: "cnpg-system" });
+    // helm-controller is its own finding, read the same way and separate from
+    // the `flux:` block above it (internal/clusterprofile: a Flux install need
+    // not include it).
+    expect(capability.helmController).toEqual({
+      version: "1.3.0",
+      namespace: "flux-system",
+    });
   });
 
   it("treats an omitted capability as unknown, never as a promise", () => {
@@ -97,6 +114,7 @@ describe("parseCapability", () => {
 
     expect(capability.classes).toEqual([]);
     expect(capability.cnpg).toBeUndefined();
+    expect(capability.helmController).toBeUndefined();
   });
 
   it("picks the class a database would land on: the cluster default", () => {
@@ -173,6 +191,42 @@ describe("capability phrasing", () => {
     );
     expect(capabilityDetail(sc)).toContain("Unknown is not the same as unavailable");
     expect(capabilityStatus("unknown")).toBe("unknown");
+  });
+});
+
+describe("operator findings", () => {
+  it("states CloudNativePG as detected or not, and never as a promise", () => {
+    expect(cnpgLine(parseCapability(PROFILE).cnpg)).toBe(
+      "CloudNativePG: detected (1.30.0, in cnpg-system).",
+    );
+    expect(cnpgLine(undefined)).toContain("CloudNativePG: not detected.");
+    expect(cnpgLine(undefined)).toContain("kelson renders the Cluster manifest either way");
+  });
+
+  it("says the same thing about helm-controller, in the same shape (#107)", () => {
+    expect(helmControllerLine(parseCapability(PROFILE).helmController)).toBe(
+      "helm-controller: detected (1.3.0, in flux-system). A `kind: helm` component has something to reconcile it.",
+    );
+
+    // Absent is a finding, and the sentence says what that costs: the manifest
+    // still renders, and nothing installs the chart.
+    const absent = helmControllerLine(undefined);
+    expect(absent).toContain("helm-controller: not detected.");
+    expect(absent).toContain("renders a HelmRelease either way");
+    expect(absent).toContain("installs nothing");
+  });
+
+  it("names an installed operator whose version could not be read", () => {
+    // Empty Version is "installed, version unknown" in internal/clusterprofile
+    // and must not read as too old — or as a missing operator.
+    expect(
+      helmControllerLine(
+        parseCapability("helmController:\n    namespace: flux-system\n").helmController,
+      ),
+    ).toContain("detected (version unknown, in flux-system)");
+    expect(cnpgLine({ version: "", namespace: "" })).toBe(
+      "CloudNativePG: detected (version unknown).",
+    );
   });
 });
 
