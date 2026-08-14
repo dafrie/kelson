@@ -16,8 +16,6 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages
@@ -31,12 +29,6 @@ jobs:
         working-directory: website
     steps:
       - uses: actions/checkout@v4
-      # `enablement: true` turns Pages on (source: GitHub Actions) if it
-      # isn't already, so the first deploy needs no manual setup in the UI.
-      - uses: actions/configure-pages@v5
-        if: github.event_name != 'pull_request'
-        with:
-          enablement: true
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -46,19 +38,34 @@ jobs:
       # The site reads the markdown in docs/ in place, so the whole repo
       # checkout is the build input, not just website/.
       - run: npm run build
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
+          name: site
           path: website/build
+          # Keep .nojekyll — upload-artifact drops hidden files by default.
+          include-hidden-files: true
 
   deploy:
-    # Deploy on push to main and on manual dispatch. PR builds only validate
-    # the site (the `build` job) and never publish.
+    # Publish to the gh-pages branch on push to main and on manual dispatch;
+    # PR builds only validate (the `build` job) and never publish. Branch-based
+    # publishing rather than actions/deploy-pages because creating the Pages
+    # site through the API needs repo-admin rights the workflow token doesn't
+    # have — pushing a gh-pages branch enables Pages with that branch as the
+    # publishing source, so the first deploy needs no manual setup in the UI.
     if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      contents: write
     steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: site
+          path: build
+      - uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: build
+          # The published tree is a build product; one commit of history is
+          # enough and keeps the branch from growing without bound.
+          force_orphan: true
