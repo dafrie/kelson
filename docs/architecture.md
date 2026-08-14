@@ -9,9 +9,9 @@ properties fall out of keeping them honest.
 ┌──────────────────────────────────────────────────────────────────────┐
 │  AUTHORING          CLI · Web UI · HTTP API · MCP server             │
 │                     four peer clients of one typed API               │
-│                     intent → validated Application spec              │
+│                     intent → Project / Environment custom resources  │
 └─────────────────────────────┬────────────────────────────────────────┘
-                              │  Application spec
+                              │  kelson.dev/v1alpha1 CRs, validated
 ┌─────────────────────────────▼────────────────────────────────────────┐
 │  RENDERING          pure function: (spec, ClusterProfile) → manifests │
 │                     no cluster · no network · no clock · no DB        │
@@ -19,14 +19,14 @@ properties fall out of keeping them honest.
 └─────────────────────────────┬────────────────────────────────────────┘
                               │  plain Kubernetes YAML + provenance
 ┌─────────────────────────────▼────────────────────────────────────────┐
-│  DELIVERY           pluggable adapter, identical input                │
-│                     ├── direct    kelson server-side applies          │
-│                     └── flux      commit → GitRepository → Kustomize  │
+│  DELIVERY           one spine, run by kelson-controller               │
+│                     immutable OCI artifact per generation             │
+│                     → Flux OCIRepository + Kustomization              │
 └─────────────────────────────┬────────────────────────────────────────┘
                               │
 ┌─────────────────────────────▼────────────────────────────────────────┐
-│  OBSERVATION        watches live resources, correlates to app model   │
-│                     via kelson.dev/revision · status, logs, metrics   │
+│  OBSERVATION        Flux conditions + live workloads, correlated via  │
+│                     kelson.dev/revision → Environment.status          │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -34,9 +34,10 @@ properties fall out of keeping them honest.
 
 Purity is not aesthetics. It buys, concretely:
 
-- **Hybrid delivery for free.** Direct and GitOps modes consume identical rendered output; the only
-  difference is who calls `apply`. That is an adapter, not a second codebase. Incumbents cannot do this
-  because their rendering is entangled with their apply logic.
+- **The artifact is the revision.** Delivery is *publish these exact bytes and point a reconciler at
+  them* ([ADR-0028](adr/0028-delivery-spine.md)), so an unchanged spec produces a digest the registry
+  already holds and a rollback is a pointer move to bytes that cannot have changed. Determinism is the
+  precondition for all of that.
 - **Trustworthy previews.** A diff is only meaningful if rendering the same spec twice gives the same
   bytes.
 - **Cheap, fast tests.** The bulk of kelson's correctness lives in golden files, not in an integration
@@ -44,16 +45,27 @@ Purity is not aesthetics. It buys, concretely:
 - **A real escape hatch.** Because output is plain YAML, users can always inspect, patch or take it and
   leave.
 
+The renderer stays pure **Go**: CUE and timoni were evaluated as the engine during the rebuild and
+rejected, because the error taxonomy, the gate table and the golden corpus are the assets and an engine
+swap surrenders all three ([ADR-0029](adr/0029-renderer-stays-go.md)). `kind: timoni` is reserved as a
+future delegation kind ([#230](https://github.com/dafrie/kelson/issues/230)), not built.
+
 `ClusterProfile` is an input rather than an ambient lookup precisely to preserve purity — see below.
 
 ## The model
 
-Three concepts ([ADR-0006](adr/0006-project-application-environment.md)), and no more without a strong
-argument. Deliberately not an OAM-style hierarchy: developers should deploy before learning vocabulary.
+Three concepts ([ADR-0006](adr/0006-project-application-environment.md), leaf amended by
+[ADR-0014](adr/0014-components.md)), and no more without a strong argument. Deliberately not an
+OAM-style hierarchy: developers should deploy before learning vocabulary.
 
 - **Project** — shared configuration and ownership. Image, common environment, service bindings, team.
-- **Application** — one deployable, rendering to one workload.
+- **Component** — one deployable, rendering to one workload. Every leaf of the spec is one.
 - **Environment** — where it runs and what differs there.
+
+`Project` and `Environment` are **custom resources** in `kelson.dev/v1alpha1`, with status subresources,
+reconciled by `kelson-controller` ([ADR-0027](adr/0027-crd-native-control-plane.md)). The documents below
+are what you write and what the API server stores; `kubectl get environments -A` answers "what is kelson
+running here" without kelson.
 
 ```yaml
 apiVersion: kelson.dev/v1alpha1
@@ -104,15 +116,18 @@ Every leaf of the spec is a component, and the kind is derived where the shape s
 ([ADR-0014](adr/0014-components.md)).
 
 This is close to today's shape, not identical to it. The `kind: postgres` component and its `from:` binding
-render since [#89](https://github.com/dafrie/kelson/issues/89); `policy:` (M7), `secrets:` (M8) and
-`cluster:` (M10) are still rejected with `schema/not-implemented` rather than accepted and rendered as
-nothing ([#141](https://github.com/dafrie/kelson/issues/141)), as is `tools:` on a `kind: agent` component
-(M7, [#75](https://github.com/dafrie/kelson/issues/75)). See [the model reference](model.md) for the
+render since [#89](https://github.com/dafrie/kelson/issues/89); what a field cannot honour it refuses by
+name rather than accepting and rendering nothing ([#141](https://github.com/dafrie/kelson/issues/141)) —
+`tools:` on a `kind: agent` component (M7, [#75](https://github.com/dafrie/kelson/issues/75)),
+`policy.deployers` (tenancy, [#231](https://github.com/dafrie/kelson/issues/231)) and, since
+[ADR-0028](adr/0028-delivery-spine.md), `components[].release` pending its Flux-native design
+([#227](https://github.com/dafrie/kelson/issues/227)). See [the model reference](model.md) for the
 current table.
 
-Environments carry what differs between deployments — cluster, namespace, domain suffix, replica and
-resource overrides, delivery mode, policy. Projects stay environment-agnostic; environments stay
-project-agnostic.
+Environments carry what differs between deployments — namespace, domain suffix, replica and resource
+overrides, secrets backend, policy. Projects stay environment-agnostic; environments stay
+project-agnostic. There is no delivery mode to choose and no `cluster:` to name: one spine
+([ADR-0028](adr/0028-delivery-spine.md)), one cluster ([ADR-0031](adr/0031-single-cluster-single-tenant.md)).
 
 **Why the abstraction stays thin.** Every concept kelson invents is one that neither a new developer nor an
 LLM has seen before. Kubernetes primitives are in the training data; `kelson.dev` concepts are not. So the
@@ -121,7 +136,10 @@ long-tail requests than adding fields until the surface is overwhelming.
 
 ## ClusterProfile — adopt, don't install
 
-On install and periodically after, kelson probes the cluster and records what it finds:
+On install and periodically after, kelson probes the cluster and records what it finds. It is an input
+to the renderer and, since [ADR-0028](adr/0028-delivery-spine.md), an input to the controller's
+reconcile — step 2 of the loop below reads it, so what the cluster can do is decided in the process
+that has cluster access and never in the renderer:
 
 ```yaml
 kubernetes:      { version: v1.31.2, platform: k3s, nodeArchitectures: [amd64] }
@@ -139,7 +157,7 @@ incomplete:
     reason: 'list storageclasses.storage.k8s.io denied'
 ```
 
-Absent components are simply missing from the document — `cnpg` and `argocd` are not installed here.
+Absent components are simply missing from the document — `cnpg` is not installed here.
 An empty mapping such as `metricsServer: {}` means present with an unknown version, which is a different
 answer again.
 
@@ -171,13 +189,18 @@ Every rendered resource is stamped:
 metadata:
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: checkout
+    kelson.dev/application: checkout        # the component's project; renamed by #234
     kelson.dev/environment: production
   annotations:
     kelson.dev/spec-hash:        sha256:…   # normalized spec
-    kelson.dev/revision:         <git sha>  # Git mode
+    kelson.dev/revision:         <tag>      # the artifact tag: <generation>-<spec-hash-short>
     kelson.dev/renderer-version: 0.4.1
 ```
+
+`kelson.dev/application` is still the label the renderer writes and Deployments select on, and it stays
+that way until [#234](https://github.com/dafrie/kelson/issues/234) does the rename in one
+behaviour-change PR: a selector is immutable in Kubernetes, so renaming it out of sequence orphans every
+running workload.
 
 This is what lets the observation plane answer "is my change live?" without owning the apply step. The UI
 shows a real state machine rather than a spinner:
@@ -192,61 +215,95 @@ Proposed ──► Committed(sha) ──► Reconciling ──► Applied ──
 from "we changed how we render," which is the difference between a real diff and a spurious one across
 upgrades.
 
-## Delivery adapters
+## The delivery spine
 
-Both consume identical rendered manifests.
+There is one delivery path and it is a controller loop ([ADR-0028](adr/0028-delivery-spine.md)).
+`kelson-controller` reconciles an `Environment` in six steps:
 
-**`direct`** — kelson server-side applies with field management, so ownership conflicts surface as
-conflicts rather than silent overwrites. Rendered output is still versioned (implicit local repo or OCI
-artifact), so direct-mode users keep diffs, history and rollback.
+```
+1 validate   internal/model/validate.go           invalid → Ready=False, status.validationErrors[]
+2 detect     ClusterProfile                      what this cluster can do
+3 render     (spec, ClusterProfile) → manifests   pure, unchanged
+4 publish    immutable OCI artifact              <registry>/kelson/<project>-<env>:<gen>-<hash8>
+5 ensure     OCIRepository + Kustomization       server-side applied into kelson-system
+6 observe    Flux conditions + workloads         → statemachine → Environment.status
+```
 
-**`flux`** — commit to the configured repo and path, then poke `flux reconcile` rather than waiting for
-the poll interval. Perceived latency ends up comparable to direct mode.
+**The artifact is the revision.** The tag is the `Environment`'s `.metadata.generation` — allocated by
+the API server, monotonic, bumped only on spec change — plus the first eight hex of the resolved spec
+hash, so a tag is both sequence- and content-identified. It is written once and never rewritten, in
+exactly the Flux OCI artifact form PR previews already publish
+([ADR-0017](adr/0017-pr-previews.md) decision 10): one publisher, one media type, one determinism test.
 
-Flux is the only supported GitOps mode ([ADR-0012](adr/0012-flux-only-gitops.md)). The adapter seam
-stays pluggable — an Argo CD adapter existed, was removed pre-release to keep the feature × mode test
-matrix honest, and may return at "compose with existing Argo" scope.
+**kelson owns exactly two Flux objects per environment**, in `kelson-system` rather than the workload
+namespace, applied with server-side apply under field manager `kelson-controller`: an `OCIRepository`
+pinned to the tag just pushed, and a `Kustomization` with `path: ./`, `prune: true`, and
+`spec.decryption` when the environment's secret backend is `sops`. kustomize-controller then owns apply
+ordering, health assessment, pruning, drift correction and retry — five things kelson stops having
+opinions about.
 
-Delivery mode is **per-environment**, not per-install. Dev can be direct while production goes through
-pull requests. This is the practical shape of the hybrid decision.
+The three verbs follow from that shape rather than adding machinery:
+
+| Verb | What it is |
+|---|---|
+| history | the registry's tag list, mirrored bounded (20) into `Environment.status.history[]` |
+| rollback | the annotation `kelson.dev/rollback-to: <revision>`, which repoints the `OCIRepository` and **suspends re-rendering** until it is removed or the spec is edited |
+| promote | a patch to the target `Environment`'s per-component image pin, stamped `kelson.dev/promoted-from: <env>@<revision>` |
+
+**Flux is a hard requirement, and a registry is one too.** [ADR-0001](adr/0001-hybrid-state-model.md)
+sold "works without adopting GitOps" and that is withdrawn. [ADR-0030](adr/0030-flux-aio-install.md)
+answers the first cost by making the Flux install small; the second — someone deploying a pre-built
+public image who now needs somewhere to push artifacts — is the sharpest new edge in the rebuild, and
+`ExternalArtifact` ([#228](https://github.com/dafrie/kelson/issues/228)) is the only recorded way out.
+
+**Every deployment is already ejected.** `kelson eject` is deleted because it has nothing left to do:
+each revision *is* an immutable artifact of standard manifests, readable with tools that are not kelson.
+
+```sh
+flux pull artifact oci://<registry>/kelson/<project>-<env>:<rev> --output ./manifests
+kelson render -f project.yaml --env production        # the same bytes, offline
+```
+
+> **Transition (R1/R2, [#224](https://github.com/dafrie/kelson/issues/224) /
+> [#225](https://github.com/dafrie/kelson/issues/225)).** The controller is being scaffolded now. Until
+> R1 lands, the code still carries `Environment.spec.delivery{mode: direct|flux}`, the direct adapter
+> that server-side applies from `kelson-server`, the go-git writer, and the ConfigMap spec and history
+> stores. They are on the deletion list of ADR-0028 decision 9 and ADR-0027 decision 7, not part of the
+> design this page describes.
 
 ## Living with flux-operator
 
 kelson deliberately sits **above** [flux-operator](https://fluxoperator.dev/) rather than beside it:
 kelson is the app-altitude author and observer (spec, capability-aware rendering, diff/dry-run, build,
-app-shaped status, UI/API/MCP); flux-operator is the substrate manager (Flux install and upgrade via
-`FluxInstance`, per-PR preview lifecycle via `ResourceSet` + `ResourceSetInputProvider`, Flux health
-via `FluxReport`, its own Flux-altitude MCP server); the Flux controllers do the reconciling. kelson
-never reconciles in GitOps mode — it writes inputs and reads status.
+app-shaped status, UI/API/MCP); the Flux controllers do the reconciling; flux-operator is a substrate
+manager for the clusters that want one. kelson never reconciles — it publishes inputs and reads status.
 
-Four cluster shapes, one install path:
+Since [ADR-0030](adr/0030-flux-aio-install.md), flux-operator is **optional**. It earns its place for
+one feature: `ResourceSet` and `ResourceSetInputProvider` are its CRDs and PR previews are built on
+them. Nothing else needs it.
 
-1. **Existing Flux** — adopt. kelson installs nothing, writes rendered manifests to a path an existing
-   `Kustomization` already watches (a path nothing watches is a hard `not-watched` error), and reads
-   status back from Kustomization conditions and `FluxReport` where available. "Where available" is a
-   detection answer: `ClusterProfile.fluxOperator` records the operator's API group, so the adapter is
-   told which source to read rather than discovering it by trying one
-   ([#157](https://github.com/dafrie/kelson/issues/157)).
-2. **No GitOps** — direct mode; or, opting in, kelson installs flux-operator, creates a `FluxInstance`
-   and per-environment `GitRepository`/`Kustomization`, then behaves exactly like shape 1.
-3. **Bare VPS bootstrap** — k3s, then flux-operator, then the same additive installer as shape 2.
-   Bootstrap never forks the install path.
-4. **PR previews** — kelson renders `ResourceSet` templates (containing kelson-rendered app manifests
-   with provenance labels); flux-operator instantiates one environment per labelled pull request and
-   tears it down on close. kelson surfaces these previews, it does not manage their lifecycle.
+Three cluster shapes, one install path:
+
+1. **Existing Flux** — adopt. kelson installs nothing, whatever the Flux came from (`flux bootstrap`,
+   flux-operator, flux-aio, a vendor's distribution); the `ClusterProfile`'s `flux` finding is what
+   matters, not its provenance. The controller publishes artifacts and creates its own two objects, so
+   there is no path for an operator to wire up and no `not-watched` failure to hit.
+2. **No Flux** — `kelson install` offers **flux-aio**: all Flux controllers in one pod, pre-rendered at
+   kelson release time from a pinned timoni module, shipped as an ordinary pinned catalog row
+   ([ADR-0030](adr/0030-flux-aio-install.md)). Full Flux via flux-operator stays available as an
+   explicit choice. Offers, never assumes ([ADR-0003](adr/0003-install-model.md)).
+3. **PR previews** — flux-operator is added, and kelson renders a `ResourceSetInputProvider` and a
+   `ResourceSet` whose template instantiates one `OCIRepository` + `Kustomization` per change request.
+   flux-operator owns the lifecycle; kelson supplies the manifests and surfaces what is running.
 
 The division of labour is symmetric: kelson does not reimplement reconciliation, Flux lifecycle or
 PR-preview GC — and `ResourceSet` templating (plain input substitution) does not replace kelson's
-renderer, which is capability-aware via `ClusterProfile`. Integration is CR-only: flux-operator is
-AGPL-3.0 and kelson is MIT, so kelson creates and reads its CRs with the dynamic client and never
-imports its Go modules. For agents, kelson's MCP (app-altitude, [ADR-0008](adr/0008-mcp-surface.md))
-and flux-operator's MCP (Flux-altitude) are complementary layers an agent can hold simultaneously.
-
-### Upgrading direct → Git
-
-Because direct mode already maintains a rendered-manifest history, `kelson eject --to-git <repo>` replays
-that history into a real repository as commits and switches the environment's adapter. No re-modelling,
-no export/import step.
+renderer, which is capability-aware via `ClusterProfile`. That asymmetry is also why `ResourceSet` is
+not the spine: it is an AGPL-3.0 CRD flux-aio does not ship, and it is a template engine in the cluster
+([ADR-0028](adr/0028-delivery-spine.md) rationale). Integration is CR-only — kelson creates and reads
+flux-operator's CRs with the dynamic client and never imports its Go modules. For agents, kelson's MCP
+(app-altitude, [ADR-0008](adr/0008-mcp-surface.md)) and flux-operator's MCP (Flux-altitude) are
+complementary layers an agent can hold simultaneously.
 
 ## Preview: three levels
 
@@ -301,15 +358,18 @@ production:  { agents: propose-only }             # no live mutation without a h
 ```
 
 The insight that makes this coherent: **an agent proposing a change and a human opening a pull request
-travel the identical path.** Render, dry-run, policy check, review, merge. The GitOps mechanism *is* the
+travel the identical path.** Render, dry-run, policy check, review, merge — against the repository where
+the Project and Environment documents live, which is where kelson recommends they live
+([ADR-0027](adr/0027-crd-native-control-plane.md) decision 6). Review of the authored document *is* the
 agent safety mechanism — one thing to build, one thing to reason about.
 
 Built as of [ADR-0025](adr/0025-agent-policy.md): the block is read from the *stored* spec and enforced
 in the API server, so a modified client changes nothing, and blast-radius limits (`maxReplicas`,
 `protect`, `forbid`) sit beside `agents:`. What is not built yet is the last step of the sentence
 above — `propose-only` today refuses the mutation and points at the proposal (`dry_run=RENDER`, or
-`Diff`) rather than opening the pull request itself. The git writer has pull-request mode; the server
-has no forge credentials to use it with.
+`Diff`) rather than opening the pull request itself. Opening it needs a forge credential, which is a
+class of secret [ADR-0009](adr/0009-secrets.md) deliberately keeps out of the control plane; ADR-0028
+removes the git writer that would otherwise have carried it.
 
 **Observation, not polling.** A watch/SSE event stream lets agents react to outcomes. Plus structured
 `explain` endpoints — "why is this application degraded?" returns causal, machine-readable data
@@ -322,8 +382,8 @@ shows one — the revision that introduced the change being blamed
 
 ## Secrets
 
-The spec carries **references, never values**, and the goal is that a literal fails validation in every
-delivery mode. Enforcing it in the shared model validation means one rule covers CLI, UI, API and agents —
+The spec carries **references, never values**, and the goal is that a literal fails validation
+everywhere. Enforcing it in the shared model validation means one rule covers CLI, UI, API and agents —
 there is no second path to secure. Today's enforcement is honest-but-heuristic: a name pattern plus
 URL-credential detection, which catches the common shapes and misses creatively named literals; making
 the guarantee structural is tracked in [#82](https://github.com/dafrie/kelson/issues/82). Full reasoning
@@ -336,15 +396,16 @@ two is not a breaking change.
 |---|---|---|
 | `cluster` | Kubernetes Secret written by kelson via the API | v0.1 |
 | `externalSecrets` | Vault, AWS/GCP/Azure secret manager — kelson renders an `ExternalSecret` and never holds the value ([ADR-0020](adr/0020-external-secrets.md)) | v0.1 |
-| `sops` | Encrypted with age in the delivery repository, decrypted in-cluster by Flux — kelson encrypts in memory and holds no private key ([ADR-0022](adr/0022-sops-age.md)) | v0.1 |
+| `sops` | Encrypted with age **inside the published artifact**, decrypted in-cluster by kustomize-controller — kelson encrypts in memory and holds no private key ([ADR-0022](adr/0022-sops-age.md), transport amended by [ADR-0028](adr/0028-delivery-spine.md) §7) | v0.1 |
 
 Rendered manifests contain only `secretKeyRef` under all three, and **kelson does not persist secret
-values** — the store is the cluster, the delivery repository or your secret manager, and kelson reads
-back masked for display. No prerequisites for the default: `kelson secret set checkout-db url=…`.
+values** — the store is the cluster, the artifact or your secret manager, and kelson reads back masked
+for display. No prerequisites for the default: `kelson secret set checkout-db url=…`.
 
 The cost of the `cluster` backend is that secrets are not part of the reproducible artifact, so a cluster
-rebuild from Git alone will not restore them. `sops` closes that — the credential is in the artifact,
-encrypted, and the only thing that has to survive outside Git is one age identity. See
+rebuilt from the artifact alone will not have them. `sops` closes that — the encrypted Secret ships in
+the artifact beside the workloads that reference it, the `Kustomization` kelson writes carries the
+decryption block, and the only thing that has to survive outside is one age identity. See
 [Secrets](secrets.md).
 
 Two failures not repeated from the category: build-time secrets go through BuildKit secret mounts rather
@@ -406,16 +467,37 @@ Two invariants: backups are configured **once per environment**, never per datab
 
 | Component | Language | Role |
 |---|---|---|
-| `kelson-server` | Go | API, renderer, delivery adapters, observation, policy |
-| `kelson-controller` | Go, controller-runtime | Reconciles CRDs in direct mode; ClusterProfile detection |
-| `kelson` (CLI) | Go | Local render/diff/deploy; single static binary |
+| `kelson-controller` | Go, controller-runtime | **The spine.** Reconciles `Project` and `Environment`: validate, detect, render, publish, ensure the Flux pair, observe ([ADR-0028](adr/0028-delivery-spine.md)). Being scaffolded now ([#224](https://github.com/dafrie/kelson/issues/224)) |
+| `kelson-server` | Go | **A stateless façade over the CRs.** Same ConnectRPC wire surface; reads and writes custom resources with server-side apply, reads `Environment.status` instead of computing it ([ADR-0027](adr/0027-crd-native-control-plane.md) decision 6). Also serves the web UI, builds, secrets, agent identities and the audit trail |
+| `kelson` (CLI) | Go | Local render/diff/deploy, cluster-direct verbs; single static binary |
 | `kelson-mcp` | Go | MCP server; task-shaped surface with capability parity to the API ([ADR-0008](adr/0008-mcp-surface.md)) |
-| `kelson-ui` | TypeScript / React | Web UI |
+| `kelson-ui` | TypeScript / React | Web UI. Shipped — served from the same listener as the API |
+
+The controller is built on controller-runtime as a **library** and not on kubebuilder: the repository
+already has three generated-artifact pipelines sharing one convention (committed output, drift test,
+`make` target), and the CRD schemas come out of the same `internal/schemagen` reflection that produces
+`schema/*.json` rather than from a second marker-driven generator. Spec structs stay in
+`internal/model`; `api/kelson/v1alpha1` holds only the CR wrappers, the status types and generated
+deepcopy ([ADR-0027](adr/0027-crd-native-control-plane.md) decisions 2–4).
 
 API transport: ConnectRPC (gRPC and HTTP/JSON from one schema definition, giving the CLI, UI and MCP
 server generated clients from a single source). Auth via OIDC, mapping to Kubernetes RBAC through
 impersonation where the deployment model allows, so kelson does not become a privilege-escalation
 bypass around the cluster's own authorization.
+
+## Tracked, not built
+
+Recorded so the next design conversation starts from the record rather than rediscovering it. None of
+these exist, and each has an issue rather than a stub in the schema.
+
+| Direction | Why it is not here | Tracked |
+|---|---|---|
+| Workspace / Team, tenancy and `policy.deployers` | Tenancy needs a human subject kelson does not model; built on "holds the shared password" it would be authorization theatre ([ADR-0031](adr/0031-single-cluster-single-tenant.md), [#84](https://github.com/dafrie/kelson/issues/84)) | [#231](https://github.com/dafrie/kelson/issues/231) |
+| Multi-cluster placement | Not a field: it changes where credentials live, what a `ClusterProfile` is and where the controller runs. `Environment.spec.cluster` is deleted rather than kept as a guessed spelling | [#232](https://github.com/dafrie/kelson/issues/232) |
+| Admission webhook for the CRDs | Costs a serving certificate, a `CABundle` to rotate and a failure mode where broken kelson rejects unrelated applies. Generated CEL rules on the CRD schema are what make deferring it tolerable | [#229](https://github.com/dafrie/kelson/issues/229) |
+| `kind: timoni` | Reserved, mirroring `kind: helm`. Timoni is a packaging layer *below* kelson's authoring layer, and there is no GA in-cluster timoni controller to delegate to ([ADR-0029](adr/0029-renderer-stays-go.md)) | [#230](https://github.com/dafrie/kelson/issues/230) |
+| `ExternalArtifact` (Flux ≥2.7) | The registry-less path. An addition to the spine, not a replacement — and an unused second publishing path is a second publishing path to test | [#228](https://github.com/dafrie/kelson/issues/228) |
+| Flux-native release hooks | Two `Kustomization`s with `dependsOn`. Possible only now that kelson owns the Kustomization; `components[].release` is a validated refusal until it is built | [#227](https://github.com/dafrie/kelson/issues/227) |
 
 ## What we deliberately do not build
 

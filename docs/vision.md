@@ -20,13 +20,19 @@ This inverts the usual instinct. The conventional PaaS move is to invent concept
 
 So kelson generates standard Kubernetes and stays out of the way. The abstraction is thin on purpose.
 
+And kelson is itself Kubernetes-shaped: you author a `Project` and an `Environment` as **custom
+resources** in your cluster ([ADR-0027](adr/0027-crd-native-control-plane.md)), a controller renders
+them to plain manifests, publishes those as an immutable OCI artifact, and Flux applies it
+([ADR-0028](adr/0028-delivery-spine.md)). `kubectl` works on kelson's own objects the way it works on
+everything else, and what lands in your cluster is YAML you could have written.
+
 ## Principles
 
 ### 1. Deletable by design
-Removing kelson should change nothing about running workloads. This is only true if the output is plain Kubernetes YAML that stands alone, so every other decision defers to it.
+Removing kelson should change nothing about running workloads. This is only true if the output is plain Kubernetes YAML that stands alone, so every other decision defers to it. It is now the delivery mechanism rather than an export of it: every revision kelson ever deployed is an immutable artifact of standard manifests you can pull with `flux pull artifact` and apply with `kubectl` ([ADR-0028](adr/0028-delivery-spine.md)) — which is why `kelson eject` was deleted rather than kept.
 
 ### 2. The renderer is a pure function
-`(spec, ClusterProfile) → manifests` touches no cluster, no network, no clock, no database. Deterministic and testable with golden files. Hybrid delivery, trustworthy previews and cheap tests all follow from this one property.
+`(spec, ClusterProfile) → manifests` touches no cluster, no network, no clock, no database. Deterministic and testable with golden files. Trustworthy previews, cheap tests and an artifact whose digest *is* the revision all follow from this one property. It stays pure Go: CUE and timoni were evaluated as the engine and rejected, because the error taxonomy and the golden corpus are the assets ([ADR-0029](adr/0029-renderer-stays-go.md)).
 
 ### 3. Thin abstraction, real escape hatch
 Three fields to deploy. Every generated resource inspectable. Raw patches and arbitrary manifests available inside the app model, so nobody has to leave the platform to do something it didn't anticipate.
@@ -55,19 +61,22 @@ MIT. Every feature. SSO, RBAC and audit logs are security basics, not upsells. P
 Three concepts, and no more without a strong argument. See [ADR-0006](adr/0006-project-application-environment.md).
 
 - **Project** — a grouping with shared configuration. A product or a team's surface area.
-- **Application** — one deployable. A web service, a worker, a cron job. Renders to one workload.
-- **Environment** — where an Application runs and what differs there. Cluster, namespace, domain, delivery mode, policy.
+- **Component** — one deployable. A web service, a worker, a cron job, a managed database. Renders to one workload ([ADR-0014](adr/0014-components.md) unified the leaf; ADR-0006 called it an Application).
+- **Environment** — where a Component runs and what differs there. Namespace, domain, secrets backend, policy.
 
-A typical service is one Project containing three Applications, deployed into two or three Environments.
+A typical service is one Project containing three Components, deployed into two or three Environments.
+Project and Environment are custom resources; a Component is an entry in the Project's `components:`
+list.
 
 ## Non-goals
 
 - **Not a Kubernetes distribution.** kelson can provision k3s or Talos for someone starting from nothing, but it delegates to them and doesn't manage node pools, upgrades or CNI.
 - **Not a general-purpose dashboard.** Headlamp and k9s exist. kelson shows applications, not every resource in the cluster.
 - **Not a CI system.** kelson builds images and deploys them. It doesn't replace GitHub Actions or run your test matrix.
-- **Not a replacement for Flux.** kelson can install Flux (via flux-operator) for someone who has nothing, but composing with an existing installation is the design point. Flux is the only supported GitOps mode ([ADR-0012](adr/0012-flux-only-gitops.md)); the adapter seam stays open for others.
+- **Not a replacement for Flux.** Flux does the reconciling, always and only ([ADR-0028](adr/0028-delivery-spine.md)) — composing with an existing installation is the design point, and a cluster with none is offered flux-aio: every Flux controller in one pod, sized for a small cluster ([ADR-0030](adr/0030-flux-aio-install.md)). There is no second delivery path and no adapter seam; a second reconciler would be a new decision, argued on evidence.
 - **Not a monitoring stack.** kelson adopts your Prometheus, Loki and Grafana and renders per-application views. It doesn't ship a TSDB.
 - **Not cloud infrastructure provisioning.** No Crossplane-style resource graph. If you need an RDS instance, provision it with Crossplane or Terraform and reference the result.
+- **Not multi-cluster, and not multi-tenant.** One cluster, one tenant, for now and on the record ([ADR-0031](adr/0031-single-cluster-single-tenant.md)). Teams with a cluster per environment can run one kelson per cluster, which means no cross-cluster promotion and no single view — a real limitation, recorded with the prior art the design will start from rather than pretended away with a spec field.
 
 ## What success looks like
 

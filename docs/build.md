@@ -84,15 +84,15 @@ So the destination arrives as a flag:
 | tag | `<project>-<project>-<short revision>` — e.g. `shop-shop-0123456789ab` |
 | reference | `<repository>@sha256:…` — what the command prints |
 
-**One repository per Project, not per Application.** The source is
-project-level (`spec.source`), so the build is too. Model rule P3 resolves an
-Application's image to its own `image:` if it has one and to the Project's
-otherwise, which means one built image feeds every application that does not
+**One repository per Project, not per Component.** The source is
+project-level (`spec.source`), so the build is too. Model rule P3 resolves a
+Component's image to its own `image:` if it has one and to the Project's
+otherwise, which means one built image feeds every component that does not
 name one. One build, one repository, one digest pinned into all of them.
 
 The tag repeats the project name because `registry.Tag` takes
-`(project, application, revision)` and a project-level build has no single
-application to put in the middle slot. Naming the first application there would
+`(project, component, revision)` and a project-level build has no single
+component to put in the middle slot. Naming the first component there would
 read as "this image belongs to `web`", which is exactly what it does not mean;
 repeating the project is redundant but true. Nothing depends on the tag —
 reproducibility comes from the digest, and the tag exists so a human reading a

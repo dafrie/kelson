@@ -1,28 +1,78 @@
-# Delivery plane — adapter interface and concurrency
+# Delivery plane — the spine, and concurrency
 
-Design reference for the delivery plane (M2). Implements issues #32, #38, #40.
-The load-bearing rule — **adapters never influence rendering** — is stated in
+Design reference for the delivery plane. The load-bearing rule —
+**delivery never influences rendering** — is stated in
 [ADR-0001](adr/0001-hybrid-state-model.md) and enforced by the package
 structure: the renderer is a pure function; `internal/delivery` only ever
 receives already-rendered manifests.
 
-## The adapter interface
+There is **one** delivery path ([ADR-0028](adr/0028-delivery-spine.md)). The
+`Adapter` / `Registry` / `Capabilities` seam ADR-0001 introduced is collapsed
+with the modes it selected between: one implementation needs no interface to
+choose it.
 
-Three concepts, mirrored in `internal/delivery`:
+## The spine
 
-- **`Adapter`** — one delivery mode's last mile: `Apply`, `Status`, `History`,
-  `Rollback`.
-- **`Capabilities`** — negotiation, so callers know up front whether PRs,
-  git or rollback are supported (`SupportsPR`, `RequiresGit`,
-  `SupportsRollback`).
-- **`Registry`** — per-environment adapter selection by delivery mode
-  (`direct` / `flux`; the `argocd` adapter is removed per
-  [ADR-0012](adr/0012-flux-only-gitops.md), and the seam is where it would
-  return).
+`kelson-controller` reconciles an `Environment` in six steps
+([ADR-0027](adr/0027-crd-native-control-plane.md) creates it,
+[ADR-0028](adr/0028-delivery-spine.md) is what it does):
 
-A further adapter requires: implement `Adapter`, register it. No renderer
-changes. That is the acceptance test for #32 and it is structural, not
-aspirational.
+| Step | What happens | Failure |
+|---|---|---|
+| 1 validate | `internal/model/validate.go` | `Ready=False`, `reason: SpecInvalid`, `status.validationErrors[]`, stop |
+| 2 detect | read the `ClusterProfile` | a capability gap, reported with what would close it |
+| 3 render | `(spec, ClusterProfile) → manifests`, pure | a structured render error |
+| 4 publish | push the set as an immutable OCI artifact | a registry error; nothing downstream runs |
+| 5 ensure | server-side apply the `OCIRepository` + `Kustomization` pair | a conflict on a field another manager owns |
+| 6 observe | Flux conditions + workloads → the state machine → `Environment.status` | see [the three answers](#status-one-state-machine-three-answers) |
+
+**The artifact.** `<registry>/kelson/<project>-<environment>:<generation>-<spec-hash-short>`.
+`<generation>` is the `Environment`'s `.metadata.generation` — allocated by the
+API server, monotonic, bumped on spec change and not on status writes, so
+kelson allocates no revision numbers of its own. The tag is written once and
+never rewritten; republishing an unchanged spec produces a digest the registry
+already holds and uploads nothing. The publisher is the one PR previews already
+use ([ADR-0017](adr/0017-pr-previews.md) decision 10) — one media type, one
+determinism test, two callers.
+
+**The two objects.** An `OCIRepository` pinned to the tag just pushed, and a
+`Kustomization` with `path: ./`, `prune: true` and `spec.decryption` when the
+environment's secret backend is `sops`. Both live in `kelson-system`, not the
+workload namespace — they are kelson's objects, and a `Kustomization` deleted by
+someone tidying an application namespace is a deployment that silently stops
+reconciling. Both are applied with server-side apply under field manager
+`kelson-controller` and carry the provenance labels, so
+`kubectl get kustomizations -n kelson-system -l kelson.dev/project=x` is the
+inventory.
+
+What kelson stops owning is the interesting half: kustomize-controller does
+apply ordering, wait-for-ready, prune by inventory, drift correction and retry
+with backoff. Those are the five things the direct adapter reimplemented.
+
+### History, rollback, promotion
+
+| Verb | Mechanism |
+|---|---|
+| history | the registry's tag list. `Environment.status.history[]` mirrors the most recent 20 (revision, digest, spec hash, timestamp, resolved images, outcome) for humans and the API; the record is the registry, and a query past the window is a registry query |
+| rollback | the annotation `kelson.dev/rollback-to: <revision>` on the `Environment`. The controller repoints the `OCIRepository` at that immutable tag and **suspends re-render** — steps 3 and 4 do not run — so the current spec cannot be republished over what you just rolled back to. Two things resume tracking and only two: removing the annotation, or editing the spec. The state is visible: `Progressing=False`, `reason: RollbackPinned`, naming both ways out |
+| promotion | an authoring change, not a delivery operation: patch the target Environment's per-component image pin, stamped `kelson.dev/promoted-from: <env>@<revision>`, then reconcile normally ([the model](model.md#promotion)) |
+
+Rollback stops being a replay. Nothing re-renders, nothing re-applies from a
+stored journal — a pointer moves to bytes that already exist and cannot have
+changed.
+
+> **Transition (R1/R2, [#224](https://github.com/dafrie/kelson/issues/224) /
+> [#225](https://github.com/dafrie/kelson/issues/225)).** The controller is
+> being scaffolded now. `internal/delivery` still contains `direct` (the
+> server-side applier, its wait logic and its JSONL history store), `git` (the
+> go-git writer), `rollback`, and the `Adapter`/`Registry`/`Capabilities` seam;
+> `internal/serverstate` still holds the ConfigMap spec and history stores.
+> ADR-0028 decision 9 deletes all of it. Surviving: `flux`, `statemachine`,
+> `install`, `uninstall`, `kube`, `dryrun`, `provenance.go`, and `ManifestFiles`
+> from `git`, which is the artifact's layout function and moves to the
+> publisher. Until R1 lands, an environment with `delivery.mode: direct` is
+> still applied by kelson itself and the sections below marked *transitional*
+> describe what it does.
 
 ### Status: one state machine, three answers
 
@@ -47,54 +97,46 @@ three answers that must never be confused:
 Every failure transition carries a `Cause` naming the responsible component
 and the reason. The engine, the transition table, provenance correlation and
 the timeout policy are specified in [the state machine](statemachine.md)
-(`internal/delivery/statemachine`); adapters plug into it by implementing a
-single watch-based `Source`.
+(`internal/delivery/statemachine`); step 6 feeds it by implementing a single
+watch-based `Source` over the Flux objects and the workloads.
 
-### The release barrier in direct mode
+### Release commands, and the barrier that is not built yet
 
 A rendered set is *ordered* — namespaces first, then the data services and charts, then the release
 Job of any component that declares one, then the workloads — and order is all a set of manifests can
 express ([#89](https://github.com/dafrie/kelson/issues/89)). Applying a Job before a Deployment does
-not mean the Job finished first.
+not mean the Job finished first, so somebody has to wait.
 
-The direct adapter therefore **stops** at the release Job
-([#104](https://github.com/dafrie/kelson/issues/104), [ADR-0019](adr/0019-release-command-hook.md)):
-it applies everything up to and including the Job, polls the Job to a terminal state, and only then
-applies the rest of the set. It is the one point in the apply loop where the adapter waits, and it is
-bounded twice over — by the Job's own `activeDeadlineSeconds`, and by the caller's context (the
-`--timeout` of `kelson deploy`).
+The only path that could wait was the one where kelson performed the apply itself, and that path is
+gone. `components[].release` is therefore a **validated refusal**
+([ADR-0028](adr/0028-delivery-spine.md) decision 8): it is in `internal/model`'s gate table, refused by
+name, rendering nothing, with [#227](https://github.com/dafrie/kelson/issues/227) in the message —
+the mechanism this project already uses for a field it cannot honour, and strictly better than silently
+dropping a migration.
 
-Three consequences, all of them the point:
+**The Flux-native replacement is known and not built.** Two `Kustomization`s with `dependsOn`: the
+first containing the release Job with a health check, the second the workloads. kustomize-controller
+already waits on `dependsOn` and already assesses Job health, so the barrier becomes a dependency
+edge instead of a pause in an apply loop — and it is possible only because kelson now owns the
+`Kustomization` ([ADR-0028](adr/0028-delivery-spine.md) decision 3). ADR-0019's own "Revisit when"
+predicted exactly this, and said that when it happens ADR-0019 is superseded rather than amended.
 
-- **A failed migration fails the deploy before anything rolls.** No workload of the new revision is
-  applied, no history entry is recorded, nothing is pruned — so the previous revision keeps serving.
-  The error is `delivery/release-failed`, naming the Job and carrying the tail of its pod's output.
-- **The wait is visible.** The adapter reports the Job through `Options.Progress` in the same
-  `delivery.Status` shape the state machine consumes: `Reconciling` while it runs, `Rejected` when it
-  fails, with the Job in `Cause` and in `Detail["releaseJob"]`. No new phase — see the ADR.
-- **A rollback does not re-run it.** Rolling the application back does not roll a migration back, so
-  re-running the old revision's release command would only repeat work the database has already done.
+> **Transitional ([#224](https://github.com/dafrie/kelson/issues/224)).** Until R1 lands, the direct
+> adapter still stops at the release Job, polls it to a terminal state and only then applies the rest
+> of the set, bounded by the Job's `activeDeadlineSeconds` and the caller's context. A failure is
+> `delivery/release-failed`, naming the Job and carrying the tail of its pod's output, and no workload
+> of the new revision is applied. That behaviour is being deleted, not extended.
 
-**Flux mode refuses the field rather than pretending.** kelson commits files and a `Kustomization`
-kelson does not own applies them in one pass; there is no commit that says "and stop here until this
-Job is Complete". Rendering it anyway would produce migrations that run beside the rollout instead of
-before it, so `release:` in a non-direct environment is a render error
-(`render/release-requires-direct`) with the gap named in the message.
+### History is the registry
 
-### History, uniform across modes
+There is no rendered-history store to keep. The registry holds every artifact ever published for an
+environment, immutably, and that *is* the history — nothing stores rendered manifests a second time,
+and the 1 MiB ConfigMap budget of [ADR-0013](adr/0013-server-state-and-api-v0.md) §1 stops being
+arithmetic the code has to do. `Environment.status.history[]` is a bounded mirror of the most recent 20
+entries for the CLI, the UI and the API to read in one call.
 
-Direct mode keeps a rendered-history store (issue #38); Git modes derive
-history from the repository. Both surface through the same `History() []Entry`
-API so the CLI/UI/API see one shape. `kelson eject --to-git` later replays
-that history rather than exporting it.
-
-### Promotion is not a delivery operation
-
-Moving a known-good image from one environment to another is an *authoring* change, not a mode of
-delivery: it edits the target Environment's per-component image pin and then takes the ordinary deploy
-path, whichever adapter that environment uses. No adapter knows what a promotion is, and none needs to
-([ADR-0016](adr/0016-delivery-flows-v0.md); the field is documented in
-[the model](model.md#promotion)).
+The cost, stated where it matters: **a lifecycle policy on your registry is now a data-retention
+policy on kelson's history**, and nothing in kelson says so at the point where you set it.
 
 ## Preview: admission rejections and what the dry-run cannot see (#45)
 
@@ -191,27 +233,31 @@ incomplete preview must never read as a clean one.
 
 ## Optimistic concurrency (#40)
 
-Concurrent edits — agent vs human, or a hand-edit in Git mode vs a commit —
+Concurrent edits — agent vs human, or a `kubectl apply` against a UI write —
 must conflict loudly, never last-write-wins.
 
 ### Spec versioning
 
-The authoring plane carries a version per spec document. The API accepts an
-expected version on writes; a mismatch returns `delivery/conflict` with both
-the expected and the observed version, plus the field that diverged.
+The spec's version is the custom resource's `resourceVersion`, carried through
+the API as the same opaque `version` string it always was
+([ADR-0027](adr/0027-crd-native-control-plane.md) decision 6). The API accepts
+an expected version on writes and a mismatch is `store/version-conflict`; the
+store vocabulary is unchanged, only what it is a vocabulary *about*.
 
-### Git mode
+### Field ownership
 
-Read-modify-write against the latest HEAD. kelson never renders from cached
-state. If HEAD moved between read and write, the write fails with a conflict
-rather than being force-pushed.
+Writes are server-side applies with a named field manager — `kelson-server` for
+API writes, `kelson-controller` for the Flux objects it owns — so two managers
+disagreeing about a field is a conflict the API server reports rather than a
+silent overwrite. The controller writes only `status`, which is a subresource,
+so a controller status write cannot race a user's spec write at all.
 
 ### Which operations may retry automatically
 
-- **May retry**: applying an unchanged manifest set (idempotent), a git commit
-  that lost a race before touching the remote, a rollback to the current
-  revision.
-- **Must surface**: a spec write that conflicts, a PR merge conflict, a
-  server-side apply that conflicts on a field owned by another controller.
-  These are the "discard human intent invisibly" failures and always go to the
-  user as a structured `delivery/conflict` error.
+- **May retry**: publishing an unchanged manifest set (the digest already
+  exists), a reconcile that lost a race and can re-read, a rollback to the
+  revision already pinned.
+- **Must surface**: a spec write that conflicts on `resourceVersion`, and a
+  server-side apply that conflicts on a field owned by another manager. These
+  are the "discard human intent invisibly" failures and always go to the user
+  as a structured conflict error.

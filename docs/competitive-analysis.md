@@ -65,9 +65,13 @@ failure that broke working installations. It also implements its own pipeline an
 delegating to Argo or Flux, so it does not compose with an existing GitOps setup. Small community, real
 bus-factor risk.
 
-**Lesson.** CRDs-over-database is correct and we adopt it. Vendoring charts for stateful software is a
-liability — see [ADR-0005](adr/0005-delegate-to-operators.md). And a PaaS that brings its own CD engine
-cannot coexist with the GitOps tooling its target users already run.
+**Lesson.** CRDs-over-database is correct and kelson adopts it — literally, since
+[ADR-0027](adr/0027-crd-native-control-plane.md): `Project` and `Environment` are custom resources with
+status subresources. Vendoring charts for stateful software is a liability — see
+[ADR-0005](adr/0005-delegate-to-operators.md), and [ADR-0030](adr/0030-flux-aio-install.md) for the one
+carefully fenced exception and why it is not the same thing. And a PaaS that brings its own CD engine
+cannot coexist with the GitOps tooling its target users already run, which is why kelson brings none:
+Flux does the reconciling ([ADR-0028](adr/0028-delivery-spine.md)).
 
 ### Canine — the most direct competitor
 
@@ -99,9 +103,9 @@ charts and applies them directly. `cluster_package/installer` installs its own p
 than adopting what is present. There is no rendered-artifact model, no preview, and no dry-run.
 
 **This is the project kelson must be meaningfully different from, not merely better than.** The
-differentiation is architectural rather than feature-count: rendered artifacts instead of database state,
-composition with existing GitOps tooling, adoption instead of installation, and agent *safety* rather than
-agent *tooling*.
+differentiation is architectural rather than feature-count: standard manifests delivered as immutable
+artifacts instead of database state, composition with the GitOps tooling users already run instead of a
+private CD engine, adoption instead of installation, and agent *safety* rather than agent *tooling*.
 
 ### Devtron — the enterprise option
 
@@ -170,12 +174,12 @@ Uptime Kuma by hand and wire dashboards themselves.
 
 | Dimension | Incumbents | kelson |
 |---|---|---|
-| Source of truth | Platform database | Rendered manifests in Git (or an implicit local repo) |
-| Delivery | Platform applies | Pluggable: direct, Flux, or Argo CD |
+| Source of truth | Platform database | `Project` / `Environment` custom resources; the deployed state is an immutable OCI artifact of rendered manifests |
+| Delivery | Platform applies | Standard manifests, published as an artifact, reconciled by Flux — one path, no adapters |
 | Existing cluster components | Ignored, duplicated | Detected and adopted |
 | Preview before deploy | None, or a text diff | Rendered diff → server-side dry-run → ephemeral live |
 | Stateful workloads | Containers with PVCs | Upstream operators (CNPG, Strimzi, Valkey) |
 | Agent tooling | Absent, or MCP tools (Canine) | Same, and not the differentiator |
 | Agent safety | Human tokens, no dry-run, no policy | Scoped identities, dry-run everywhere, per-env policy |
-| Uninstall | Destructive | Leaves running apps and a plain Kustomize repo |
+| Uninstall | Destructive | Leaves running apps, and every revision is already a plain manifest set anyone can pull |
 | SSO / RBAC / audit | Missing or paywalled | Free, always |

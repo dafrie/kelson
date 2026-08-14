@@ -3,11 +3,46 @@
 Four phases, seventeen milestones plus the v0.2 data split (M9b). Each milestone has a tracking epic
 issue; the [issue tracker](https://github.com/dafrie/kelson/issues) is the live view.
 
-This is a long project. The renderer and delivery adapters came first because everything else depends
-on their properties. The 2026-08-12 architecture review added a hard rule to that: **the spine before
-the leaves.** M4's exit criterion — a spec deployed end to end, proven on kind (#86) — gates
-everything visible, because the review found finished, well-tested subsystems (~10k LOC) that nothing
-had ever called.
+This is a long project. The renderer came first because everything else depends on its properties. The
+2026-08-12 architecture review added a hard rule to that: **the spine before the leaves.** A spec
+deployed end to end, proven on kind (#86), gates everything visible, because the review found finished,
+well-tested subsystems (~10k LOC) that nothing had ever called.
+
+**The rebuild below is that rule applied to itself.** ADRs 0027–0031 replace the spine — not a leaf —
+and the phases are ordered so that nothing visible is rebuilt before the thing underneath it works on a
+kind cluster.
+
+---
+
+## Now: the CRD-native rebuild (epic [#223](https://github.com/dafrie/kelson/issues/223))
+
+Five ADRs taken as one decision on 2026-08-14, pre-release and therefore cheap:
+[ADR-0027](adr/0027-crd-native-control-plane.md) puts state in `Project` and `Environment` custom
+resources reconciled by a controller; [ADR-0028](adr/0028-delivery-spine.md) replaces delivery modes
+with one spine — render, push an immutable OCI artifact, let Flux reconcile;
+[ADR-0029](adr/0029-renderer-stays-go.md) keeps the renderer pure Go after evaluating CUE and timoni;
+[ADR-0030](adr/0030-flux-aio-install.md) makes Flux installable on a small cluster;
+[ADR-0031](adr/0031-single-cluster-single-tenant.md) draws the scope line at one cluster, one tenant.
+
+| Phase | Scope | Exit |
+|---|---|---|
+| **R1 · The spine** ([#224](https://github.com/dafrie/kelson/issues/224)) | `api/kelson/v1alpha1`, CRD generation out of `internal/schemagen`, `cmd/kelson-controller` on controller-runtime, the OCI publisher, the `OCIRepository` + `Kustomization` pair, status and history mirror. Deletes `internal/delivery/direct`, `git`, `rollback`, the adapter seam and the ConfigMap spec/history stores | **a spec deployed end to end on a kind cluster** — apply a Project and an Environment, artifact published, Flux reconciles, `Environment.status` reaches Healthy |
+| **R2 · Façade and verbs** ([#225](https://github.com/dafrie/kelson/issues/225)) | `kelson-server` over CRs with SSA and `resourceVersion` concurrency; the agent and audit stores to `internal/controlstore`; deploy, history, rollback (the annotation), promote (the CR patch) reshaped in the CLI, the UI and MCP | every verb works over the new spine with the wire surface unchanged |
+| **R3 · Install path** ([#226](https://github.com/dafrie/kelson/issues/226)) | the flux-aio catalog row and its release-time render, kelson's own CRDs as a catalog entry, chart and RBAC for the controller, previews re-verified against the shared publisher | a cluster with nothing gets a working kelson in one install path |
+
+Follow-ups, deliberately out of the three phases:
+[#227](https://github.com/dafrie/kelson/issues/227) Flux-native release hooks ·
+[#228](https://github.com/dafrie/kelson/issues/228) `ExternalArtifact` for registry-less clusters ·
+[#229](https://github.com/dafrie/kelson/issues/229) admission webhook ·
+[#230](https://github.com/dafrie/kelson/issues/230) `kind: timoni` ·
+[#231](https://github.com/dafrie/kelson/issues/231) tenancy ·
+[#232](https://github.com/dafrie/kelson/issues/232) multi-cluster ·
+[#233](https://github.com/dafrie/kelson/issues/233) agent/audit stores as CRDs ·
+[#234](https://github.com/dafrie/kelson/issues/234) the label rename and the `delivery:` block removal,
+kept as one behaviour-change PR.
+
+The milestone tables below are kept as written, with the rows the rebuild absorbs annotated rather than
+deleted: what was built and why it was replaced is the part worth keeping.
 
 ---
 
@@ -24,11 +59,11 @@ It spans M0–M8, the v0.1 half of M9, and the minimal bootstrap. Deliberately t
 | Deferred from v0.1 | Why |
 |---|---|
 | Database branching, Valkey (M9b) | Branching is the flagship — which is exactly why it does not ship on top of an unproven deploy path. Basic Postgres (shared/small presets, backups, verified restore) stays. |
-| Argo CD adapter | Removed entirely, not deferred ([ADR-0012](adr/0012-flux-only-gitops.md)): Flux is the only GitOps mode; the adapter seam stays pluggable for a possible return. |
+| Argo CD adapter | Removed entirely, not deferred ([ADR-0012](adr/0012-flux-only-gitops.md)). [ADR-0028](adr/0028-delivery-spine.md) then removed the seam it would have returned through: one reconciler, no adapters. A second one would be a new ADR answering ADR-0012's parity question with evidence. |
 | ~~Buildpacks (#49)~~ | *Reversed by shipping early:* the driver was written, tested and unused, so the deferral was of the wiring rather than of the work. Both strategies now build; what stays deferred is in-cluster detection (#50), which is why `auto` still needs a local checkout. |
 | Release history UI (#67) | The API has it; the UI can wait. |
 | ~~external-secrets (#80)~~ | *Reversed by shipping early:* it turned out to need no per-backend code at all — kelson renders an `ExternalSecret` and delegates every provider to the operator's own SecretStore ([ADR-0020](adr/0020-external-secrets.md)). |
-| ~~SOPS + age (#81)~~ | *Reversed by shipping early:* it closes the one gap ADR-0009 documented against the `cluster` backend — a cluster rebuilt from Git alone now comes back with its secrets. kelson encrypts in memory and holds no private key ([ADR-0022](adr/0022-sops-age.md)). |
+| ~~SOPS + age (#81)~~ | *Reversed by shipping early:* it closes the one gap ADR-0009 documented against the `cluster` backend — a cluster rebuilt from the delivered artifact now comes back with its secrets. kelson encrypts in memory and holds no private key ([ADR-0022](adr/0022-sops-age.md)), and since [ADR-0028](adr/0028-delivery-spine.md) §7 it also writes the decryption block, closing that ADR's worst failure mode. |
 | MySQL | The operator landscape is materially weaker than CNPG. Two engines done properly beats three half-supported. |
 | M10–M16 | See the phase tables below. |
 
@@ -36,7 +71,9 @@ It spans M0–M8, the v0.1 half of M9, and the minimal bootstrap. Deliberately t
 rendered-history store and landed with M2, and the Score question (#31) was answered rather than
 postponed: [an importer, not an input format](research/score-as-input-format.md), scheduled as #131 in
 M15. (The Argo adapter also shipped early with M2, and was then removed by ADR-0012 — shipping early
-is not the same as being right.)
+is not the same as being right. `eject` is the second case: it shipped, and
+[ADR-0028](adr/0028-delivery-spine.md) deleted it because every revision is now already an immutable
+artifact of standard manifests, so the export had nothing left to export.)
 
 **M9 moved into v0.1 and then split.** Managed Postgres is the feature people ask about first, and
 shipping without it would make v0.1 hard to use for a real application. Branching grew on top of it
@@ -57,13 +94,14 @@ mitigation is detection plus an explicit nudge at the point of use rather than a
 | Milestone | Scope |
 |---|---|
 | **M0 · Foundations** ✓ | Repo scaffolding, CI, release tooling, docs site, governance. Includes the CI rule enforcing renderer purity. |
-| **M1 · Model & renderer** ✓ | Project/Application/Environment schemas, pure renderer, golden-file harness, `kelson render` |
-| **M2 · Delivery adapters** ✓ | `direct` / `flux`, provenance, status correlation, eject-to-git (the `argocd` adapter it also delivered is removed per ADR-0012) |
+| **M1 · Model & renderer** ✓ | Project/Component/Environment schemas (ADR-0006's leaf, as amended by [ADR-0014](adr/0014-components.md)), pure renderer, golden-file harness, `kelson render` |
+| **M2 · Delivery adapters** ✓ | `direct` / `flux`, provenance, status correlation, eject-to-git (the `argocd` adapter it also delivered is removed per ADR-0012). *Superseded by R1:* [ADR-0028](adr/0028-delivery-spine.md) collapses the adapter seam to one spine and deletes `direct`, the git writer, rollback-by-replay and eject. Provenance and the state machine survive unchanged |
 | **M3 · Preview, diff & dry-run** | Rendered diff, server-side dry-run diff, structured diff output |
-| **M4 · Build & deploy — the spine** | Source to image, registry, **wiring delivery/observation into `kelson deploy`/`status`/`rollback` (#135)**, logs, rollback, Gateway-API-only cleanup (#140), honest-spec gating (#141) |
+| **M4 · Build & deploy — the spine** | Source to image, registry, **wiring delivery/observation into `kelson deploy`/`status`/`rollback` (#135)**, logs, rollback, Gateway-API-only cleanup (#140), honest-spec gating (#141). *Delivery half absorbed by R1/R2:* the same verbs, over the artifact spine instead of over an adapter. Build, logs and the gating cleanups are unaffected |
 
 Exit: **a spec deployed end to end on a kind cluster in CI (#86)** — render → deliver → observe →
-Healthy, through both adapters, with byte-identical rendered output proven by golden tests.
+Healthy, with byte-identical rendered output proven by golden tests. R1 inherits this gate verbatim,
+with "through both adapters" struck: there is one path, and it is the one under test.
 
 ## Phase 2 — Product
 
@@ -72,7 +110,7 @@ server are peers over one schema and an API designed around the UI first ends up
 
 | Milestone | Scope |
 |---|---|
-| **M5 · ClusterProfile & install** | Detection and adoption, Helm chart, non-destructive uninstall, minimal k3s bootstrap, storage capability. Installing Flux means flux-operator + `FluxInstance` (#60). |
+| **M5 · ClusterProfile & install** | Detection and adoption, Helm chart, non-destructive uninstall, minimal k3s bootstrap, storage capability. *Install half superseded by R3:* [ADR-0030](adr/0030-flux-aio-install.md) makes flux-aio the default offer on a Flux-less cluster and flux-operator optional (previews only), and the chart gains kelson's CRDs and the controller. Detection, adoption and uninstall stand |
 | **M7 · Agent surface & MCP** | ConnectRPC schema (#69), `kelson-server` v0 (#139), dry-run everywhere, idempotency, structured errors, MCP server, agent identities, policy. **Runs before M6.** |
 | **M6 · Web UI** | App list and detail, deploy flow with preview, live logs, diff view, rollback — built against the M7 schema |
 | **M8 · Secrets** | ~~SOPS/age (#81)~~ *(landed early, [ADR-0022](adr/0022-sops-age.md))*, structural no-plaintext guarantee (#82), binding injection, cluster backend |
@@ -85,8 +123,8 @@ server are peers over one schema and an API designed around the UI first ends up
 | Milestone | Scope |
 |---|---|
 | **M9b · Branching, Valkey & advanced data (v0.2)** | Snapshot/fallback branching, branch policy and lifecycle, preview databases, migration testing against a production branch, Valkey |
-| **M10 · Environments & promotion** | Environment model, PR previews via flux-operator `ResourceSet`/`ResourceSetInputProvider`, vcluster ephemeral preview, promotion, Kargo interop |
-| **M11 · Teams, RBAC & tenancy** | OIDC SSO, teams, Kubernetes RBAC mapping, quotas, audit log |
+| **M10 · Environments & promotion** | Environment model, PR previews via flux-operator `ResourceSet`/`ResourceSetInputProvider`, vcluster ephemeral preview, promotion, Kargo interop. *Partly absorbed:* the Environment becomes a CRD in R1 and promotion becomes a CR patch in R2; multi-cluster targeting, once M10's, is now [#232](https://github.com/dafrie/kelson/issues/232) and `Environment.spec.cluster` is deleted ([ADR-0031](adr/0031-single-cluster-single-tenant.md)) |
+| **M11 · Teams, RBAC & tenancy** | OIDC SSO, teams, Kubernetes RBAC mapping, quotas, audit log. Out of the rebuild's scope by [ADR-0031](adr/0031-single-cluster-single-tenant.md), which records the shape and the prior art without building any of it ([#231](https://github.com/dafrie/kelson/issues/231)); the order is forced — real human identity (#84), then RBAC, then tenancy |
 | **M12 · Networking & TLS** | Gateway API (only — no Ingress, [#140](https://github.com/dafrie/kelson/issues/140)), custom domains, cert-manager, DNS |
 | **M13 · Observability** | Prometheus/Loki/Tempo adoption, per-app dashboards, alerts, cost |
 
@@ -105,27 +143,33 @@ server are peers over one schema and an API designed around the UI first ends up
 Ongoing, tracked by label rather than milestone.
 
 - **Security** — [threat model](https://github.com/dafrie/kelson/issues/84), [supply chain](https://github.com/dafrie/kelson/issues/85), least-privilege RBAC
-- **Testing** — golden files for the renderer, envtest for controllers, [e2e on kind](https://github.com/dafrie/kelson/issues/86) as the M4 exit gate
+- **Testing** — golden files for the renderer, envtest for the controller, [e2e on kind](https://github.com/dafrie/kelson/issues/86) as the exit gate for M4 and now for R1
 - **Docs** — every feature ships with docs; an ADR for every load-bearing decision
 
 ## Sequencing notes
 
-**The renderer came first** because deletability, trustworthy preview, cheap testing and hybrid
-delivery all derive from its purity ([ADR-0001](adr/0001-hybrid-state-model.md)).
+**The renderer came first** because deletability, trustworthy preview and cheap testing all derive from
+its purity ([ADR-0001](adr/0001-hybrid-state-model.md)) — and it is the one layer the rebuild did not
+touch, deliberately and on the record ([ADR-0029](adr/0029-renderer-stays-go.md)). Hybrid delivery was
+the fourth thing that property bought, and [ADR-0028](adr/0028-delivery-spine.md) gave it back: the
+purity now buys an artifact whose digest *is* the revision.
 
 **The spine gates the visible parts.** The review found the delivery, build and observation planes
-finished but never assembled — high-quality parts with zero callers. M4 now owns the assembly, and
-its kind E2E test is the exit gate no later milestone starts without.
+finished but never assembled — high-quality parts with zero callers. The kind E2E test is the exit gate
+no later milestone starts without, and the rebuild inherits it: **R1 does not end until a spec deploys
+end to end on kind through the artifact spine**, and R2 does not begin on the strength of a design
+document.
 
 **The API precedes the UI** ([M7](https://github.com/dafrie/kelson/issues/8) before
 [M6](https://github.com/dafrie/kelson/issues/7)). The UI, CLI and MCP server are peers over one
 schema ([ADR-0002](adr/0002-tech-stack.md)); kelson's identity is agent-native, so the schema is the
 product surface and the UI is its first big client.
 
-**Delegate to flux-operator.** Flux install/upgrade (`FluxInstance`), PR-preview lifecycle
-(`ResourceSet` + `ResourceSetInputProvider`) and Flux health (`FluxReport`) are flux-operator's job;
-kelson authors templates and reads status. CR-only integration — flux-operator is AGPL-3.0, kelson is
-MIT.
+**Delegate to Flux; flux-operator only where it is the one that can.** kustomize-controller reconciles
+everything kelson delivers ([ADR-0028](adr/0028-delivery-spine.md)), and the PR-preview lifecycle
+(`ResourceSet` + `ResourceSetInputProvider`) is flux-operator's — which is now the *only* reason to
+install it ([ADR-0030](adr/0030-flux-aio-install.md)). CR-only integration either way: flux-operator is
+AGPL-3.0, kelson is MIT.
 
 **Minimal bootstrap moved from Phase 4 to M5.** [ADR-0003](adr/0003-install-model.md) was revised:
 starting on Kubernetes at day zero is the premise, not a concession, so "I have nothing" needs an
@@ -143,4 +187,7 @@ database; branching moved back because it is the highest-dependency feature in t
 a proven substrate.
 
 **Branching still pulls the release-command hook forward.** Migrations matter for any app with a
-database, so #104 stays in M9 (v0.1) rather than waiting for M9b or day-2 operations in M14.
+database, so #104 stayed in M9 (v0.1) rather than waiting for M9b or day-2 operations in M14. The hook
+shipped, and [ADR-0028](adr/0028-delivery-spine.md) then took its implementation away with the mode it
+depended on: `release:` is a validated refusal until the two-`Kustomization` `dependsOn` split is built
+([#227](https://github.com/dafrie/kelson/issues/227)). That is a regression, recorded as one.

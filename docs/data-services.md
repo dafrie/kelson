@@ -691,7 +691,9 @@ Provenance is identical to every other rendered resource: `app.kubernetes.io/man
 `kelson.dev/spec-hash` computed over the data component's own resolved input, so an unrelated edit
 elsewhere in the spec does not churn the database's annotation.
 
-Data components carry no `kelson.dev/application` label and render no ServiceAccount of their own.
+Data components carry no `kelson.dev/application` label — the workload-identity label, still spelled
+that way until [#234](https://github.com/dafrie/kelson/issues/234) renames it — and render no
+ServiceAccount of their own.
 They are not owned by one workload — that is what makes them bindable by several — and the identity
 their pods run under is the operator's to create, not kelson's
 ([ADR-0005](adr/0005-delegate-to-operators.md), [ADR-0014](adr/0014-components.md) decision D).

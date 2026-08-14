@@ -2,7 +2,7 @@
 
 A self-hosted PaaS that runs on your Kubernetes cluster and writes standard manifests instead of hiding them.
 
-**Pre-alpha, and not usable yet.** `kelson render`, `kelson diff` (including server-side dry-run) and `kelson profile` work today. The delivery adapters (direct and Flux), build drivers and observation layer are implemented and tested but not yet wired to a `deploy` command, and there is no server or UI. The [roadmap](roadmap.md) and the [issue tracker](https://github.com/dafrie/kelson/issues) are the current state of the project.
+**Pre-alpha, and not usable yet.** `kelson render`, `diff` (including server-side dry-run), `deploy`, `status`, `rollback`, `promote`, `build`, `secret`, `explain`, `install`/`uninstall` and `profile` work today, as do `kelson-server` (which carries the web UI on the same listener) and `kelson-mcp`. The spine underneath them is being rebuilt: [ADR-0027](adr/0027-crd-native-control-plane.md)–[ADR-0031](adr/0031-single-cluster-single-tenant.md) make `Project` and `Environment` custom resources reconciled by a controller and replace the delivery modes with one path — render, push an immutable OCI artifact, let Flux reconcile ([#223](https://github.com/dafrie/kelson/issues/223)). The [roadmap](roadmap.md) and the [issue tracker](https://github.com/dafrie/kelson/issues) are the current state of the project.
 
 ## Why Kubernetes
 
@@ -14,9 +14,9 @@ kelson doesn't wrap Kubernetes in new concepts. It generates Kubernetes.
 
 ## What's different
 
-- **Uninstalling doesn't break anything.** `kelson uninstall` removes one environment's resources and nothing else; `helm uninstall` removes the server and leaves your applications running ([installing](install.md)).
+- **Uninstalling doesn't break anything.** `kelson uninstall` removes one environment's resources and nothing else; `helm uninstall` removes the control plane and leaves your applications running ([installing](install.md)). Every revision kelson deployed is already an immutable artifact of standard manifests, so leaving costs nothing.
 - **You see what will happen first.** Three preview levels: a rendered diff, a server-side dry-run, an ephemeral live environment.
-- **It adopts what you already run.** Detects Gateway API, cert-manager, external-secrets, Prometheus, CloudNativePG and Flux, and renders to fit. Routing is Gateway API only.
+- **It adopts what you already run.** Detects Gateway API, cert-manager, external-secrets, Prometheus, CloudNativePG and Flux, and renders to fit. Routing is Gateway API only. A cluster with no Flux is offered flux-aio — every Flux controller in one pod ([ADR-0030](adr/0030-flux-aio-install.md)).
 - **Agents get guardrails, not just tools.** Every mutation supports dry-run, and per-environment policy says what an agent may do unsupervised — `propose-only`, replica ceilings, protected components, forbidden operations — enforced server-side from the stored spec ([agent policy](server.md#agent-policy-what-agents-may-do-in-this-environment)).
 - **It doesn't reimplement operators.** CloudNativePG, Strimzi, cert-manager, external-secrets.
 

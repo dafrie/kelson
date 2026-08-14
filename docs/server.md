@@ -4,9 +4,36 @@
 MCP surface and any other client talk to ([ADR-0013](adr/0013-server-state-and-api-v0.md),
 issue [#139](https://github.com/dafrie/kelson/issues/139)).
 
-It holds no state. Specs and deployment history live as ConfigMaps in the namespace it runs against,
-so a restart or a second replica loses and forks nothing, and `kubectl get configmaps -l
-kelson.dev/project=x` is the audit trail.
+**It is a stateless façade over Kubernetes.** The wire surface is unchanged; what is underneath it is
+not ([ADR-0027](adr/0027-crd-native-control-plane.md) decision 6). `SpecService` reads and writes
+`Project` and `Environment` **custom resources** with server-side apply under the field manager
+`kelson-server`; `DeployService.Status` reads `Environment.status` instead of computing it, because the
+controller already wrote what it observed there. ADR-0013 §1's rule — the process holds no state a
+restart or a second replica would lose or fork — is more true after this change than before it, and
+`kubectl get projects,environments -A` is now the inventory.
+
+Optimistic concurrency is `resourceVersion`, carried through the API as the same opaque `version`
+string, and a conflicting write is still `store/version-conflict`. The store vocabulary
+(`store/version-conflict`, `store/not-found`, `store/too-large`) is unchanged; only what it is a
+vocabulary *about* changed.
+
+**The loss, stated plainly: the authored document no longer round-trips byte for byte.** ADR-0013 §1
+promised the store returned what you stored — your YAML, comments and key order intact. A custom
+resource is a decoded, re-serialized object, so `PutSpec` followed by `GetSpec` returns an *equivalent*
+document, not the same bytes. Comments do not survive. This is real, and it is accepted because the
+document store the project recommends is your own git repository, where byte fidelity is git's job and
+always was. `kelson-server` becomes what it should have been: an API over cluster state, not a home for
+a file.
+
+> **Transition (R1/R2, [#224](https://github.com/dafrie/kelson/issues/224) /
+> [#225](https://github.com/dafrie/kelson/issues/225)).** Today the specs and the deployment history
+> are still ConfigMaps in `internal/serverstate`, and the server still calls a delivery adapter to
+> apply. Both are deleted by [ADR-0027](adr/0027-crd-native-control-plane.md) decision 7 and
+> [ADR-0028](adr/0028-delivery-spine.md) decision 9. The **agent identity and audit records are not** —
+> they are control-plane records rather than delivery state, and they relocate unchanged to
+> `internal/controlstore` so the package name stops implying they are the server's memory of a
+> deployment. Whether they should also become custom resources is
+> [#233](https://github.com/dafrie/kelson/issues/233), not a decision either ADR took.
 
 ```sh
 kelson-server                                   # 127.0.0.1:8420, namespace kelson-system
@@ -24,8 +51,8 @@ In a cluster it is a Helm install, and every flag below is a values knob — see
 | `--insecure-bind` | — | off | Allow a non-loopback bind with no password. |
 | `--password` | `KELSON_PASSWORD` | unset | The shared password clients authenticate with. Unset means no authentication. |
 | `--kubeconfig` | `KUBECONFIG` | in-cluster, then `~/.kube/config` | Which cluster it works against. |
-| `--namespace` | — | `kelson-system` | Where the spec and history ConfigMaps live. |
-| `--keep` | — | 20 | Deployment revisions retained per environment. |
+| `--namespace` | — | `kelson-system` | Where kelson's custom resources and control-plane records live. |
+| `--keep` | — | 20 | Deployment revisions retained per environment — the bound on the history mirror in `Environment.status`. |
 | `--audit-retention` | — | 30 | Days of audit records retained (maximum 120). `0` turns the trail off. See [The audit trail](#the-audit-trail). |
 | `--registry` | `KELSON_REGISTRY` | unset | Destination registry for builds, e.g. `ghcr.io/acme`. See [build](build.md). |
 | `--push-secret` | — | unset | Name of an existing `kubernetes.io/dockerconfigjson` Secret authenticating the push. |
@@ -333,8 +360,8 @@ because the credential is already the grant: an agent cannot change anything unl
 `kelson agent create --allow mutate`. Write the block on the environments that need guarding, which
 is usually production.
 
-**It is enforced on the server, from the stored spec.** kelson reads the policy out of the spec store
-for the environment a request acts on — never out of the request. An agent that sends its own
+**It is enforced on the server, from the stored spec.** kelson reads the policy off the stored
+`Environment` a request acts on — never out of the request. An agent that sends its own
 documents saying `agents: allow` for an environment kelson holds as `propose-only` is refused, so a
 modified client buys nothing. Humans are never subject to any of this; a caller authenticated with
 the password is not an agent.
@@ -355,9 +382,11 @@ a spec for a project that has *any* propose-only environment.
 It refuses every live mutation of the environment and tells the agent how to propose instead: re-send
 the deploy with `dry_run=RENDER` for the manifests, or call `Diff`. A human then applies the change.
 
-It does **not** open a pull request yet. The git writer implements pull-request mode
-(`internal/delivery/git`), but the server commits directly and has no forge credentials, so claiming
-"proposal opened" would be a lie. ADR-0025 §7 records the gap and the seam that closes it.
+It does **not** open a pull request yet, and after [ADR-0028](adr/0028-delivery-spine.md) it has no
+half-built path to one: the git writer is deleted with the rest of the git transport, and opening a pull
+request needs a forge credential the control plane deliberately does not hold
+([ADR-0009](adr/0009-secrets.md)). The proposal a human reviews is the change to the Project or
+Environment document in your own repository. ADR-0025 §7 records the gap.
 
 `build` is deliberately not refused by `propose-only`: a build produces an artifact in a registry and
 changes no environment. Use `forbid: [build]` to stop it.
@@ -445,11 +474,17 @@ through kelson's redaction registry twice on the way in
 
 ### Where it lives, and what that costs
 
-ConfigMaps in the state namespace, one per UTC day, under the same labels and the same RBAC the spec
-and history stores already have — so the trail needs no extra grant, and
+ConfigMaps in the state namespace, one per UTC day, and
 `kubectl get configmap -l kelson.dev/state=audit -o yaml` reads it when kelson-server itself is what
 you are investigating. `kelson audit` talks to the cluster directly for the same reason `kelson
 agent` does: the authority is your kube context, and it still works when the server is down.
+
+These records **stay ConfigMaps** through the CRD rebuild, and move with the agent identity store to
+`internal/controlstore` ([ADR-0027](adr/0027-crd-native-control-plane.md) decision 7). They are
+control-plane records — who a principal is, what a principal did — not delivery state, and neither the
+controller nor Flux has any interest in them; an audit ring also wants a fixed-size buffer more than it
+wants a typed API. Making them custom resources is
+[#233](https://github.com/dafrie/kelson/issues/233), and it has to argue that case first.
 
 A ConfigMap is a poor append log and kelson does not pretend otherwise. **The day is a ring**: past
 2000 records or 768 KiB, the oldest of that day are dropped, and the count of what was dropped
@@ -478,6 +513,15 @@ the HTTP gate before any interceptor runs, and there is no principal to attribut
 the web UI yet.
 
 ## The delivery grant is opt-in, and cluster-wide
+
+> **Transition (R2/R3, [#225](https://github.com/dafrie/kelson/issues/225) /
+> [#226](https://github.com/dafrie/kelson/issues/226)).** This whole section describes the grant the
+> **direct adapter** needs, and the direct adapter is being deleted
+> ([ADR-0028](adr/0028-delivery-spine.md) decision 9). Under the spine the server applies no workload
+> at all: the controller publishes an artifact and writes two Flux objects in `kelson-system`, and
+> kustomize-controller applies your manifests under **Flux's** RBAC. What the server and the controller
+> each need afterwards — and what shrinks — is install work tracked with R3. Until then, everything
+> below is what a chart-installed server actually needs to deploy.
 
 A default `helm install` gives the server no way to apply anything. That is deliberate — the
 installer does not hand itself broad write on your say-so — but it means a server installed the
@@ -528,8 +572,9 @@ per-project or per-environment identity would look like, belongs to
 
 Two honest limits beyond that. `spec.overlays` can emit **any** kind, so a spec that overlays a
 `PodDisruptionBudget` fails with a plain `forbidden` naming it — bind a ClusterRole of your own
-alongside this one for those. And a Git-backed or Flux-backed environment does not need this value
-at all: there kelson writes to a repository and Flux does the applying, under Flux's RBAC.
+alongside this one for those. And a Flux-backed environment does not need this value at all: there
+kelson publishes an artifact and Flux does the applying, under Flux's RBAC — which is what every
+environment becomes once R1 lands.
 
 `hack/local/up.sh` (`make kind-up`) sets the value, because a throwaway kind cluster on your own
 machine is the one place where that trade is obviously right.
@@ -598,8 +643,12 @@ environment's previews.
 - `internal/api` — the ConnectRPC handlers (`api.go`), the credential gate (`auth.go`), the principal
   (`principal.go`), the RPC-to-scope table (`scope.go`), the authorization interceptor (`authz.go`)
   and the per-identity budgets (`ratelimit.go`).
-- `internal/serverstate` — the ConfigMap-backed spec, history and audit stores (`audit.go`), and the
-  Secret-backed agent identity store (`agent.go`).
+- `api/kelson/v1alpha1` — the public CR types (`Project`, `Environment`, their status structs and
+  generated deepcopy) the façade reads and writes. The spec structs themselves stay in
+  `internal/model` ([ADR-0027](adr/0027-crd-native-control-plane.md) decision 3).
+- `internal/controlstore` — the audit ring (`audit.go`) and the Secret-backed agent identity store
+  (`agent.go`). *Transitional:* both still live in `internal/serverstate` beside the ConfigMap spec and
+  history stores that ADR-0027 deletes ([#224](https://github.com/dafrie/kelson/issues/224)).
 - `internal/api/audit.go` — the audit capture points and `AuditService`; `cmd/kelson/audit.go` — the
   `kelson audit` command and its JSONL export.
 - `internal/secret` — the cluster secret backend behind `SecretService`.
