@@ -1,0 +1,57 @@
+# Retract a version tag — the undo for release.yml's dispatch path.
+#
+# Automation that cannot push tags cannot delete a mistaken one either, so
+# this workflow does it with its own token. It deletes the tag ref and, if
+# goreleaser already opened one, the DRAFT release attached to it. It refuses
+# to touch a published (non-draft) release: retracting something users may
+# have already pulled is a human decision made in the GitHub UI, not a
+# dispatch input.
+#
+# It does not delete container images. If a run pushed images before the tag
+# was retracted, remove them in the ghcr.io package settings.
+
+name: retract-tag
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to retract (vX.Y.Z). Deleted together with its draft release, if any."
+        required: true
+        type: string
+
+permissions:
+  contents: write # delete the tag ref and the draft release
+
+jobs:
+  retract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: delete tag and draft release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = context.payload.inputs.tag;
+            if (!/^v\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(tag)) {
+              core.setFailed(`tag ${tag} is not a vX.Y.Z version (docs/release-policy.md)`);
+              return;
+            }
+            try {
+              const { data: release } = await github.rest.repos.getReleaseByTag({ ...context.repo, tag });
+              if (!release.draft) {
+                core.setFailed(`release ${tag} is published, not draft — retract it manually in the GitHub UI first`);
+                return;
+              }
+              await github.rest.repos.deleteRelease({ ...context.repo, release_id: release.id });
+              core.info(`deleted draft release for ${tag}`);
+            } catch (e) {
+              if (e.status !== 404) throw e;
+              core.info(`no release for ${tag}`);
+            }
+            try {
+              await github.rest.git.deleteRef({ ...context.repo, ref: `tags/${tag}` });
+              core.info(`deleted tag ${tag}`);
+            } catch (e) {
+              if (e.status !== 404 && e.status !== 422) throw e;
+              core.info(`tag ${tag} does not exist; nothing to delete`);
+            }
