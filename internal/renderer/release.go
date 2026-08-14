@@ -92,7 +92,7 @@ const maxReleaseJobName = 63
 // releaseRequiresDirect is the delivery-mode gate. It reports every component
 // with a release hook, not just the first: one run should list all the work.
 //
-// It is called from Render alongside helmRequiresFlux and previewsRequireFlux,
+// It is called from Render alongside helmRequiresFlux and PreviewsRequireFlux,
 // before anything is emitted, so a spec that cannot render produces errors
 // rather than a partial manifest set.
 func releaseRequiresDirect(resolved *model.Resolved) Errors {
