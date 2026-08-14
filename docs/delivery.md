@@ -50,6 +50,37 @@ the timeout policy are specified in [the state machine](statemachine.md)
 (`internal/delivery/statemachine`); adapters plug into it by implementing a
 single watch-based `Source`.
 
+### The release barrier in direct mode
+
+A rendered set is *ordered* — namespaces first, then the data services and charts, then the release
+Job of any component that declares one, then the workloads — and order is all a set of manifests can
+express ([#89](https://github.com/dafrie/kelson/issues/89)). Applying a Job before a Deployment does
+not mean the Job finished first.
+
+The direct adapter therefore **stops** at the release Job
+([#104](https://github.com/dafrie/kelson/issues/104), [ADR-0019](adr/0019-release-command-hook.md)):
+it applies everything up to and including the Job, polls the Job to a terminal state, and only then
+applies the rest of the set. It is the one point in the apply loop where the adapter waits, and it is
+bounded twice over — by the Job's own `activeDeadlineSeconds`, and by the caller's context (the
+`--timeout` of `kelson deploy`).
+
+Three consequences, all of them the point:
+
+- **A failed migration fails the deploy before anything rolls.** No workload of the new revision is
+  applied, no history entry is recorded, nothing is pruned — so the previous revision keeps serving.
+  The error is `delivery/release-failed`, naming the Job and carrying the tail of its pod's output.
+- **The wait is visible.** The adapter reports the Job through `Options.Progress` in the same
+  `delivery.Status` shape the state machine consumes: `Reconciling` while it runs, `Rejected` when it
+  fails, with the Job in `Cause` and in `Detail["releaseJob"]`. No new phase — see the ADR.
+- **A rollback does not re-run it.** Rolling the application back does not roll a migration back, so
+  re-running the old revision's release command would only repeat work the database has already done.
+
+**Flux mode refuses the field rather than pretending.** kelson commits files and a `Kustomization`
+kelson does not own applies them in one pass; there is no commit that says "and stop here until this
+Job is Complete". Rendering it anyway would produce migrations that run beside the rollout instead of
+before it, so `release:` in a non-direct environment is a render error
+(`render/release-requires-direct`) with the gap named in the message.
+
 ### History, uniform across modes
 
 Direct mode keeps a rendered-history store (issue #38); Git modes derive

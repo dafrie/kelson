@@ -46,8 +46,12 @@ errors, because the check needs a ClusterProfile and validation deliberately has
 render error for a different reason — the refusal depends on the *Environment*, and a Project document
 is valid on its own terms against every environment it will ever meet (`render/helm-requires-flux`,
 [below](#the-flux-only-gate-and-why-it-exists)). `Environment.spec.previews` carries the same gate for
-the same reason, and is the only other field that does (`render/previews-require-flux`,
-[Previews](#previews-a-child-environment-per-pull-request)). `Environment.spec.secrets.backend` is a
+the same reason (`render/previews-require-flux`,
+[Previews](#previews-a-child-environment-per-pull-request)), and
+`Project.spec.components[].release` carries it pointing the other way — direct mode only, because only
+the mode where kelson owns the apply can wait for a migration before rolling the workloads
+(`render/release-requires-direct`, [Release commands](#release-commands-migrations-before-the-rollout),
+[ADR-0019](adr/0019-release-command-hook.md)). `Environment.spec.secrets.backend` is a
 third: `externalSecrets` and `sops` are `render/secret-backend-unsupported` rather than gated fields,
 because the field *is* consumed — see [Choosing the backend](#choosing-the-backend).
 
@@ -386,6 +390,131 @@ only in who names the Secret: a binding names a *component* and kelson derives t
 generates, while `{secret: <name>, key: <key>}` names the Secret directly, for every credential that is
 not a data service kelson manages. See [Secrets](#secrets-references-never-literals) and
 [ADR-0018](adr/0018-secret-references.md).
+
+## Release commands: migrations, before the rollout
+
+> Implemented since [#104](https://github.com/dafrie/kelson/issues/104) and
+> [ADR-0019](adr/0019-release-command-hook.md). Available in **direct mode only** — the one
+> delivery-mode gate in the model that points at `direct` rather than at `flux`, and the
+> [table below](#which-delivery-modes-support-a-release-command) says why.
+
+A `release:` command runs to completion, and successfully, **before the revision's workloads roll**.
+It is where database migrations go.
+
+```yaml
+spec:
+  components:
+    - name: db
+      kind: postgres
+      preset: ha-small
+    - name: web
+      port: 8080
+      release:
+        command: ["./manage.py", "migrate", "--noinput"]   # required
+        timeout: 30m                                        # optional, default 10m
+  env:
+    DATABASE_URL: { from: { service: db, key: uri } }
+```
+
+**It belongs to a component, not to the Project.** Everything the command needs is a component's: the
+image it runs, the env it reads, the bindings it resolves and the ServiceAccount it runs under. A
+Project-level hook would have to pick one component's image and then pretend it had not. Put it on the
+component whose rollout must wait for it — usually the service that talks to the database. It is
+refused on `kind: cron` (a cron component already *is* a command on a schedule), and on data
+components and charts for the reason every workload field is: what they run is their operator's
+business.
+
+### What is rendered, and in which order
+
+One `ServiceAccount` (the component's own, moved here from its workload group because the Job's pod
+names it) and one `Job`, placed **after the data services and the charts, and before every workload**.
+The Job carries the component's image, the component's whole environment — bindings and secret
+references included, so the migration reads exactly the `DATABASE_URL` the application reads —
+`restartPolicy: Never`, `backoffLimit: 2` and the `activeDeadlineSeconds` your `timeout` resolves to.
+
+Order in a rendered set is not a wait: applying a Job before a Deployment says nothing about the Job
+having finished. **The waiting is delivery's**, and that is the whole reason this field is
+mode-gated — see [docs/delivery.md](delivery.md#the-release-barrier-in-direct-mode).
+
+The small `backoffLimit` is deliberate and is not a retry policy for broken migrations. It exists so a
+*first* deploy — where the database was created seconds earlier and is not yet accepting connections —
+does not fail for a reason that has nothing to do with the migration. kelson does not wait for a data
+service to be ready before starting the release command; the two pod retries (10s, then 20s) are what
+absorbs that window today.
+
+### Failure, and what stays running
+
+A failed release command **fails the deploy before any workload of the new revision is applied**. The
+previous revision keeps serving, nothing is recorded in the history, and nothing is pruned. The error
+is a structured `delivery/release-failed` naming the Job, and it carries the tail of the command's own
+output as its cause, because the sentence you need is in there rather than in anything kelson could
+write:
+
+```
+release-web-5be0c165 [delivery/release-failed] the release command failed: BackoffLimitExceeded;
+the workloads of this revision were not applied, so the previous revision is still running
+(cause: ERROR: relation "orders" does not exist)
+```
+
+While it runs, the deployment reads as `Reconciling` with the Job named; a failure is `Rejected` —
+"processed, refused, not live", which is exactly what happened. A migration does not get a phase of
+its own, and [ADR-0019](adr/0019-release-command-hook.md) records why.
+
+### Running twice, and not running twice
+
+The Job's name is `release-<component>-<first 8 of the spec hash>`, so **the name is the idempotency
+key**:
+
+- re-deploying an **unchanged** revision finds the Job it already ran and, if it completed, does not
+  run it again. A completed release command is a fact about a revision, not about a deploy attempt.
+- a **changed** revision — a new image, a new release command, a new env value — is a different spec
+  hash and therefore a different Job, so a deploy runs its migrations.
+- re-deploying a revision whose Job **failed** deletes it and runs it again. A Job cannot be edited, so
+  a verdict that must be re-taken is a delete and a create; without it the first transient failure
+  would be permanent short of `kubectl`.
+
+**Write idempotent migrations anyway.** kelson bounds how often a command is re-run; it cannot bound
+what the command does when it is. A migration that is not safe to re-run will eventually be re-run — by
+a retry, by an interrupted deploy, by a redeploy after an unrelated fix — and every migration framework
+worth using already tracks what it has applied.
+
+### Rollback does not undo a migration
+
+Rolling the application back re-applies the previous revision's manifests and **deliberately does not
+re-run its release command**. A schema change is not in the rendered output and kelson has no
+down-migration to run, so there is nothing to roll back to: the rolled-back workloads meet the newer
+schema. Plan for that — keep migrations backwards-compatible with the revision you might roll back to
+([#55](https://github.com/dafrie/kelson/issues/55)).
+
+### Promotion moves the image, never the database
+
+Promoting is editing one field — the target Environment's per-component image pin
+([above](#promotion)) — and deploying that environment. The release Job is then rendered **for the
+target environment**: its namespace, its bindings, its secret references. Production's migration runs
+against production's database, staging's against staging's, and a preview's against the preview's own,
+because a binding resolves to the Secret *that environment's* operator generated
+(`checkout-production-db-app` and `checkout-staging-db-app` are different Secrets in different
+namespaces). Nothing about a promotion carries the source environment's data, credentials or schema
+state across; what is promoted is an image reference.
+
+The consequence worth stating: promoting a revision whose migration already ran in staging **runs it
+again in production**, against production's database, because it is a different database. That is what
+you want, and it is another reason the migration must be idempotent.
+
+### Which delivery modes support a release command
+
+| Mode | Support |
+|---|---|
+| `direct` | **Full.** kelson owns the apply, so it applies up to the Job, waits for it, and only then applies the workloads. |
+| `flux` | **Refused** at render time — `render/release-requires-direct`. kelson writes files that somebody else's `Kustomization` applies in one pass; no commit can say "stop here until this Job is Complete", so the migration would run *beside* the rollout instead of before it, and a failed one would not stop it. |
+| `argocd` | Refused, same error. The adapter is removed ([ADR-0012](adr/0012-flux-only-gitops.md)) and the reasoning above would apply to it unchanged. |
+
+The refusal is deliberate, and it is the same rule the Flux-only gates obey from the other side: a spec
+field must render something real in every mode or refuse per mode honestly. The gap it leaves is real
+and worth knowing before you meet it — **previews are Flux-only
+([ADR-0017](adr/0017-pr-previews.md)), so a preview environment cannot carry a release command today**.
+Migrations for preview databases are tracked with the rest of that work; kelson refuses rather than
+rendering a Job that would race the preview's own rollout.
 
 ## Helm components: a chart, delegated
 
