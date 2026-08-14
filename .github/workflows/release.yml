@@ -1,8 +1,9 @@
 # Release pipeline — issue #21.
 #
-# Triggered by a version tag `vX.Y.Z` (see docs/release-policy.md). Runs
-# goreleaser to build binaries and a container image, opens a draft GitHub
-# release, and pushes the image to ghcr.io/dafrie/kelson-server.
+# Triggered by a version tag `vX.Y.Z` (see docs/release-policy.md). Builds the
+# web UI into the server's embed directory, runs goreleaser to build binaries
+# and a container image, opens a draft GitHub release, and pushes the image to
+# ghcr.io/dafrie/kelson-server.
 #
 # Cosign image signing is stubbed below — it is installed but the sign step is
 # not wired. Enable it as part of the supply-chain work (issue #85), where
@@ -76,6 +77,23 @@ jobs:
         with:
           go-version: "1.26"
           cache: true
+
+      - name: setup node
+        uses: actions/setup-node@v4
+        with:
+          # LTS, and at or above the floor ui/package.json's `engines` sets.
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      # goreleaser compiles Go and nothing else, so whatever is in the embed
+      # directory when it starts is what the released binaries and the image
+      # carry. Without this step every release would ship the placeholder page
+      # instead of the UI (internal/webui/webui.go). The copy lands in a
+      # gitignored directory, so the tree stays clean and goreleaser's
+      # dirty-state check still passes.
+      - name: build the web UI into the embed directory
+        run: make ui
 
       - name: login to ghcr.io
         uses: docker/login-action@v3
