@@ -1,6 +1,6 @@
 // Package api serves the kelson v1alpha1 schema over ConnectRPC (issue #139,
 // ADR-0013 §2). It is the transport half of kelson-server: one Server
-// implements all six generated service interfaces, and cmd/kelson-server
+// implements every generated service interface, and cmd/kelson-server
 // mounts them on an http.ServeMux.
 //
 // # Everything that touches a cluster arrives as a seam
@@ -286,7 +286,7 @@ type Options struct {
 	WatchInterval time.Duration
 }
 
-// Server implements all nine kelson.v1alpha1 services.
+// Server implements all ten kelson.v1alpha1 services.
 type Server struct {
 	specs    SpecStore
 	profile  ProfileCapture
@@ -317,6 +317,7 @@ var (
 	_ kelsonv1alpha1connect.BuildServiceHandler   = (*Server)(nil)
 	_ kelsonv1alpha1connect.SecretServiceHandler  = (*Server)(nil)
 	_ kelsonv1alpha1connect.PreviewServiceHandler = (*Server)(nil)
+	_ kelsonv1alpha1connect.ExplainServiceHandler = (*Server)(nil)
 )
 
 // New returns a Server over the given seams.
@@ -357,6 +358,7 @@ func (s *Server) Register(mux *http.ServeMux, opts ...connect.HandlerOption) {
 		func() (string, http.Handler) { return kelsonv1alpha1connect.NewBuildServiceHandler(s, opts...) },
 		func() (string, http.Handler) { return kelsonv1alpha1connect.NewSecretServiceHandler(s, opts...) },
 		func() (string, http.Handler) { return kelsonv1alpha1connect.NewPreviewServiceHandler(s, opts...) },
+		func() (string, http.Handler) { return kelsonv1alpha1connect.NewExplainServiceHandler(s, opts...) },
 	}
 	for _, build := range handlers {
 		mux.Handle(build())

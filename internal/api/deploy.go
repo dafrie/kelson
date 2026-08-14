@@ -285,6 +285,33 @@ func (s *Server) Status(ctx context.Context, req *connect.Request[kelsonv1alpha1
 // Every other kind carries no signal the probe can classify, and reporting
 // "unknown" for them as if it were a verdict would be worse than saying nothing.
 func workloadVerdicts(ctx context.Context, plane *Plane, set delivery.ManifestSet, namespace string) ([]*kelsonv1alpha1.WorkloadVerdict, error) {
+	verdicts, err := observeWorkloads(ctx, plane, set, namespace)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*kelsonv1alpha1.WorkloadVerdict, 0, len(verdicts))
+	for _, verdict := range verdicts {
+		out = append(out, &kelsonv1alpha1.WorkloadVerdict{
+			Resource:    verdict.Resource,
+			Code:        string(verdict.Code),
+			Healthy:     verdict.Healthy,
+			Degraded:    !verdict.Healthy && !verdict.Stuck && observation.IsFailure(verdict.Code),
+			Message:     verdict.String(),
+			Remediation: verdict.Remediation,
+		})
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
+}
+
+// observeWorkloads is workloadVerdicts before the wire projection: the same
+// evaluation, returning the observation plane's own values. Explain needs those
+// rather than the wire ones — a cause is built from the verdict's containers
+// and their captured output, which the wire message deliberately does not carry
+// (issue #77) — so the traversal lives here once and both callers share it.
+func observeWorkloads(ctx context.Context, plane *Plane, set delivery.ManifestSet, namespace string) ([]observation.Verdict, error) {
 	if plane.Health == nil {
 		return nil, nil
 	}
@@ -321,22 +348,7 @@ func workloadVerdicts(ctx context.Context, plane *Plane, set delivery.ManifestSe
 		}
 		verdicts = append(verdicts, verdict)
 	}
-
-	out := make([]*kelsonv1alpha1.WorkloadVerdict, 0, len(verdicts))
-	for _, verdict := range verdicts {
-		out = append(out, &kelsonv1alpha1.WorkloadVerdict{
-			Resource:    verdict.Resource,
-			Code:        string(verdict.Code),
-			Healthy:     verdict.Healthy,
-			Degraded:    !verdict.Healthy && !verdict.Stuck && observation.IsFailure(verdict.Code),
-			Message:     verdict.String(),
-			Remediation: verdict.Remediation,
-		})
-	}
-	if len(out) == 0 {
-		return nil, nil
-	}
-	return out, nil
+	return verdicts, nil
 }
 
 // Rollback returns an environment to a recorded revision, streaming the

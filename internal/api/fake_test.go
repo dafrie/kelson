@@ -45,6 +45,7 @@ type clients struct {
 	builds   kelsonv1alpha1connect.BuildServiceClient
 	secrets  kelsonv1alpha1connect.SecretServiceClient
 	previews kelsonv1alpha1connect.PreviewServiceClient
+	explain  kelsonv1alpha1connect.ExplainServiceClient
 }
 
 func serve(t *testing.T, opts Options) clients {
@@ -73,6 +74,7 @@ func serveServer(t *testing.T, server *Server) clients {
 		builds:   kelsonv1alpha1connect.NewBuildServiceClient(hc, srv.URL),
 		secrets:  kelsonv1alpha1connect.NewSecretServiceClient(hc, srv.URL),
 		previews: kelsonv1alpha1connect.NewPreviewServiceClient(hc, srv.URL),
+		explain:  kelsonv1alpha1connect.NewExplainServiceClient(hc, srv.URL),
 	}
 }
 
@@ -188,6 +190,7 @@ type fakeAdapter struct {
 	// statuses are returned in order; the last one repeats forever.
 	statuses    []delivery.Status
 	history     []delivery.Entry
+	historyErr  error
 	rollbackRes delivery.Result
 	rollbackErr error
 }
@@ -241,6 +244,9 @@ func (f *fakeAdapter) Status(context.Context, delivery.ManifestSet) (delivery.St
 
 func (f *fakeAdapter) History(context.Context, delivery.ManifestSet) ([]delivery.Entry, error) {
 	f.record("history")
+	if f.historyErr != nil {
+		return nil, f.historyErr
+	}
 	return f.history, nil
 }
 

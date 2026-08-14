@@ -325,6 +325,12 @@ type Input struct {
 	// run one (issue #45). Empty is the ordinary case.
 	Violations []diff.PolicyViolation
 
+	// Notes are degradations the caller already knows about — a history store
+	// that refused, a seam this build was not wired with. They are seeded into
+	// the answer's own notes so the caller's knowledge and this package's land
+	// in one list, inside one budget.
+	Notes []string
+
 	// Logs fetches a bounded log window. Nil disables log evidence.
 	Logs LogFn
 	// Manifests fetches a revision's recorded manifests. Nil disables the
@@ -345,6 +351,9 @@ func Explain(ctx context.Context, in Input) Explanation {
 		Revision:    in.Status.Revision,
 	}
 	b.Phase = string(in.Status.Phase)
+	for _, n := range in.Notes {
+		b.note("%s", n)
+	}
 
 	// The recorded manifests come first: the probe paths, the images and the
 	// env-var diff all read from them, and the change correlation is what turns

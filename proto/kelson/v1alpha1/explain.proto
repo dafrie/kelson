@@ -1,0 +1,191 @@
+// ExplainService: "why is this application degraded?" answered with
+// structured, causal data (issue #77, ADR-0023).
+//
+// It is the API capability, and `diagnose_application` in the MCP surface
+// (issue #73) is its task-shaped presentation. The structured-cause machinery
+// lives behind this service — in internal/explain — so the CLI, the UI and the
+// agent surface compose one answer instead of implementing three diagnoses.
+//
+// # A service of its own, not a method on DeployService
+//
+// ADR-0013 §2 organises services by capability rather than by resource.
+// Delivery *control* — deploy, status, rollback, history, promote — and causal
+// *analysis* are different capabilities with different readers, and
+// DeployService is already the largest service in this schema. A separate
+// service also leaves room for the subjects explanation will grow (a build, a
+// rejected policy, a preview) without each one widening the deploy contract.
+//
+// # Read-only, and there is nothing here that could write
+//
+// Explain renders the spec, asks the adapter for its status, asks the
+// observation plane for its verdicts, reads the recorded manifests of two
+// revisions and takes a bounded log window. Every one of those is a read.
+//
+// # Bounded, and the bounds are part of the contract
+//
+// The response is written to be pasted into a context window whole. The caps
+// are enforced server-side by internal/explain and stated on the fields below:
+// at most 6 causes, 4 evidence items per cause, 8 log lines per excerpt at 200
+// bytes each, and 12 KiB across the whole message. Every cut that fired is
+// listed in `truncated` — a truncated answer read as a complete one draws a
+// wrong conclusion from a correct report, so nothing is dropped silently.
+syntax = "proto3";
+
+package kelson.v1alpha1;
+
+import "kelson/v1alpha1/common.proto";
+import "kelson/v1alpha1/render.proto";
+
+option go_package = "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1;kelsonv1alpha1";
+
+message ExplainRequest {
+  SpecRef spec = 1;
+  // Optional when the spec holds exactly one environment, as everywhere else.
+  string environment = 2;
+  ProfileRef profile = 3;
+  // Delivery adapter override ("direct", "flux"); empty uses the spec's mode.
+  string mode = 4;
+  // Image override, for a spec whose component images are supplied at deploy
+  // time. It affects only what is rendered to address the environment; an
+  // explanation is about what is live.
+  string image = 5;
+}
+
+message ExplainResponse {
+  ExplainSubject subject = 1;
+  // The delivery state-machine phase, relayed from the adapter.
+  string phase = 2;
+  // The one-line answer the causes explain. Always set.
+  string summary = 3;
+  // Ordered most-answering first, so a client that renders only the first cause
+  // renders the one to act on. At most 6.
+  repeated ExplainCause causes = 4;
+  // The most recent recorded revision and what it changed. Unset when no
+  // history was readable; `notes` then says why.
+  RecentChange recent_change = 5;
+  // What could not be read — a log engine that is down, a pruned revision, a
+  // mode that keeps no recorded manifests. A partial answer says it is partial.
+  repeated string notes = 6;
+  // Every bound that fired, in words. Empty means nothing was cut.
+  repeated string truncated = 7;
+  // Structured spec findings, as everywhere in this schema: an invalid spec is
+  // an answer with the RPC reporting success, not a transport failure.
+  repeated Error errors = 8;
+}
+
+message ExplainSubject {
+  string project = 1;
+  string environment = 2;
+  string namespace = 3;
+  // The revision the delivery adapter reports as live.
+  string revision = 4;
+}
+
+// ExplainCause is one reason the subject is in the state it is in.
+message ExplainCause {
+  // The stable class of the cause, e.g. "explain/missing-env-var". Branch on
+  // this, never on `message`. Codes are a compatibility promise: an existing
+  // code never changes meaning. The taxonomy is documented in ADR-0023 and in
+  // internal/explain's Code constants.
+  string code = 1;
+  // One sentence stating the cause. When the confidence is medium the sentence
+  // says which half of the evidence is a correlation — it never presents a
+  // guess as a fact.
+  string message = 2;
+  // high | medium | low.
+  //
+  //   high   — a controller named the reason (a kubelet waiting reason, a
+  //            scheduler message, an external-secrets condition, an API-server
+  //            rejection, a Flux failure condition), or two independent signals
+  //            agree.
+  //   medium — one signal only, or a heuristic the producing plane already
+  //            calls one.
+  //   low    — a finding that is real and vetoed nothing, such as an
+  //            audit-mode policy report.
+  string confidence = 3;
+  // What the cause is about, e.g. "Deployment/hello-production/web".
+  string resource = 4;
+  // The checkable facts behind the cause. At most 4 per cause.
+  repeated ExplainEvidence evidence = 5;
+  // The fix stated as an action. Empty when none is determinable — an invented
+  // remediation is worse than none.
+  string remediation = 6;
+  // The revision that made the change this cause blames. Unset when no
+  // correlation could be made, which is the ordinary case for a failure nothing
+  // recent caused.
+  RevisionRef introduced_by = 7;
+}
+
+// ExplainEvidence is one checkable fact. `kind` says what it is so a client can
+// render a quoted controller condition differently from an application's own
+// output without parsing the text.
+message ExplainEvidence {
+  // condition | log | field | revision.
+  //
+  //   condition — a controller's own words, verbatim.
+  //   log       — a bounded excerpt of the workload's output: at most 8 lines
+  //               of at most 200 bytes, newest kept, passed through kelson's
+  //               redaction on the way in (issue #117).
+  //   field     — a reference into the rendered manifest, e.g.
+  //               spec.template.spec.containers[0].env[DATABASE_URL].
+  //   revision  — a change between two recorded revisions.
+  string kind = 1;
+  // Where it came from: a resource, a pod and container, a policy engine.
+  string source = 2;
+  // The fact itself. Multi-line only for a log excerpt.
+  string detail = 3;
+}
+
+// RevisionRef identifies one recorded revision, enough to find it in History
+// without a second call.
+message RevisionRef {
+  string revision = 1;
+  string committed_at = 2;
+  string message = 3;
+  string author = 4;
+}
+
+// RecentChange is the provenance half of an explanation: what the most recent
+// revision did, so the current state and the last change arrive together.
+//
+// It is computed from the *recorded rendered manifests* of two revisions — the
+// bytes that were applied — never from the current spec, which has moved on
+// since the deploy that broke the environment.
+message RecentChange {
+  RevisionRef revision = 1;
+  // The revision compared against. Unset when there is none, or when it was
+  // pruned from retention.
+  RevisionRef previous = 2;
+  string summary = 3;
+  // At most 12 each; the overflow is stated in ExplainResponse.truncated.
+  repeated EnvChange env = 4;
+  repeated ImageChange images = 5;
+}
+
+// EnvChange is one environment variable's change, at the container level —
+// which is the level a diagnosis needs, because two containers of the same
+// workload fail for different reasons.
+//
+// `before` and `after` are the variable's rendered *form*: a literal value, or
+// "secret <name>/<key>" for a secretKeyRef, which carries no value because a
+// manifest never holds one (ADR-0009). Literals pass through kelson's redaction
+// like every other display byte.
+message EnvChange {
+  string workload = 1;  // "Deployment/web"
+  string container = 2;
+  string name = 3;
+  string kind = 4;      // added | removed | modified
+  string before = 5;
+  string after = 6;
+}
+
+message ImageChange {
+  string workload = 1;
+  string container = 2;
+  string before = 3;
+  string after = 4;
+}
+
+service ExplainService {
+  rpc Explain(ExplainRequest) returns (ExplainResponse);
+}
