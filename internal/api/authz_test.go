@@ -578,7 +578,7 @@ func TestABudgetIsPerIdentity(t *testing.T) {
 // contract, asserted directly because a method with no row cannot be reached
 // through a generated client — the coverage test makes sure there is none.
 func TestAnUnmappedMethodIsRefusedToEveryone(t *testing.T) {
-	a := newAuthorizer(func() time.Time { return testNow }, nil)
+	a := newAuthorizer(func() time.Time { return testNow }, nil, nil)
 	const unmapped = "/kelson.v1alpha1.FutureService/DoSomething"
 
 	principals := map[string]Principal{
@@ -587,7 +587,7 @@ func TestAnUnmappedMethodIsRefusedToEveryone(t *testing.T) {
 		"an anonymous caller": {Type: PrincipalAnonymous},
 	}
 	for who, p := range principals {
-		_, err := a.admit(p, unmapped)
+		_, err := a.admit(t.Context(), p, unmapped)
 		if authCode(err) != connect.CodePermissionDenied {
 			t.Errorf("%s calling an unmapped method = %v, want permission-denied", who, err)
 		}
@@ -600,7 +600,7 @@ func TestAnUnmappedMethodIsRefusedToEveryone(t *testing.T) {
 	// above is about the missing row rather than about a gate that refuses
 	// everything.
 	for who, p := range principals {
-		if _, err := a.admit(p, kelsonv1alpha1connect.SpecServiceGetSpecProcedure); err != nil {
+		if _, err := a.admit(t.Context(), p, kelsonv1alpha1connect.SpecServiceGetSpecProcedure); err != nil {
 			t.Errorf("%s was refused a mapped method: %v", who, err)
 		}
 	}
@@ -615,7 +615,7 @@ func TestAnUnmappedMethodIsRefusedToEveryone(t *testing.T) {
 // record.
 func TestEveryRequestIsAttributedToItsPrincipal(t *testing.T) {
 	var records recordingHandler
-	a := newAuthorizer(func() time.Time { return testNow }, slog.New(&records))
+	a := newAuthorizer(func() time.Time { return testNow }, slog.New(&records), nil)
 
 	agent := Principal{Type: PrincipalAgent, Name: "deploybot", Agent: serverstate.Agent{
 		Name:    "deploybot",
@@ -623,20 +623,20 @@ func TestEveryRequestIsAttributedToItsPrincipal(t *testing.T) {
 		Scope:   serverstate.Scope{Environments: []string{devEnv}, Operations: []serverstate.Operation{serverstate.OpMutate}},
 		Limit:   serverstate.Limit{RequestsPerMinute: 60, Burst: 10},
 	}}
-	row, err := a.admit(agent, kelsonv1alpha1connect.DeployServiceDeployProcedure)
+	row, err := a.admit(t.Context(), agent, kelsonv1alpha1connect.DeployServiceDeployProcedure)
 	if err != nil {
 		t.Fatalf("admit: %v", err)
 	}
-	if err := a.checkTarget(agent, kelsonv1alpha1connect.DeployServiceDeployProcedure, row,
+	if err := a.checkTarget(t.Context(), agent, kelsonv1alpha1connect.DeployServiceDeployProcedure, row,
 		&kelsonv1alpha1.DeployRequest{Spec: specRefFor("shop"), Environment: prodEnv}); err == nil {
 		t.Fatal("a production deploy by a development-scoped identity was allowed")
 	}
 
 	human := Principal{Type: PrincipalHuman, Name: "ada"}
-	if _, err := a.admit(human, kelsonv1alpha1connect.SpecServiceGetSpecProcedure); err != nil {
+	if _, err := a.admit(t.Context(), human, kelsonv1alpha1connect.SpecServiceGetSpecProcedure); err != nil {
 		t.Fatalf("admit a human: %v", err)
 	}
-	if err := a.checkTarget(human, kelsonv1alpha1connect.SpecServiceGetSpecProcedure, row, nil); err != nil {
+	if err := a.checkTarget(t.Context(), human, kelsonv1alpha1connect.SpecServiceGetSpecProcedure, row, nil); err != nil {
 		t.Fatalf("checkTarget for a human: %v", err)
 	}
 	a.record(human, kelsonv1alpha1connect.SpecServiceGetSpecProcedure, "allowed", nil)

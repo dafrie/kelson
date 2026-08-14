@@ -121,11 +121,34 @@ func TestEveryScopeRowIsWellFormed(t *testing.T) {
 			t.Errorf("%s has an unknown reach %d", procedure, row.Reach)
 		}
 
-		if row.Operation == serverstate.OpAdmin && !strings.Contains(procedure, "AgentService") {
-			t.Errorf("%s is classed admin but is not an AgentService method: admin is refused to every agent "+
-				"credential, so classing an ordinary RPC that way locks agents out of it entirely", procedure)
+		if row.Operation == serverstate.OpAdmin && !adminService(procedure) {
+			t.Errorf("%s is classed admin but belongs to none of the administrative services (%s): admin is "+
+				"refused to every agent credential, so classing an ordinary RPC that way locks agents out of it "+
+				"entirely. If this service really is administrative, add it to adminServices and say why in its ADR",
+				procedure, strings.Join(adminServices, ", "))
 		}
 	}
+}
+
+// adminServices is the closed list of services whose methods may be classed
+// admin. It is a list rather than a predicate over the procedure string so that
+// filing a *new* service under admin is a deliberate edit here with a reason
+// beside it, and not something that happens because a name happened to match.
+//
+//   - AgentService: an agent that could mint an agent could mint one wider than
+//     itself, which would make every scope advisory (ADR-0024 §5).
+//   - AuditService: an agent that could read the audit trail could read what its
+//     reviewer will see, and the trail spans every project, so there is no
+//     scoped version of the answer that would be safe to serve (ADR-0026 §5).
+var adminServices = []string{"AgentService", "AuditService"}
+
+func adminService(procedure string) bool {
+	for _, service := range adminServices {
+		if strings.Contains(procedure, service) {
+			return true
+		}
+	}
+	return false
 }
 
 // TestMutatingMethodsAreClassedAsMutations is a spot check with teeth: the

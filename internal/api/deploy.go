@@ -15,6 +15,7 @@ import (
 	"github.com/dafrie/kelson/internal/model"
 	"github.com/dafrie/kelson/internal/observation"
 	"github.com/dafrie/kelson/internal/redact"
+	"github.com/dafrie/kelson/internal/serverstate"
 )
 
 // Deploy renders the spec, hands the manifests to the environment's adapter and
@@ -32,6 +33,11 @@ import (
 // is an answer about the deployment, not a failure of the RPC carrying it.
 func (s *Server) Deploy(ctx context.Context, req *connect.Request[kelsonv1alpha1.DeployRequest], stream *connect.ServerStream[kelsonv1alpha1.DeployResponse]) error {
 	msg := req.Msg
+	// The audit record is opened by the interceptor and enriched here, where
+	// what actually happened is known (issue #78, audit.go).
+	auditDryRun(ctx, msg.GetDryRun())
+	auditIdempotencyKey(ctx, msg.GetIdempotencyKey())
+
 	out, err := s.renderSpec(ctx, msg.GetSpec(), msg.GetEnvironment(), msg.GetImage(), msg.GetProfile())
 	if err != nil {
 		return failRequest(err)
@@ -42,6 +48,7 @@ func (s *Server) Deploy(ctx context.Context, req *connect.Request[kelsonv1alpha1
 	}
 	t := target(out, msg.GetMode())
 	dryRun := msg.GetDryRun()
+	auditChange(ctx, changeFromSet(set))
 
 	// Agent policy (ADR-0025), before the first event and against the *stored*
 	// environment this render resolved to — an inline document naming
@@ -112,6 +119,7 @@ func (s *Server) Deploy(ctx context.Context, req *connect.Request[kelsonv1alpha1
 			fmt.Errorf("api: the %s adapter did not complete the apply for %s/%s", adapter.Name(), set.Project, set.Environment))
 	}
 	set.Revision = res.Revision
+	auditRevision(ctx, res.Revision)
 	if err := stream.Send(&kelsonv1alpha1.DeployResponse{
 		Event: &kelsonv1alpha1.DeployResponse_Committed_{
 			Committed: &kelsonv1alpha1.DeployResponse_Committed{Revision: res.Revision, Adapter: adapter.Name()},
@@ -151,6 +159,10 @@ func (s *Server) previewDeploy(ctx context.Context, out *rendered, set delivery.
 	if err != nil {
 		return failRequest(err)
 	}
+	// A server-side dry run computed a real comparison, so the record carries
+	// the diff's own numbers rather than the applied set's shape.
+	auditChange(ctx, changeFromDiff(d))
+	auditDryRunResult(ctx, previewSummary(d))
 
 	transition := &kelsonv1alpha1.DeployResponse_Transition{
 		Phase:  string(delivery.PhaseProposed),
@@ -383,6 +395,7 @@ func observeWorkloads(ctx context.Context, plane *Plane, set delivery.ManifestSe
 // preview; anything else applies it.
 func (s *Server) Rollback(ctx context.Context, req *connect.Request[kelsonv1alpha1.RollbackRequest], stream *connect.ServerStream[kelsonv1alpha1.RollbackResponse]) error {
 	msg := req.Msg
+	auditDryRun(ctx, msg.GetDryRun())
 	// Rollback replays recorded bytes rather than a re-render, but the spec is
 	// still what names the project, environment and delivery mode; no image is
 	// carried, so a spec that builds from source resolves without one.
@@ -421,6 +434,7 @@ func (s *Server) Rollback(ctx context.Context, req *connect.Request[kelsonv1alph
 	if err != nil {
 		return fail(connect.CodeFailedPrecondition, err)
 	}
+	auditChange(ctx, serverstate.AuditChange{From: entry.Revision})
 	if err := s.sendPreview(ctx, plane, set, entry, stream); err != nil {
 		return err
 	}
@@ -440,6 +454,7 @@ func (s *Server) Rollback(ctx context.Context, req *connect.Request[kelsonv1alph
 		return fail(connect.CodeInternal,
 			fmt.Errorf("api: the %s adapter did not complete the rollback to %s", adapter.Name(), entry.Revision))
 	}
+	auditRevision(ctx, res.Revision)
 	if err := stream.Send(&kelsonv1alpha1.RollbackResponse{
 		Event: &kelsonv1alpha1.RollbackResponse_Committed_{
 			Committed: &kelsonv1alpha1.RollbackResponse_Committed{
@@ -471,6 +486,7 @@ func (s *Server) sendPreview(ctx context.Context, plane *Plane, set delivery.Man
 		if err != nil {
 			return fail(connect.CodeInternal, err)
 		}
+		auditChange(ctx, changeFromDiff(d))
 		preview.DiffJson = encoded
 		for _, f := range findings {
 			preview.Findings = append(preview.Findings, &kelsonv1alpha1.RollbackResponse_Finding{

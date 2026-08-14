@@ -22,6 +22,9 @@ import (
 // leaves the store holding a spec no plane can render.
 func (s *Server) PutSpec(ctx context.Context, req *connect.Request[kelsonv1alpha1.PutSpecRequest]) (*connect.Response[kelsonv1alpha1.PutSpecResponse], error) {
 	msg := req.Msg
+	auditDryRun(ctx, msg.GetDryRun())
+	auditIdempotencyKey(ctx, msg.GetIdempotencyKey())
+
 	docs := msg.GetDocuments()
 	if docs == nil {
 		return nil, fail(connect.CodeInvalidArgument, fmt.Errorf("api: PutSpec needs documents to store"))
@@ -34,6 +37,11 @@ func (s *Server) PutSpec(ctx context.Context, req *connect.Request[kelsonv1alpha
 		}
 		return nil, failRequest(err)
 	}
+	// The project name lives inside the YAML, which is why the scope table
+	// cannot read a target out of a PutSpec request (scope.go). The audit
+	// record can have one, because by here the document has been decoded.
+	auditTarget(ctx, spec.project.Metadata.Name, "")
+
 	if errs := model.ValidateSet(spec.project, spec.environments...); len(errs) > 0 {
 		return connect.NewResponse(&kelsonv1alpha1.PutSpecResponse{Errors: wireErrors(errs)}), nil
 	}
@@ -76,6 +84,7 @@ func (s *Server) PutSpec(ctx context.Context, req *connect.Request[kelsonv1alpha
 	if err != nil {
 		return nil, failRequest(err)
 	}
+	auditChange(ctx, serverstate.AuditChange{Revision: stored.Version})
 	return connect.NewResponse(&kelsonv1alpha1.PutSpecResponse{Spec: wireSpec(stored, true)}), nil
 }
 
@@ -136,6 +145,7 @@ func (s *Server) ListSpecs(ctx context.Context, _ *connect.Request[kelsonv1alpha
 // DeleteSpec removes a stored project under the same optimistic-concurrency
 // contract as PutSpec.
 func (s *Server) DeleteSpec(ctx context.Context, req *connect.Request[kelsonv1alpha1.DeleteSpecRequest]) (*connect.Response[kelsonv1alpha1.DeleteSpecResponse], error) {
+	auditIdempotencyKey(ctx, req.Msg.GetIdempotencyKey())
 	if s.specs == nil {
 		return nil, unimplemented("the spec store")
 	}

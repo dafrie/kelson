@@ -94,6 +94,9 @@ type AgentStore interface {
 	Authenticate(ctx context.Context, token string) (serverstate.Agent, error)
 }
 
+// The audit-trail seam is [AuditSink] in audit.go, beside the capture points
+// that write through it.
+
 // ProfileCapture captures a ClusterProfile from the server's own cluster. In
 // production it is detect.FromCluster; in tests it is a fixture, which is the
 // whole point of the seam — capability detection needs a cluster and handler
@@ -290,6 +293,13 @@ type Options struct {
 	Secrets  SecretStore
 	Agents   AgentStore
 
+	// Audit is the durable audit trail (issue #78, ADR-0026).
+	// *serverstate.AuditStore implements it. A nil one is a server that keeps
+	// no trail: AuditService answers CodeUnimplemented and every capture point
+	// is a no-op, which is the pre-#78 posture exactly. The slog attribution
+	// line of #74 is unaffected either way.
+	Audit AuditSink
+
 	// BuildDefaults is the destination configuration builds fall back to.
 	BuildDefaults BuildDefaults
 
@@ -313,7 +323,7 @@ type Options struct {
 	WatchInterval time.Duration
 }
 
-// Server implements all eleven kelson.v1alpha1 services.
+// Server implements all twelve kelson.v1alpha1 services.
 type Server struct {
 	specs    SpecStore
 	profile  ProfileCapture
@@ -324,10 +334,16 @@ type Server struct {
 	secrets  SecretStore
 	agents   AgentStore
 
-	// authz is the scope, rate-limit and audit-attribution interceptor. It is
-	// built here and mounted by Register so no caller can serve these handlers
-	// without it (issue #74).
+	// authz is the scope, rate-limit and audit interceptor. It is built here
+	// and mounted by Register so no caller can serve these handlers without it
+	// (issues #74, #78).
 	authz *authorizer
+
+	// audit is the interceptor's auditor, held here so QueryAudit reads the
+	// same sink the capture points write to. A server whose trail was written
+	// through one store and queried from another would produce a trail that
+	// disagreed with itself.
+	audit *auditor
 
 	buildDefaults BuildDefaults
 
@@ -352,6 +368,7 @@ var (
 	_ kelsonv1alpha1connect.PreviewServiceHandler = (*Server)(nil)
 	_ kelsonv1alpha1connect.ExplainServiceHandler = (*Server)(nil)
 	_ kelsonv1alpha1connect.AgentServiceHandler   = (*Server)(nil)
+	_ kelsonv1alpha1connect.AuditServiceHandler   = (*Server)(nil)
 )
 
 // New returns a Server over the given seams.
@@ -365,7 +382,7 @@ func New(opts Options) *Server {
 		build:         opts.Build,
 		secrets:       opts.Secrets,
 		agents:        opts.Agents,
-		authz:         newAuthorizer(opts.Now, opts.Logger),
+		authz:         newAuthorizer(opts.Now, opts.Logger, opts.Audit),
 		buildDefaults: opts.BuildDefaults,
 		deployTimeout: opts.DeployTimeout,
 		pollInterval:  opts.PollInterval,
@@ -376,6 +393,7 @@ func New(opts Options) *Server {
 	if s.pollInterval <= 0 {
 		s.pollInterval = DefaultPollInterval
 	}
+	s.audit = s.authz.audit
 	s.events = newBroker(s.observeScope, opts.WatchInterval, watchRingSize)
 	return s
 }
@@ -402,6 +420,7 @@ func (s *Server) Register(mux *http.ServeMux, opts ...connect.HandlerOption) {
 		func() (string, http.Handler) { return kelsonv1alpha1connect.NewPreviewServiceHandler(s, opts...) },
 		func() (string, http.Handler) { return kelsonv1alpha1connect.NewExplainServiceHandler(s, opts...) },
 		func() (string, http.Handler) { return kelsonv1alpha1connect.NewAgentServiceHandler(s, opts...) },
+		func() (string, http.Handler) { return kelsonv1alpha1connect.NewAuditServiceHandler(s, opts...) },
 	}
 	for _, build := range handlers {
 		mux.Handle(build())

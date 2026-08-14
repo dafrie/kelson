@@ -48,6 +48,13 @@ import (
 // nothing to the cluster.
 func (s *Server) Promote(ctx context.Context, req *connect.Request[kelsonv1alpha1.PromoteRequest]) (*connect.Response[kelsonv1alpha1.PromoteResponse], error) {
 	msg := req.Msg
+	// Promote names two environments and the scope table records the first;
+	// the one that changed is the destination, so the record is corrected here
+	// (issue #78).
+	auditTarget(ctx, msg.GetProject(), msg.GetToEnvironment())
+	auditDryRun(ctx, msg.GetDryRun())
+	auditIdempotencyKey(ctx, msg.GetIdempotencyKey())
+
 	if err := checkPromoteRequest(msg); err != nil {
 		return nil, fail(connect.CodeInvalidArgument, err)
 	}
@@ -104,6 +111,7 @@ func (s *Server) Promote(ctx context.Context, req *connect.Request[kelsonv1alpha
 		Components:   wirePromoted(changes),
 		FromRevision: revision,
 	}
+	auditChange(ctx, serverstate.AuditChange{From: revision})
 	profile, err := s.resolveProfile(ctx, msg.GetProfile())
 	if err != nil {
 		return nil, failRequest(err)
@@ -132,6 +140,7 @@ func (s *Server) Promote(ctx context.Context, req *connect.Request[kelsonv1alpha
 		return nil, failRequest(err)
 	}
 	res.Version = written.Version
+	auditChange(ctx, serverstate.AuditChange{Revision: written.Version})
 	return connect.NewResponse(res), nil
 }
 
