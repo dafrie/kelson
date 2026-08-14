@@ -27,7 +27,7 @@ It spans M0–M8, the v0.1 half of M9, and the minimal bootstrap. Deliberately t
 | Argo CD adapter | Removed entirely, not deferred ([ADR-0012](adr/0012-flux-only-gitops.md)): Flux is the only GitOps mode; the adapter seam stays pluggable for a possible return. |
 | Buildpacks (#49) | Dockerfile covers most repos. [ADR-0010](adr/0010-build-strategy.md) makes Buildpacks the eventual *default*, so this defers the default, not the decision. |
 | Release history UI (#67) | The API has it; the UI can wait. |
-| external-secrets (#80) | SOPS + age (#81) is more self-contained for a bootstrapped cluster. ESO follows. |
+| ~~external-secrets (#80)~~ | *Reversed by shipping early:* it turned out to need no per-backend code at all — kelson renders an `ExternalSecret` and delegates every provider to the operator's own SecretStore ([ADR-0020](adr/0020-external-secrets.md)). SOPS (#81) is still deferred. |
 | MySQL | The operator landscape is materially weaker than CNPG. Two engines done properly beats three half-supported. |
 | M10–M16 | See the phase tables below. |
 
