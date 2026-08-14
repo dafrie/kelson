@@ -108,16 +108,18 @@ func TestRollbackDefaultsToThePreviousEntry(t *testing.T) {
 }
 
 // TestRollbackRequiresConfirmation: without --yes and with nothing to answer
-// the prompt, the rollback is cancelled and the adapter is never called. A
-// closed stdin must never be able to mean "yes".
+// the prompt, the rollback refuses loudly and the adapter is never called. A
+// closed stdin must never be able to mean "yes" — and it is not a quiet "no"
+// either, because an unattended run that silently did nothing would be read
+// as a rollback that happened.
 func TestRollbackRequiresConfirmation(t *testing.T) {
 	spec, history := deploySpec(t)
 	adapter, src := rollbackAdapter()
 
 	stdout, code, msg := runDelivery(t, planeOf([]delivery.Adapter{adapter}, nil, src),
 		"rollback", "-f", spec, "--env", "development", "--history", history)
-	if code != exitErr || !strings.Contains(msg, "cancelled") {
-		t.Fatalf("expected a cancelled rollback, got %d: %s", code, msg)
+	if code != exitErr || !strings.Contains(msg, "stdin closed") {
+		t.Fatalf("expected the stdin-closed refusal, got %d: %s", code, msg)
 	}
 	for _, call := range adapter.callLog() {
 		if call == "rollback" {

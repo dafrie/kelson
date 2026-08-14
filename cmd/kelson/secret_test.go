@@ -352,20 +352,19 @@ func TestSecretListEmptyNamesTheCommandThatFillsIt(t *testing.T) {
 
 // --- delete -------------------------------------------------------------------
 
-// TestSecretDeleteAsksBeforeDeleting: an unconfirmed delete removes nothing. A
-// closed stdin is a "no", which is what an unattended run must get.
+// TestSecretDeleteAsksBeforeDeleting: an unconfirmed delete removes nothing,
+// and a stdin that closes before the answer is a loud refusal, not a quiet
+// "no" — an unattended run that exits 0 having deleted nothing would be read
+// as a delete that happened.
 func TestSecretDeleteAsksBeforeDeleting(t *testing.T) {
 	store := &fakeSecretStore{}
 	stdout, code, msg := runSecret(t, store,
 		"secret", "delete", "checkout-db", "--project", "checkout", "--env", "production")
-	if code != exitOK {
-		t.Fatalf("exit = %d (%s)\n%s", code, msg, stdout)
+	if code != exitErr || !strings.Contains(msg, "stdin closed") {
+		t.Fatalf("expected the stdin-closed refusal, got %d (%s)\n%s", code, msg, stdout)
 	}
 	if len(store.deletes) != 0 {
 		t.Error("an unconfirmed delete removed the Secret")
-	}
-	if !strings.Contains(stdout, "aborted") {
-		t.Errorf("stdout should say nothing happened:\n%s", stdout)
 	}
 }
 

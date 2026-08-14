@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/dafrie/kelson/internal/clusterprofile"
 	"github.com/dafrie/kelson/internal/delivery"
@@ -525,24 +527,37 @@ func (p *printer) printf(format string, a ...any) {
 // interactive reports whether the command's input is a terminal. A command
 // that cannot ask a human must never block on an answer, so a non-terminal
 // stdin skips the prompt rather than waiting for input that will never come.
+//
+// The check is a real terminal probe (an ioctl), not a file-mode sniff:
+// /dev/null — what a child process inherits when its parent wires up no
+// stdin, which is exactly the unattended case this gate exists for — is a
+// character device, so os.ModeCharDevice calls it a terminal and the refusal
+// below never fires (the E2E suite caught this as an uninstall that exited 0
+// with nobody to answer).
 func interactive(cmd *cobra.Command) bool {
 	f, ok := cmd.InOrStdin().(*os.File)
 	if !ok {
 		return false
 	}
-	info, err := f.Stat()
-	return err == nil && info.Mode()&os.ModeCharDevice != 0
+	return term.IsTerminal(int(f.Fd()))
 }
 
-// confirm asks a yes/no question. Anything but an explicit yes is no, and EOF
-// (a closed or empty stdin) is no as well: an unattended run must not be able
-// to answer "yes" by accident.
+// confirm asks a yes/no question. Anything but an explicit yes is no, and a
+// bare Enter is no as well: an unattended run must not be able to answer
+// "yes" by accident. EOF is not an answer at all — a stdin that closes before
+// the question is answered is the unattended case wearing a different hat, so
+// it is an error the caller surfaces as a non-zero exit, never a quiet no.
 func confirm(cmd *cobra.Command, question string) (bool, error) {
 	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s [y/N]: ", question); err != nil {
 		return false, err
 	}
 	var answer string
 	if _, err := fmt.Fscanln(cmd.InOrStdin(), &answer); err != nil {
+		if errors.Is(err, io.EOF) {
+			return false, errors.New("stdin closed before the question was answered: pass --yes to proceed without asking")
+		}
+		// Fscanln errors on a bare Enter ("unexpected newline"); that is a
+		// human declining the default, not a broken stdin.
 		return false, nil
 	}
 	switch strings.ToLower(strings.TrimSpace(answer)) {
