@@ -320,15 +320,6 @@ func (h *harness) kubectlOK(args ...string) result {
 	return res
 }
 
-// get returns one field of one object via jsonpath, trimmed. It is the
-// smallest possible read, used where a test needs a single fact (an image, a
-// phase) rather than a whole object.
-func (h *harness) get(kind, name, jsonpath string) string {
-	h.t.Helper()
-	res := h.kubectlOK("-n", h.namespace, "get", kind, name, "-o", "jsonpath="+jsonpath)
-	return strings.TrimSpace(res.stdout)
-}
-
 // --- waiting ----------------------------------------------------------------
 
 // waitFor polls check until it reports satisfied, then returns. On expiry it

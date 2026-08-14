@@ -14,6 +14,14 @@
 # checksum-verified kind and a digest-pinned node image. That script is used
 # rather than a third-party action so CI and a laptop create the same cluster
 # from the same pin.
+#
+# One cluster, shared by every scenario. hack/e2e/spine.sh adds the delivery
+# spine to it — Flux (through `kelson install flux`, pinned and
+# checksum-verified), the in-cluster registry (`kelson install registry`) and a
+# Helm release of this checkout's kelson-controller — because TestDeliverySpine
+# is the R1 exit gate and asserts against all three. A second cluster would
+# double the slowest thing in the repository to isolate scenarios that do not
+# collide: they use different namespaces and different object names.
 
 name: E2E
 
@@ -59,10 +67,22 @@ jobs:
             CHANGED="$(git diff --name-only "${BEFORE:-HEAD~1}" "$GITHUB_SHA")"
           fi
 
+          # `*` matches a slash in a shell case pattern, so each prefix below
+          # covers the whole subtree. The Go patterns already cover the
+          # controller and the delivery plane; the paths are listed anyway
+          # because what this job proves is now the spine (ADR-0028), and a
+          # reader deciding whether their change is covered should be able to
+          # see the answer without knowing that.
           e2e="false"
           for f in $CHANGED; do
             case "$f" in
               *.go|go.mod|go.sum|Makefile|examples/*|test/e2e/*|hack/e2e/*|.github/workflows/e2e.yml)
+                e2e="true"
+                ;;
+              api/*|internal/controller/*|internal/artifact/*|internal/delivery/*)
+                e2e="true"
+                ;;
+              deploy/chart/*|deploy/crds/*|Dockerfile.controller)
                 e2e="true"
                 ;;
             esac
@@ -76,9 +96,11 @@ jobs:
     needs: changes
     if: ${{ needs.changes.outputs.e2e == 'true' }}
     runs-on: ubuntu-latest
-    # The suite's own budget is 15m (`go test -timeout`); this leaves room for
-    # the cluster to come up and for the failure dump to be collected.
-    timeout-minutes: 30
+    # The suite's own budget is 25m (`go test -timeout`); this leaves room for
+    # the cluster to come up, for Flux and the registry to be installed, for the
+    # controller image to be built and loaded, and for the failure dump to be
+    # collected.
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -108,15 +130,31 @@ jobs:
           set -euo pipefail
           export KUBECONFIG="$GITHUB_WORKSPACE/hack/bin/e2e.kubeconfig"
           kubectl version
+          helm version
           kubectl get nodes -o wide
           kubectl get pods -A
+
+      # Flux, the in-cluster registry and this checkout's kelson-controller.
+      # Idempotent, and it re-uses the cluster the previous step created rather
+      # than making one of its own. `helm` is preinstalled on the GitHub-hosted
+      # runner image; the step above fails loudly if that ever stops being true.
+      - name: Provision the delivery spine
+        run: hack/e2e/spine.sh
+
+      - name: Record the spine's shape
+        run: |
+          set -euo pipefail
+          export KUBECONFIG="$GITHUB_WORKSPACE/hack/bin/e2e.kubeconfig"
+          kubectl get pods -A -o wide
+          kubectl -n kelson-system get deploy,svc
+          kubectl -n kelson-system logs deploy/kelson-controller --tail=50
 
       - name: Run the end-to-end suite
         env:
           KELSON_E2E: "1"
           KELSON_E2E_BIN: ${{ github.workspace }}/hack/bin/kelson
           KUBECONFIG: ${{ github.workspace }}/hack/bin/e2e.kubeconfig
-        run: go test -tags e2e -v -timeout 15m ./test/e2e/...
+        run: go test -tags e2e -v -timeout 25m ./test/e2e/...
 
       # Nobody is watching this run, so a failure has to explain itself from
       # the artifact alone. `|| true` throughout: a diagnostic that fails must
@@ -132,6 +170,13 @@ jobs:
           kubectl get all -A -o wide > /tmp/e2e-diagnostics/all-resources.txt 2>&1 || true
           kubectl get events -A --sort-by=.lastTimestamp > /tmp/e2e-diagnostics/events.txt 2>&1 || true
           kubectl describe pods -A > /tmp/e2e-diagnostics/describe-pods.txt 2>&1 || true
+          # The spine's own objects, which `get all` does not cover: they are
+          # custom resources, and they are the first thing to read when the
+          # exit-gate scenario fails.
+          kubectl get environments,projects -A -o yaml > /tmp/e2e-diagnostics/kelson-resources.yaml 2>&1 || true
+          kubectl get ocirepositories,kustomizations -A -o yaml > /tmp/e2e-diagnostics/flux-objects.yaml 2>&1 || true
+          kubectl -n kelson-system logs deploy/kelson-controller --tail=2000 \
+            > /tmp/e2e-diagnostics/kelson-controller.log 2>&1 || true
           hack/bin/kind export logs /tmp/e2e-diagnostics/kind --name kelson-e2e || true
 
       - name: Upload cluster diagnostics
