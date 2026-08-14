@@ -7,8 +7,9 @@ import {
   SecretService,
   type SetSecretRequest,
 } from "../gen/kelson/v1alpha1/secret_pb";
+import { formatAge } from "../components/phase";
 import { renderAt } from "../test/render";
-import { formatAge, SecretsPanel } from "./SecretsPanel";
+import { SecretsPanel } from "./SecretsPanel";
 
 /**
  * The panel against a stub SecretService — the real generated client, the real

@@ -18,6 +18,7 @@ import { DataServices } from "../dataservices/DataServices";
 import { isDataServiceVerdict } from "../dataservices/parse";
 import { PhaseRail } from "../deploy/PhaseRail";
 import { parseCause, type RailInput } from "../deploy/rail";
+import { Previews } from "../previews/Previews";
 import { SecretsPanel } from "../secrets/SecretsPanel";
 
 /**
@@ -398,6 +399,14 @@ function EnvironmentPanel({
                 : { state: "unavailable" }
           }
         />
+
+        {/* A preview is a *child* of this environment rather than a part of it
+            (ADR-0017): kelson recorded no Environment document for it and its
+            phase is flux-operator's, not the state machine's. So it sits below
+            the environment's own state rather than among the workloads, for the
+            same reason the data services do — reading it as one of this
+            environment's resources is the mistake the placement prevents. */}
+        <Previews project={project} environment={environment} />
 
         {/* Beside the data services, and outside the status block for the same
             reason: the Secrets an environment holds are readable whether or not

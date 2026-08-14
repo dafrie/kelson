@@ -3,6 +3,7 @@ import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { Code, ConnectError, createRouterTransport } from "@connectrpc/connect";
 
 import { DeployService } from "../gen/kelson/v1alpha1/deploy_pb";
+import { PreviewService } from "../gen/kelson/v1alpha1/preview_pb";
 import { ProfileService } from "../gen/kelson/v1alpha1/profile_pb";
 import { SecretService } from "../gen/kelson/v1alpha1/secret_pb";
 import { SpecService } from "../gen/kelson/v1alpha1/spec_pb";
@@ -42,6 +43,18 @@ const transport = createRouterTransport((router) => {
           ageSeconds: 3600n,
         },
       ],
+    }),
+  });
+
+  // The previews section (ADR-0017) reads this per environment, like the
+  // Secrets panel above. This project declares none, which is the ordinary
+  // answer and the one that draws the empty state.
+  router.service(PreviewService, {
+    listPreviews: (req) => ({
+      project: "checkout",
+      environment: req.environment,
+      namespace: `checkout-${req.environment}`,
+      mode: "direct",
     }),
   });
 
