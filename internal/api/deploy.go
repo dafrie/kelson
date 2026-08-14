@@ -12,6 +12,7 @@ import (
 	"github.com/dafrie/kelson/internal/delivery/rollback"
 	"github.com/dafrie/kelson/internal/delivery/statemachine"
 	"github.com/dafrie/kelson/internal/diff"
+	"github.com/dafrie/kelson/internal/model"
 	"github.com/dafrie/kelson/internal/observation"
 	"github.com/dafrie/kelson/internal/redact"
 )
@@ -42,6 +43,21 @@ func (s *Server) Deploy(ctx context.Context, req *connect.Request[kelsonv1alpha1
 	t := target(out, msg.GetMode())
 	dryRun := msg.GetDryRun()
 
+	// Agent policy (ADR-0025), before the first event and against the *stored*
+	// environment this render resolved to — an inline document naming
+	// shop/production is asking about the shop/production kelson holds. A dry
+	// run is exempt on purpose: rendering and previewing change nothing, and
+	// they are precisely what a propose-only agent is told to send instead.
+	var guard agentGuard
+	if persists(dryRun) {
+		if guard, err = s.guard(ctx, model.AgentOpDeploy, set.Project, set.Environment); err != nil {
+			return err
+		}
+		if err := guard.blastRadius(out.resolved); err != nil {
+			return err
+		}
+	}
+
 	proposed := &kelsonv1alpha1.DeployResponse_Proposed{
 		Project:     set.Project,
 		Environment: set.Environment,
@@ -66,6 +82,13 @@ func (s *Server) Deploy(ctx context.Context, req *connect.Request[kelsonv1alpha1
 	}
 	if dryRun == kelsonv1alpha1.DryRun_DRY_RUN_SERVER {
 		return s.previewDeploy(ctx, out, set, stream)
+	}
+
+	// `require: [dry-run]` is satisfied by kelson running one here, on the set
+	// that is about to be applied — never by a claim on the request that one
+	// was run elsewhere (ADR-0025 §5).
+	if err := s.requireDryRun(ctx, guard, out.profile, set); err != nil {
+		return err
 	}
 
 	adapter, _, err := s.selectAdapter(ctx, t)
@@ -370,6 +393,16 @@ func (s *Server) Rollback(ctx context.Context, req *connect.Request[kelsonv1alph
 	set, err := manifestSet(out)
 	if err != nil {
 		return fail(connect.CodeInternal, err)
+	}
+	// A rollback replays recorded bytes rather than this render, so the
+	// blast-radius rules have nothing here to read (ADR-0025 records the gap
+	// and the rule that covers it: `forbid: [rollback]`). What does apply is
+	// the pair that needs no spec — propose-only and forbid — and, as with
+	// Deploy, the preview-only rung is exempt because it changes nothing.
+	if msg.GetDryRun() != kelsonv1alpha1.DryRun_DRY_RUN_RENDER {
+		if _, err := s.guard(ctx, model.AgentOpRollback, set.Project, set.Environment); err != nil {
+			return err
+		}
 	}
 	adapter, plane, err := s.selectAdapter(ctx, target(out, msg.GetMode()))
 	if err != nil {

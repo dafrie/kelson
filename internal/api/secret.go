@@ -7,6 +7,7 @@ import (
 	"connectrpc.com/connect"
 
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
+	"github.com/dafrie/kelson/internal/model"
 	"github.com/dafrie/kelson/internal/redact"
 	"github.com/dafrie/kelson/internal/secret"
 )
@@ -46,9 +47,6 @@ func (s *Server) SetSecret(ctx context.Context, req *connect.Request[kelsonv1alp
 	for _, value := range msg.GetValues() {
 		redact.Register(value)
 	}
-	if s.secrets == nil {
-		return nil, unimplemented("the secret backend")
-	}
 
 	request := secret.SetRequest{
 		Target: secretTarget(msg.GetTarget()),
@@ -59,6 +57,24 @@ func (s *Server) SetSecret(ctx context.Context, req *connect.Request[kelsonv1alp
 	namespace, err := request.Validate()
 	if err != nil {
 		return nil, failSecret(err)
+	}
+	// Agent policy (ADR-0025). A secret write is a change to the environment's
+	// live state — the pods read the value — so propose-only refuses it, and a
+	// request that addresses a bare namespace instead of a (project,
+	// environment) is refused too: policy lives on the environment, and there
+	// is no environment in "namespace: shop-production" that kelson may assume.
+	if persists(msg.GetDryRun()) {
+		if _, err := s.guard(ctx, model.AgentOpSecretSet, request.Project, request.Environment); err != nil {
+			return nil, err
+		}
+	}
+	// The seam check comes after the guard on purpose. Both answers are true on
+	// a server with no secret backend, and "you may not" is the one that does
+	// not depend on how this server happens to be wired — an agent must not
+	// learn that a rule does not apply to it by asking a server that could not
+	// have obeyed it anyway.
+	if s.secrets == nil {
+		return nil, unimplemented("the secret backend")
 	}
 
 	if msg.GetDryRun() == kelsonv1alpha1.DryRun_DRY_RUN_RENDER {
@@ -111,9 +127,6 @@ func (s *Server) ListSecrets(ctx context.Context, req *connect.Request[kelsonv1a
 // it.
 func (s *Server) DeleteSecret(ctx context.Context, req *connect.Request[kelsonv1alpha1.DeleteSecretRequest]) (*connect.Response[kelsonv1alpha1.DeleteSecretResponse], error) {
 	msg := req.Msg
-	if s.secrets == nil {
-		return nil, unimplemented("the secret backend")
-	}
 	request := secret.DeleteRequest{
 		Target: secretTarget(msg.GetTarget()),
 		Name:   msg.GetName(),
@@ -122,6 +135,14 @@ func (s *Server) DeleteSecret(ctx context.Context, req *connect.Request[kelsonv1
 	namespace, err := request.Validate()
 	if err != nil {
 		return nil, failSecret(err)
+	}
+	if persists(msg.GetDryRun()) {
+		if _, err := s.guard(ctx, model.AgentOpSecretDelete, request.Project, request.Environment); err != nil {
+			return nil, err
+		}
+	}
+	if s.secrets == nil {
+		return nil, unimplemented("the secret backend")
 	}
 	if msg.GetDryRun() == kelsonv1alpha1.DryRun_DRY_RUN_RENDER {
 		return connect.NewResponse(&kelsonv1alpha1.DeleteSecretResponse{Namespace: namespace}), nil

@@ -75,6 +75,17 @@ func (s *Server) Promote(ctx context.Context, req *connect.Request[kelsonv1alpha
 		return nil, fail(connect.CodeInvalidArgument, err)
 	}
 
+	// Agent policy applies to the environment being *written*. Promoting reads
+	// the source's history and rewrites the target's pins, so production's
+	// policy governs a promotion into production regardless of where the images
+	// came from (ADR-0025). A dry run stores nothing and is exempt, like every
+	// other preview rung.
+	if persists(msg.GetDryRun()) {
+		if _, err := s.guard(ctx, model.AgentOpPromote, spec.project.Metadata.Name, targetEnv.Metadata.Name); err != nil {
+			return nil, err
+		}
+	}
+
 	revision, deployed, err := s.deployedImages(ctx, spec.project, source, msg.GetMode())
 	if err != nil {
 		return nil, failRequest(err)

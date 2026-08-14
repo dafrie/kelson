@@ -122,6 +122,15 @@ func planeErrors(err error) []*kelsonv1alpha1.Error {
 	if errors.As(err, &authErr) {
 		return []*kelsonv1alpha1.Error{authErr.wire()}
 	}
+
+	// The agent-policy plane (issue #75, ADR-0025). Same wire shape again, and
+	// its own prefix: `agent-policy/propose-only` is a statement about this
+	// environment's spec, where `policy/webhook-denied` (internal/diff) is one
+	// about the cluster's admission control.
+	var policyErr policyError
+	if errors.As(err, &policyErr) {
+		return []*kelsonv1alpha1.Error{policyErr.wire()}
+	}
 	return nil
 }
 
