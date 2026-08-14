@@ -83,6 +83,28 @@ rules:
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["get", "create", "delete"]
+  # internal/delivery/flux: the PR preview read behind PreviewService.ListPreviews
+  # (ADR-0017 stage 3). All four kinds live in the environment's own namespace —
+  # the lifecycle pair kelson renders, and the per-change-request objects
+  # flux-operator instantiates from it — so a namespaced Role covers them. Read
+  # only: previews are published by CI and torn down by flux-operator, and no
+  # RPC in this schema writes one.
+  #
+  # NOT granted here, and it cannot be: the HTTPRoutes a preview's hostnames
+  # come from live in the preview's *own* namespace, which is created at
+  # reconcile time and is therefore not in .Values.rbac.targetNamespaces. Without
+  # a cluster-scoped read of httproutes the preview list is complete except for
+  # its hostnames, which is why that read degrades to silence rather than to an
+  # error. See docs/server.md if you want them.
+  - apiGroups: ["fluxcd.controlplane.io"]
+    resources: ["resourcesets", "resourcesetinputproviders"]
+    verbs: ["get", "list"]
+  - apiGroups: ["source.toolkit.fluxcd.io"]
+    resources: ["ocirepositories"]
+    verbs: ["get", "list"]
+  - apiGroups: ["kustomize.toolkit.fluxcd.io"]
+    resources: ["kustomizations"]
+    verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

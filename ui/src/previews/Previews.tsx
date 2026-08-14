@@ -281,8 +281,9 @@ function PreviewRow({
         </div>
       ) : (
         <p className="k-mono k-previews__muted">
-          no hostnames — this preview's set declares no routes, or Gateway API is
-          not served here
+          no hostnames — this preview's set declares no routes, or kelson cannot
+          read routes in its namespace. Absence here is not a claim that the
+          preview serves nothing.
         </p>
       )}
 

@@ -2,12 +2,16 @@ package flux
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 var (
@@ -202,6 +206,29 @@ func TestPreviewsSurvivesAClusterWithoutGatewayAPI(t *testing.T) {
 	withoutCRD(dyn, "httproutes")
 	seedLifecycle(t, dyn, "True", "True")
 	seedPair(t, dyn, "1", "dddd", "True", "True")
+
+	got, err := DynamicStatusReader{Client: dyn}.Previews(context.Background(), previewScope)
+	if err != nil {
+		t.Fatalf("Previews: %v", err)
+	}
+	if len(got.Previews) != 1 || got.Previews[0].Phase != PreviewReady {
+		t.Fatalf("previews = %+v", got.Previews)
+	}
+	if len(got.Previews[0].Hosts) != 0 {
+		t.Errorf("hosts = %v, want none", got.Previews[0].Hosts)
+	}
+}
+
+// The narrow-RBAC install: a preview's own namespace is created at reconcile
+// time, so the chart cannot grant a route read in it. The previews still come
+// back — losing their hostnames is a smaller loss than losing them.
+func TestPreviewsSurvivesARefusedRouteRead(t *testing.T) {
+	dyn := newFakeCluster(t, previewKinds()...)
+	dyn.PrependReactor("list", "httproutes", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "httproutes"}, "", errors.New("no"))
+	})
+	seedLifecycle(t, dyn, "True", "True")
+	seedPair(t, dyn, "2", "cccc", "True", "True")
 
 	got, err := DynamicStatusReader{Client: dyn}.Previews(context.Background(), previewScope)
 	if err != nil {

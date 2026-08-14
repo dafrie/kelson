@@ -257,10 +257,7 @@ func (r DynamicStatusReader) previewChildren(ctx context.Context, scope PreviewS
 		return nil, readErr("Kustomizations", err)
 	}
 	sources, applies := children(allSources, prefix), children(allApplies, prefix)
-	hosts, err := r.previewHosts(ctx, scope)
-	if err != nil {
-		return nil, err
-	}
+	hosts := r.previewHosts(ctx, scope)
 
 	names := make(map[string]struct{}, len(sources)+len(applies))
 	for name := range sources {
@@ -333,20 +330,25 @@ func previewOrder(id string) int {
 // parent environment's render, so they name the *parent* environment — which is
 // exactly what makes one selector answer for every preview at once. The
 // namespace prefix is what separates the previews from the parent itself.
-func (r DynamicStatusReader) previewHosts(ctx context.Context, scope PreviewScope) (map[string][]string, error) {
+//
+// It returns no error, which is the one place in this file that swallows one.
+// The reason is that this read *enriches* an answer that is already complete: a
+// preview's identity, its commit and its phase come from the pair, and a
+// hostname is what it additionally serves on. The read is also the one that
+// cannot be granted namespace by namespace — a preview's namespace is created
+// at reconcile time, so listing its routes needs cluster scope, which the
+// deploy chart does not grant. Turning that into a failure would mean an
+// install with narrow RBAC could not see its previews at all, which is a much
+// worse answer than seeing them without their hostnames. The caller says
+// exactly that in words rather than reporting an empty list as fact.
+func (r DynamicStatusReader) previewHosts(ctx context.Context, scope PreviewScope) map[string][]string {
 	list, err := r.Client.Resource(httpRouteGVR).List(ctx, metav1.ListOptions{
 		LabelSelector: "app.kubernetes.io/managed-by=kelson," +
 			"kelson.dev/project=" + scope.Project + "," +
 			"kelson.dev/environment=" + scope.Environment,
 	})
-	if unserved(err) {
-		// No Gateway API on this cluster. A preview still exists and still has
-		// a phase; it has no hostnames kelson can read, which is a smaller
-		// claim than a failed listing.
-		return nil, nil
-	}
 	if err != nil {
-		return nil, readErr("HTTPRoutes", err)
+		return nil
 	}
 
 	prefix := naming.Preview(scope.Project, scope.Environment, "")
@@ -370,7 +372,7 @@ func (r DynamicStatusReader) previewHosts(ctx context.Context, scope PreviewScop
 		sort.Strings(out[ns])
 		out[ns] = dedupe(out[ns])
 	}
-	return out, nil
+	return out
 }
 
 // managedByKelson repeats the selector's test locally. A fake API server does
