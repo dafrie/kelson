@@ -887,6 +887,32 @@
   margin-top: 24px;
 }
 
+/* Adding a component (#214): a section of its own, because it writes a new
+   entry rather than changing an existing one, and because it must stay
+   reachable from the YAML tab — a document the form cannot rebuild is exactly
+   the one whose reader is standing there. */
+.k-edit__add {
+  gap: 14px;
+}
+
+/* The append this UI would not make. It is a notice with a payload: the block
+   the form would have written, so "we will not rewrite your file" comes with
+   the thing the reader needs instead of it. */
+.k-edit__handoff {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 18px;
+  background: var(--kelson-degraded-fill);
+  border: 1px solid var(--kelson-degraded-border);
+  border-radius: 6px;
+}
+
+.k-edit__handoff-title {
+  font-weight: 500;
+  color: var(--kelson-text);
+}
+
 /* The form for a document the UI cannot rebuild. It is a notice, not an error:
    nothing is wrong with the document — the form is what cannot hold it. */
 .k-edit__readonly {

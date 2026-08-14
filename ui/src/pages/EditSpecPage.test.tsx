@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { Link } from "react-router-dom";
 import { Code, ConnectError, createRouterTransport } from "@connectrpc/connect";
 import { create } from "@bufbuild/protobuf";
@@ -182,11 +182,11 @@ function stubTransport(stub: Stub = {}) {
   return { transport, recorder };
 }
 
-function renderEditor(stub: Stub = {}) {
+function renderEditor(stub: Stub = {}, path = "/projects/hello/edit") {
   const { transport, recorder } = stubTransport(stub);
   const view = renderAt(
     transport,
-    "/projects/hello/edit",
+    path,
     "/projects/:project/edit",
     <EditSpecPage />,
     [
@@ -693,5 +693,177 @@ spec:
 
     fireEvent.click(screen.getByRole("link", { name: "← hello" }));
     expect(await screen.findByText("the project detail screen")).toBeTruthy();
+  });
+});
+
+/**
+ * Adding a component (#214).
+ *
+ * The assertion that matters is on the bytes: the stored document is the
+ * user's file, so an append has to be the stored bytes plus one entry, and a
+ * document this UI cannot rebuild has to get the entry handed over instead of
+ * being rewritten into something the form understood.
+ */
+describe("EditSpecPage · adding a component", () => {
+  /**
+   * The panel's own fields, by its landmark. They are named what the component
+   * sections above name theirs — a port is a port — so the region is what tells
+   * the two apart, for a screen reader and for this test alike.
+   */
+  function panel() {
+    return within(screen.getByRole("region", { name: "Add a component" }));
+  }
+
+  async function openAdd() {
+    await openedOnForm();
+    fireEvent.click(panel().getByRole("button", { name: "Add component" }));
+  }
+
+  it("appends a service to the stored document without touching the rest of it", async () => {
+    const { recorder } = renderEditor();
+    await openAdd();
+
+    fireEvent.change(panel().getByLabelText("Component name"), {
+      target: { value: "api" },
+    });
+    fireEvent.change(panel().getByLabelText("Port"), { target: { value: "9090" } });
+    fireEvent.click(panel().getByRole("button", { name: "Add to the spec" }));
+
+    // It is in the form immediately, as a component like any other…
+    expect(await screen.findByText(/was added to this project's components/)).toBeTruthy();
+    expect(screen.getAllByLabelText("Replicas (min)")).toHaveLength(3);
+
+    // …and nothing is stored until the same check and save every other edit
+    // goes through.
+    fireEvent.click(screen.getByRole("button", { name: "Check and preview the diff" }));
+    await waitFor(() => expect(recorder.writes).toHaveLength(1));
+    expect(writtenProject(recorder)).toBe(
+      `${UI_PROJECT}\n    - name: api\n      port: 9090\n`,
+    );
+  });
+
+  it("writes a data component as a name and a kind, and states it rather than editing it", async () => {
+    const { recorder } = renderEditor();
+    await openAdd();
+
+    fireEvent.click(panel().getByRole("radio", { name: "PostgreSQL" }));
+    fireEvent.change(panel().getByLabelText("Component name"), {
+      target: { value: "db" },
+    });
+    // A data component has no image question: what it runs is its operator's
+    // business (ADR-0005).
+    expect(panel().queryByRole("radio", { name: "Its own image" })).toBeNull();
+    fireEvent.click(panel().getByRole("button", { name: "Add to the spec" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Check and preview the diff" }));
+    await waitFor(() => expect(recorder.writes).toHaveLength(1));
+    expect(writtenProject(recorder)).toBe(`${UI_PROJECT}\n    - name: db\n      kind: postgres\n`);
+
+    // In the form it is a statement, not a set of fields: no image to roll and
+    // no replicas to scale (#107). Three components, still two editable ones.
+    expect(screen.getAllByLabelText("Replicas (min)")).toHaveLength(2);
+    expect(screen.getByText(/A managed data service/)).toBeTruthy();
+    // And the form is still live: the parser and the builder learned the same
+    // key, so the document is still one this UI can rebuild.
+    expect(screen.queryByText(/was hand-edited/)).toBeNull();
+  });
+
+  it("writes no image for a component that inherits the project's, and one for a component that does not", async () => {
+    const { recorder } = renderEditor();
+    await openAdd();
+
+    fireEvent.click(panel().getByRole("radio", { name: "Worker" }));
+    fireEvent.change(panel().getByLabelText("Component name"), {
+      target: { value: "mailer" },
+    });
+    // The default is inheritance, which is rule P3 and how one repository ships
+    // a web process and a worker.
+    expect(
+      (panel().getByRole("radio", { name: "The project's image" }) as HTMLInputElement)
+        .checked,
+    ).toBe(true);
+    fireEvent.click(panel().getByRole("radio", { name: "Its own image" }));
+    fireEvent.change(panel().getByLabelText("Image"), {
+      target: { value: "ghcr.io/acme/hello-mailer:1.4.2" },
+    });
+    fireEvent.click(panel().getByRole("button", { name: "Add to the spec" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Check and preview the diff" }));
+    await waitFor(() => expect(recorder.writes).toHaveLength(1));
+    expect(writtenProject(recorder)).toContain(
+      "\n    - name: mailer\n      image: ghcr.io/acme/hello-mailer:1.4.2\n",
+    );
+  });
+
+  it("refuses a name the project already uses, and one that is not a label", async () => {
+    renderEditor();
+    await openAdd();
+
+    fireEvent.click(panel().getByRole("radio", { name: "Worker" }));
+    fireEvent.change(panel().getByLabelText("Component name"), {
+      target: { value: "worker" },
+    });
+    fireEvent.click(panel().getByRole("button", { name: "Add to the spec" }));
+
+    expect(
+      screen.getByText(/already has a component called "worker"/),
+    ).toBeTruthy();
+    expect(
+      panel().getByLabelText("Component name").getAttribute("aria-invalid"),
+    ).toBe("true");
+    // Nothing was appended: the document is still the stored one.
+    expect(
+      (screen.getByRole("button", {
+        name: "Check and preview the diff",
+      }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+
+    fireEvent.change(panel().getByLabelText("Component name"), {
+      target: { value: "Mail Worker" },
+    });
+    expect(screen.getByText(/not a DNS-1123 label/)).toBeTruthy();
+  });
+
+  it("hands over the entry rather than rewriting a hand-edited document", async () => {
+    renderEditor({ project: HAND_WRITTEN });
+
+    // This document opens on the YAML tab, which is exactly where the reader
+    // who wants a second component is standing.
+    await screen.findByRole("textbox", { name: "Project document" });
+    fireEvent.click(panel().getByRole("button", { name: "Add component" }));
+    fireEvent.click(panel().getByRole("radio", { name: "Worker" }));
+    fireEvent.change(panel().getByLabelText("Component name"), {
+      target: { value: "worker" },
+    });
+    fireEvent.click(panel().getByRole("button", { name: "Add to the spec" }));
+
+    expect(
+      screen.getByText("This document cannot be rebuilt from the form"),
+    ).toBeTruthy();
+    // The block to paste, and a way to take it…
+    expect(screen.getByText(/- name: worker/)).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: /copy the component entry/ }),
+    ).toBeTruthy();
+    // …and the document itself is untouched, comment and all.
+    expect(
+      (screen.getByRole("textbox", { name: "Project document" }) as HTMLTextAreaElement)
+        .value,
+    ).toBe(HAND_WRITTEN);
+    expect(
+      (screen.getByRole("button", {
+        name: "Check and preview the diff",
+      }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
+
+  it("opens on the add panel when the project page sent the reader to add one", async () => {
+    renderEditor({}, "/projects/hello/edit?add=component");
+
+    // No press needed: the action pressed on the project page is the thing in
+    // front of the reader when the screen arrives.
+    await openedOnForm();
+    expect(panel().getByLabelText("Component name")).toBeTruthy();
+    expect(panel().queryByRole("button", { name: "Add component" })).toBeNull();
   });
 });

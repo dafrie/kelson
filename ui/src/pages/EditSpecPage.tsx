@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
-import { Link, useBlocker, useParams } from "react-router-dom";
+import { Link, useBlocker, useParams, useSearchParams } from "react-router-dom";
 
 import { useAsync, useClients } from "../api/data";
 import { isVersionConflict } from "../api/errors";
@@ -11,6 +11,7 @@ import type {
 } from "../gen/kelson/v1alpha1/common_pb";
 import type { DiffResponse } from "../gen/kelson/v1alpha1/render_pb";
 import { Copyable } from "../components/Copyable";
+import { YamlBlock } from "../components/Disclosure";
 import { ErrorPanel } from "../components/ErrorPanel";
 import { StatusPill } from "../components/StatusPill";
 import { EmptyState, LoadingState } from "../components/States";
@@ -18,12 +19,19 @@ import { EnvValueFields, envValueNote } from "../components/EnvValueFields";
 import { DiffView } from "../diff/DiffView";
 import { decodeDiff, type Diff } from "../diff/parse";
 import {
+  appendComponent,
+  componentDraftProblems,
   componentWorkload,
+  emptyComponentDraft,
+  isDataComponent,
+  isDataDraft,
   isRebuildable,
   mapEditErrors,
   readSpec,
   sameText,
   writeSpec,
+  type ComponentDraft,
+  type ComponentDraftField,
   type ComponentEdit,
   type EditFieldKey,
   type EnvironmentEdit,
@@ -31,6 +39,7 @@ import {
   type SpecEdit,
   type SpecTextSet,
 } from "../spec/edit";
+import { parseComponents } from "../spec/components";
 import { plainEnv, type EnvVar } from "../spec/documents";
 
 /**
@@ -48,6 +57,18 @@ import { plainEnv, type EnvVar } from "../spec/documents";
  *   - The **YAML tab** is always there and always complete. It is the answer to
  *     everything the form does not model, and the only honest place to edit a
  *     hand-written document.
+ *
+ * **Adding a component** (#214) is the third thing, and it hangs off the same
+ * guard. A Project is a container of components (ADR-0014) and until now this
+ * screen could edit the ones a document already had but never add one, so a
+ * second component meant hand-writing YAML nobody advertised. The add panel
+ * appends one entry to `spec.components` of the *stored* document — the append
+ * is the stored bytes plus the new block, asserted rather than assumed
+ * (src/spec/edit.ts: appendComponent) — and when the document is one this UI
+ * cannot rebuild, it does what every other path here does: says so, and hands
+ * over the exact block to paste in the YAML tab. Storing it is still the check
+ * and the save below, because adding a component changes what would be deployed
+ * and nothing else.
  *
  * Both go through the same pipeline, which is the API's own two rungs plus the
  * one thing an *edit* needs that a create does not: PutSpec at dry_run=RENDER
@@ -139,6 +160,7 @@ function Editor({
   onReload: () => void;
 }) {
   const clients = useClients();
+  const [params] = useSearchParams();
   const [text, setText] = useState<SpecTextSet>(stored);
   /**
    * What the form shows, alongside the text it writes.
@@ -155,6 +177,15 @@ function Editor({
     isRebuildable(stored) ? "form" : "yaml",
   );
   const [openDoc, setOpenDoc] = useState("project");
+  /**
+   * The add panel opens by itself when the project page sent the reader here to
+   * add something (`?add=component`), so the action they pressed there is the
+   * thing in front of them when the screen arrives.
+   */
+  const [adding, setAdding] = useState(() => params.get("add") === "component");
+  const [addedName, setAddedName] = useState<string | undefined>(undefined);
+  /** The block to paste when this document cannot be rebuilt — see onAdd. */
+  const [handoff, setHandoff] = useState<string | undefined>(undefined);
   const [wire, setWire] = useState<readonly WireError[]>([]);
   const [checked, setChecked] = useState<Checked | undefined>(undefined);
   const [conflict, setConflict] = useState(false);
@@ -168,6 +199,17 @@ function Editor({
   const environments = useMemo(
     () => Object.keys(text.environments).sort(),
     [text.environments],
+  );
+  /**
+   * The names already taken, for the add panel's uniqueness check.
+   *
+   * Read from the document rather than from the parsed draft: a hand-written
+   * document has no draft at all, and a reader adding a component to one still
+   * deserves to be told the name is taken before the server tells them.
+   */
+  const existingNames = useMemo(
+    () => parseComponents(text.project).map((c) => c.name),
+    [text.project],
   );
 
   useUnsavedChangesGuard(dirty && !saved);
@@ -191,6 +233,34 @@ function Editor({
       replace(writeSpec(next));
     },
     [replace],
+  );
+
+  /**
+   * One more entry in `spec.components`, or the honest refusal.
+   *
+   * The append is byte-faithful or it does not happen: `appendComponent`
+   * returns the whole document set only when the stored bytes are ones this UI
+   * can rebuild, and otherwise returns the block that would have been added so
+   * the reader can paste it into the YAML tab with their formatting intact
+   * (ADR-0013 §1). Nothing is written to the store either way — the check and
+   * the save below are still the only things that write.
+   */
+  const onAdd = useCallback(
+    (draft: ComponentDraft): boolean => {
+      const result = appendComponent(text, draft);
+      if (!result.ok) {
+        setHandoff(result.added);
+        setAddedName(undefined);
+        return false;
+      }
+      setHandoff(undefined);
+      setAdding(false);
+      setAddedName(draft.name.trim());
+      setDraft(result.edit);
+      replace(result.text);
+      return true;
+    },
+    [replace, text],
   );
 
   const onYaml = useCallback(
@@ -359,6 +429,19 @@ function Editor({
         />
       )}
 
+      {/* Under both tabs: adding a component is an act on the document, not on
+          a view of it, and the document that cannot be rebuilt is exactly the
+          one whose reader is standing on the YAML tab when they want one. */}
+      <AddComponent
+        existing={existingNames}
+        open={adding}
+        onOpen={setAdding}
+        onAdd={onAdd}
+        handoff={handoff}
+        added={addedName}
+        onOpenYaml={() => setTab("yaml")}
+      />
+
       {tab === "form" && mapped.general.length > 0 ? (
         <ErrorPanel
           title="The server would not accept this spec"
@@ -512,17 +595,21 @@ function SpecForm({
         </div>
       </section>
 
-      {edit.project.components.map((component, i) => (
-        <ComponentForm
-          key={`${i}:${component.name}`}
-          component={component}
-          index={i}
-          project={edit.project.name}
-          readOnly={readOnly}
-          onChange={(patch) => setComponent(i, patch)}
-          errorsFor={errorsFor}
-        />
-      ))}
+      {edit.project.components.map((component, i) =>
+        isDataComponent(component) ? (
+          <DataComponentRow key={`${i}:${component.name}`} component={component} />
+        ) : (
+          <ComponentForm
+            key={`${i}:${component.name}`}
+            component={component}
+            index={i}
+            project={edit.project.name}
+            readOnly={readOnly}
+            onChange={(patch) => setComponent(i, patch)}
+            errorsFor={errorsFor}
+          />
+        ),
+      )}
 
       {edit.environments.map((env, i) => (
         <section className="k-section" key={env.name}>
@@ -776,6 +863,336 @@ function PreviewsFields({
   );
 }
 
+/**
+ * A data component, stated rather than edited.
+ *
+ * It is in the list because a Project's components are one list (ADR-0014) and
+ * leaving it out would make the form disagree with the document about what this
+ * project contains. It has no fields because its whole configuration is a
+ * preset an operator implements (ADR-0005, ADR-0007): there is no image to
+ * roll, no replica count to set, and offering either would invite exactly the
+ * wrong instinct — which is the same reason the project page gives databases
+ * their own section (#107). The preset itself lives in that section, and this
+ * says so instead of growing a second control for it.
+ */
+function DataComponentRow({ component }: { component: ComponentEdit }) {
+  return (
+    <section className="k-section">
+      <div className="k-eyebrow">
+        Component · <span className="k-mono">{component.name}</span>
+        <span className="k-chip k-mono k-edit__kind">{component.kind}</span>
+      </div>
+      <div className="k-section__body k-edit__group">
+        <p className="k-note">
+          A managed data service. Its topology is a preset its operator
+          implements, so there is nothing here to scale or roll — the preset and
+          what it means are on the project page, in the data services section,
+          and the YAML tab is where a `preset:` is written. A workload reaches
+          it with{" "}
+          <span className="k-mono">
+            {`{ from: { service: ${component.name}, key: uri } }`}
+          </span>
+          .
+        </p>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * Adding one entry to `spec.components` (#214).
+ *
+ * The kind is the question, and the shape follows from it — the inverse of the
+ * create form, which asks for a port and derives the kind, because "add the
+ * worker" is a different sentence from "get something running". Only the kinds
+ * this form can write whole are offered:
+ *
+ *   - **service, worker, cron** — the derived kinds. They are asked as the
+ *     shape questions the model derives them from (docs/model.md), so the
+ *     document that gets written states a port or a schedule and never a
+ *     `kind:` that repeats what the shape already says.
+ *   - **postgres, valkey** — a name and a `kind:`, which is a whole data
+ *     component: every other field on one is `schema/mutually-exclusive` and
+ *     its preset defaults, so there is nothing else to ask here. The preset is
+ *     the data-services panel's subject (#107, ADR-0007).
+ *
+ * `helm` and `agent` are not offered, and are named rather than shown disabled:
+ * a chart component is a `chart:` plus `values:` this form has no fields for
+ * (ADR-0016), and an agent is worker-shaped whose one distinguishing field,
+ * `tools:`, kelson rejects until M7 (#75) — so a picker entry for either would
+ * be a control that cannot finish its own job.
+ *
+ * Nothing here writes to the store. The append changes the document in this
+ * editor, and the check and the save below are what store it, exactly as every
+ * other edit on this screen.
+ */
+function AddComponent({
+  existing,
+  open,
+  onOpen,
+  onAdd,
+  handoff,
+  added,
+  onOpenYaml,
+}: {
+  /** The component names already in the document, for the uniqueness rule. */
+  existing: readonly string[];
+  open: boolean;
+  onOpen: (open: boolean) => void;
+  /** Appends, and answers whether it happened. */
+  onAdd: (draft: ComponentDraft) => boolean;
+  /** The block to paste, when the document could not be rebuilt. */
+  handoff: string | undefined;
+  /** The name the last successful add wrote, if this session made one. */
+  added: string | undefined;
+  onOpenYaml: () => void;
+}) {
+  const [draft, setDraft] = useState<ComponentDraft>(emptyComponentDraft);
+  const [attempted, setAttempted] = useState(false);
+  const set = (patch: Partial<ComponentDraft>) =>
+    setDraft((prev) => ({ ...prev, ...patch }));
+
+  const problems = componentDraftProblems(draft, existing);
+  const problemFor = (field: ComponentDraftField): string | undefined =>
+    attempted ? problems.find((p) => p.field === field)?.message : undefined;
+
+  const submit = () => {
+    setAttempted(true);
+    if (componentDraftProblems(draft, existing).length > 0) return;
+    // The draft is kept when the append could not happen: the reader is being
+    // handed a snippet, and clearing the fields under it would take away the
+    // thing the snippet describes.
+    if (!onAdd(draft)) return;
+    setDraft(emptyComponentDraft());
+    setAttempted(false);
+  };
+
+  const data = isDataDraft(draft);
+
+  return (
+    // A named region: this panel's fields have the same names as the ones the
+    // component sections above carry (a port is a port), and the landmark is
+    // what tells a screen reader — and a test — which one is which.
+    <section className="k-section k-edit__add" aria-label="Add a component">
+      <div className="k-env__head">
+        <div className="k-eyebrow">Add a component</div>
+        {open ? null : (
+          <button type="button" className="k-button" onClick={() => onOpen(true)}>
+            Add component
+          </button>
+        )}
+      </div>
+
+      {added !== undefined ? (
+        <p className="k-note" role="status">
+          <span className="k-mono">{added}</span> was added to this project's
+          components. Nothing is stored yet — check and save below.
+        </p>
+      ) : null}
+
+      {handoff !== undefined ? (
+        <div className="k-edit__handoff" role="alert">
+          <span className="k-edit__handoff-title">
+            This document cannot be rebuilt from the form
+          </span>
+          <p className="k-note">
+            It carries something these fields do not model — a comment, a key
+            order, a kind this form does not write — so appending through them
+            would rewrite your file from what the form understood (ADR-0013 §1).
+            Here is the entry instead: paste it under{" "}
+            <span className="k-mono">spec.components:</span> in the YAML tab,
+            where the rest of the document keeps its formatting.
+          </p>
+          <YamlBlock bytes={handoff} />
+          <div className="k-actions">
+            <Copyable value={handoff} label="copy the component entry" />
+            <button type="button" className="k-button" onClick={onOpenYaml}>
+              Edit the YAML
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {!open ? (
+        <span className="k-field__note k-mono">
+          a project is a container of components (ADR-0014): a service, its
+          worker, a nightly job and the database they share are one Project and
+          one spec
+        </span>
+      ) : (
+        <div className="k-section__body k-edit__group">
+          <fieldset className="k-panel k-new__source">
+            <legend className="k-eyebrow">What it is</legend>
+            {KIND_CHOICES.map((choice) => (
+              <label className="k-check k-mono" key={choice.kind}>
+                <input
+                  type="radio"
+                  name="new-component-kind"
+                  checked={draft.kind === choice.kind}
+                  onChange={() => set({ kind: choice.kind })}
+                />
+                {choice.label}
+              </label>
+            ))}
+            <span className="k-field__note k-mono">
+              {KIND_CHOICES.find((c) => c.kind === draft.kind)?.note}
+            </span>
+            <span className="k-field__note k-mono">
+              `helm` and `agent` are components too and are not offered here: a
+              chart needs its own `chart:` and `values:`, which these fields do
+              not have (ADR-0016), and an agent is worker-shaped until its
+              `tools:` policy stops being rejected (#75, M7). Both are written on
+              the YAML tab.
+            </span>
+          </fieldset>
+
+          <div className="k-new__row">
+            <EditField
+              label="Component name"
+              value={draft.name}
+              onChange={(v) => set({ name: v })}
+              readOnly={false}
+              placeholder={data ? "db" : "worker"}
+              problem={problemFor("name")}
+              errors={[]}
+              note="a DNS-1123 label, unique within this project — it names the workload or the database in the namespace"
+            />
+            {draft.kind === "service" ? (
+              <EditField
+                label="Port"
+                narrow
+                value={draft.port}
+                onChange={(v) => set({ port: v })}
+                readOnly={false}
+                placeholder="8080"
+                problem={problemFor("port")}
+                errors={[]}
+                note="the port the container listens on — what makes this a service: Deployment + Service + routing"
+              />
+            ) : null}
+            {draft.kind === "cron" ? (
+              <EditField
+                label="Schedule"
+                value={draft.schedule}
+                onChange={(v) => set({ schedule: v })}
+                readOnly={false}
+                placeholder="0 3 * * *"
+                problem={problemFor("schedule")}
+                errors={[]}
+                note="a five-field cron expression — what makes this a CronJob"
+              />
+            ) : null}
+          </div>
+
+          {data ? (
+            <p className="k-field__note k-mono">
+              that is the whole component: a data service's configuration is its
+              preset, and leaving it out takes the model's default. What each
+              preset means — instances, CPU, storage, replication — is on the
+              project page, in the data services section, and a preset is
+              written there or on the YAML tab.
+            </p>
+          ) : (
+            <>
+              <fieldset className="k-panel k-new__source">
+                <legend className="k-eyebrow">Which image it runs</legend>
+                <label className="k-check k-mono">
+                  <input
+                    type="radio"
+                    name="new-component-image"
+                    checked={!draft.ownImage}
+                    onChange={() => set({ ownImage: false })}
+                  />
+                  The project's image
+                </label>
+                <label className="k-check k-mono">
+                  <input
+                    type="radio"
+                    name="new-component-image"
+                    checked={draft.ownImage}
+                    onChange={() => set({ ownImage: true })}
+                  />
+                  Its own image
+                </label>
+                <span className="k-field__note k-mono">
+                  {draft.ownImage
+                    ? "an `image:` on the component, which wins over the project's (rule P3)"
+                    : "no `image:` at all: this component runs the project's image, or the artifact its source and build produce (rule P3) — which is how one repository ships a web process and a worker"}
+                </span>
+              </fieldset>
+
+              {draft.ownImage ? (
+                <div className="k-new__row">
+                  <EditField
+                    label="Image"
+                    value={draft.image}
+                    onChange={(v) => set({ image: v })}
+                    readOnly={false}
+                    placeholder="ghcr.io/acme/hello-worker:1.4.2"
+                    problem={problemFor("image")}
+                    errors={[]}
+                    note="a pre-built image reference — a tag works, a digest is reproducible"
+                  />
+                </div>
+              ) : null}
+            </>
+          )}
+
+          <div className="k-deploy__confirm k-edit__actions">
+            <button
+              type="button"
+              className="k-button k-button--primary"
+              onClick={submit}
+            >
+              Add to the spec
+            </button>
+            <button type="button" className="k-button" onClick={() => onOpen(false)}>
+              Cancel
+            </button>
+            <span className="k-mono k-deploy__note">
+              appends one entry to spec.components · stores nothing, deploys
+              nothing — the check and the save below do that
+            </span>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** The kinds the add panel writes, with what each one is. */
+const KIND_CHOICES: {
+  kind: ComponentDraft["kind"];
+  label: string;
+  note: string;
+}[] = [
+  {
+    kind: "service",
+    label: "Web service",
+    note: "a port makes it a service: Deployment + Service + routing",
+  },
+  {
+    kind: "worker",
+    label: "Worker",
+    note: "no port and no schedule: a Deployment that serves no traffic",
+  },
+  {
+    kind: "cron",
+    label: "Cron job",
+    note: "a schedule makes it a CronJob; a job that also serves traffic is two components",
+  },
+  {
+    kind: "postgres",
+    label: "PostgreSQL",
+    note: "a managed database, rendered as a CloudNativePG Cluster its operator runs (ADR-0007)",
+  },
+  {
+    kind: "valkey",
+    label: "Valkey",
+    note: "a managed cache, rendered as a ValkeyCluster its operator runs (ADR-0015)",
+  },
+];
+
 function ComponentForm({
   component,
   index,
@@ -905,6 +1322,7 @@ function EditField({
   readOnly,
   placeholder,
   note,
+  problem,
   errors,
   narrow,
 }: {
@@ -914,6 +1332,12 @@ function EditField({
   readOnly: boolean;
   placeholder?: string;
   note?: string;
+  /**
+   * What the browser itself refuses to send, as the create form words it: a
+   * name that is not a label, a port that is not a number. The server's own
+   * findings arrive separately, in `errors`, and both can be true at once.
+   */
+  problem?: string | undefined;
   errors: WireError[];
   narrow?: boolean;
 }) {
@@ -929,9 +1353,14 @@ function EditField({
         value={value}
         placeholder={placeholder}
         readOnly={readOnly}
-        aria-invalid={errors.length > 0 ? true : undefined}
+        aria-invalid={problem !== undefined || errors.length > 0 ? true : undefined}
         onChange={(e) => onChange(e.target.value)}
       />
+      {problem !== undefined ? (
+        <span className="k-field__problem k-mono" role="alert">
+          {problem}
+        </span>
+      ) : null}
       <FieldErrors errors={errors} />
       {note !== undefined ? (
         <span className="k-field__note k-mono">{note}</span>
