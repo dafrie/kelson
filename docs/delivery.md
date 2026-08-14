@@ -215,3 +215,31 @@ rather than being force-pushed.
   server-side apply that conflicts on a field owned by another controller.
   These are the "discard human intent invisibly" failures and always go to the
   user as a structured `delivery/conflict` error.
+
+## When a field cannot change in place (`delivery/immutable-field`)
+
+Some fields are immutable once an object exists — most consequentially a
+Deployment's `spec.selector`. An apply that changes one is rejected by the API
+server with a 422, and it will be rejected identically on every retry: there is
+no edit that reaches the new value, because the live object is what has to go.
+
+The direct adapter classifies that rejection as `delivery/immutable-field`
+rather than the generic `delivery/apply-failed`, names the stuck field, carries
+the API server's own words in `cause`, and gives the only remediation that
+works:
+
+```
+Deployment/checkout-production/web [delivery/immutable-field] the API server
+refuses the update: spec.selector cannot change on an existing object: delete
+Deployment/checkout-production/web and deploy again — re-deploying without
+deleting fails the same way, and there is no in-place edit that reaches the new
+value
+```
+
+The code exists because the generic remediation ("fix the spec, then
+re-deploy") is actively wrong here: the spec is what the object *should* be.
+[ADR-0027](adr/0027-finish-the-component-rename.md) is the change that made this
+reachable — it renamed the selector label, so any workload deployed before it
+must be deleted and redeployed. Deleting the whole environment
+(`kelson uninstall --project <p> --env <e>`) and deploying again does the same
+job for more than one workload.
