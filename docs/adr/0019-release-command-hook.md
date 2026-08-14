@@ -1,6 +1,9 @@
 # ADR-0019: The release command hook — a component field, direct mode only, no new phase
 
-- **Status:** Accepted
+- **Status:** Accepted, implementation gated (2026-08-14: [ADR-0028](0028-delivery-spine.md) removed
+  direct mode, so `components[].release` moves to `internal/model`'s not-implemented gate table pending
+  the Flux-native replacement — two `Kustomization`s with `dependsOn` — which this ADR's "Revisit when"
+  already predicted would supersede it.)
 - **Date:** 2026-08-14
 
 ## Context

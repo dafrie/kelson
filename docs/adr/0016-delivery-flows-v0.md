@@ -1,6 +1,9 @@
 # ADR-0016: The four M10 delivery flows, and what each one is in v0
 
-- **Status:** Accepted
+- **Status:** Accepted (2026-08-14: the delivery-mode gate of decision 4, and the gate-as-precedent
+  paragraph, are superseded by [ADR-0028](0028-delivery-spine.md) — there is one delivery path, so
+  nothing is mode-gated. Decisions 1, 2, 3 and 5 stand; promotion is still a per-environment image pin
+  and a spec edit, now written as a CR patch.)
 - **Date:** 2026-08-13
 
 ## Context

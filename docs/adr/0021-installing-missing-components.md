@@ -1,6 +1,9 @@
 # ADR-0021: Installing missing platform components — pinned upstream manifests, per-object provenance
 
-- **Status:** Accepted
+- **Status:** Accepted (2026-08-14: [ADR-0030](0030-flux-aio-install.md) adds one catalog row whose
+  bytes kelson renders at release time rather than fetches, and states the trade against "nothing is
+  vendored" explicitly; the detection-first, digest-pinned, per-object-provenance mechanism is
+  unchanged.)
 - **Date:** 2026-08-14
 
 ## Context

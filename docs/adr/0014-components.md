@@ -1,6 +1,8 @@
 # ADR-0014: One `components:` list, per-component identity
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-08-14: implemented — `spec.components` with the closed kind enum is the
+  model's only leaf list and every component renders its own ServiceAccount. Decision B's Workspace
+  shape is carried forward, still unbuilt, by [ADR-0031](0031-single-cluster-single-tenant.md).)
 - **Date:** 2026-08-13
 
 > Amends [ADR-0006](0006-project-application-environment.md), which named the leaf *Application* and

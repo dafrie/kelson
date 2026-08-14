@@ -1,6 +1,9 @@
 # ADR-0022: The `sops` backend — encrypt on write, decrypt in-cluster, and kelson holds no key
 
-- **Status:** Accepted
+- **Status:** Accepted (amended 2026-08-14 by [ADR-0028](0028-delivery-spine.md): the transport is an
+  OCI artifact, not a git commit — encrypted Secret manifests ship inside the artifact and kelson now
+  writes the `Kustomization` that carries `spec.decryption`, which closes this ADR's "committed but
+  never decrypted" negative. The encrypt-on-write, kelson-holds-no-key mechanism is unchanged.)
 - **Date:** 2026-08-14
 
 ## Context

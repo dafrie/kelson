@@ -1,6 +1,9 @@
 # ADR-0012: Flux is the only GitOps delivery mode; Argo CD deferred
 
-- **Status:** Accepted
+- **Status:** Accepted (2026-08-14: the conclusion — Flux, and only Flux — is carried into
+  [ADR-0028](0028-delivery-spine.md), which supersedes this ADR's git-writer mechanics and the
+  surviving `direct` half of the two-mode matrix below. The return condition for an Argo adapter now
+  has to answer ADR-0028 as well as this ADR.)
 - **Date:** 2026-08-12
 
 ## Context
