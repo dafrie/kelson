@@ -1,5 +1,7 @@
 package model
 
+import "time"
+
 // Project is the shared-configuration document: image/build, environment,
 // and the Components that deploy together (ADR-0006, amended by ADR-0014).
 // It stays environment-agnostic; everything that differs per target lives in
@@ -210,6 +212,23 @@ type Component struct {
 	// credentials go.
 	ValuesFrom []ValuesFrom `yaml:"valuesFrom,omitempty" json:"valuesFrom,omitempty" jsonschema:"description=helm components only; Secrets and ConfigMaps merged into the chart values by helm-controller"`
 
+	// Release is the release-command hook: a command run to completion against
+	// this component's image, with this component's environment, before the new
+	// revision's workloads roll (issue #104). It is where database migrations
+	// go.
+	//
+	// It belongs on a *component* rather than on the Project because everything
+	// the command needs is a component's: the image it runs, the env it reads,
+	// the data-service bindings it resolves and the ServiceAccount it runs
+	// under. A Project-level hook would have to pick one component's image and
+	// then pretend it had not.
+	//
+	// Workload kinds only, and not `cron`: a cron component is a schedule, and
+	// a release command runs at deploy time. Data components and charts refuse
+	// it for the reason they refuse every workload field — what they run is
+	// their operator's business (ADR-0005).
+	Release *Release `yaml:"release,omitempty" json:"release,omitempty" jsonschema:"description=command run to completion before this revision's workloads roll — direct delivery mode only"`
+
 	// Tools is the tool subset an agent component may call — the per-agent
 	// capability policy ADR-0014 records as mandatory practice for this
 	// component type. It is validated and then refused
@@ -240,6 +259,32 @@ func (c Component) DerivedKind() ComponentKind {
 		return ComponentWorker
 	}
 }
+
+// Release is a component's release-command hook (issue #104): the command that
+// runs, to completion and successfully, before the revision's workloads roll.
+//
+// The shape is a struct rather than a bare command list because the two
+// questions a migration raises are "what runs" and "how long may it take", and
+// the second one has no other place to live. Retries are deliberately not a
+// field: the Job never retries a *failed* migration behind the deploy's back
+// (docs/model.md, "Release commands"), and the retry that does exist — a
+// re-deploy — is a user action, not a setting.
+type Release struct {
+	// Command is the argv of the release command. It is required: a release
+	// hook with nothing to run is a Job that succeeds and means nothing.
+	Command []string `yaml:"command" json:"command" jsonschema:"required,minItems=1,description=argv of the command; it runs with the component's image and environment"`
+
+	// Timeout is how long the command may run before Kubernetes fails the Job,
+	// as a Go duration ("10m"). It becomes the Job's activeDeadlineSeconds.
+	// Empty means DefaultReleaseTimeout.
+	Timeout string `yaml:"timeout,omitempty" json:"timeout,omitempty" jsonschema:"default=10m,description=Go duration such as 30m; the Job's activeDeadlineSeconds"`
+}
+
+// DefaultReleaseTimeout is how long a release command may run when the spec
+// names no timeout. It is a deliberate ceiling rather than "no deadline": a
+// migration that hangs holds the deploy, and a Job with no deadline holds the
+// namespace long after the deploy that started it gave up.
+const DefaultReleaseTimeout = 10 * time.Minute
 
 // ChartSource is where a helm component's chart is fetched from. Exactly one
 // field is set: the two are different Flux source kinds, not two spellings of

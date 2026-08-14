@@ -70,6 +70,8 @@ var renderedFields = map[string]map[string]string{
 		"$.spec.components[].resources.requests.memory": "renderer: container resource requests",
 		"$.spec.components[].resources.limits.cpu":      "renderer: container resource limits",
 		"$.spec.components[].resources.limits.memory":   "renderer: container resource limits",
+		"$.spec.components[].release.command":           "renderer: the release-hook Job's container command (direct mode only, ADR-0019)",
+		"$.spec.components[].release.timeout":           "renderer: the release-hook Job's activeDeadlineSeconds",
 		"$.spec.components[].env.*":                     "renderer: container env (literal form)",
 		"$.spec.components[].env.*.from.service":        "renderer: secretKeyRef name — the credentials Secret of the bound data component",
 		"$.spec.components[].env.*.from.key":            "renderer: secretKeyRef key, mapped onto the operator's own key names",
