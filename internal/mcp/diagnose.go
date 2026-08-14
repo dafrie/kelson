@@ -20,6 +20,8 @@ Composes, for one (project, environment): the delivery phase, revision, namespac
 
 The Secrets are there for one specific failure: a workload stuck in CreateContainerConfigError is usually a spec referencing { secret: <name>, key: <key> } that does not exist. Compare the SECRETS section against the references in the spec; set_secret writes a missing one.
 
+Under the externalSecrets backend the same failure has a different cause and it is already in the WORKLOADS section: a verdict on an external-secrets.io/ExternalSecret resource with code secret-sync-failed means the external-secrets controller could not read the value from the backing store or could not write the Secret, and the verdict carries the controller's own reason (SecretSyncedError, SecretMissing) and message. Read that before the pods below it — it is why they cannot start. The SECRETS section lists only the Secrets kelson itself writes, so an environment on this backend will normally show none there and that is not a fault.
+
 The VERSION SKEW section is there for another: an adopted operator too old to serve the API kelson writes accepts the manifest and then never reconciles it, and the symptom arrives long after the deploy with nothing in the workload's logs to point at the version. An [unsupported] line names the component, both versions and what specifically degrades; [unknown] means the version could not be read, not that it is fine; [note] means newer than kelson has tested, which is never a fault.
 
 READ-ONLY. Changes nothing. Never reports a secret value — kelson does not store them and no API returns one.

@@ -128,7 +128,7 @@ kubernetes:      { version: v1.31.2, platform: k3s, nodeArchitectures: [amd64] }
 gatewayAPI:      { version: v1.6.0, classes: [envoy] }
 ingressClasses:  [{ name: nginx, controller: k8s.io/ingress-nginx, default: true }]
 certManager:     { clusterIssuers: [letsencrypt-prod] }
-externalSecrets: { clusterSecretStores: [vault-backend] }
+externalSecrets: { clusterSecretStores: [vault-backend], secretStores: [{ name: team-vault, namespace: shop-staging }] }
 prometheus:      { serviceMonitor: true, podMonitor: true }
 flux:            { version: v2.4.0 }
 fluxOperator:    {}
@@ -323,7 +323,7 @@ two is not a breaking change.
 | Backend | Where the value lives | Ships |
 |---|---|---|
 | `cluster` | Kubernetes Secret written by kelson via the API | v0.1 |
-| `externalSecrets` | Vault, AWS/GCP/Azure secret manager | v0.2 |
+| `externalSecrets` | Vault, AWS/GCP/Azure secret manager — kelson renders an `ExternalSecret` and never holds the value ([ADR-0020](adr/0020-external-secrets.md)) | v0.1 |
 | `sops` | Encrypted in Git, age keys | v0.2 |
 
 In v0.1 rendered manifests contain only `secretKeyRef`, and **kelson does not persist secret values** —

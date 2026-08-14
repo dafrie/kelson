@@ -231,11 +231,11 @@ func TestSecretReferenceIsNotALiteral(t *testing.T) {
 // than cluster is internal/renderer/secrets_test.go's business; here the point
 // is only that an author can write it.
 //
-// `externalSecrets` is absent from the list on purpose: it requires a `store`,
-// and `store` is the half of the block still gated (TestGateTableIsEnforced
-// covers that pair).
+// All three backends are here since ADR-0020: `store` left the gate table with
+// it, and `externalSecrets` no longer requires one — with exactly one store on
+// the cluster the renderer resolves it, and only the renderer can know that.
 func TestSecretBackendUngated(t *testing.T) {
-	for _, backend := range []string{"cluster", "sops"} {
+	for _, backend := range []string{"cluster", "externalSecrets", "sops"} {
 		_, errs := DecodeDocuments([]byte(`apiVersion: kelson.dev/v1alpha1
 kind: Environment
 metadata: {name: production}
@@ -244,6 +244,54 @@ spec:
   secrets: {backend: ` + backend + "}\n"))
 		if len(errs) != 0 {
 			t.Errorf("backend %q must validate, got:\n%v", backend, errs)
+		}
+	}
+}
+
+// TestExternalSecretsFieldsAreBackendScoped: `store` and `refreshInterval`
+// configure the externalSecrets backend and nothing else, so writing either
+// under `cluster` is refused rather than ignored — the quiet-success shape
+// issue #141 exists to prevent.
+func TestExternalSecretsFieldsAreBackendScoped(t *testing.T) {
+	for _, field := range []string{"store: vault-backend", "refreshInterval: 15m"} {
+		_, errs := DecodeDocuments([]byte(`apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata: {name: production}
+spec:
+  project: checkout
+  secrets: {backend: cluster, ` + field + "}\n"))
+		if !slices.Contains(errs.Codes(), ErrMutuallyExclusive) {
+			t.Errorf("%q under backend cluster must be refused, got:\n%v", field, errs)
+		}
+	}
+}
+
+// TestRefreshIntervalIsADuration: the renderer writes the interval through
+// verbatim and may not import `time` (ADR-0001), so the parse has to happen
+// here or a typo reaches external-secrets as an unparseable spec field.
+func TestRefreshIntervalIsADuration(t *testing.T) {
+	for _, tc := range []struct {
+		interval string
+		valid    bool
+	}{
+		{"1h", true},
+		{"30s", true},
+		{"24h0m0s", true},
+		{"1 hour", false},
+		{"hourly", false},
+		{"3600", false},
+		{"0", false},
+		{"-5m", false},
+	} {
+		_, errs := DecodeDocuments([]byte(`apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata: {name: production}
+spec:
+  project: checkout
+  secrets: {backend: externalSecrets, refreshInterval: "` + tc.interval + "\"}\n"))
+		got := len(errs) == 0
+		if got != tc.valid {
+			t.Errorf("refreshInterval %q: valid=%v, want %v (errors: %v)", tc.interval, got, tc.valid, errs)
 		}
 	}
 }

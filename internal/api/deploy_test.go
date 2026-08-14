@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -442,5 +443,65 @@ func TestRollbackRefusedByCapabilities(t *testing.T) {
 	}
 	if connect.CodeOf(stream.Err()) != connect.CodeFailedPrecondition {
 		t.Fatalf("code = %v, want FailedPrecondition (err %v)", connect.CodeOf(stream.Err()), stream.Err())
+	}
+}
+
+// TestStatusVerdictsIncludeSecretSync is issue #80's acceptance criterion on
+// the wire: a failed ExternalSecret sync arrives as an ordinary degraded
+// verdict with the controller's cause named, ahead of the workloads it broke.
+// Nothing downstream — `kelson status`, the event stream, diagnose_application,
+// the UI — learns a new shape for it.
+func TestStatusVerdictsIncludeSecretSync(t *testing.T) {
+	set := delivery.ManifestSet{Manifests: []delivery.Manifest{
+		{Kind: "ExternalSecret", Name: "payments", Namespace: "hello-development"},
+		{Kind: "Deployment", Name: "web", Namespace: "hello-development"},
+	}}
+	health := syncingEvaluator{
+		fakeEvaluator: fakeEvaluator{},
+		sync: map[string]observation.Verdict{"payments": {
+			Healthy:     false,
+			Code:        observation.CodeSecretSyncFailed,
+			Resource:    "external-secrets.io/ExternalSecret/hello-development/payments",
+			Reason:      `SecretSyncedError: cannot get secret "payments": permission denied`,
+			Remediation: "check the SecretStore authenticates",
+		}},
+	}
+
+	verdicts, err := workloadVerdicts(context.Background(), &Plane{Health: health}, set, "fallback")
+	if err != nil {
+		t.Fatalf("workloadVerdicts: %v", err)
+	}
+	if len(verdicts) != 2 {
+		t.Fatalf("verdicts = %d, want one per ExternalSecret and Deployment", len(verdicts))
+	}
+	first := verdicts[0]
+	if first.GetCode() != string(observation.CodeSecretSyncFailed) {
+		t.Fatalf("the sync verdict must come first — the cause above the symptom; got %q", first.GetCode())
+	}
+	if !first.GetDegraded() || first.GetHealthy() {
+		t.Errorf("verdict = %+v, want degraded", first)
+	}
+	if !strings.Contains(first.GetMessage(), "permission denied") {
+		t.Errorf("message = %q, want the controller's own cause", first.GetMessage())
+	}
+	if first.GetRemediation() == "" {
+		t.Errorf("a failure must state the fix")
+	}
+}
+
+// TestStatusVerdictsWithoutASyncEvaluator: the capability is optional, so a
+// health source that only classifies workloads reports exactly what it did
+// before rather than failing the readback.
+func TestStatusVerdictsWithoutASyncEvaluator(t *testing.T) {
+	set := delivery.ManifestSet{Manifests: []delivery.Manifest{
+		{Kind: "ExternalSecret", Name: "payments", Namespace: "hello-development"},
+		{Kind: "Deployment", Name: "web", Namespace: "hello-development"},
+	}}
+	verdicts, err := workloadVerdicts(context.Background(), &Plane{Health: fakeEvaluator{}}, set, "fallback")
+	if err != nil {
+		t.Fatalf("workloadVerdicts: %v", err)
+	}
+	if len(verdicts) != 1 || verdicts[0].GetResource() != "Deployment/hello-development/web" {
+		t.Fatalf("verdicts = %+v, want the Deployment alone", verdicts)
 	}
 }

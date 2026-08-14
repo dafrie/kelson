@@ -38,6 +38,13 @@ const (
 	CodeSchedulingFailed Code = "scheduling-failed"
 	// CodeMissing: the workload object is not in the cluster.
 	CodeMissing Code = "missing"
+	// CodeSecretSyncFailed: an ExternalSecret's Ready condition is False — the
+	// external-secrets controller could not read the value from the backing
+	// store, or could not write the Secret (issue #80, ADR-0020). It is a
+	// failure rather than a wait because the controller has looked and said no,
+	// and it is a *definite* one: the workloads referencing that Secret will
+	// not start, or are running on a value that has stopped refreshing.
+	CodeSecretSyncFailed Code = "secret-sync-failed"
 )
 
 // failure codes is the set a Verdict carries when it is a definitive failure,
@@ -50,6 +57,7 @@ var failureCodes = map[Code]bool{
 	CodeFailingProbe:          true,
 	CodeInsufficientResources: true,
 	CodeSchedulingFailed:      true,
+	CodeSecretSyncFailed:      true,
 }
 
 // IsFailure reports whether the code is a definitive health failure. The
@@ -82,6 +90,11 @@ func (c Code) remediation() string {
 		return "the pod cannot be scheduled: check node selectors, affinity rules and taints"
 	case CodeMissing:
 		return "the workload is not in the cluster: check the namespace and that it was applied"
+	case CodeSecretSyncFailed:
+		return "external-secrets could not sync this Secret: the reason above is the controller's own — " +
+			"check that the SecretStore authenticates, that the remote key and property exist in the backing " +
+			"store, and that the store's credentials still work. Workloads referencing this Secret will not " +
+			"start until it syncs"
 	default:
 		return ""
 	}

@@ -97,11 +97,31 @@ const (
 	// names it and the `kelson secret set` that precedes it.
 	ErrBindingUnavailableKey = "render/binding-unavailable-key"
 	// ErrSecretBackendUnsupported: the environment selects a secret backend the
-	// renderer has no mechanism for — `externalSecrets` (issue #80) or `sops`
-	// (issue #81). Only `cluster` renders today, and it renders by emitting
-	// nothing extra: a secretKeyRef already addresses a Secret in the
-	// namespace. See internal/renderer/secrets.go.
+	// renderer has no mechanism for — `sops` (issue #81). `cluster` renders by
+	// emitting nothing extra (a secretKeyRef already addresses a Secret in the
+	// namespace) and `externalSecrets` renders an ExternalSecret per referenced
+	// Secret (ADR-0020). See internal/renderer/secrets.go.
 	ErrSecretBackendUnsupported = "render/secret-backend-unsupported"
+	// ErrExternalSecretsNotInstalled: the environment selects backend
+	// externalSecrets and the ClusterProfile reports no external-secrets
+	// operator. The backend delegates entirely to that controller, so an
+	// ExternalSecret applied without it is a resource nothing reconciles — or a
+	// kind the API server does not serve. It is the profile-driven sibling of
+	// ErrHelmRequiresFlux: same shape of gate, different kind of input, and
+	// only a definite No refuses (ADR-0020).
+	ErrExternalSecretsNotInstalled = "render/external-secrets-not-installed"
+	// ErrExternalSecretsStoreUnknown: secrets.store names a store the cluster
+	// profile does not have, or the environment names none and the profile
+	// reports no store at all. kelson references a store and never configures
+	// one — the backend credentials live in the SecretStore's spec.provider,
+	// which is the cluster administrator's (ADR-0005).
+	ErrExternalSecretsStoreUnknown = "render/external-secrets-store-not-found"
+	// ErrExternalSecretsStoreAmbiguous: the store cannot be resolved to exactly
+	// one — several are available and the spec names none, or the name matches
+	// both a namespaced SecretStore and a ClusterSecretStore. kelson refuses
+	// rather than picking: a wrong store is not a render failure, it is a
+	// workload reading a credential from somewhere nobody intended.
+	ErrExternalSecretsStoreAmbiguous = "render/external-secrets-store-ambiguous"
 	// ErrInternal: an invariant failed inside the renderer itself.
 	ErrInternal = "render/internal"
 )

@@ -148,4 +148,5 @@ This reference is **generated** from the committed JSON Schema [`schema/environm
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `backend` | string enum `"cluster"`, `"externalSecrets"`, `"sops"` | yes |  |  |
-| `store` | string | no |  |  |
+| `refreshInterval` | string | no | `"1h"` | externalSecrets only; how often the value is re-read from the backing store; a positive Go duration such as 30s or 15m or 1h |
+| `store` | string | no |  | externalSecrets only; name of a SecretStore in this namespace or a ClusterSecretStore — optional when the cluster offers exactly one |

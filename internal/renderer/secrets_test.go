@@ -79,39 +79,32 @@ func TestRenderedOutputCarriesNoSecretValue(t *testing.T) {
 	}
 }
 
-// TestSecretBackendGate: only `cluster` renders. The other two backends are a
-// structured refusal naming the issue that implements them, rather than a
-// cluster-shaped render against a Secret nothing would populate.
+// TestSecretBackendGate: `sops` is a structured refusal naming the issue that
+// implements it, rather than a cluster-shaped render against a Secret nothing
+// would populate. It is the last of the three left in this shape — ADR-0020
+// gave `externalSecrets` a mechanism, and its refusals are now about the
+// cluster and the store rather than about the backend's existence
+// (TestExternalSecretsRequiresTheOperator).
 func TestSecretBackendGate(t *testing.T) {
-	for _, tc := range []struct {
-		backend   model.SecretBackendType
-		wantIssue string
-	}{
-		{model.SecretsExternalSecrets, "#80"},
-		{model.SecretsSOPS, "#81"},
-	} {
-		t.Run(string(tc.backend), func(t *testing.T) {
-			r := secretRefFixture()
-			r.Environment.Secrets = model.SecretBackend{Backend: tc.backend}
-			_, err := Render(r, gatewayProfile(), nil)
-			if err == nil {
-				t.Fatalf("backend %q must not render", tc.backend)
-			}
-			errs, ok := err.(Errors)
-			if !ok || len(errs) != 1 {
-				t.Fatalf("expected one structured render error, got %T: %v", err, err)
-			}
-			e := errs[0]
-			if e.Code != ErrSecretBackendUnsupported {
-				t.Errorf("code = %q, want %q", e.Code, ErrSecretBackendUnsupported)
-			}
-			if !strings.Contains(e.Remediation, tc.wantIssue) {
-				t.Errorf("remediation must name where the work is tracked (%s), got %q", tc.wantIssue, e.Remediation)
-			}
-			if !strings.Contains(e.Remediation, "backend: cluster") {
-				t.Errorf("remediation must name the backend that works today, got %q", e.Remediation)
-			}
-		})
+	r := secretRefFixture()
+	r.Environment.Secrets = model.SecretBackend{Backend: model.SecretsSOPS}
+	_, err := Render(r, gatewayProfile(), nil)
+	if err == nil {
+		t.Fatalf("backend sops must not render")
+	}
+	errs, ok := err.(Errors)
+	if !ok || len(errs) != 1 {
+		t.Fatalf("expected one structured render error, got %T: %v", err, err)
+	}
+	e := errs[0]
+	if e.Code != ErrSecretBackendUnsupported {
+		t.Errorf("code = %q, want %q", e.Code, ErrSecretBackendUnsupported)
+	}
+	if !strings.Contains(e.Remediation, "#81") {
+		t.Errorf("remediation must name where the work is tracked (#81), got %q", e.Remediation)
+	}
+	if !strings.Contains(e.Remediation, "backend: cluster") {
+		t.Errorf("remediation must name the backend that works today, got %q", e.Remediation)
 	}
 }
 

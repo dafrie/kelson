@@ -27,7 +27,6 @@ milestone that will implement the field.
 | Field | Rejected until |
 |---|---|
 | `Project.spec.components[].tools` (`kind: agent`) | M7 · Agent surface & MCP ([#75](https://github.com/dafrie/kelson/issues/75)) |
-| `Project.spec.defaults.secrets.store`, `Environment.spec.secrets.store` | M8 · Secrets ([#80](https://github.com/dafrie/kelson/issues/80)) |
 | `Project.spec.defaults.policy`, `Environment.spec.policy` | M7 · Agent surface & MCP |
 | `Environment.spec.cluster` | M10 · Environments & promotion |
 
@@ -35,9 +34,11 @@ The gate lives in validation only: `internal/model/notimplemented.go` holds the 
 `internal/model/coverage_test.go` fails the build if a new spec field is neither consumed nor gated.
 Resolution of these fields already works, so a milestone lands by deleting a table row — the data-service
 fields and the `from:` bindings left the table exactly that way with
-[#89](https://github.com/dafrie/kelson/issues/89). A row may also *narrow*: `secrets:` was gated whole
-until [ADR-0018](adr/0018-secret-references.md), and now `backend` is consumed while `store` — which
-configures the `externalSecrets` backend alone — stays gated.
+[#89](https://github.com/dafrie/kelson/issues/89). A row may also *narrow* before it disappears:
+`secrets:` was gated whole until [ADR-0018](adr/0018-secret-references.md) narrowed it to `store`
+alone, and [ADR-0020](adr/0020-external-secrets.md) removed that last row when `store` and
+`refreshInterval` became an ExternalSecret's `secretStoreRef` and `spec.refreshInterval`
+([#80](https://github.com/dafrie/kelson/issues/80)).
 
 Not every refusal is a gate. A field can be consumed and still have values kelson will not render:
 `preset: branch`, and a preset the target cluster's operator cannot host, are structured *render*
@@ -52,8 +53,11 @@ the same reason (`render/previews-require-flux`,
 the mode where kelson owns the apply can wait for a migration before rolling the workloads
 (`render/release-requires-direct`, [Release commands](#release-commands-migrations-before-the-rollout),
 [ADR-0019](adr/0019-release-command-hook.md)). `Environment.spec.secrets.backend` is a
-third: `externalSecrets` and `sops` are `render/secret-backend-unsupported` rather than gated fields,
-because the field *is* consumed — see [Choosing the backend](#choosing-the-backend).
+third: `sops` is `render/secret-backend-unsupported` rather than a gated field, because the field *is*
+consumed — see [Choosing the backend](#choosing-the-backend). And `backend: externalSecrets` adds a
+fourth kind of refusal, the one that depends on the *cluster*: `render/external-secrets-not-installed`,
+`render/external-secrets-store-not-found` and `render/external-secrets-store-ambiguous` are decided
+from the ClusterProfile, exactly as the data-service presets are.
 
 And not every refusal is either: a field that belongs to another kind is a plain validation error, because
 one list means one type carrying fields only some of its kinds use. `preset` on a worker, `port` on a
@@ -944,13 +948,51 @@ and the spec text does not change when it changes:
 | Backend | What it does | Status |
 |---|---|---|
 | `cluster` | the reference addresses a Kubernetes Secret written out of band. The built-in default | renders |
-| `externalSecrets` | an `ExternalSecret` per reference, resolved from Vault or a cloud secret manager | `render/secret-backend-unsupported`, [#80](https://github.com/dafrie/kelson/issues/80) |
+| `externalSecrets` | an `ExternalSecret` per referenced Secret, resolved by external-secrets from Vault or a cloud secret manager | renders ([ADR-0020](adr/0020-external-secrets.md)) |
 | `sops` | values encrypted in Git with age keys, decrypted in-cluster | `render/secret-backend-unsupported`, [#81](https://github.com/dafrie/kelson/issues/81) |
 
-The refusal is a **render** error rather than a validation one, for the reason the Helm gate is: it is
-decided from spec data alone, before anything is emitted, so the same document renders the same way
-against every cluster. `secrets.store`, which configures the `externalSecrets` backend and nothing
-else, is still `schema/not-implemented` (#141).
+The `sops` refusal is a **render** error rather than a validation one, for the reason the Helm gate is:
+it is decided from spec data alone, before anything is emitted, so the same document renders the same
+way against every cluster.
+
+### The `externalSecrets` backend
+
+The spec text does not change. `{secret: payments, key: api-key}` still renders the same
+`valueFrom.secretKeyRef` it renders under `cluster`; what the backend adds is the resource that
+*populates* the Secret that reference addresses — one `ExternalSecret` per Secret name, with one `data`
+entry per key something in the environment reads, rendered ahead of every workload.
+
+```yaml
+secrets:
+  backend: externalSecrets
+  store: vault-backend      # optional: a SecretStore in this namespace, or a ClusterSecretStore
+  refreshInterval: 15m      # optional: a positive Go duration, default 1h
+```
+
+`store` is a **name**, resolved against the ClusterProfile at render time, and the *kind* comes from
+the profile — whether `vault-backend` is a namespaced `SecretStore` or a cluster-scoped
+`ClusterSecretStore` is a fact about the cluster, not something the spec restates. It may be omitted
+when the cluster offers exactly one store. Anything less definite is refused rather than guessed:
+
+| Code | When |
+|---|---|
+| `render/external-secrets-not-installed` | the profile reports no external-secrets operator. A profile with a detection *gap* on `externalSecrets` renders — "we could not look" is never "it is absent" |
+| `render/external-secrets-store-not-found` | `store` names one the cluster does not have, or none is named and the cluster has none. The error lists what it does have |
+| `render/external-secrets-store-ambiguous` | no `store` and several are available, or the name matches both a `SecretStore` and a `ClusterSecretStore` |
+
+Each remote value is addressed as `remoteRef: {key: <secret name>, property: <key>}` — the spec's own
+two parts, unchanged, so a value is where an author would look for it. The path *prefix* (a Vault mount,
+an AWS name prefix, a GCP project) belongs to the SecretStore's own `spec.provider` and has no spelling
+in the kelson spec: kelson references a store and never configures one.
+
+**kelson needs no per-backend code.** Vault, AWS Secrets Manager, GCP Secret Manager and Azure Key
+Vault are backends *of external-secrets*, configured in the SecretStore; an `ExternalSecret` is
+provider-agnostic. ADR-0020 records the API reading that rests on.
+
+**A failed sync is visible.** The observation plane reads each ExternalSecret's `Ready` condition and
+reports `secret-sync-failed` with the controller's own reason and message, in the same verdict list as
+the workloads and above them — a Secret that never synced is why the pods below it cannot start.
+Nothing reads the Secret itself: kelson holds no value under this backend at any point.
 
 ## Environment schema
 
@@ -978,8 +1020,9 @@ spec:
     require: [dry-run]               # only dry-run is defined today
     deployers: [team-platform]       # who may deploy; default: the Project's team
   secrets:
-    backend: cluster                 # cluster | externalSecrets | sops — only cluster renders today
-    store: vault-backend             # externalSecrets only, and rejected until M8 (#141, #80)
+    backend: cluster                 # cluster | externalSecrets | sops — sops does not render yet (#81)
+    store: vault-backend             # externalSecrets only; optional when the cluster offers one store
+    refreshInterval: 1h              # externalSecrets only; a positive Go duration, default 1h
   previews:                          # Flux mode only — see "Previews" below
     provider: github                 # github | gitlab
     repo: https://github.com/acme/checkout           # the SOURCE repo, not delivery.git.repo

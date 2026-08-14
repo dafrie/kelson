@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"strconv"
 	"strings"
@@ -240,5 +241,107 @@ func TestStatusWithoutProbeSaysSo(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "no observation probe available") {
 		t.Fatalf("stdout should say health was not read:\n%s", stdout)
+	}
+}
+
+// syncingProbe is a fakeProbe that also answers sync questions, standing in for
+// the real observation.Probe's optional SecretSyncEvaluator capability.
+type syncingProbe struct {
+	fakeProbe
+	sync map[string]observation.Verdict
+	seen []string
+}
+
+func (s *syncingProbe) EvaluateSecretSync(_ context.Context, namespace, name string) (observation.Verdict, error) {
+	s.seen = append(s.seen, name)
+	if v, ok := s.sync[name]; ok {
+		return v, nil
+	}
+	return observation.Verdict{
+		Healthy:  true,
+		Code:     observation.CodeHealthy,
+		Resource: "external-secrets.io/ExternalSecret/" + namespace + "/" + name,
+	}, nil
+}
+
+// TestStatusReportsSecretSyncFailures is issue #80's acceptance criterion at
+// the surface a human reads: a Secret that failed to sync is an
+// application-level problem with the cause named, and it is reported above the
+// workloads it broke rather than left for someone to infer from a
+// CreateContainerConfigError.
+func TestStatusReportsSecretSyncFailures(t *testing.T) {
+	set := delivery.ManifestSet{Manifests: []delivery.Manifest{
+		{Kind: "ExternalSecret", Name: "payments", Namespace: "shop-prod"},
+		{Kind: "Deployment", Name: "web", Namespace: "shop-prod"},
+	}}
+	probe := &syncingProbe{
+		sync: map[string]observation.Verdict{"payments": {
+			Healthy:     false,
+			Code:        observation.CodeSecretSyncFailed,
+			Reason:      `SecretSyncedError: cannot get secret "payments": permission denied`,
+			Resource:    "external-secrets.io/ExternalSecret/shop-prod/payments",
+			Remediation: "check the SecretStore",
+		}},
+	}
+
+	verdicts, err := workloadVerdicts(context.Background(), &deliveryPlane{health: probe}, set, "fallback")
+	if err != nil {
+		t.Fatalf("workloadVerdicts: %v", err)
+	}
+	if len(verdicts) != 2 {
+		t.Fatalf("verdicts = %+v, want one per ExternalSecret and Deployment", verdicts)
+	}
+	if verdicts[0].Code != observation.CodeSecretSyncFailed {
+		t.Fatalf("the sync verdict must come first — the cause above the symptom; got %+v", verdicts)
+	}
+	if !isDegraded(verdicts[0]) {
+		t.Errorf("a failed sync must count as degraded, not as a wait state")
+	}
+	if !strings.Contains(verdicts[0].String(), "permission denied") {
+		t.Errorf("the summary must carry the controller's cause: %q", verdicts[0].String())
+	}
+	if len(probe.seen) != 1 || probe.seen[0] != "payments" {
+		t.Errorf("asked about %v, want exactly the rendered ExternalSecret", probe.seen)
+	}
+}
+
+// TestStatusWithoutASyncEvaluatorStillWorks: the sync capability is optional,
+// so an Evaluator that only classifies workloads keeps reporting exactly what
+// it did before rather than failing the whole status readback.
+func TestStatusWithoutASyncEvaluatorStillWorks(t *testing.T) {
+	set := delivery.ManifestSet{Manifests: []delivery.Manifest{
+		{Kind: "ExternalSecret", Name: "payments", Namespace: "shop-prod"},
+		{Kind: "Deployment", Name: "web", Namespace: "shop-prod"},
+	}}
+	verdicts, err := workloadVerdicts(context.Background(), &deliveryPlane{health: fakeProbe{}}, set, "fallback")
+	if err != nil {
+		t.Fatalf("workloadVerdicts: %v", err)
+	}
+	if len(verdicts) != 1 || verdicts[0].Resource != "Deployment/shop-prod/web" {
+		t.Fatalf("verdicts = %+v, want the Deployment alone", verdicts)
+	}
+}
+
+// TestExternalSecretsPicksTheRenderedOnes: the rendered set is the correlation,
+// and the fallback namespace applies only where the manifest carries none.
+func TestExternalSecretsPicksTheRenderedOnes(t *testing.T) {
+	set := delivery.ManifestSet{Manifests: []delivery.Manifest{
+		{Kind: "Namespace", Name: "shop-prod"},
+		{Kind: "ExternalSecret", Name: "payments", Namespace: "shop-prod"},
+		{Kind: "ExternalSecret", Name: "mail-relay"},
+		{Kind: "Deployment", Name: "web", Namespace: "shop-prod"},
+	}}
+	got := externalSecrets(set, "fallback")
+	want := []workloadRef{
+		{namespace: "shop-prod", name: "payments"},
+		{namespace: "fallback", name: "mail-relay"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("[%d] = %+v, want %+v", i, got[i], want[i])
+		}
 	}
 }

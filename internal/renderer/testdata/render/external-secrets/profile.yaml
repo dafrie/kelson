@@ -1,0 +1,14 @@
+# A cluster running external-secrets, with three stores configured — the shape
+# detection produces (issue #80). Whether they front Vault, AWS Secrets Manager,
+# GCP Secret Manager or Azure Key Vault is invisible here and stays invisible in
+# the rendered output: the provider lives in each store's own spec.provider, and
+# kelson names a store rather than configuring one (ADR-0005, ADR-0020).
+#
+# Three stores is the point. The spec names one, so the render is unambiguous;
+# the same profile with no `store:` in the spec is refused, which
+# TestExternalSecretsStoreResolution covers.
+externalSecrets:
+  version: 0.20.0
+  clusterSecretStores: [aws-backend, vault-backend]
+  secretStores:
+    - { name: team-vault, namespace: checkout-staging }

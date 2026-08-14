@@ -146,6 +146,11 @@ const sidebars: SidebarsConfig = {
           id: 'adr/0019-release-command-hook',
           label: '0019 — Release command hook',
         },
+        {
+          type: 'doc',
+          id: 'adr/0020-external-secrets',
+          label: '0020 — External secrets',
+        },
       ],
     },
   ],

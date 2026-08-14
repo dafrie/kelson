@@ -418,6 +418,25 @@ func (e *steppingEvaluator) Evaluate(_ context.Context, namespace, name string) 
 	}, nil
 }
 
+// syncingEvaluator is a fakeEvaluator that also answers sync questions,
+// standing in for the real observation.Probe's optional SecretSyncEvaluator
+// capability (issue #80).
+type syncingEvaluator struct {
+	fakeEvaluator
+	sync map[string]observation.Verdict
+}
+
+func (s syncingEvaluator) EvaluateSecretSync(_ context.Context, namespace, name string) (observation.Verdict, error) {
+	if v, ok := s.sync[name]; ok {
+		return v, nil
+	}
+	return observation.Verdict{
+		Healthy:  true,
+		Code:     observation.CodeHealthy,
+		Resource: "external-secrets.io/ExternalSecret/" + namespace + "/" + name,
+	}, nil
+}
+
 // fakeProfile is a ProfileCapture returning a fixture.
 func fakeProfile(p clusterprofile.ClusterProfile) ProfileCapture {
 	return CaptureFunc(func(context.Context) (clusterprofile.ClusterProfile, error) { return p, nil })

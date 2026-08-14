@@ -1,0 +1,57 @@
+# Fixture: the externalSecrets backend (#80, ADR-0020). The spec text is
+# byte-identical to what an author writes under `backend: cluster` — the same
+# `{secret: <name>, key: <key>}` references, in the same places — and the only
+# difference is one field on the Environment. That is ADR-0018's promise that
+# migrating backends is a one-field edit, and this fixture is where it is
+# asserted rather than claimed.
+#
+# What the backend adds is the resource that *populates* the Secret each
+# reference addresses: one ExternalSecret per Secret name, with one `data` entry
+# per key something in this environment reads, ahead of every workload. The
+# workload half is unchanged — still `valueFrom.secretKeyRef`, still naming the
+# Secret the author named.
+#
+# The store is named explicitly here, and the cluster offers three, so this also
+# pins that a named store resolves to the right *kind*: `vault-backend` is a
+# ClusterSecretStore in the profile, and the rendered secretStoreRef says so.
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: checkout
+spec:
+  image: ghcr.io/acme/checkout:1.4.2
+
+  env:
+    LOG_LEVEL: info
+    DATABASE_URL: { secret: checkout-db, key: url }
+
+  components:
+    - name: web
+      port: 8080
+      env:
+        FEATURE_FLAGS: "checkout-v2,fast-refund"
+        # Two keys of one Secret: one ExternalSecret with two `data` entries,
+        # not two ExternalSecrets fighting over one target.
+        STRIPE_API_KEY: { secret: payments, key: stripe-api-key }
+        SESSION_PEPPER: { secret: payments, key: session.pepper }
+    - name: nightly-report
+      schedule: "0 3 * * *"
+      command: ["checkout", "report"]
+      env:
+        REPORT_BUCKET: s3://acme-reports
+        SMTP_PASSWORD: { secret: mail-relay, key: password }
+---
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: staging
+spec:
+  project: checkout
+  namespace: checkout-staging
+  secrets:
+    backend: externalSecrets
+    store: vault-backend
+    # Shorter than the 1h default, and written through to the ExternalSecret
+    # verbatim. Validation parsed it as a duration so the renderer — which may
+    # not import `time` — does not have to.
+    refreshInterval: 15m

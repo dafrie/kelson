@@ -78,8 +78,10 @@ var renderedFields = map[string]map[string]string{
 		"$.spec.components[].env.*.secret":              "renderer: secretKeyRef name — the Secret the author names, never read by kelson (ADR-0018)",
 		"$.spec.components[].env.*.key":                 "renderer: secretKeyRef key within that Secret (ADR-0018)",
 
-		"$.spec.defaults.deliveryMode":    "resolve P4 → internal/delivery: adapter selection",
-		"$.spec.defaults.secrets.backend": "resolve P4 → renderer: selects the reference mechanism; cluster renders, externalSecrets and sops are render/secret-backend-unsupported (#80, #81)",
+		"$.spec.defaults.deliveryMode":            "resolve P4 → internal/delivery: adapter selection",
+		"$.spec.defaults.secrets.backend":         "resolve P4 → renderer: selects the reference mechanism; cluster renders secretKeyRefs, externalSecrets also renders an ExternalSecret per referenced Secret, sops is render/secret-backend-unsupported (#81)",
+		"$.spec.defaults.secrets.store":           "resolve P4 → renderer: ExternalSecret spec.secretStoreRef, resolved against the ClusterProfile's stores (ADR-0020)",
+		"$.spec.defaults.secrets.refreshInterval": "resolve P4 → renderer: ExternalSecret spec.refreshInterval (default 1h, ADR-0020)",
 
 		"$.spec.overlays[].patch":    "renderer: strategic-merge patch against rendered resources",
 		"$.spec.overlays[].manifest": "renderer: extra manifest emitted as-is",
@@ -92,7 +94,9 @@ var renderedFields = map[string]map[string]string{
 		"$.spec.project":   "resolve: binds the Environment to its Project",
 		"$.spec.namespace": "renderer: target namespace on every resource",
 
-		"$.spec.secrets.backend": "renderer: selects the reference mechanism; cluster renders, externalSecrets and sops are render/secret-backend-unsupported (#80, #81)",
+		"$.spec.secrets.backend":         "renderer: selects the reference mechanism; cluster renders secretKeyRefs, externalSecrets also renders an ExternalSecret per referenced Secret, sops is render/secret-backend-unsupported (#81)",
+		"$.spec.secrets.store":           "renderer: ExternalSecret spec.secretStoreRef, resolved against the ClusterProfile's stores (ADR-0020)",
+		"$.spec.secrets.refreshInterval": "renderer: ExternalSecret spec.refreshInterval (default 1h, ADR-0020)",
 
 		"$.spec.routing.domainSuffix": "renderer: default hostname for ported components",
 		"$.spec.routing.gatewayClass": "renderer: HTTPRoute parentRef",
@@ -237,14 +241,6 @@ spec:
   defaults:
     policy: {agents: allow}`,
 
-	KindProject + " $.spec.defaults.secrets.store": `
-spec:
-  image: i:1
-  components:
-    - {name: web, port: 8080}
-  defaults:
-    secrets: {backend: externalSecrets, store: vault-backend}`,
-
 	KindEnvironment + " $.spec.cluster": `
 spec:
   project: p
@@ -254,11 +250,6 @@ spec:
 spec:
   project: p
   policy: {agents: allow, require: [dry-run], deployers: [team]}`,
-
-	KindEnvironment + " $.spec.secrets.store": `
-spec:
-  project: p
-  secrets: {backend: externalSecrets, store: vault-backend}`,
 }
 
 // TestGateTableIsEnforced renders each gated field into a document and demands

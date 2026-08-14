@@ -121,7 +121,8 @@ func TestProbeFullCluster(t *testing.T) {
 	}))
 	f.seed(t, clusterIssuerGVR, unstruct(schema.GroupVersionKind{Group: "cert-manager.io", Version: "v1", Kind: "ClusterIssuer"}, "letsencrypt-prod", nil))
 	f.seed(t, clusterSecretStoreGVR, unstruct(schema.GroupVersionKind{Group: "external-secrets.io", Version: "v1", Kind: "ClusterSecretStore"}, "vault", nil))
-	f.seed(t, secretStoreGVR, unstruct(schema.GroupVersionKind{Group: "external-secrets.io", Version: "v1", Kind: "SecretStore"}, "vault-ns", nil))
+	f.seed(t, secretStoreGVR, unstruct(schema.GroupVersionKind{Group: "external-secrets.io", Version: "v1", Kind: "SecretStore"}, "vault-ns",
+		map[string]any{"metadata": map[string]any{"namespace": "shop-staging"}}))
 	f.seed(t, storageClassGVR, unstruct(schema.GroupVersionKind{Group: "storage.k8s.io", Version: "v1", Kind: "StorageClass"}, "standard", map[string]any{
 		"metadata":    map[string]any{"annotations": map[string]any{"storageclass.kubernetes.io/is-default-class": "true"}},
 		"provisioner": "pd.csi.storage.gke.io",
@@ -156,8 +157,17 @@ func TestProbeFullCluster(t *testing.T) {
 	}
 	if prof.ExternalSecrets == nil ||
 		!reflect.DeepEqual(prof.ExternalSecrets.ClusterSecretStores, []string{"vault"}) ||
-		!reflect.DeepEqual(prof.ExternalSecrets.SecretStores, []string{"vault-ns"}) {
+		!reflect.DeepEqual(prof.ExternalSecrets.SecretStores,
+			[]clusterprofile.SecretStore{{Name: "vault-ns", Namespace: "shop-staging"}}) {
 		t.Fatalf("external secrets = %+v", prof.ExternalSecrets)
+	}
+	// A namespaced store is usable from its own namespace and nowhere else:
+	// the fact ADR-0020's store resolution turns on.
+	if got := prof.ExternalSecrets.SecretStoresIn("shop-staging"); !reflect.DeepEqual(got, []string{"vault-ns"}) {
+		t.Errorf("SecretStoresIn(shop-staging) = %v, want [vault-ns]", got)
+	}
+	if got := prof.ExternalSecrets.SecretStoresIn("shop-production"); got != nil {
+		t.Errorf("SecretStoresIn(shop-production) = %v, want none — a SecretStore does not cross namespaces", got)
 	}
 	if !prof.HasPolicyEngine() || len(prof.PolicyEngines) != 2 {
 		t.Fatalf("policy engines = %+v", prof.PolicyEngines)

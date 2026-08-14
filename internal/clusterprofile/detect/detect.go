@@ -376,9 +376,21 @@ func (p *prober) probeExternalSecretStores(ctx context.Context, es *clusterprofi
 		p.gap("externalSecrets.secretStores", p.reasonFor(err, "secretstores.external-secrets.io"))
 	} else {
 		for _, s := range namespaced.Items {
-			es.SecretStores = append(es.SecretStores, s.GetName())
+			// The namespace is recorded, not dropped: a SecretStore is readable
+			// only from its own namespace, so a bare name would make a store in
+			// one team's namespace look available to every other (issue #80,
+			// ADR-0020).
+			es.SecretStores = append(es.SecretStores, clusterprofile.SecretStore{
+				Name:      s.GetName(),
+				Namespace: s.GetNamespace(),
+			})
 		}
-		sort.Strings(es.SecretStores)
+		sort.Slice(es.SecretStores, func(i, j int) bool {
+			if es.SecretStores[i].Namespace != es.SecretStores[j].Namespace {
+				return es.SecretStores[i].Namespace < es.SecretStores[j].Namespace
+			}
+			return es.SecretStores[i].Name < es.SecretStores[j].Name
+		})
 	}
 }
 

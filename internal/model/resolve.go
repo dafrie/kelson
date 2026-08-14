@@ -231,6 +231,14 @@ func resolve(p *Project, e *Environment) *Resolved {
 	if sb := e.Spec.Secrets; sb != nil {
 		r.Environment.Secrets = *sb
 	}
+	// The externalSecrets refresh interval is defaulted here, once, so the pure
+	// renderer never has to know what an unset interval means — the same reason
+	// resolvePreviews fills its own defaults in. It may not parse one either:
+	// the renderer cannot import `time` (ADR-0001, issue #20), which is why
+	// validation owns the duration check and this owns the default.
+	if r.Environment.Secrets.Backend == SecretsExternalSecrets && r.Environment.Secrets.RefreshInterval == "" {
+		r.Environment.Secrets.RefreshInterval = DefaultSecretRefreshInterval
+	}
 	r.Environment.Previews = resolvePreviews(e.Spec.Previews)
 
 	// P6: project overlays first.
