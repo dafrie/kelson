@@ -1,0 +1,281 @@
+package install
+
+import (
+	"sort"
+
+	"github.com/dafrie/kelson/internal/clusterprofile"
+)
+
+// The pins table (issue #60).
+//
+// This is the single source of truth for what `kelson install` will fetch and
+// apply. One row per component, and everything a row promises is checkable
+// without reading any Go: the exact upstream URL, the exact bytes at it, and
+// the namespace the manifest creates.
+//
+// # Updating a pin
+//
+// Editing a version means editing three fields together — Version, ManifestURL
+// and SHA256 — and the drift test in pins_test.go fails when they disagree, so
+// a half-updated row cannot merge. The procedure is:
+//
+//	curl -fsSLO <the new ManifestURL>
+//	sha256sum <the downloaded file>
+//
+// and paste both into the row. Do not compute the digest from a mirror, a proxy
+// cache or a locally re-serialized copy: the value here is what the bytes at
+// that URL hash to, and an install compares against it before it applies
+// anything (see [Installer.Plan]).
+//
+// Nothing here is vendored. The repository holds the URL and the digest and
+// never a copy of the manifest — ADR-0005, and the Bitnami lesson in the
+// package doc.
+//
+// # Why some rows are deferred
+//
+// A deferred row is a refusal with a reason and a follow-up, not a silence.
+// `kelson install external-secrets` says why it will not install it and names
+// the issue, which is more useful than an "unknown component" error that makes
+// the user wonder whether they typed it wrong.
+
+// Status is whether a row can be installed today.
+type Status string
+
+const (
+	// StatusSupported means this component installs.
+	StatusSupported Status = "supported"
+	// StatusDeferred means kelson knows the component, detects it, renders
+	// against it — and declines to install it, for the reason in FollowUp.
+	StatusDeferred Status = "deferred"
+)
+
+// Component is one installable platform component and its pin.
+type Component struct {
+	// Name is the CLI token and the value of the kelson.dev/installed-component
+	// label. It matches the support-matrix name where one exists
+	// (internal/clusterprofile/support), so the two tables can be read together.
+	Name string
+	// Title is what the component calls itself, for output addressed to humans.
+	Title string
+	// Status is whether this row installs.
+	Status Status
+	// Version is the upstream release pinned, exactly as upstream tags it.
+	Version string
+	// ManifestURL is the upstream-published install manifest for that release.
+	// It must contain Version: a URL and a version that disagree is a pin that
+	// documents one thing and installs another.
+	ManifestURL string
+	// SHA256 is the hex digest of the bytes at ManifestURL. An install that
+	// fetches anything else refuses and applies nothing.
+	SHA256 string
+	// Namespace is the namespace the manifest creates and the component runs
+	// in, reported in the preview so a user knows where it is about to land.
+	Namespace string
+	// ProfileField is the ClusterProfile field root whose detection Gap makes
+	// this component's presence Unknown (clusterprofile.GapFor).
+	ProfileField string
+	// Provides is what installing this unlocks, in terms of what kelson renders.
+	// A component list that says only "cert-manager" makes the reader guess why
+	// they would want it.
+	Provides string
+	// FollowUp is the reason a deferred row is deferred, and where the work is
+	// tracked. Empty for a supported row.
+	FollowUp string
+}
+
+// Pinned Flux distribution for the FluxInstance `kelson install flux` creates.
+//
+// The version is a minor-pinned semver expression rather than an exact release
+// on purpose. flux-operator owns the install and upgrade lifecycle of the Flux
+// controllers (ADR-0016) and reconciles patch releases within the expression by
+// itself; pinning an exact patch here would mean kelson taking custody of an
+// upgrade cadence it explicitly delegates. The minor is pinned because a minor
+// bump is an API-surface decision — internal/clusterprofile/support carries the
+// floors kelson renders against — and that one is kelson's to make deliberately.
+const (
+	// FluxDistributionVersion is the semver expression in FluxInstance
+	// spec.distribution.version.
+	FluxDistributionVersion = "2.9.x"
+	// FluxDistributionRegistry is the registry the operator pulls Flux images
+	// from. Upstream's own default, named explicitly because the CRD requires it.
+	FluxDistributionRegistry = "ghcr.io/fluxcd"
+)
+
+// FluxComponents is the controller set the FluxInstance asks for.
+//
+// helm-controller is in the list deliberately: `kind: helm` components render a
+// HelmRelease and a FluxInstance may legally install a subset that leaves that
+// controller out, which is a cluster running Flux with nothing to reconcile a
+// chart (ADR-0016, internal/clusterprofile/helm). image-reflector-controller and
+// image-automation-controller are left out because kelson renders nothing that
+// uses them, and an unused controller is footprint a user did not ask for.
+var FluxComponents = []string{
+	"source-controller",
+	"kustomize-controller",
+	"helm-controller",
+	"notification-controller",
+}
+
+// Components is the pins table, in stable authoring order.
+var Components = []Component{
+	{
+		Name:         "flux",
+		Title:        "flux-operator (and the Flux controllers it installs)",
+		Status:       StatusSupported,
+		Version:      "v0.58.0",
+		ManifestURL:  "https://github.com/controlplaneio-fluxcd/flux-operator/releases/download/v0.58.0/install.yaml",
+		SHA256:       "51c707087ca7b6d342b71b79270d13416b2a1b24fb30e39ebc8ac07922e1b56a",
+		Namespace:    "flux-system",
+		ProfileField: "flux",
+		Provides: "the GitOps delivery mode (ADR-0012): the GitRepository and Kustomization kelson commits " +
+			"against, and the helm-controller every `kind: helm` component needs",
+	},
+	{
+		Name:         "cert-manager",
+		Title:        "cert-manager",
+		Status:       StatusSupported,
+		Version:      "v1.21.1",
+		ManifestURL:  "https://github.com/cert-manager/cert-manager/releases/download/v1.21.1/cert-manager.yaml",
+		SHA256:       "5f6a499b8c1857d57f560f536e0dcc830914b45c420899fe7ad0692c8624e408",
+		Namespace:    "cert-manager",
+		ProfileField: "certManager",
+		Provides: "TLS on routed services: the cert-manager.io/v1 Certificate kelson renders when routing.tls " +
+			"is set. It installs no ClusterIssuer — which ACME account or CA to trust is your decision, not " +
+			"kelson's, and detection reports the issuers you create",
+	},
+	{
+		Name:         "cnpg",
+		Title:        "CloudNativePG",
+		Status:       StatusSupported,
+		Version:      "v1.30.0",
+		ManifestURL:  "https://github.com/cloudnative-pg/cloudnative-pg/releases/download/v1.30.0/cnpg-1.30.0.yaml",
+		SHA256:       "f8bede43fe4ee0d478c2355b204a36876b2ae4faac60f2a9452280b293da3b88",
+		Namespace:    "cnpg-system",
+		ProfileField: "cnpg",
+		Provides: "every `kind: postgres` component (ADR-0005, ADR-0007): the operator that backs the managed " +
+			"database type, its presets, and the declarative capabilities internal/clusterprofile/postgres " +
+			"reports per version",
+	},
+	{
+		Name:         "envoy-gateway",
+		Title:        "Envoy Gateway",
+		Status:       StatusDeferred,
+		Namespace:    "envoy-gateway-system",
+		ProfileField: "gatewayAPI",
+		Provides: "all HTTP routing: the Gateway API CRDs and a controller that implements them, which every " +
+			"HTTPRoute kelson renders needs (issue #140)",
+		FollowUp: "installing a Gateway API implementation is a routing decision with a blast radius the " +
+			"other three do not have — it claims a GatewayClass, and a cluster that already routes traffic " +
+			"through anything else must not have a second implementation appear beside it. Detection reports " +
+			"the classes a cluster offers but not which of them carries production traffic, so kelson cannot " +
+			"yet make this offer honestly. Tracked as a follow-up on issue #60",
+	},
+	{
+		Name:         "external-secrets",
+		Title:        "external-secrets",
+		Status:       StatusDeferred,
+		Namespace:    "external-secrets",
+		ProfileField: "externalSecrets",
+		Provides: "the `externalSecrets` secret backend (ADR-0020): the ExternalSecret kelson renders per " +
+			"referenced Secret, so no kelson process ever holds a secret value",
+		FollowUp: "upstream publishes external-secrets as a Helm chart and no plain install manifest, so " +
+			"installing it means rendering a chart. Embedding a Helm engine to do that is a larger decision " +
+			"than this issue makes — ADR-0021 §3 records the trade — and vendoring a rendered copy is exactly " +
+			"the custody ADR-0005 refuses. Tracked as a follow-up on issue #60",
+	},
+}
+
+// Lookup returns the pin for a component by name, and whether it is tracked.
+func Lookup(name string) (Component, bool) {
+	for _, c := range Components {
+		if c.Name == name {
+			return c, true
+		}
+	}
+	return Component{}, false
+}
+
+// Names returns every component name the table knows, sorted. It is what the
+// CLI prints when it is given a name that is not in the table — a list of the
+// real answers beats "unknown component".
+func Names() []string {
+	out := make([]string, 0, len(Components))
+	for _, c := range Components {
+		out = append(out, c.Name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Supported returns the rows that can be installed today, in table order.
+func Supported() []Component {
+	var out []Component
+	for _, c := range Components {
+		if c.Status == StatusSupported {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// Presence is what detection says about this component, and why.
+//
+// The Outcome is the whole point. Yes means detection found it, and the install
+// is refused because kelson must never modify a component it did not install.
+// No means detection looked and it is absent, which is the only case that
+// installs. Unknown means a detection Gap hid it — the probe lacked the RBAC to
+// see the API group — and installing on an unknown would be the guess the
+// tri-state exists to prevent (issue #144).
+func (c Component) Presence(prof clusterprofile.ClusterProfile) (clusterprofile.Outcome, string) {
+	if gap, ok := prof.GapFor(c.ProfileField); ok {
+		return clusterprofile.OutcomeUnknown, "detection could not read it: " + gap.Reason
+	}
+	// flux is two findings, and both are a refusal for different reasons. An
+	// existing flux-operator owns the Flux installation already; Flux
+	// controllers without the operator are somebody's hand-managed install, and
+	// dropping a FluxInstance beside them would hand a second manager the same
+	// controllers.
+	if c.Name == "flux" {
+		switch {
+		case prof.FluxOperator != nil:
+			return clusterprofile.OutcomeYes, describe("flux-operator", prof.FluxOperator)
+		case prof.Flux != nil:
+			return clusterprofile.OutcomeYes, describe("the Flux controllers", prof.Flux) +
+				", installed by something other than flux-operator"
+		default:
+			return clusterprofile.OutcomeNo, ""
+		}
+	}
+	switch {
+	case c.Name == "cert-manager" && prof.CertManager != nil:
+		return clusterprofile.OutcomeYes, versioned("cert-manager", prof.CertManager.Version)
+	case c.Name == "cnpg" && prof.CloudNativePG != nil:
+		return clusterprofile.OutcomeYes,
+			versioned("CloudNativePG", prof.CloudNativePG.Version) + namespaced(prof.CloudNativePG.Namespace)
+	case c.Name == "envoy-gateway" && prof.GatewayAPI != nil:
+		return clusterprofile.OutcomeYes, versioned("the Gateway API", prof.GatewayAPI.Version)
+	case c.Name == "external-secrets" && prof.ExternalSecrets != nil:
+		return clusterprofile.OutcomeYes, versioned("external-secrets", prof.ExternalSecrets.Version)
+	}
+	return clusterprofile.OutcomeNo, ""
+}
+
+func describe(what string, c *clusterprofile.Component) string {
+	return versioned(what, c.Version) + namespaced(c.Namespace)
+}
+
+// versioned names a detected component, keeping "installed, version unknown"
+// distinguishable from a version detection actually read.
+func versioned(what, version string) string {
+	if version == "" {
+		return what + " is present (version unknown)"
+	}
+	return what + " " + version + " is present"
+}
+
+func namespaced(ns string) string {
+	if ns == "" {
+		return ""
+	}
+	return " in namespace " + ns
+}

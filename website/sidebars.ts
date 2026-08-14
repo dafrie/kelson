@@ -151,6 +151,11 @@ const sidebars: SidebarsConfig = {
           id: 'adr/0020-external-secrets',
           label: '0020 — External secrets',
         },
+        {
+          type: 'doc',
+          id: 'adr/0021-installing-missing-components',
+          label: '0021 — Installing missing components',
+        },
       ],
     },
   ],
