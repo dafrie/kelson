@@ -1,0 +1,7 @@
+# The Valkey operator only. This fixture has no database in it, so a CNPG
+# finding here would say nothing and its absence proves the two judgements are
+# independent.
+valkey:
+  version: 0.5.0
+  namespace: valkey-operator-system
+  crds: [valkeyclusters, valkeynodes]

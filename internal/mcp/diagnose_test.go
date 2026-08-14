@@ -7,7 +7,49 @@ import (
 	"connectrpc.com/connect"
 
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
+	"github.com/dafrie/kelson/internal/model"
 )
+
+// TestComponentShapeReportsCacheAuth: whether a cache has a password is the
+// second thing anyone diagnosing one asks, and both answers have to be legible
+// — "no auth" is a real state a reader must be able to see, not the absence of
+// a line (ADR-0015 amendment, #98).
+func TestComponentShapeReportsCacheAuth(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		c    model.Component
+		want string
+	}{
+		{
+			"authenticated cache",
+			model.Component{
+				Name:   "cache",
+				Kind:   model.ComponentValkey,
+				Preset: model.PresetSmall,
+				Auth:   &model.SecretRef{Name: "cache-auth", Key: "password"},
+			},
+			"valkey preset small, auth from secret cache-auth key password",
+		},
+		{
+			"open cache",
+			model.Component{Name: "cache", Kind: model.ComponentValkey, Preset: model.PresetSmall},
+			"valkey preset small, no auth (reachable without a password in this namespace)",
+		},
+		{
+			// A database's credential comes from the operator that generates
+			// it, so there is no auth clause to report and none is invented.
+			"postgres is unchanged",
+			model.Component{Name: "db", Kind: model.ComponentPostgres, Preset: model.PresetSmall},
+			"postgres preset small",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := componentShape(tc.c); got != tc.want {
+				t.Errorf("componentShape() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
 
 // TestDiagnoseComposesTheWholeAnswer: the flagship composition (ADR-0008 §1).
 // One call returns the verdict, the status, the workload verdicts with the

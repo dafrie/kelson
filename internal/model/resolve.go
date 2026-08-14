@@ -107,6 +107,17 @@ type ResolvedDataService struct {
 	Name   string
 	Kind   ComponentKind // postgres | valkey
 	Preset ServicePreset // after the P5 environment override
+	// Auth is the Secret the component's password is read from, or nil for a
+	// component that declares none. No precedence rule reaches it: P5 overrides
+	// a data component's preset and nothing else, and the same Secret *name*
+	// resolves per namespace anyway, so one reference on the Project is a
+	// different Secret in each environment without the spec saying so twice.
+	//
+	// It carries an explicit json tag with omitempty where its siblings carry
+	// none, because this struct is hashed into kelson.dev/spec-hash: a nil
+	// pointer must marshal to nothing, or adding the field would have changed
+	// the annotation of every data service that does not use it.
+	Auth *SecretRef `json:"auth,omitempty"`
 }
 
 // ResolvedChart is one `kind: helm` component after resolution. There is
@@ -233,7 +244,7 @@ func resolveDataService(c Component, kind ComponentKind, ov ComponentOverride) R
 	if ov.Preset != "" {
 		preset = ov.Preset
 	}
-	return ResolvedDataService{Name: c.Name, Kind: kind, Preset: preset}
+	return ResolvedDataService{Name: c.Name, Kind: kind, Preset: preset, Auth: c.Auth}
 }
 
 // resolvePreviews fills in the two defaults kelson has an opinion about, so

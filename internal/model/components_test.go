@@ -123,6 +123,102 @@ func TestPresetOnWorkloadRejected(t *testing.T) {
 	}
 }
 
+// TestComponentAuth covers the `auth:` reference added by the 2026-08-14
+// amendment to ADR-0015 (#98): a valkey-only field, held to the same shape
+// ADR-0018 gave every other reference, and refused with a reason everywhere
+// else rather than silently ignored (#141).
+func TestComponentAuth(t *testing.T) {
+	t.Run("valid on valkey", func(t *testing.T) {
+		errs := decodeProjectSpec(t, `  image: i:1
+  components:
+    - name: cache
+      kind: valkey
+      preset: small
+      auth: {secret: cache-auth, key: password}
+`)
+		if len(errs) != 0 {
+			t.Fatalf("auth on a valkey component must validate, got:\n%v", errs)
+		}
+	})
+
+	t.Run("carried through resolution", func(t *testing.T) {
+		docs, errs := DecodeDocuments([]byte(`apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata: {name: p}
+spec:
+  image: i:1
+  components:
+    - {name: cache, kind: valkey, preset: small, auth: {secret: cache-auth, key: password}}
+---
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata: {name: production}
+spec:
+  project: p
+  namespace: p-prod
+`))
+		if len(errs) != 0 {
+			t.Fatalf("the document must validate, got:\n%v", errs)
+		}
+		res, errs := Resolve(docs[0].(*Project), docs[1].(*Environment))
+		if len(errs) != 0 {
+			t.Fatalf("Resolve failed: %v", errs)
+		}
+		auth := res.DataServices[0].Auth
+		if auth == nil || auth.Name != "cache-auth" || auth.Key != "password" {
+			t.Fatalf("auth did not survive resolution: %#v", auth)
+		}
+	})
+
+	t.Run("half a reference is refused like any other", func(t *testing.T) {
+		errs := decodeProjectSpec(t,
+			"  image: i:1\n  components:\n    - {name: cache, kind: valkey, preset: small, auth: {secret: cache-auth}}\n")
+		found := false
+		for _, e := range errs {
+			if e.Code == ErrMissingRequired && e.Field == "$.spec.components[0].auth.key" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("auth reuses the secret-reference rules, got:\n%v", errs)
+		}
+	})
+
+	for _, tc := range []struct {
+		name, spec, field, wants string
+	}{
+		{
+			"on postgres", "    - {name: db, kind: postgres, preset: small, auth: {secret: s, key: k}}",
+			"$.spec.components[0].auth", "initdb",
+		},
+		{
+			"on a workload", "    - {name: web, port: 8080, auth: {secret: s, key: k}}",
+			"$.spec.components[0].auth", "{secret: s, key: k}",
+		},
+		{
+			"on a chart",
+			"    - {name: ing, kind: helm, chart: c, chartVersion: 1.0.0, source: {repository: https://example.com}, auth: {secret: s, key: k}}",
+			"$.spec.components[0].auth", "kind: valkey",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			errs := decodeProjectSpec(t, "  image: i:1\n  components:\n"+tc.spec+"\n")
+			found := false
+			for _, e := range errs {
+				if e.Code == ErrMutuallyExclusive && e.Field == tc.field {
+					found = true
+					if !strings.Contains(e.Remediation, tc.wants) {
+						t.Errorf("remediation must say where the credential comes from instead, got %q", e.Remediation)
+					}
+				}
+			}
+			if !found {
+				t.Errorf("auth on this kind must be refused, got:\n%v", errs)
+			}
+		})
+	}
+}
+
 // TestToolsRequireAnAgentAndAreGated covers ADR-0014 decision C: the field is
 // validated where it belongs and refused everywhere, because there is no policy
 // engine to enforce it yet (#75).

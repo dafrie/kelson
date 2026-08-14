@@ -142,13 +142,16 @@ const valkeyPort = "6379"
 //
 // A binding key is answered from exactly one of three maps, and which one it is
 // says something real about the service. `keys` are credentials: they resolve to
-// a secretKeyRef against a Secret the *operator* generated, because a spec never
-// carries a value (ADR-0009). `values` are addresses: a hostname and a port are
-// not secrets, they are derived from names the renderer already knows, and
-// wrapping them in a Secret nobody wrote would be theatre. `withheld` is the
-// third answer — a key the kind declares that this service type cannot supply —
-// and it exists so the refusal can say why instead of pretending the key was
-// misspelled.
+// a secretKeyRef, because a spec never carries a value (ADR-0009). Which Secret
+// depends on the kind — CloudNativePG's generated <cluster>-app for postgres,
+// the one an author named under `auth:` for a valkey component that declares
+// one — and the difference stops here: both are a name and a key, and the
+// binding path below cannot tell them apart. `values` are addresses: a hostname
+// and a port are not secrets, they are derived from names the renderer already
+// knows, and wrapping them in a Secret nobody wrote would be theatre.
+// `withheld` is the third answer — a key the kind declares that this service
+// *as configured* cannot supply — and it exists so the refusal can say why
+// instead of pretending the key was misspelled.
 type boundService struct {
 	name   string
 	secret string
@@ -328,11 +331,20 @@ func valkeyManifests(
 	}
 
 	m := valkeyCluster(resolved, svc, name, hash)
-	return []Manifest{m}, boundService{
-		name:     svc.Name,
-		values:   valkeyBindingValues(name, resolved.Environment.Namespace),
-		withheld: valkeyWithheldKeys,
-	}, nil
+	bound := boundService{
+		name:   svc.Name,
+		values: valkeyBindingValues(name, resolved.Environment.Namespace),
+	}
+	if svc.Auth != nil {
+		// The same Secret the ValkeyCluster's ACL user reads its password from,
+		// pointed at from the other side. Nothing about it is derived: kelson
+		// writes the author's name and key into both places and reads neither.
+		bound.secret = svc.Auth.Name
+		bound.keys = map[string]string{"password": svc.Auth.Key}
+	} else {
+		bound.withheld = valkeyWithheldKeys(svc.Name)
+	}
+	return []Manifest{m}, bound, nil
 }
 
 // valkeyPresetSupported refuses the two presets that are not cache topologies.
@@ -407,18 +419,16 @@ func valkeyCapable(svc *model.ResolvedDataService, profile clusterprofile.Cluste
 // point, not a limitation, and docs/data-services.md states what using one as a
 // durable store would take instead of leaving it to be assumed either way.
 //
-// `users` is absent, so the operator leaves Valkey's own `default` user in
-// place and the cache accepts connections from anything that can reach its
-// Service. That is the operator's own default and it is not a shortcut kelson
-// took: the operator reads application user passwords from a Secret it never
-// creates, and a pure renderer has no random source to create one with (issue
-// #20) — the same constraint that made CNPG's initdb bootstrap the right choice
-// there and leaves nothing equivalent here. ADR-0015 records the consequence.
+// `users` is absent unless the component declares `auth:`. Without it the
+// operator leaves Valkey's own `default` user in place and the cache accepts
+// connections from anything that can reach its Service — the operator's own
+// default, and the documented negative of ADR-0015. With it, kelson renders the
+// `default` user against the author's Secret; see valkeyUsers.
 func valkeyCluster(resolved *model.Resolved, svc *model.ResolvedDataService, name, hash string) Manifest {
 	p := valkeyPresets[svc.Preset]
 	prov := serviceProvenance(resolved, name, hash)
 
-	spec := mapNode(
+	specKV := []any{
 		"shards", p.shards,
 		// Written even when it is zero, which is also the operator's default:
 		// replicas is the field that separates one preset from another, and a
@@ -428,6 +438,13 @@ func valkeyCluster(resolved *model.Resolved, svc *model.ResolvedDataService, nam
 			"requests", mapNode("cpu", p.cpu, "memory", p.memory),
 			"limits", mapNode("memory", p.memory),
 		),
+	}
+	if svc.Auth != nil {
+		// Between `resources` and `config`, which is where `users` sits in the
+		// operator's own ValkeyClusterSpec.
+		specKV = append(specKV, "users", valkeyUsers(svc.Auth))
+	}
+	specKV = append(specKV,
 		// spec.config is written verbatim into valkey.conf ahead of the
 		// operator's own directives, and both of these keys are on the
 		// operator's live-settable allow-list — changing a preset re-tunes a
@@ -437,7 +454,73 @@ func valkeyCluster(resolved *model.Resolved, svc *model.ResolvedDataService, nam
 			"maxmemory-policy", valkeyEvictionPolicy,
 		),
 	)
-	return baseManifest(valkeyAPIVersion, "ValkeyCluster", prov, spec)
+	return baseManifest(valkeyAPIVersion, "ValkeyCluster", prov, mapNode(specKV...))
+}
+
+// valkeyAuthUser is the ACL user kelson renders for an authenticated cache:
+// Valkey's own `default`, given a password and the permissions it already had.
+//
+// Naming a *new* user would leave `default` exactly as it is — an ACL file that
+// does not mention `default` does not change it, so the built-in
+// `on nopass ~* &* +@all` survives and the cache stays open to anything that
+// skips the AUTH. Redefining `default` is therefore not a shortcut around
+// inventing a username: it is the only edit that closes the hole this field
+// exists to close. It also keeps the binding vocabulary honest —
+// model.ServiceKeys[valkey] has no `username` key, and `AUTH <password>` against
+// `default` is what every Redis-compatible client can do without one.
+const valkeyAuthUser = "default"
+
+// valkeyUsers renders spec.users, verified against the operator's API at
+// https://github.com/valkey-io/valkey-operator/blob/main/api/v1alpha1/valkeyacls_types.go
+// (read 2026-08-14) and the field reference at
+// https://github.com/valkey-io/valkey-operator/blob/main/docs/valkeycluster.md#users:
+//
+//	type UserAclSpec struct {
+//	    Name           string             `json:"name"`             // may not start with "_"
+//	    Enabled        bool               `json:"enabled,omitempty"`  // +kubebuilder:default=true
+//	    PasswordSecret PasswordSecretSpec `json:"passwordSecret,omitempty"`
+//	    NoPassword     bool               `json:"nopass,omitempty"`
+//	    ResetPass      bool               `json:"resetpass,omitempty"`
+//	    Commands       CommandsAclSpec    `json:"commands,omitempty"` // allow/deny []string
+//	    Keys           KeysAclSpec        `json:"keys,omitempty"`     // readWrite/readOnly/writeOnly []string
+//	    Channels       ChannelsAclSpec    `json:"channels,omitempty"` // patterns []string
+//	    RawAcl         string             `json:"permissions,omitempty"`
+//	}
+//	type PasswordSecretSpec struct {
+//	    Name string   `json:"name,omitempty"`
+//	    Keys []string `json:"keys,omitempty"`
+//	}
+//
+// Three details of the operator's behaviour decide what is written here, all
+// read from its internal/controller/users.go at the same commit:
+//
+//   - `passwordSecret.name` defaults to <cluster>-users and `keys` defaults to
+//     the *username*. kelson writes both explicitly, because both defaults are
+//     names the author did not choose and one of them would silently be the
+//     literal string "default".
+//   - the Secret's value may be plaintext — the operator SHA-256-hashes
+//     whatever it reads, unless the value is already a `#`-prefixed 64-hex
+//     digest. So `kelson secret set` needs no special format, and kelson does
+//     not have to hash anything (it could not: the renderer is pure and the
+//     value is not in the spec).
+//   - the ACL is applied with `ACL LOAD` against a running node, so adding
+//     `auth:` to an existing cache does not roll its pods.
+//
+// The permissions are the built-in `default` user's own — all keys, all
+// channels, all commands — restated because an ACL-file line replaces a user's
+// rules rather than adding to them. The change this field makes is
+// authentication and nothing else: the same cache, with a password.
+func valkeyUsers(auth *model.SecretRef) *yaml.Node {
+	return seqNode(mapNode(
+		"name", valkeyAuthUser,
+		"passwordSecret", mapNode(
+			"name", auth.Name,
+			"keys", seqNode(strNode(auth.Key)),
+		),
+		"keys", mapNode("readWrite", seqNode(strNode("*"))),
+		"channels", mapNode("patterns", seqNode(strNode("*"))),
+		"commands", mapNode("allow", seqNode(strNode("@all"))),
+	))
 }
 
 // valkeyServiceName is the Service the operator creates for a cluster:
@@ -468,15 +551,26 @@ func valkeyBindingValues(cluster, namespace string) map[string]string {
 }
 
 // valkeyWithheldKeys is the `password` key of model.ServiceKeys[valkey] and the
-// reason it has no answer. It is data rather than a special case in bindingRef
-// so that the day the operator generates an application credential, this map
-// empties and the key moves into `keys` with nothing else to change.
-var valkeyWithheldKeys = map[string]string{
-	"password": "the Valkey operator generates no application credential — it reads user passwords from a " +
-		"Secret it never creates — and a pure renderer has no random source to create one with (issue #20). " +
-		"kelson therefore renders no ACL user, and the cache is reachable without a password by anything that " +
-		"can reach its Service in this namespace. Bind `uri`, `host` and `port`, and see ADR-0015 for what " +
-		"would have to change upstream for `password` to become real",
+// reason it has no answer *for a component that declares no `auth:`*. A
+// component that declares one answers the key from `keys` instead, through the
+// ordinary secretKeyRef path, and this map is never built for it.
+//
+// It stays a map rather than a special case in bindingRef because the shape is
+// what lets a service withhold a key with a reason at all, and because the
+// remediation now has somewhere to send the reader: the missing piece is a
+// field they can add, not an upstream change they can only wait for.
+func valkeyWithheldKeys(component string) map[string]string {
+	return map[string]string{
+		"password": "this cache renders no ACL user, so Valkey's own `default` user stays in place and anything " +
+			"that can reach the Service in this namespace can read and write the cache without a password. " +
+			"kelson cannot invent one — the operator reads user passwords from a Secret it never creates, and a " +
+			"pure renderer has no random source (issue #20) — but it can reference one you write. Two steps: " +
+			"`kelson secret set " + component + "-auth --project <project> --env <environment> password=<value>` " +
+			"(or --from-stdin password, to keep it out of your shell history), then add " +
+			"`auth: {secret: " + component + "-auth, key: password}` to the " + quoted(component) + " component. " +
+			"kelson then renders the ACL user against that Secret and this binding becomes a secretKeyRef " +
+			"against the same one (ADR-0015 amendment 2026-08-14, ADR-0018, docs/data-services.md)",
+	}
 }
 
 // supportedPreset applies the capability verdict from issue #90's judgement.

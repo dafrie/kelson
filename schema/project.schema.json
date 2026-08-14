@@ -293,6 +293,25 @@
                 "description": "data components only",
                 "default": "shared"
               },
+              "auth": {
+                "properties": {
+                  "secret": {
+                    "type": "string",
+                    "description": "name of a Secret in the environment's namespace; kelson references it and never creates or reads it"
+                  },
+                  "key": {
+                    "type": "string",
+                    "description": "key within that Secret"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "secret",
+                  "key"
+                ],
+                "description": "valkey components only; names the Secret holding the cache password — kelson references it and never creates or reads it"
+              },
               "chart": {
                 "type": "string",
                 "description": "helm components only; the chart name within its source"

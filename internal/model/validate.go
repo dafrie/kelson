@@ -790,7 +790,34 @@ func (v *validator) dataComponent(field string, c Component, kind ComponentKind)
 			"remove "+set+"; a data component's whole configuration is its preset, because its topology belongs to the "+
 				"operator (ADR-0005). Bind a workload to it with {from: {service: "+c.Name+", key: uri}}")
 	}
+	v.dataAuth(field, c, kind)
 	v.chartOnlyFields(field, c, kind)
+}
+
+// dataAuth checks the `auth:` reference of a data component, and refuses it on
+// the data kind that has no use for one.
+//
+// The split is not an implementation gap. `kind: postgres` gets its application
+// credential from CloudNativePG's initdb bootstrap, which generates it and
+// publishes it as <cluster>-app; an author-written Secret there would be a
+// second credential the database never learns about, and every binding would
+// keep resolving against the operator's. `kind: valkey` is the opposite case —
+// the operator reads a user password from a Secret it never creates — which is
+// what `auth:` exists to name (ADR-0015 amendment, 2026-08-14).
+func (v *validator) dataAuth(field string, c Component, kind ComponentKind) {
+	if c.Auth == nil {
+		return
+	}
+	if kind != ComponentValkey {
+		v.err(ErrMutuallyExclusive, field+".auth",
+			fmt.Sprintf("component %q has kind %q, which manages its own credentials", c.Name, kind),
+			"remove auth; CloudNativePG's initdb bootstrap generates the application user and its password and "+
+				"publishes them as <cluster>-app, so a Secret you write would be a second credential the database "+
+				"never accepts. Bind {from: {service: "+c.Name+", key: password}} and kelson points the "+
+				"secretKeyRef at the one the operator made (ADR-0015 amendment, docs/data-services.md)")
+		return
+	}
+	v.secretRef(field+".auth", c.Auth)
 }
 
 // chartComponent validates a `kind: helm` component (ADR-0016 decision 4):
@@ -832,6 +859,36 @@ func (v *validator) chartComponent(field string, c Component, kind ComponentKind
 			fmt.Sprintf("component %q has kind %q, and a preset is the topology of a data component", c.Name, kind),
 			"remove preset; a chart's topology is configured with values, not with a kelson preset")
 	}
+	v.workloadAuth(field, c, kind)
+}
+
+// workloadAuth refuses `auth:` on everything that is not a data component.
+//
+// The field configures an operator kelson delegates to; on a workload or a
+// chart there is no operator on the other end of it, and the thing an author
+// most likely meant has its own spelling — an env value written as
+// {secret: <name>, key: <key>} (ADR-0018), which is the same two fields in the
+// place they take effect.
+func (v *validator) workloadAuth(field string, c Component, kind ComponentKind) {
+	if c.Auth == nil {
+		return
+	}
+	v.err(ErrMutuallyExclusive, field+".auth",
+		fmt.Sprintf("component %q has kind %q, and auth configures the ACL user of a managed data service",
+			c.Name, kind),
+		"remove auth. To read a credential from a Secret here, write it where it is used — "+
+			"env: {MY_VAR: {secret: "+refExample(c.Auth.Name)+", key: "+refKeyExample(c.Auth.Key)+"}}, which renders "+
+			"as a valueFrom.secretKeyRef (ADR-0018). auth belongs on a kind: valkey component, where it names the "+
+			"Secret the cache's own password is read from")
+}
+
+// refKeyExample keeps the workloadAuth remediation concrete when the author
+// already wrote the key half, the way refExample does for the name.
+func refKeyExample(key string) string {
+	if key == "" {
+		return "<key>"
+	}
+	return key
 }
 
 // chartSource holds a helm component to exactly one chart source. Both set is
@@ -1050,6 +1107,7 @@ func (v *validator) workloadComponent(
 			fmt.Sprintf("component %q has kind %q, and a preset is the topology of a data component", c.Name, kind),
 			"remove preset, or set kind: postgres if this was meant to be a database")
 	}
+	v.workloadAuth(field, c, kind)
 	if len(c.Tools) > 0 {
 		if kind != ComponentAgent {
 			v.err(ErrMutuallyExclusive, field+".tools",

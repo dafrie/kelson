@@ -77,11 +77,14 @@ const (
 	ErrBindingUnknownKey = "render/binding-unknown-key"
 	// ErrBindingUnavailableKey: an env binding names a well-known key of the
 	// component's kind that this service genuinely cannot supply — today, the
-	// `password` of a `kind: valkey` component, because the Valkey operator
-	// generates no application credential and a pure renderer has no random
-	// source (#20, #98). It is not ErrBindingUnknownKey: the key is real and the
-	// spelling is right, so the message must say what is missing rather than
-	// offer a list of alternatives that does not contain the answer.
+	// `password` of a `kind: valkey` component that declares no `auth:`, because
+	// the Valkey operator generates no application credential and a pure
+	// renderer has no random source to invent one with (#20). It is not
+	// ErrBindingUnknownKey: the key is real and the spelling is right, so the
+	// message must say what is missing rather than offer a list of alternatives
+	// that does not contain the answer — and since the ADR-0015 amendment
+	// (#98) what is missing is a field the author can add, so the remediation
+	// names it and the `kelson secret set` that precedes it.
 	ErrBindingUnavailableKey = "render/binding-unavailable-key"
 	// ErrSecretBackendUnsupported: the environment selects a secret backend the
 	// renderer has no mechanism for — `externalSecrets` (issue #80) or `sops`
