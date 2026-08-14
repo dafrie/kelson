@@ -41,6 +41,31 @@ func sopsStore(t *testing.T, recipients ...string) (*SOPSStore, string) {
 	if len(recipients) == 0 {
 		recipients = []string{testRecipient}
 	}
+	store, err := NewSOPS(SOPSConfig{
+		Writer:     newSOPSWriterTo(t, remote),
+		Recipients: recipients,
+		Now:        func() time.Time { return time.Date(2026, 8, 14, 9, 0, 0, 0, time.UTC) },
+	})
+	if err != nil {
+		t.Fatalf("NewSOPS: %v", err)
+	}
+	return store, remote
+}
+
+// newSOPSWriter is a writer over a fresh bare repository.
+func newSOPSWriter(t *testing.T) *git.Writer {
+	t.Helper()
+	remote := t.TempDir()
+	if _, err := gogit.PlainInit(remote, true); err != nil {
+		t.Fatalf("init bare remote: %v", err)
+	}
+	return newSOPSWriterTo(t, remote)
+}
+
+// newSOPSWriterTo is a writer over a named remote, which may deliberately not
+// be a repository at all.
+func newSOPSWriterTo(t *testing.T, remote string) *git.Writer {
+	t.Helper()
 	w, err := git.New(git.Config{
 		Target:   git.Target{Repo: remote, Branch: "main", Path: "clusters/prod"},
 		Mode:     git.ModeCommit,
@@ -50,15 +75,7 @@ func sopsStore(t *testing.T, recipients ...string) (*SOPSStore, string) {
 	if err != nil {
 		t.Fatalf("git writer: %v", err)
 	}
-	store, err := NewSOPS(SOPSConfig{
-		Writer:     w,
-		Recipients: recipients,
-		Now:        func() time.Time { return time.Date(2026, 8, 14, 9, 0, 0, 0, time.UTC) },
-	})
-	if err != nil {
-		t.Fatalf("NewSOPS: %v", err)
-	}
-	return store, remote
+	return w
 }
 
 // remoteFile returns one committed file's bytes, or nil when it is absent.
