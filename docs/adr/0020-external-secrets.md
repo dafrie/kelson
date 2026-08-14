@@ -284,6 +284,13 @@ ADR-0018's "revisit when" might still turn out to be right.
 - **The ExternalSecret takes the Secret's name, so kelson can collide with a human.** An
   administrator's hand-written ExternalSecret named `payments` and kelson's are one object. The
   conflict surfaces at apply rather than being designed out.
+- **A namespaced SecretStore does not reach a PR preview.** A preview renders through this same
+  renderer into its own namespace (`internal/preview`, [ADR-0017](0017-pr-previews.md)), so a
+  `SecretStore` living in the parent environment's namespace is not a candidate there and the preview
+  refuses with `render/external-secrets-store-not-found`. That is the loud failure rather than a
+  preview quietly running without its credentials, and the working shape is a `ClusterSecretStore` —
+  but it means "which store" is now a question an environment answers on behalf of namespaces it does
+  not know the names of yet.
 - **kelson still does not know whether the *remote* secret exists.** ADR-0018's negative — "a reference
   to a Secret nobody created renders cleanly and fails at pod start" — moves rather than closes: it now
   fails at sync time with a named reason, which is far better, and it is still not something render or
