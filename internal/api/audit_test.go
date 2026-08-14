@@ -310,6 +310,11 @@ func TestARefusalIsRecordedWithTheCodeTheCallerGot(t *testing.T) {
 	if rec.Principal.Name != "deploybot" {
 		t.Errorf("a refusal must still name who was refused, got %+v", rec.Principal)
 	}
+	// And what it tried to reach. "deploybot was refused" is half an answer;
+	// "deploybot was refused production" is the one an operator acts on.
+	if rec.Target.Project != "hello" || rec.Target.Environment != prodEnv {
+		t.Errorf("target = %+v, want the target the refused call named", rec.Target)
+	}
 }
 
 // TestAReasonIsAbsentWhenNoneWasSupplied: kelson records the caller's words and

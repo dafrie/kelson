@@ -177,8 +177,8 @@ func (a *authorizer) WrapStreamingHandler(next connect.StreamingHandlerFunc) con
 		// The connection is wrapped whatever the principal is. For an agent
 		// the wrapper carries the scope check; for every caller it carries the
 		// target the audit record needs, which is only knowable once the
-		// request message has been decoded.
-		checked := ctx
+		// request message has been decoded — including on a refusal, so a
+		// refused record still says what the caller tried to touch.
 		if p.Type != PrincipalAgent {
 			a.record(p, procedure, "allowed", nil)
 		}
@@ -189,7 +189,7 @@ func (a *authorizer) WrapStreamingHandler(next connect.StreamingHandlerFunc) con
 				if p.Type != PrincipalAgent {
 					return nil
 				}
-				if err := a.checkTarget(checked, p, procedure, row, msg); err != nil {
+				if err := a.checkTarget(ctx, p, procedure, row, msg); err != nil {
 					return err
 				}
 				a.record(p, procedure, "allowed", nil)
