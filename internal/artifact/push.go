@@ -1,4 +1,4 @@
-package preview
+package artifact
 
 import (
 	"bytes"
@@ -63,7 +63,7 @@ func (p *Pusher) Push(ctx context.Context, a Artifact) (string, error) {
 		return "", err
 	}
 	if a.Tag == "" {
-		return "", fmt.Errorf("preview: an artifact needs a tag to publish under")
+		return "", fmt.Errorf("artifact: an artifact needs a tag to publish under")
 	}
 	for _, blob := range []struct {
 		digest string
@@ -100,17 +100,23 @@ type target struct {
 	path string
 }
 
-// parseRepository splits previews.artifacts.repository into a host and a
-// repository path, refusing anything that carries a tag or a digest — the tag
-// is the publisher's to choose (it is the head commit), and a spec that pinned
-// one would silently publish every change request over the same artifact.
+// ociPrefix is how a repository is spelled where a scheme is written at all —
+// `previews.artifacts.repository` in a spec, `url:` on an OCIRepository. It is
+// accepted and stripped here so a caller may pass either spelling.
+const ociPrefix = "oci://"
+
+// parseRepository splits a repository reference into a host and a repository
+// path, refusing anything that carries a tag or a digest — the tag is the
+// publisher's to choose (the head commit for a preview, the generation and spec
+// hash for the spine), and a pinned repository would silently publish every
+// revision over the same artifact.
 func parseRepository(repository string) (target, error) {
 	ref := strings.TrimPrefix(strings.TrimSpace(repository), ociPrefix)
 	if ref == "" {
 		return target{}, Error{
-			Reason:      ReasonNoArtifactRepository,
+			Reason:      ReasonNoRepository,
 			Message:     "no artifact repository to publish to",
-			Remediation: "set spec.previews.artifacts.repository on the environment",
+			Remediation: "name one: spec.previews.artifacts.repository for a preview, --registry for the controller",
 		}
 	}
 	parsed, err := registry.Parse(ref)
@@ -118,14 +124,14 @@ func parseRepository(repository string) (target, error) {
 		return target{}, Error{
 			Reason:      ReasonRepositoryInvalid,
 			Message:     err.Error(),
-			Remediation: "spec.previews.artifacts.repository is an oci:// repository, e.g. oci://ghcr.io/acme/checkout-previews",
+			Remediation: "an artifact repository is a registry host and a path, e.g. ghcr.io/acme/checkout-previews",
 		}
 	}
 	if parsed.Tag != "" || parsed.Digest != "" {
 		return target{}, Error{
 			Reason:      ReasonRepositoryInvalid,
 			Message:     "artifact repository " + quoted(repository) + " carries a tag or a digest",
-			Remediation: "drop it: the tag is the change request's head commit and kelson chooses it (ADR-0017 decision 2)",
+			Remediation: "drop it: the tag is the publisher's to choose (ADR-0017 decision 2, ADR-0028 decision 2)",
 		}
 	}
 	path := parsed.Repository
@@ -184,7 +190,7 @@ func (p *Pusher) pushBlob(ctx context.Context, t target, digest string, body []b
 	location := start.Header.Get("Location")
 	closeBody(start)
 	if location == "" {
-		return fmt.Errorf("preview: %s accepted an upload without saying where to send it (no Location header)", t.host)
+		return fmt.Errorf("artifact: %s accepted an upload without saying where to send it (no Location header)", t.host)
 	}
 
 	upload, err := p.uploadURL(t, location, digest)
@@ -207,11 +213,11 @@ func (p *Pusher) pushBlob(ctx context.Context, t target, digest string, body []b
 func (p *Pusher) uploadURL(t target, location, digest string) (string, error) {
 	base, err := url.Parse(p.endpoint(t, "/blobs/uploads/"))
 	if err != nil {
-		return "", fmt.Errorf("preview: %w", err)
+		return "", fmt.Errorf("artifact: %w", err)
 	}
 	loc, err := url.Parse(location)
 	if err != nil {
-		return "", fmt.Errorf("preview: %s returned an unusable upload location: %w", t.host, err)
+		return "", fmt.Errorf("artifact: %s returned an unusable upload location: %w", t.host, err)
 	}
 	resolved := base.ResolveReference(loc)
 	q := resolved.Query()
@@ -262,7 +268,7 @@ func (p *Pusher) attempt(ctx context.Context, t target, method, endpoint string,
 	}
 	req, err := http.NewRequestWithContext(ctx, method, endpoint, reader)
 	if err != nil {
-		return nil, fmt.Errorf("preview: %w", err)
+		return nil, fmt.Errorf("artifact: %w", err)
 	}
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
@@ -275,7 +281,7 @@ func (p *Pusher) attempt(ctx context.Context, t target, method, endpoint string,
 		// A transport error may quote the URL but never a header, so the
 		// credential cannot be in here — and internal/redact is the net under
 		// it either way.
-		return nil, fmt.Errorf("preview: %s %s: %w", method, redactQuery(endpoint), err)
+		return nil, &UnreachableError{Doing: method + " " + redactQuery(endpoint), Err: err}
 	}
 	return res, nil
 }
@@ -308,7 +314,7 @@ func (p *Pusher) authorize(ctx context.Context, t target, challenge string) erro
 	case "bearer":
 		realm := params["realm"]
 		if realm == "" {
-			return fmt.Errorf("preview: %s asked for a bearer token but named no realm to get one from", t.host)
+			return fmt.Errorf("artifact: %s asked for a bearer token but named no realm to get one from", t.host)
 		}
 		token, err := p.fetchToken(ctx, t, realm, params)
 		if err != nil {
@@ -323,23 +329,31 @@ func (p *Pusher) authorize(ctx context.Context, t target, challenge string) erro
 		return nil
 	case "basic", "":
 		if p.Credential.Username == "" {
-			return fmt.Errorf("preview: %s/%s requires credentials and this push has none; %s",
-				t.host, t.path, credentialHint)
+			return &DeniedError{
+				StatusCode: http.StatusUnauthorized,
+				Status:     "401 Unauthorized",
+				Doing:      "publishing to " + t.host + "/" + t.path,
+				Detail:     "this push carries no credential; " + credentialHint,
+			}
 		}
 		return nil
 	default:
-		return fmt.Errorf("preview: %s asked for %q authentication, which kelson does not speak", t.host, scheme)
+		return fmt.Errorf("artifact: %s asked for %q authentication, which kelson does not speak", t.host, scheme)
 	}
 }
 
-// credentialHint is the one sentence every auth refusal ends with, so the two
-// ways to supply a credential are always named together.
-const credentialHint = "log the runner in to the registry (docker login writes the config this reads), or pass --registry-secret to resolve a dockerconfigjson Secret from the cluster"
+// credentialHint is the one sentence every auth refusal ends with, so every way
+// to supply a credential is always named together — the CLI's two, and the
+// controller's mounted docker config (ADR-0028 decision 2).
+const credentialHint = "log the runner in to the registry (docker login writes the config this reads), pass --registry-secret to resolve a dockerconfigjson Secret from the cluster, or mount one at the controller's --registry-config path"
+
+// quoted is the house spelling for a value echoed back inside a message.
+func quoted(s string) string { return `"` + s + `"` }
 
 func (p *Pusher) fetchToken(ctx context.Context, t target, realm string, params map[string]string) (string, error) {
 	u, err := url.Parse(realm)
 	if err != nil {
-		return "", fmt.Errorf("preview: %s named an unusable token realm: %w", t.host, err)
+		return "", fmt.Errorf("artifact: %s named an unusable token realm: %w", t.host, err)
 	}
 	q := u.Query()
 	if service := params["service"]; service != "" {
@@ -357,25 +371,30 @@ func (p *Pusher) fetchToken(ctx context.Context, t target, realm string, params 
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
-		return "", fmt.Errorf("preview: %w", err)
+		return "", fmt.Errorf("artifact: %w", err)
 	}
 	if p.Credential.Username != "" {
 		req.SetBasicAuth(p.Credential.Username, p.Credential.Password)
 	}
 	res, err := p.client().Do(req)
 	if err != nil {
-		return "", fmt.Errorf("preview: requesting a token from %s: %w", redactQuery(realm), err)
+		return "", &UnreachableError{Doing: "requesting a token from " + redactQuery(realm), Err: err}
 	}
 	defer closeBody(res)
 	if res.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("preview: %s refused a token for %s (%s); %s", u.Host, t.path, res.Status, credentialHint)
+		return "", &DeniedError{
+			StatusCode: res.StatusCode,
+			Status:     res.Status,
+			Doing:      "requesting a push token for " + t.path + " from " + u.Host,
+			Detail:     credentialHint,
+		}
 	}
 	var payload struct {
 		Token       string `json:"token"`
 		AccessToken string `json:"access_token"`
 	}
 	if err := json.NewDecoder(io.LimitReader(res.Body, tokenLimit)).Decode(&payload); err != nil {
-		return "", fmt.Errorf("preview: %s returned a token response kelson could not read: %w", u.Host, err)
+		return "", fmt.Errorf("artifact: %s returned a token response kelson could not read: %w", u.Host, err)
 	}
 	if payload.Token != "" {
 		return payload.Token, nil
@@ -383,7 +402,7 @@ func (p *Pusher) fetchToken(ctx context.Context, t target, realm string, params 
 	if payload.AccessToken != "" {
 		return payload.AccessToken, nil
 	}
-	return "", fmt.Errorf("preview: %s returned a token response with no token in it", u.Host)
+	return "", fmt.Errorf("artifact: %s returned a token response with no token in it", u.Host)
 }
 
 // tokenLimit bounds a token response. It is generous for a JWT and small
@@ -449,11 +468,12 @@ func splitParams(s string) []string {
 // its query string, because an upload location can carry a signed token.
 func responseError(res *http.Response, doing string) error {
 	body, _ := io.ReadAll(io.LimitReader(res.Body, errorLimit))
-	detail := strings.TrimSpace(string(body))
-	if detail == "" {
-		return fmt.Errorf("preview: %s failed: %s", doing, res.Status)
+	return &DeniedError{
+		StatusCode: res.StatusCode,
+		Status:     res.Status,
+		Doing:      doing,
+		Detail:     strings.TrimSpace(string(body)),
 	}
-	return fmt.Errorf("preview: %s failed: %s: %s", doing, res.Status, detail)
 }
 
 // redactQuery drops a URL's query string before it reaches an error message.

@@ -31,6 +31,17 @@
 // RPC later; it is not needed for the flow to work, and a server that polled
 // forges would duplicate the ResourceSetInputProvider that is already running.
 //
+// # Where the publisher lives
+//
+// Not here. [ADR-0028](docs/adr/0028-delivery-spine.md) decision 2 converges the
+// preview pipeline and the delivery spine on one publisher — "one media type,
+// one determinism test, two callers" — so the packaging, the push and the
+// docker-config credential lookup moved to internal/artifact, a package neither
+// caller owns. What stays is the half that is actually about previews: which
+// annotations a preview artifact carries and which tag it goes under
+// ([Package]), plus aliases so this package's vocabulary is unchanged for
+// `kelson preview publish` and for the publisher/consumer contract test.
+//
 // # Determinism
 //
 // The artifact is a pure function of its inputs, down to the digest: the tar is

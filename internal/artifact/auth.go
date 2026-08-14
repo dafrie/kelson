@@ -1,4 +1,4 @@
-package preview
+package artifact
 
 import (
 	"encoding/json"
@@ -42,14 +42,14 @@ func CredentialFromDockerConfig(path, host string) (registry.Credential, error) 
 		return registry.Credential{}, nil
 	}
 	if err != nil {
-		return registry.Credential{}, fmt.Errorf("preview: reading the registry login at %s: %w", file, err)
+		return registry.Credential{}, fmt.Errorf("artifact: reading the registry login at %s: %w", file, err)
 	}
 	// A file that exists and is not JSON is a broken login, which is a
 	// different thing from no login at all and must not degrade into one: an
 	// anonymous push would then fail against the registry with a 401 that says
 	// nothing about the file that caused it.
 	if !json.Valid(data) {
-		return registry.Credential{}, fmt.Errorf("preview: the registry login at %s is not valid JSON", file)
+		return registry.Credential{}, fmt.Errorf("artifact: the registry login at %s is not valid JSON", file)
 	}
 
 	keys := []string{host}
@@ -85,7 +85,7 @@ func dockerConfigPath(path string) (string, error) {
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", fmt.Errorf("preview: locating the registry login: %w", err)
+		return "", fmt.Errorf("artifact: locating the registry login: %w", err)
 	}
 	return filepath.Join(home, ".docker", "config.json"), nil
 }

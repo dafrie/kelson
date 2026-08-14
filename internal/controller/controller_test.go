@@ -315,17 +315,29 @@ func TestEnvironmentDeliveryFailureIsRetried(t *testing.T) {
 	}
 }
 
+// spyDeliverer is the fake behind the [Deliverer] seam: it records what the
+// reconciler decided to publish and returns whatever outcome a test needs, so
+// every branch of validation, rollback, history and the finalizer is testable
+// without a registry.
 type spyDeliverer struct {
 	calls   int
 	got     Revision
 	outcome Outcome
 	err     error
+
+	tornDown []string
+	teardown error
 }
 
 func (s *spyDeliverer) Deliver(_ context.Context, rev Revision) (Outcome, error) {
 	s.calls++
 	s.got = rev
 	return s.outcome, s.err
+}
+
+func (s *spyDeliverer) Teardown(_ context.Context, project, environment string) error {
+	s.tornDown = append(s.tornDown, project+"/"+environment)
+	return s.teardown
 }
 
 func TestEnvironmentDeletedIsNotAnError(t *testing.T) {

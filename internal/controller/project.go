@@ -85,6 +85,26 @@ func setReady(conditions *[]metav1.Condition, generation int64, status metav1.Co
 	})
 }
 
+// setProgressing sets the Progressing condition, which only an Environment
+// carries: a Project has no delivery of its own and so has nothing to be
+// progressing towards.
+//
+// It is a second condition rather than another reason on Ready because the two
+// answer different questions and a rolled-back environment answers them
+// differently: Ready=True (the pinned revision is live and healthy) with
+// Progressing=False/RollbackPinned (and it is deliberately not tracking your
+// spec). Folding that into one condition would force a choice between claiming
+// an environment is broken and hiding that it has stopped deploying.
+func setProgressing(conditions *[]metav1.Condition, generation int64, status metav1.ConditionStatus, reason, message string) {
+	meta.SetStatusCondition(conditions, metav1.Condition{
+		Type:               v1alpha1.ConditionProgressing,
+		Status:             status,
+		Reason:             reason,
+		Message:            message,
+		ObservedGeneration: generation,
+	})
+}
+
 // patchStatus writes the status subresource with a merge patch against the
 // object as it was read.
 //

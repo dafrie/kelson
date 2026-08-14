@@ -349,6 +349,17 @@ spec:
                     required:
                       - revision
                     properties:
+                      digest:
+                        description: the artifact's OCI digest — what was put there, as opposed to where
+                        type: string
+                      images:
+                        description: the container images this revision resolved to, in component order
+                        type: array
+                        items:
+                          type: string
+                      outcome:
+                        description: 'the delivery phase this revision reached: Proposed, Committed, Reconciling, Applied, Healthy, Degraded or Rejected'
+                        type: string
                       revision:
                         description: 'the artifact tag: <generation>-<spec-hash-short>'
                         type: string
@@ -367,7 +378,14 @@ spec:
                   description: 'the delivery state-machine phase: Proposed, Committed, Reconciling, Applied, Healthy, Degraded or Rejected'
                   type: string
                 revision:
-                  description: the settled revision — the artifact tag currently serving
+                  description: the settled revision — the artifact tag the OCIRepository is pinned to
+                  type: string
+                rollbackGeneration:
+                  description: the .metadata.generation the rollback was applied at. A generation past this one means the spec was edited since, which resumes normal publishing (ADR-0028 decision 5).
+                  type: integer
+                  format: int64
+                rollbackRevision:
+                  description: the kelson.dev/rollback-to value the controller has acted on
                   type: string
                 validationErrors:
                   description: 'what validate.go said about this document. An invalid spec is a status and not a rejection: nothing renders, nothing is published, and the previous revision keeps serving.'

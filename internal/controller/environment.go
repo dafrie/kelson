@@ -3,36 +3,81 @@ package controller
 import (
 	"context"
 	"fmt"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/dafrie/kelson/api/kelson/v1alpha1"
+	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/model"
 	"github.com/dafrie/kelson/internal/renderer"
 )
 
-// EnvironmentReconciler converges one Environment (ADR-0028 decision 1).
+// Finalizer is what keeps an Environment alive until its Flux objects are gone.
 //
-// It runs steps 1 to 3 — validate, detect, resolve and render — and hands the
-// result to a [Deliverer], which is a no-op until issue #224. See the package
-// doc for what that means and why the seam is here already.
+// # Why there is one at all
+//
+// Deleting an Environment has to delete the Kustomization, and deleting the
+// Kustomization is what removes the workloads — it prunes its inventory on the
+// way out. Without a finalizer the custom resource disappears the instant
+// `kubectl delete` returns, taking with it the only record of which objects
+// were kelson's, and the Kustomization keeps reconciling an environment nobody
+// declared any more.
+//
+// # What it deliberately does not clean up
+//
+// The workload namespace and the published artifacts. See the deletion path in
+// [EnvironmentReconciler.finalize] for why.
+const Finalizer = "kelson.dev/environment"
+
+// nonTerminalRequeue is the belt-and-braces poll while a deployment is in
+// flight.
+//
+// The watch on the Flux objects is what actually reports progress, and in a
+// healthy cluster this timer never fires before the watch does. It exists for
+// the cases where the watch cannot: an informer that has not synced, a cache
+// scoped to a namespace the objects moved out of, an event dropped during a
+// leader-election handover. Ten seconds is short enough to be invisible in a
+// rollout and long enough that it is not a poll loop.
+const nonTerminalRequeue = 10 * time.Second
+
+// EnvironmentReconciler converges one Environment: all six steps of ADR-0028
+// decision 1.
+//
+//	1 validate  — internal/model/validate.go. A status, never an error return.
+//	2 detect    — the ClusterProfile, behind [ProfileSource].
+//	3 render    — the pure renderer. Suspended while a rollback is pinned.
+//	4 publish   — the OCI artifact. Suspended with it.
+//	5 ensure    — the OCIRepository and Kustomization pair.
+//	6 observe   — the Kustomization's condition, mapped onto a phase.
+//
+// Steps 4 to 6 are behind [Deliverer]; everything else is here.
 type EnvironmentReconciler struct {
 	Client client.Client
 
-	// Profiles supplies the ClusterProfile the render is judged against.
+	// Profiles supplies the ClusterProfile the render is judged against, and
+	// the Flux finding that decides whether publishing happens at all.
 	Profiles ProfileSource
 
-	// Delivery publishes the rendered set. Never nil in production;
-	// [NoopDeliverer] is the default a manager wires when nothing else is
-	// configured.
+	// Delivery publishes the rendered set and applies the Flux objects. Never
+	// nil in production; [NoopDeliverer] is what a zero-value reconciler falls
+	// back to, so a test about validation needs no registry.
 	Delivery Deliverer
+
+	// FluxWatches records whether SetupWithManager registered the watches on
+	// the Flux objects. It is false on a cluster with no Flux, where an
+	// informer on an unserved CRD would hang the cache sync forever — see
+	// SetupWithManager.
+	FluxWatches bool
 }
 
 // Reconcile converges one Environment and records what it observed.
@@ -42,6 +87,13 @@ func (r *EnvironmentReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	var env v1alpha1.Environment
 	if err := r.Client.Get(ctx, req.NamespacedName, &env); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	// Deletion comes first, and before validation: an Environment whose spec
+	// stopped validating must still be deletable, and an object being deleted
+	// has nothing to converge towards.
+	if !env.DeletionTimestamp.IsZero() {
+		return r.finalize(ctx, &env)
 	}
 
 	base := env.DeepCopy()
@@ -87,6 +139,12 @@ func (r *EnvironmentReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	// Step 3a: resolve. Resolution can still produce taxonomy errors — an image
 	// that resolves to nothing, for instance — and they are the same kind of
 	// answer as a validation failure, so they land in the same place.
+	//
+	// It runs even under a rollback, where the render below does not. Resolution
+	// is pure and cheap, and the Kustomization needs the namespace and the
+	// secret backend on every reconcile, including the ones where nothing is
+	// rendered. What a rollback suspends is producing *new bytes to publish*,
+	// which is the render and the push.
 	resolved, errs := model.Resolve(mp, me)
 	if len(errs) > 0 {
 		logger.Info("environment spec does not resolve", "errors", len(errs))
@@ -112,49 +170,279 @@ func (r *EnvironmentReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 
 	// Step 2: detect. A profile that cannot be read is a transient cluster
-	// problem and therefore the one thing in this function that IS an error
-	// return: waiting and trying again is the right behaviour.
+	// problem and therefore one of the few things in this function that IS an
+	// error return: waiting and trying again is the right behaviour.
 	profile, err := r.Profiles.Profile(ctx)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("reading the cluster profile: %w", err)
 	}
 
-	// Step 3b: render. Still pure — this reconciler is the caller that has
-	// cluster access, the renderer has none (ADR-0028 decision 1, step 3).
-	manifests, err := renderer.Render(resolved, profile, nil)
+	specHash, err := model.SpecHash(resolved)
 	if err != nil {
-		// A render refusal is kelson's gap and not the author's mistake — an
-		// unimplemented field, a capability the profile does not offer — so it
-		// gets its own reason and, like an invalid spec, no requeue.
-		logger.Info("render failed", "error", err)
-		setReady(&env.Status.Conditions, env.Generation, metav1.ConditionFalse,
-			v1alpha1.ReasonRenderFailed, err.Error())
-		return ctrl.Result{}, patchStatus(ctx, r.Client, &env, base)
+		return ctrl.Result{}, fmt.Errorf("hashing the resolved spec: %w", err)
 	}
 
-	// Steps 4 and 5: publish and ensure. Stubbed (issue #224).
+	// Rollback (ADR-0028 decision 5), decided before the render because it
+	// decides whether there is one.
+	rb := rollbackFor(env.Annotations, env.Generation, env.Status)
+	if rb.Active {
+		if err := verifyRollbackTarget(rb.Requested, env.Status.History); err != nil {
+			return r.refuse(ctx, &env, base, err)
+		}
+	}
+
+	var manifests []renderer.Manifest
+	if !rb.Active {
+		// Step 3b: render. Still pure — this reconciler is the caller that has
+		// cluster access, the renderer has none (ADR-0028 decision 1, step 3).
+		manifests, err = renderer.Render(resolved, profile, nil)
+		if err != nil {
+			// A render refusal is kelson's gap and not the author's mistake — an
+			// unimplemented field, a capability the profile does not offer — so it
+			// gets its own reason and, like an invalid spec, no requeue.
+			logger.Info("render failed", "error", err)
+			setReady(&env.Status.Conditions, env.Generation, metav1.ConditionFalse,
+				v1alpha1.ReasonRenderFailed, err.Error())
+			return ctrl.Result{}, patchStatus(ctx, r.Client, &env, base)
+		}
+	}
+
+	// Steps 4, 5 and 6.
 	outcome, err := r.deliverer().Deliver(ctx, Revision{
-		Project:     project.Name,
-		Environment: env.Name,
-		Generation:  env.Generation,
-		Manifests:   manifests,
-		Resolved:    resolved,
+		Project:              project.Name,
+		Environment:          env.Name,
+		EnvironmentNamespace: env.Namespace,
+		TargetNamespace:      resolved.Environment.Namespace,
+		Generation:           env.Generation,
+		SpecHash:             specHash,
+		Manifests:            manifests,
+		Resolved:             resolved,
+		FluxPresent:          profile.Flux != nil,
+		Observed:             env.Status.Revision,
+		ObservedDigest:       headDigest(env.Status.History, env.Status.Revision),
+		PinnedTo:             rb.Pin(),
 	})
 	if err != nil {
-		// Publishing is I/O against a registry and a cluster, so a failure is
-		// worth retrying and is returned as an error.
-		return ctrl.Result{}, fmt.Errorf("delivering %s/%s: %w", project.Name, env.Name, err)
+		return r.refuse(ctx, &env, base, err)
 	}
+
+	// A finalizer is added only now, on the first reconcile that got this far.
+	// Adding it earlier would put a deletion blocker on an object that has
+	// nothing to clean up, and an Environment whose spec never validated would
+	// then need the finalizer stripped by hand before `kubectl delete` returned.
+	if err := r.addFinalizer(ctx, &env); err != nil {
+		return ctrl.Result{}, err
+	}
+
 	if outcome.Revision != "" {
 		env.Status.Revision = outcome.Revision
 	}
-	if outcome.Phase != "" {
-		env.Status.Phase = outcome.Phase
+	env.Status.Phase = nextPhase(env.Status.Phase, outcome.Phase)
+	env.Status.History = recordHistory(env.Status.History, outcome, specHash, metav1.Now())
+	env.Status.RollbackRevision, env.Status.RollbackGeneration = "", 0
+	if rb.Active {
+		env.Status.RollbackRevision, env.Status.RollbackGeneration = rb.Requested, rb.Generation
 	}
 
-	setReady(&env.Status.Conditions, env.Generation, metav1.ConditionTrue, v1alpha1.ReasonReady,
-		fmt.Sprintf("the environment is valid and renders %s", resourceCount(len(manifests))))
-	return ctrl.Result{}, patchStatus(ctx, r.Client, &env, base)
+	r.setConditions(&env, rb, outcome, len(manifests))
+	if err := patchStatus(ctx, r.Client, &env, base); err != nil {
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{RequeueAfter: r.requeueFor(env.Status.Phase)}, nil
+}
+
+// setConditions writes both conditions from one outcome, so Ready and
+// Progressing can never disagree about what happened.
+func (r *EnvironmentReconciler) setConditions(env *v1alpha1.Environment, rb rollback, outcome Outcome, rendered int) {
+	switch {
+	case outcome.RolledBack:
+		setReady(&env.Status.Conditions, env.Generation, metav1.ConditionTrue,
+			v1alpha1.ReasonRolledBack,
+			fmt.Sprintf("serving revision %s, which this environment published earlier", outcome.Revision))
+		setProgressing(&env.Status.Conditions, env.Generation, metav1.ConditionFalse,
+			v1alpha1.ReasonRollbackPinned, rollbackPinnedMessage(outcome.Revision))
+		return
+
+	case outcome.Phase == v1alpha1.PhaseRejected, outcome.Phase == v1alpha1.PhaseDegraded:
+		// Flux processed the change: it refused it, or it applied it and the
+		// result is unhealthy. Either way the cause is Flux's own words, and
+		// relaying them verbatim is what makes the status actionable.
+		setReady(&env.Status.Conditions, env.Generation, metav1.ConditionFalse,
+			v1alpha1.ReasonRenderFailed, outcome.Cause)
+
+	case outcome.Phase == v1alpha1.PhaseHealthy:
+		setReady(&env.Status.Conditions, env.Generation, metav1.ConditionTrue, v1alpha1.ReasonReady,
+			fmt.Sprintf("revision %s is live and healthy (%s)", outcome.Revision, resourceCount(rendered)))
+
+	case outcome.Revision != "":
+		setReady(&env.Status.Conditions, env.Generation, metav1.ConditionTrue, v1alpha1.ReasonReady,
+			fmt.Sprintf("revision %s is published and %s is reconciling it",
+				outcome.Revision, defaultString(outcome.Phase, "Flux")))
+
+	default:
+		// Nothing was published: the no-op deliverer, or a build with delivery
+		// unwired. The render still happened and is still worth reporting.
+		setReady(&env.Status.Conditions, env.Generation, metav1.ConditionTrue, v1alpha1.ReasonReady,
+			fmt.Sprintf("the environment is valid and renders %s", resourceCount(rendered)))
+	}
+
+	message := ""
+	if rb.Inert {
+		message = rollbackInertMessage(rb.Requested, rb.Generation)
+	}
+	if terminalPhase(outcome.Phase) {
+		setProgressing(&env.Status.Conditions, env.Generation, metav1.ConditionFalse,
+			v1alpha1.ReasonSettled, joinMessages("nothing is in flight for generation "+
+				fmt.Sprint(env.Generation), message))
+		return
+	}
+	setProgressing(&env.Status.Conditions, env.Generation, metav1.ConditionTrue,
+		v1alpha1.ReasonReconciling, joinMessages(defaultString(outcome.Cause,
+			"waiting for Flux to reconcile revision "+outcome.Revision), message))
+}
+
+// refuse writes a delivery failure into the status and decides what happens
+// next. It is the single place the taxonomy in errors.go is turned into a
+// controller-runtime result, which is what makes "which reason requeues how"
+// a table rather than a habit.
+func (r *EnvironmentReconciler) refuse(ctx context.Context, env *v1alpha1.Environment, base client.Object, err error) (ctrl.Result, error) {
+	de, ok := asDeliveryError(err)
+	if !ok {
+		// Not part of the taxonomy: treat it as transient and let
+		// controller-runtime back off. An unclassified failure that stopped
+		// retrying would be a deployment silently abandoned.
+		return ctrl.Result{}, err
+	}
+
+	log.FromContext(ctx).Info("delivery refused", "reason", de.Reason, "message", de.Message)
+	setReady(&env.Status.Conditions, env.Generation, metav1.ConditionFalse, de.Reason, de.Error())
+	// Progressing is False for every refusal: nothing is in flight, whether or
+	// not something will be retried.
+	setProgressing(&env.Status.Conditions, env.Generation, metav1.ConditionFalse,
+		v1alpha1.ReasonSettled, de.Message)
+	if patchErr := patchStatus(ctx, r.Client, env, base); patchErr != nil {
+		return ctrl.Result{}, patchErr
+	}
+	if de.Backoff {
+		return ctrl.Result{}, de
+	}
+	return ctrl.Result{RequeueAfter: de.Retry}, nil
+}
+
+// finalize is the deletion path (ADR-0028, the 2026-08-14 amendment).
+//
+// Order is the decision: the Kustomization goes first, because deleting it is
+// what removes the workloads — it prunes its own inventory on the way out.
+// Deleting the OCIRepository first would leave the Kustomization pointing at a
+// source that no longer exists, so it would stop reconciling with an error,
+// prune nothing, and the workloads would outlive the Environment that declared
+// them.
+//
+// Two things are deliberately not deleted:
+//
+//   - **The workload namespace.** Deleting a namespace cascades to everything
+//     inside it, including resources kelson never created, and the labels alone
+//     can never prove kelson created the namespace rather than adopting one
+//     that already existed (internal/delivery/provenance.go's ownership
+//     annotation exists precisely for this distinction). `kelson uninstall`
+//     is the verb that reasons about namespaces; deleting a custom resource is
+//     not.
+//   - **The published artifacts.** They are the history (ADR-0028 decision 4)
+//     and they are immutable. Deleting an Environment must not make its own
+//     record unrecoverable, and re-applying the same spec then finds every
+//     revision it ever published still there.
+func (r *EnvironmentReconciler) finalize(ctx context.Context, env *v1alpha1.Environment) (ctrl.Result, error) {
+	if !controllerutil.ContainsFinalizer(env, Finalizer) {
+		return ctrl.Result{}, nil
+	}
+	if err := r.deliverer().Teardown(ctx, env.Spec.Project, env.Name); err != nil {
+		de, ok := asDeliveryError(err)
+		if !ok || de.Backoff {
+			return ctrl.Result{}, err
+		}
+		// A teardown that cannot proceed — RBAC, most likely — keeps the
+		// finalizer and retries. The object stays in Terminating, which is the
+		// honest state: its workloads are still running.
+		log.FromContext(ctx).Info("teardown refused", "reason", de.Reason, "message", de.Message)
+		return ctrl.Result{RequeueAfter: de.Retry}, nil
+	}
+	patch := client.MergeFrom(env.DeepCopy())
+	controllerutil.RemoveFinalizer(env, Finalizer)
+	if err := r.Client.Patch(ctx, env, patch); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+	return ctrl.Result{}, nil
+}
+
+// addFinalizer puts the deletion blocker on, once, after the first successful
+// Ensure. The patch is against the object and not the status subresource,
+// because a finalizer is metadata.
+//
+// It patches a *copy*. A client patch writes the API server's response back
+// over the object it was handed, which would discard the status this reconcile
+// has spent the whole function assembling and has not written yet — a bug that
+// shows up as an environment whose observedGeneration never moves. So only the
+// two fields the patch actually changed are carried back.
+func (r *EnvironmentReconciler) addFinalizer(ctx context.Context, env *v1alpha1.Environment) error {
+	if controllerutil.ContainsFinalizer(env, Finalizer) {
+		return nil
+	}
+	patched := env.DeepCopy()
+	patch := client.MergeFrom(env.DeepCopy())
+	controllerutil.AddFinalizer(patched, Finalizer)
+	if err := r.Client.Patch(ctx, patched, patch); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	env.Finalizers, env.ResourceVersion = patched.Finalizers, patched.ResourceVersion
+	return nil
+}
+
+// requeueFor is the belt-and-braces poll. A settled phase needs none: the watch
+// on the Flux objects reports the next change, and a timer on a healthy
+// environment is load with no question behind it.
+func (r *EnvironmentReconciler) requeueFor(phase string) time.Duration {
+	if phase == "" || terminalPhase(phase) {
+		return 0
+	}
+	return nonTerminalRequeue
+}
+
+// terminalPhase reports whether Flux is done with this revision, well or badly.
+// Degraded counts: it is live, it is wrong, and nothing kelson does next
+// changes that — only a new spec or a recovering workload will, and both are
+// watch events.
+func terminalPhase(phase string) bool {
+	switch phase {
+	case v1alpha1.PhaseHealthy, v1alpha1.PhaseRejected, v1alpha1.PhaseDegraded:
+		return true
+	default:
+		return false
+	}
+}
+
+// headDigest finds the digest already recorded for a revision, so a reconcile
+// that skips the publish does not drop it out of the history.
+func headDigest(history []v1alpha1.HistoryEntry, revision string) string {
+	for _, e := range history {
+		if e.Revision == revision {
+			return e.Digest
+		}
+	}
+	return ""
+}
+
+func defaultString(s, fallback string) string {
+	if s == "" {
+		return fallback
+	}
+	return s
+}
+
+func joinMessages(primary, extra string) string {
+	if extra == "" {
+		return primary
+	}
+	return primary + ". " + extra
 }
 
 func resourceCount(n int) string {
@@ -174,8 +462,10 @@ func (r *EnvironmentReconciler) deliverer() Deliverer {
 	return r.Delivery
 }
 
-// SetupWithManager registers the reconciler and the one watch it needs beyond
-// its own kind.
+// SetupWithManager registers the reconciler and the watches it needs beyond its
+// own kind.
+//
+// # The Project watch
 //
 // A change to a Project changes what its Environments validate and render
 // against, so each one has to be re-reconciled — otherwise an Environment
@@ -184,15 +474,69 @@ func (r *EnvironmentReconciler) deliverer() Deliverer {
 // Environments in the Project's namespace and filters by spec.project; a field
 // index would be faster and is not worth its setup at this size, since the list
 // is served from the same cache the reconciler already has.
-func (r *EnvironmentReconciler) SetupWithManager(mgr ctrl.Manager) error {
+//
+// # The Flux watches, and why they are conditional
+//
+// Step 6 is watch-driven: a Kustomization going Ready is what turns an
+// Environment's phase to Healthy, and without the watch that transition would
+// wait for a timer. But an informer on a CRD the API server does not serve does
+// not fail — it blocks the manager's cache sync, forever, and the whole
+// controller never becomes ready. A cluster with no Flux is exactly the cluster
+// ADR-0030 exists for, so registering those watches unconditionally would make
+// the controller unable to start on the clusters it most needs to start on and
+// report `FluxNotInstalled` from.
+//
+// So `fluxPresent` is a start-up finding (cmd/kelson-controller does one
+// detection before building the manager) and the watches are gated on it. The
+// cost is real and is stated where it is paid: a cluster where Flux is
+// installed *after* the controller starts keeps reconciling on the requeue
+// timer until the controller is restarted. That is a restart after an install,
+// which is a thing an operator is already doing.
+func (r *EnvironmentReconciler) SetupWithManager(mgr ctrl.Manager, fluxPresent bool) error {
 	if r.Profiles == nil {
 		r.Profiles = StaticProfileSource{}
 	}
-	return ctrl.NewControllerManagedBy(mgr).
+	r.FluxWatches = fluxPresent
+
+	builder := ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.Environment{}).
 		Watches(&v1alpha1.Project{}, handler.EnqueueRequestsFromMapFunc(r.environmentsOfProject)).
-		Named("environment").
-		Complete(r)
+		Named("environment")
+
+	if fluxPresent {
+		for _, gvk := range []struct{ group, version, kind string }{
+			{ociRepositoryGVK.Group, ociRepositoryGVK.Version, ociRepositoryGVK.Kind},
+			{kustomizationGVK.Group, kustomizationGVK.Version, kustomizationGVK.Kind},
+		} {
+			obj := &unstructured.Unstructured{}
+			obj.SetAPIVersion(gvk.group + "/" + gvk.version)
+			obj.SetKind(gvk.kind)
+			builder = builder.Watches(obj, handler.EnqueueRequestsFromMapFunc(environmentOfFluxObject))
+		}
+	}
+	return builder.Complete(r)
+}
+
+// environmentOfFluxObject maps a Flux object back to the Environment that owns
+// it.
+//
+// The mapping is the labels and nothing else. It cannot be an owner reference:
+// the Flux objects live in the Flux namespace and the Environment lives in the
+// application's, and Kubernetes garbage collection does not cross namespaces —
+// a cross-namespace owner reference is not merely unsupported, it makes the
+// dependent eligible for deletion as an orphan. Hence the finalizer, and hence
+// this: [delivery.LabelEnvironmentNamespace] and [delivery.LabelEnvironment]
+// are exactly the namespace and name of the object to enqueue.
+func environmentOfFluxObject(_ context.Context, obj client.Object) []reconcile.Request {
+	labels := obj.GetLabels()
+	if labels[delivery.LabelManagedBy] != delivery.ManagedByKelson {
+		return nil
+	}
+	namespace, name := labels[delivery.LabelEnvironmentNamespace], labels[delivery.LabelEnvironment]
+	if namespace == "" || name == "" {
+		return nil
+	}
+	return []reconcile.Request{{NamespacedName: types.NamespacedName{Namespace: namespace, Name: name}}}
 }
 
 func (r *EnvironmentReconciler) environmentsOfProject(ctx context.Context, project client.Object) []reconcile.Request {

@@ -149,6 +149,20 @@ func environmentStatusSchema() omap {
 	historyItem.set("type", "object")
 	historyItem.set("required", []string{"revision"})
 	historyItem.set("properties", omap{
+		{"digest", omap{
+			{"description", "the artifact's OCI digest — what was put there, as opposed to where"},
+			{"type", "string"},
+		}},
+		{"images", omap{
+			{"description", "the container images this revision resolved to, in component order"},
+			{"type", "array"},
+			{"items", omap{{"type", "string"}}},
+		}},
+		{"outcome", omap{
+			{"description", "the delivery phase this revision reached: Proposed, Committed, " +
+				"Reconciling, Applied, Healthy, Degraded or Rejected"},
+			{"type", "string"},
+		}},
 		{"revision", omap{
 			{"description", "the artifact tag: <generation>-<spec-hash-short>"},
 			{"type", "string"},
@@ -188,7 +202,18 @@ func environmentStatusSchema() omap {
 			{"type", "string"},
 		}},
 		{"revision", omap{
-			{"description", "the settled revision — the artifact tag currently serving"},
+			{"description", "the settled revision — the artifact tag the OCIRepository is pinned to"},
+			{"type", "string"},
+		}},
+		{"rollbackGeneration", omap{
+			{"description", "the .metadata.generation the rollback was applied at. A generation past " +
+				"this one means the spec was edited since, which resumes normal publishing " +
+				"(ADR-0028 decision 5)."},
+			{"type", "integer"},
+			{"format", "int64"},
+		}},
+		{"rollbackRevision", omap{
+			{"description", "the kelson.dev/rollback-to value the controller has acted on"},
 			{"type", "string"},
 		}},
 		{"validationErrors", validationErrorsSchema()},

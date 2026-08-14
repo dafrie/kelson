@@ -15,7 +15,7 @@ const rev = "abc123def"
 
 func TestPhaseCommittedWhenNotObserved(t *testing.T) {
 	k := Kustomization{Name: "web", Namespace: "apps", Ready: ConditionUnknown}
-	st := phaseFor(k, rev)
+	st := PhaseFor(k, rev)
 	if st.Phase != delivery.PhaseCommitted {
 		t.Fatalf("phase = %q, want committed", st.Phase)
 	}
@@ -30,7 +30,7 @@ func TestPhaseRejectedNamesTheCause(t *testing.T) {
 		Ready: ConditionFalse, Reason: reasonBuildFailed, Message: "image not found",
 		LastAttemptedRevision: "main@sha1:" + rev,
 	}
-	st := phaseFor(k, rev)
+	st := PhaseFor(k, rev)
 	if st.Phase != delivery.PhaseRejected {
 		t.Fatalf("phase = %q, want rejected", st.Phase)
 	}
@@ -45,7 +45,7 @@ func TestPhaseDegradedSurfacesHealth(t *testing.T) {
 		Ready: ConditionFalse, Reason: reasonHealthCheckFail, Message: "ready: 0/1",
 		LastAppliedRevision: "abc123def",
 	}
-	st := phaseFor(k, rev)
+	st := PhaseFor(k, rev)
 	if st.Phase != delivery.PhaseDegraded {
 		t.Fatalf("phase = %q, want degraded", st.Phase)
 	}
@@ -56,7 +56,7 @@ func TestPhaseDegradedSurfacesHealth(t *testing.T) {
 
 func TestPhaseHealthy(t *testing.T) {
 	k := Kustomization{Name: "web", Namespace: "apps", Ready: ConditionTrue, LastAppliedRevision: rev}
-	st := phaseFor(k, rev)
+	st := PhaseFor(k, rev)
 	if st.Phase != delivery.PhaseHealthy {
 		t.Fatalf("phase = %q, want healthy", st.Phase)
 	}
@@ -64,7 +64,7 @@ func TestPhaseHealthy(t *testing.T) {
 
 func TestPhaseAppliedWhenAppliedNotReady(t *testing.T) {
 	k := Kustomization{Name: "web", Namespace: "apps", Ready: ConditionUnknown, LastAppliedRevision: rev}
-	st := phaseFor(k, rev)
+	st := PhaseFor(k, rev)
 	if st.Phase != delivery.PhaseApplied {
 		t.Fatalf("phase = %q, want applied", st.Phase)
 	}
@@ -72,7 +72,7 @@ func TestPhaseAppliedWhenAppliedNotReady(t *testing.T) {
 
 func TestPhaseReconciling(t *testing.T) {
 	k := Kustomization{Name: "web", Namespace: "apps", Ready: ConditionUnknown, LastAttemptedRevision: rev, Reconciling: true}
-	st := phaseFor(k, rev)
+	st := PhaseFor(k, rev)
 	if st.Phase != delivery.PhaseReconciling {
 		t.Fatalf("phase = %q, want reconciling", st.Phase)
 	}
@@ -80,7 +80,7 @@ func TestPhaseReconciling(t *testing.T) {
 
 func TestPhaseCommittedWhenSuspended(t *testing.T) {
 	k := Kustomization{Name: "web", Namespace: "apps", Suspended: true, Ready: ConditionFalse}
-	st := phaseFor(k, rev)
+	st := PhaseFor(k, rev)
 	if st.Phase != delivery.PhaseCommitted {
 		t.Fatalf("phase = %q, want committed (suspended)", st.Phase)
 	}
@@ -111,22 +111,99 @@ func TestKustomizationCovers(t *testing.T) {
 	}
 }
 
-// TestRevisionMatches covers the Flux revision spellings (branch@sha1:abc,
-// branch/abc, abbreviated).
+// TestRevisionMatches covers both source kinds. The git spellings
+// (branch@sha1:abc, branch/abc, abbreviated) are what a Kustomization kelson
+// merely observes writes; the OCI spelling (tag@sha256:digest) is what the
+// spine's own OCIRepository writes, and it is compared whole — a tag is not a
+// prefix of anything, and reading the digest as a commit is the bug that made a
+// healthy deployment report Committed forever.
 func TestRevisionMatches(t *testing.T) {
 	for _, tc := range []struct {
+		name      string
 		flux, sha string
 		want      bool
 	}{
-		{"main@sha1:abc123def", "abc123def", true},
-		{"main@sha1:abc123def", "abc123", true},
-		{"main/abc123def", "abc123def", true},
-		{"main@sha1:abc123def", "def456", false},
-		{"", "abc", false},
+		{"git v2", "main@sha1:abc123def", "abc123def", true},
+		{"git v2 abbreviated", "main@sha1:abc123def", "abc123", true},
+		{"git v1", "main/abc123def", "abc123def", true},
+		{"git, different commit", "main@sha1:abc123def", "def456", false},
+		{"empty revision", "", "abc", false},
+
+		{"oci tag", "7-1a2b3c4d@sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "7-1a2b3c4d", true},
+		{"oci tag, wrong generation", "8-1a2b3c4d@sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "7-1a2b3c4d", false},
+		{"oci tag, wrong hash", "7-9999aaaa@sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "7-1a2b3c4d", false},
+		{"oci tag is not a prefix", "7-1a2b3c4de@sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "7-1a2b3c4d", false},
+		{"oci digest is not the answer", "7-1a2b3c4d@sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "9f86d081", false},
+		{"oci tag without a digest", "7-1a2b3c4d", "7-1a2b3c4d", true},
 	} {
 		if got := revisionMatches(tc.flux, tc.sha); got != tc.want {
-			t.Fatalf("revisionMatches(%q, %q) = %v, want %v", tc.flux, tc.sha, got, tc.want)
+			t.Fatalf("%s: revisionMatches(%q, %q) = %v, want %v", tc.name, tc.flux, tc.sha, got, tc.want)
 		}
+	}
+}
+
+// TestPhaseForOCIRevisionIsHealthy is the same fix seen from the caller: an
+// OCIRepository-backed Kustomization that has applied kelson's tag and reports
+// Ready must read as Healthy, not as "has not observed this revision yet".
+func TestPhaseForOCIRevisionIsHealthy(t *testing.T) {
+	const rev = "7-1a2b3c4d"
+	k := Kustomization{
+		Name: "checkout-production", Namespace: "kelson-system",
+		SourceKind: "OCIRepository", SourceName: "checkout-production",
+		Ready:                 ConditionTrue,
+		LastAppliedRevision:   rev + "@sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+		LastAttemptedRevision: rev + "@sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+	}
+	if st := PhaseFor(k, rev); st.Phase != delivery.PhaseHealthy {
+		t.Fatalf("phase = %s (%s), want %s", st.Phase, st.Cause, delivery.PhaseHealthy)
+	}
+	// And the previous revision is still Committed: the spine must be able to
+	// tell "Flux has not caught up" from "Flux is done".
+	if st := PhaseFor(k, "8-99887766"); st.Phase != delivery.PhaseCommitted {
+		t.Fatalf("phase for the next revision = %s, want %s", st.Phase, delivery.PhaseCommitted)
+	}
+}
+
+// TestKustomizationFromReadsTheFieldPaths pins the extraction the controller's
+// own observer depends on: same field paths, same conditions, one reader.
+func TestKustomizationFromReadsTheFieldPaths(t *testing.T) {
+	obj := map[string]any{
+		"spec": map[string]any{
+			"path":      "./",
+			"suspend":   true,
+			"sourceRef": map[string]any{"kind": "OCIRepository", "name": "checkout-production"},
+		},
+		"status": map[string]any{
+			"lastAppliedRevision":   "7-1a2b3c4d@sha256:abc",
+			"lastAttemptedRevision": "8-99887766@sha256:def",
+			"conditions": []any{
+				map[string]any{"type": "Ready", "status": "False", "reason": "BuildFailed", "message": "boom"},
+				map[string]any{"type": "Reconciling", "status": "True"},
+			},
+		},
+	}
+	k := KustomizationFrom(obj, "checkout-production", "kelson-system")
+	if k.Name != "checkout-production" || k.Namespace != "kelson-system" {
+		t.Errorf("identity = %s/%s", k.Namespace, k.Name)
+	}
+	if k.Path != "./" || !k.Suspended {
+		t.Errorf("spec = path %q, suspend %v", k.Path, k.Suspended)
+	}
+	if k.SourceKind != "OCIRepository" || k.SourceName != "checkout-production" {
+		t.Errorf("sourceRef = %s/%s", k.SourceKind, k.SourceName)
+	}
+	if k.LastAppliedRevision != "7-1a2b3c4d@sha256:abc" || k.LastAttemptedRevision != "8-99887766@sha256:def" {
+		t.Errorf("revisions = %q / %q", k.LastAppliedRevision, k.LastAttemptedRevision)
+	}
+	if k.Ready != ConditionFalse || k.Reason != "BuildFailed" || k.Message != "boom" {
+		t.Errorf("ready = %s/%s/%s", k.Ready, k.Reason, k.Message)
+	}
+	if !k.Reconciling {
+		t.Error("the Reconciling condition was dropped")
+	}
+	// Nobody looked: Unknown, never a confident False.
+	if empty := KustomizationFrom(map[string]any{}, "x", "y"); empty.Ready != ConditionUnknown {
+		t.Errorf("an object with no conditions reads as %s, want Unknown", empty.Ready)
 	}
 }
 
@@ -151,7 +228,7 @@ func TestDecryptionFailureIsNamed(t *testing.T) {
 			Ready: ConditionFalse, Reason: m.reason, Message: m.message,
 			LastAttemptedRevision: "main@sha1:" + rev,
 		}
-		st := phaseFor(k, rev)
+		st := PhaseFor(k, rev)
 		if st.Phase != delivery.PhaseRejected {
 			t.Fatalf("phase = %q, want rejected", st.Phase)
 		}
@@ -182,7 +259,7 @@ func TestOrdinaryBuildFailureGetsNoDecryptionCause(t *testing.T) {
 			Ready: ConditionFalse, Reason: reasonBuildFailed, Message: message,
 			LastAttemptedRevision: "main@sha1:" + rev,
 		}
-		if contains(phaseFor(k, rev).Cause, "could not decrypt") {
+		if contains(PhaseFor(k, rev).Cause, "could not decrypt") {
 			t.Errorf("a non-SOPS build failure must not be explained as a decryption failure: %q", message)
 		}
 	}

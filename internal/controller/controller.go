@@ -1,27 +1,42 @@
 // Package controller is the reconciliation plane: the controllers behind
 // kelson's two custom resources (ADR-0027, ADR-0028).
 //
-// # What a reconcile does today, and what it will do
+// # What a reconcile does
 //
-// ADR-0028 decision 1 lists six steps for an Environment: validate, detect,
-// resolve-and-render, publish, ensure the Flux objects, observe. This package
-// implements the first three and stops:
+// ADR-0028 decision 1's six steps, in [EnvironmentReconciler.Reconcile]:
 //
 //  1. validate — internal/model/validate.go, the same function the CLI and the
 //     server call. An invalid document is a *status*, never an error return.
-//  2. detect   — behind [ProfileSource]. The real implementation reads a
-//     ClusterProfile from the cluster; [StaticProfileSource] stands
-//     in until that wiring lands.
+//  2. detect   — behind [ProfileSource]. One start-up detection, served
+//     forever by [StaticProfileSource]; live refresh is later work.
 //  3. resolve and render — internal/model's resolver and the pure renderer,
 //     unchanged and still pure: this package is the caller that has cluster
 //     access, the renderer still has none.
+//  4. publish — the rendered set as an immutable OCI artifact
+//     (internal/artifact, the publisher previews already use).
+//  5. ensure — server-side apply the OCIRepository and Kustomization pair.
+//  6. observe — read the Kustomization's condition back and map it onto a
+//     phase with internal/delivery/flux's own mapping.
 //
-// Steps 4 to 6 — push the OCI artifact, server-side apply the OCIRepository and
-// Kustomization pair, watch them back into the state machine — are behind
-// [Deliverer], whose only implementation here is [NoopDeliverer]. That is
-// issue #224. The interface exists now so the reconcile loop above it is the
-// shape it will keep, and so the seam is a named thing in the tree rather than
-// a TODO in the middle of a function.
+// Steps 4 to 6 are behind [Deliverer], implemented by [FluxDeliverer]. The seam
+// is the boundary between "decides what to publish", which is a pure function
+// of the spec and the status, and "talks to a registry and an API server".
+//
+// # Three things this package is careful about
+//
+//   - **The state machine is a table here, not an engine.**
+//     internal/delivery/statemachine has an Engine that blocks until a
+//     deployment settles, and calling it inside Reconcile would hold a worker
+//     for the length of a rollout. What is used is Validate — the transition
+//     table — once per observation.
+//   - **Every refusal has exactly one requeue behaviour**, decided by its
+//     reason and not by its call site (errors.go). FluxNotInstalled in
+//     particular never returns an error, because a cluster with no Flux is the
+//     expected state of a fresh install and a crash-looping controller cannot
+//     tell anybody so.
+//   - **Deleting an Environment deletes its workloads.** The finalizer removes
+//     the Kustomization, which prunes what it applied. See
+//     [EnvironmentReconciler.finalize] for what is deliberately *not* removed.
 //
 // # An invalid spec is never an error return
 //
@@ -64,11 +79,19 @@ type ProfileSource interface {
 	Profile(ctx context.Context) (clusterprofile.ClusterProfile, error)
 }
 
-// StaticProfileSource serves one profile, forever. It is what
-// cmd/kelson-controller runs with until detection is wired: an empty profile is
-// the honest answer for a controller that has not looked, and the renderer
-// already treats "absent" as "do not emit the optional resource" rather than as
-// an error (internal/clusterprofile's tri-state discipline).
+// StaticProfileSource serves one profile, forever: the one
+// cmd/kelson-controller detected at start-up.
+//
+// It is static rather than refreshed because the same finding decides whether
+// the Flux watches are registered at all, and a watch cannot be added to a
+// running manager — so a profile that changed under the process would be a
+// profile half the code had acted on. Live refresh is tracked separately; the
+// stated cost is that installing Flux under a running controller needs a
+// restart, which is said out loud on stdout.
+//
+// An empty profile is a real answer, not a missing one: the renderer treats
+// "absent" as "do not emit the optional resource" rather than as an error
+// (internal/clusterprofile's tri-state discipline).
 type StaticProfileSource struct {
 	ClusterProfile clusterprofile.ClusterProfile
 }
@@ -78,24 +101,63 @@ func (s StaticProfileSource) Profile(context.Context) (clusterprofile.ClusterPro
 	return s.ClusterProfile, nil
 }
 
-// Revision is one rendered candidate: what steps 4 and 5 would publish.
+// Revision is one candidate: everything steps 4 to 6 need about an Environment,
+// and nothing about the custom resource it came from.
+//
+// The reconciler assembles it and a [Deliverer] consumes it, which is what
+// keeps the two halves separable: deciding *what* to publish is a pure function
+// of the spec and the status, and publishing it is I/O against a registry and
+// an API server.
 type Revision struct {
 	// Project and Environment name the pair, and are the artifact's repository
 	// path: <registry>/kelson/<project>-<environment>.
 	Project     string
 	Environment string
 
+	// EnvironmentNamespace is where the *custom resource* lives. It is the
+	// value of the kelson.dev/environment-namespace label on both Flux objects,
+	// which is what a watch event maps back through and what the name-conflict
+	// check compares — so it is the CR's namespace and never the workload's.
+	EnvironmentNamespace string
+
+	// TargetNamespace is where the workloads land: the resolved namespace,
+	// which defaults to <project>-<environment> and which the Kustomization
+	// applies into. It is carried separately from Resolved because the Flux
+	// objects need it on a rollback too, where nothing re-renders.
+	TargetNamespace string
+
 	// Generation is the Environment's .metadata.generation — the revision
 	// number, allocated by the API server rather than by kelson (ADR-0028
 	// decision 2).
 	Generation int64
 
-	// Manifests are the rendered set, in render order.
+	// SpecHash is the hash of the resolved spec (model.SpecHash). Its leading
+	// eight characters are the second half of the artifact tag.
+	SpecHash string
+
+	// Manifests are the rendered set, in render order. Empty under a rollback,
+	// where step 3 does not run.
 	Manifests []renderer.Manifest
 
-	// Resolved is the spec the manifests came from, for anything the publisher
-	// needs to label or annotate.
+	// Resolved is the spec the manifests came from: the namespace, the secret
+	// backend and the resolved images.
 	Resolved *model.Resolved
+
+	// FluxPresent is the ClusterProfile's finding. False means there is nothing
+	// in the cluster that would reconcile what kelson published, which is a
+	// status and a timer rather than a failure (ADR-0030).
+	FluxPresent bool
+
+	// Observed is status.revision: the tag a previous reconcile published.
+	// ObservedDigest is that artifact's digest, carried so a skipped publish
+	// does not lose it from the history.
+	Observed       string
+	ObservedDigest string
+
+	// PinnedTo is the immutable tag a rollback pins the pair to. Non-empty
+	// means steps 3 and 4 did not run and must not (ADR-0028 decision 5); the
+	// caller has already verified the target against status.history.
+	PinnedTo string
 }
 
 // Outcome is what a Deliverer reports back into the Environment's status.
@@ -104,38 +166,64 @@ type Outcome struct {
 	// Empty means nothing was published.
 	Revision string
 
+	// Digest is that artifact's OCI digest, when this reconcile knows it.
+	Digest string
+
 	// Phase is the delivery state-machine phase (the v1alpha1.Phase*
 	// constants). Empty means the phase is unchanged.
 	Phase string
+
+	// Cause is the phase's explanation, when it has one: the sentence
+	// internal/delivery/flux produced from the Kustomization's own condition.
+	Cause string
+
+	// Published is true when this reconcile pushed a tag that was not already
+	// the settled one. It is what makes a history entry — a re-observation of
+	// an unchanged revision must not create one.
+	Published bool
+
+	// RolledBack is true when the pair was pinned to a rollback target rather
+	// than to a freshly published revision.
+	RolledBack bool
+
+	// Images are what this revision resolved to, in component order.
+	Images []string
 }
 
-// Deliverer performs ADR-0028's steps 4 and 5: push the rendered set as an
-// immutable OCI artifact, then server-side apply the OCIRepository and
-// Kustomization pair that consume it.
+// Deliverer performs ADR-0028's steps 4, 5 and 6: push the rendered set as an
+// immutable OCI artifact, server-side apply the OCIRepository and Kustomization
+// pair that consume it, and read the result back.
 //
-// TODO(#224): the real implementation. It needs the artifact publisher the
-// preview pipeline already has (ADR-0017 decision 10, the same package by
-// decision 2 of ADR-0028), a registry and push credential from the controller's
-// flags, and the two Flux objects in kelson-system. Until then
-// [NoopDeliverer] renders and stops, which is a deliberate half: the render is
-// the part that can tell an author their document is wrong, and it is worth
-// doing before the publishing exists.
+// The production implementation is [FluxDeliverer]. The interface exists
+// because the reconciler above it — validation, rollback, history, the
+// finalizer — is worth testing without a registry, and because "decides what to
+// publish" and "talks to the network" is a boundary worth being able to see.
 type Deliverer interface {
 	Deliver(ctx context.Context, rev Revision) (Outcome, error)
+
+	// Teardown removes the Flux objects for one pair. It runs while an
+	// Environment is being deleted, on every reconcile until the finalizer
+	// clears, so it must be idempotent and must treat "already gone" as
+	// success.
+	Teardown(ctx context.Context, project, environment string) error
 }
 
 // NoopDeliverer publishes nothing and reports nothing.
 //
-// It returns an empty Outcome rather than a fabricated one on purpose: a phase
-// of "Healthy" for a deployment that never happened would be a status that
-// lies, which is the specific failure ADR-0027 says a status subresource exists
-// to prevent.
+// It is what a zero-value reconciler falls back to, so a test that only cares
+// about validation does not have to build a registry. It returns an empty
+// Outcome rather than a fabricated one on purpose: a phase of "Healthy" for a
+// deployment that never happened would be a status that lies, which is the
+// specific failure ADR-0027 says a status subresource exists to prevent.
 type NoopDeliverer struct{}
 
-// Deliver does nothing. See [Deliverer] and issue #224.
+// Deliver does nothing.
 func (NoopDeliverer) Deliver(context.Context, Revision) (Outcome, error) {
 	return Outcome{}, nil
 }
+
+// Teardown does nothing: there is nothing a no-op deliverer could have created.
+func (NoopDeliverer) Teardown(context.Context, string, string) error { return nil }
 
 // modelProject lifts a custom resource into the authoring-model document
 // validate.go and the resolver expect.

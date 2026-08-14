@@ -1,4 +1,4 @@
-package preview_test
+package artifact_test
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/dafrie/kelson/internal/build/registry"
-	"github.com/dafrie/kelson/internal/preview"
+	"github.com/dafrie/kelson/internal/artifact"
 )
 
 // The push half is tested against a fake registry rather than a mocked client,
@@ -130,19 +130,12 @@ func (f *fakeRegistry) calls() []string {
 	return append([]string(nil), f.requests...)
 }
 
-// artifactFor packages a real render for a fake registry's address.
-//
-// The repository is substituted on the rendered Set rather than in the spec
-// because the spec cannot express one: the model reads the port in
-// "127.0.0.1:8080/acme/previews" as a tag and refuses it
-// (validate.go, previews.artifacts.repository). That is a real gap for a
-// registry on a port and it is recorded in ADR-0017's stage 2 section; it is
-// not this test's subject, which is the push.
-func artifactFor(t *testing.T, repository string) preview.Artifact {
+// artifactFor packages the fixture set for a fake registry's address.
+func artifactFor(t *testing.T, repository string) artifact.Artifact {
 	t.Helper()
-	set := mustRender(t, testOptions())
-	set.Repository = repository
-	return mustPackage(t, set)
+	c := testContents()
+	c.Repository = repository
+	return mustPackage(t, c)
 }
 
 // TestPushUploadsBlobsThenManifest pins the order and the content: an
@@ -153,7 +146,7 @@ func TestPushUploadsBlobsThenManifest(t *testing.T) {
 	repository := fake.start(t)
 	a := artifactFor(t, repository)
 
-	ref, err := (&preview.Pusher{}).Push(context.Background(), a)
+	ref, err := (&artifact.Pusher{}).Push(context.Background(), a)
 	if err != nil {
 		t.Fatalf("Push: %v", err)
 	}
@@ -182,17 +175,19 @@ func TestPushUploadsBlobsThenManifest(t *testing.T) {
 	}
 }
 
-// TestPushTagsTheHeadCommit is the publisher's half of ADR-0017 decision 2.
-func TestPushTagsTheHeadCommit(t *testing.T) {
+// TestPushTagsWhatItWasGiven: the tag is the caller's (the head commit for a
+// preview, <generation>-<spec-hash-short> for the spine) and the push must not
+// invent one.
+func TestPushTagsWhatItWasGiven(t *testing.T) {
 	fake := newFakeRegistry()
 	a := artifactFor(t, fake.start(t))
-	if _, err := (&preview.Pusher{}).Push(context.Background(), a); err != nil {
+	if _, err := (&artifact.Pusher{}).Push(context.Background(), a); err != nil {
 		t.Fatalf("Push: %v", err)
 	}
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
-	if _, ok := fake.manifests[testSHA]; !ok {
-		t.Errorf("the artifact was not tagged %s (stored tags: %v)", testSHA, keys(fake.manifests))
+	if _, ok := fake.manifests[testTag]; !ok {
+		t.Errorf("the artifact was not tagged %s (stored tags: %v)", testTag, keys(fake.manifests))
 	}
 }
 
@@ -204,7 +199,7 @@ func TestPushSkipsBlobsTheRegistryAlreadyHas(t *testing.T) {
 	repository := fake.start(t)
 	a := artifactFor(t, repository)
 
-	pusher := &preview.Pusher{}
+	pusher := &artifact.Pusher{}
 	if _, err := pusher.Push(context.Background(), a); err != nil {
 		t.Fatalf("first push: %v", err)
 	}
@@ -233,7 +228,7 @@ func TestPushAnswersABearerChallenge(t *testing.T) {
 	fake.username, fake.password = "robot", "s3cret"
 	a := artifactFor(t, fake.start(t))
 
-	pusher := &preview.Pusher{Credential: registry.Credential{Username: "robot", Password: "s3cret"}}
+	pusher := &artifact.Pusher{Credential: registry.Credential{Username: "robot", Password: "s3cret"}}
 	if _, err := pusher.Push(context.Background(), a); err != nil {
 		t.Fatalf("Push: %v", err)
 	}
@@ -256,7 +251,7 @@ func TestPushWithoutCredentialsSaysHowToSupplyThem(t *testing.T) {
 	fake.username, fake.password = "robot", "s3cret"
 	a := artifactFor(t, fake.start(t))
 
-	_, err := (&preview.Pusher{}).Push(context.Background(), a)
+	_, err := (&artifact.Pusher{}).Push(context.Background(), a)
 	if err == nil {
 		t.Fatal("an unauthenticated push succeeded against a registry that requires a token")
 	}
@@ -274,7 +269,7 @@ func TestPushNeverEchoesTheCredential(t *testing.T) {
 	fake.username, fake.password = "robot", "s3cret"
 	a := artifactFor(t, fake.start(t))
 
-	pusher := &preview.Pusher{Credential: registry.Credential{Username: "robot", Password: "wrong-password"}}
+	pusher := &artifact.Pusher{Credential: registry.Credential{Username: "robot", Password: "wrong-password"}}
 	_, err := pusher.Push(context.Background(), a)
 	if err == nil {
 		t.Fatal("a push with the wrong password succeeded")
@@ -289,24 +284,35 @@ func TestPushNeverEchoesTheCredential(t *testing.T) {
 func TestPushRefusesAPinnedRepository(t *testing.T) {
 	a := artifactFor(t, newFakeRegistry().start(t))
 	a.Repository += ":latest"
-	_, err := (&preview.Pusher{}).Push(context.Background(), a)
+	_, err := (&artifact.Pusher{}).Push(context.Background(), a)
 	if err == nil {
 		t.Fatal("a repository carrying a tag was accepted")
 	}
-	var refusal preview.Error
-	if !asPreviewError(err, &refusal) || refusal.Reason != preview.ReasonRepositoryInvalid {
-		t.Errorf("error = %v, want %s", err, preview.ReasonRepositoryInvalid)
+	var refusal artifact.Error
+	if !asArtifactError(err, &refusal) || refusal.Reason != artifact.ReasonRepositoryInvalid {
+		t.Errorf("error = %v, want %s", err, artifact.ReasonRepositoryInvalid)
 	}
 }
 
 func TestRegistryHost(t *testing.T) {
-	host, err := preview.RegistryHost("oci://ghcr.io/acme/checkout-previews")
+	host, err := artifact.RegistryHost("oci://ghcr.io/acme/checkout-previews")
 	if err != nil {
 		t.Fatalf("RegistryHost: %v", err)
 	}
 	if host != "ghcr.io" {
 		t.Errorf("host = %q, want ghcr.io", host)
 	}
+}
+
+// asArtifactError is errors.As without the import, because artifact.Error is a
+// value type with no wrapping.
+func asArtifactError(err error, target *artifact.Error) bool {
+	e, ok := err.(artifact.Error)
+	if !ok {
+		return false
+	}
+	*target = e
+	return true
 }
 
 func keys(m map[string][]byte) []string {

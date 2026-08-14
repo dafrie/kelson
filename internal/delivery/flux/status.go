@@ -136,9 +136,15 @@ var degradedReasons = map[string]bool{
 	reasonPruneFailed:     true,
 }
 
-// phaseFor maps one Kustomization's observation onto the delivery phase for a
+// PhaseFor maps one Kustomization's observation onto the delivery phase for a
 // specific revision.
-func phaseFor(k Kustomization, revision string) delivery.Status {
+//
+// It is exported because the spine's own observer calls it (ADR-0028 decision
+// 1, step 6): internal/controller reads back the Kustomization it owns and has
+// to arrive at the same phase, with the same causes, that `kelson status`
+// arrives at for any other Kustomization. A second mapping would be a second
+// opinion about what Degraded means.
+func PhaseFor(k Kustomization, revision string) delivery.Status {
 	detail := map[string]string{
 		"kustomization":       k.Namespace + "/" + k.Name,
 		"path":                k.Path,
@@ -264,12 +270,37 @@ func matchesAny(s string, markers []string) bool {
 	return false
 }
 
-// revisionMatches compares a Flux revision string against a git sha. Flux
-// writes "<branch>@sha1:<sha>" (v2) or "<branch>/<sha>" (older); either side
-// may be abbreviated.
-func revisionMatches(fluxRevision, sha string) bool {
-	if fluxRevision == "" || sha == "" {
+// ociRevisionMarker is what makes an OCI revision recognisable as one.
+// source-controller writes an OCIRepository's revision as "<tag>@sha256:<digest>",
+// and a git v2 revision as "<branch>@sha1:<sha>" — same separator, different
+// algorithm, and the algorithm is the only thing that tells them apart.
+const ociRevisionMarker = "@sha256:"
+
+// revisionMatches compares a Flux revision string against the revision kelson
+// is waiting for.
+//
+// Two source kinds, two shapes, and the difference is load-bearing:
+//
+//   - **OCI** (the spine, ADR-0028 decision 2) writes "<tag>@sha256:<digest>",
+//     where the tag is the whole answer — "7-1a2b3c4d" — and the digest names
+//     the bytes behind it. The parts must be compared whole: a tag is not a
+//     prefix of anything, and "7-1a2b3c4d" against "7-1a2b3c4de" is a different
+//     revision, not an abbreviation of the same one.
+//   - **git** (the preview pipeline and any Kustomization kelson merely
+//     observes) writes "<branch>@sha1:<sha>" (v2) or "<branch>/<sha>" (older),
+//     and either side may be abbreviated, because a short sha is how humans
+//     write commits.
+//
+// Before the spine existed there was only the second case, and applying it to
+// an OCI revision reads the digest as the commit: "7-1a2b3c4d@sha256:beef…"
+// compares "beef…" against the tag, never matches, and a deployment that is
+// live and healthy reports as Committed forever.
+func revisionMatches(fluxRevision, want string) bool {
+	if fluxRevision == "" || want == "" {
 		return false
+	}
+	if before, _, ok := strings.Cut(fluxRevision, ociRevisionMarker); ok {
+		return strings.EqualFold(strings.TrimSpace(before), strings.TrimSpace(want))
 	}
 	got := fluxRevision
 	if _, after, ok := cutLast(got, ":"); ok {
@@ -277,11 +308,11 @@ func revisionMatches(fluxRevision, sha string) bool {
 	} else if _, after, ok := cutLast(got, "/"); ok {
 		got = after
 	}
-	got, sha = strings.ToLower(strings.TrimSpace(got)), strings.ToLower(strings.TrimSpace(sha))
+	got, want = strings.ToLower(strings.TrimSpace(got)), strings.ToLower(strings.TrimSpace(want))
 	if got == "" {
 		return false
 	}
-	return strings.HasPrefix(got, sha) || strings.HasPrefix(sha, got)
+	return strings.HasPrefix(got, want) || strings.HasPrefix(want, got)
 }
 
 func cutLast(s, sep string) (before, after string, found bool) {
