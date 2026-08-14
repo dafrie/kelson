@@ -298,7 +298,7 @@ func remediationFor(ec EnvChange) string {
 		return fmt.Sprintf("restore %s in the component's env, or roll back to the previous revision if the removal was not intended; `kelson rollback` previews what it cannot revert first",
 			ec.Name)
 	}
-	return fmt.Sprintf("check that %s resolves: the Secret and key named in %s must exist in this namespace (diagnose_application lists the Secrets kelson manages, and `kelson secret set` writes a missing one)",
+	return fmt.Sprintf("check that %s resolves: the Secret and key named in %s must exist in this namespace (diagnose_component lists the Secrets kelson manages, and `kelson secret set` writes a missing one)",
 		ec.Name, ec.After)
 }
 

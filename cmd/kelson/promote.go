@@ -28,7 +28,7 @@ import (
 // direct-mode history, edits the Environment document on disk, and stops.
 // The server path exists and is the same operation, one layer up: the Promote
 // RPC (internal/api) does exactly this against the cluster-backed history and
-// the spec store, and `kelson-mcp`'s promote_application composes it.
+// the spec store, and `kelson-mcp`'s promote_component composes it.
 //
 // The edit is byte-faithful (internal/promote): the authored document comes
 // back with one line changed and everything else — comments, blank lines,

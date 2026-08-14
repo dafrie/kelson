@@ -66,7 +66,7 @@ func TestDiagnoseRendersTheServersCauses(t *testing.T) {
 		},
 	})
 
-	out := h.call(t, "diagnose_application", map[string]any{"project": "hello", "environment": "production"})
+	out := h.call(t, "diagnose_component", map[string]any{"project": "hello", "environment": "production"})
 
 	mustContain(t, out,
 		"WHY (the server's causes, with confidence and evidence)",
@@ -109,7 +109,7 @@ func TestDiagnoseWithoutExplainStillDiagnoses(t *testing.T) {
 		},
 	})
 
-	out := h.call(t, "diagnose_application", map[string]any{"project": "hello", "environment": "production"})
+	out := h.call(t, "diagnose_component", map[string]any{"project": "hello", "environment": "production"})
 	mustContain(t, out,
 		"WHY (the server's causes, with confidence and evidence)",
 		"unavailable — unimplemented:",
@@ -133,6 +133,6 @@ func TestDiagnoseReportsNoCauseFound(t *testing.T) {
 		},
 	})
 
-	out := h.call(t, "diagnose_application", map[string]any{"project": "hello", "environment": "production"})
+	out := h.call(t, "diagnose_component", map[string]any{"project": "hello", "environment": "production"})
 	mustContain(t, out, "no cause found:")
 }

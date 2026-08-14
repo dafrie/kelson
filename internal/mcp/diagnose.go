@@ -14,7 +14,7 @@ import (
 	"github.com/dafrie/kelson/internal/model"
 )
 
-const diagnoseApplicationDescription = `Answer "what is wrong with this environment, and why" in one call.
+const diagnoseComponentDescription = `Answer "what is wrong with this environment, and why" in one call.
 
 Composes, for one (project, environment): the server's own causal answer — WHY — with a confidence and the evidence behind each cause; the delivery phase, revision, namespace and cause; every workload's health verdict with the server's own remediation; a bounded window of the failing workload's logs (the lines before it terminated, when it is failing); the last 5 deployment revisions; a compact summary of what the spec declares (components, images, kinds); the Secrets kelson manages in the namespace, by name and key; and the cluster's version skew against what kelson renders against.
 
@@ -34,25 +34,25 @@ Prefer this over logs_window when you do not yet know what is wrong: logs_window
 
 Costs several server calls and returns at most 80 log lines, the last 5 revisions and 12 workload verdicts, each truncated explicitly. It never returns full manifests or the spec YAML.`
 
-type diagnoseApplicationInput struct {
-	Project     string `json:"project" jsonschema:"the stored project name, as reported by list_applications"`
+type diagnoseComponentInput struct {
+	Project     string `json:"project" jsonschema:"the stored project name, as reported by list_components"`
 	Environment string `json:"environment" jsonschema:"the environment to diagnose, e.g. production"`
 }
 
-func diagnoseApplicationTool(c *clients) tool {
-	def := readOnlyTool("diagnose_application", "Diagnose an application", diagnoseApplicationDescription)
+func diagnoseComponentTool(c *clients) tool {
+	def := readOnlyTool("diagnose_component", "Diagnose a component", diagnoseComponentDescription)
 	return tool{
 		def:  def,
 		rpcs: []rpc{rpcExplain, rpcStatus, rpcQueryLogs, rpcHistory, rpcGetSpec, rpcListSecrets, rpcGetProfile},
 		add: func(srv *mcpsdk.Server) {
-			mcpsdk.AddTool(srv, def, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in diagnoseApplicationInput) (*mcpsdk.CallToolResult, any, error) {
-				return c.diagnoseApplication(ctx, in)
+			mcpsdk.AddTool(srv, def, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in diagnoseComponentInput) (*mcpsdk.CallToolResult, any, error) {
+				return c.diagnoseComponent(ctx, in)
 			})
 		},
 	}
 }
 
-// diagnoseApplication is the composition ADR-0008 §1 names: the server's
+// diagnoseComponent is the composition ADR-0008 §1 names: the server's
 // causes, status, verdicts, a log window around the failure, recent history and
 // a spec summary, in one answer.
 //
@@ -64,7 +64,7 @@ func diagnoseApplicationTool(c *clients) tool {
 // is the causal answer itself, which ExplainService produces and the WHY
 // section renders (why.go, ADR-0023). This tool is the task-shaped
 // presentation of that capability, never a second implementation of it.
-func (c *clients) diagnoseApplication(ctx context.Context, in diagnoseApplicationInput) (*mcpsdk.CallToolResult, any, error) {
+func (c *clients) diagnoseComponent(ctx context.Context, in diagnoseComponentInput) (*mcpsdk.CallToolResult, any, error) {
 	res, err := c.deploy.Status(ctx, connect.NewRequest(&kelsonv1alpha1.StatusRequest{
 		Spec:        specRef(in.Project),
 		Environment: in.Environment,
@@ -147,24 +147,26 @@ func (c *clients) reportWorkloads(r *report, status *kelsonv1alpha1.StatusRespon
 // before the container died, which is the crash-loop diagnosis — and anything
 // else gets a plain tail. The selector's namespace comes from Status, which is
 // the only RPC that resolves it (#161).
-func (c *clients) reportLogs(ctx context.Context, r *report, status *kelsonv1alpha1.StatusResponse, in diagnoseApplicationInput) {
+func (c *clients) reportLogs(ctx context.Context, r *report, status *kelsonv1alpha1.StatusResponse, in diagnoseComponentInput) {
 	verdicts := status.GetVerdicts()
 	if len(verdicts) == 0 {
 		r.section("LOGS")
-		r.addf("  skipped: no workload to select logs for. Use logs_window with an explicit application.")
+		r.addf("  skipped: no workload to select logs for. Use logs_window with an explicit component.")
 		return
 	}
 	focus := verdicts[0]
 	if failing := failingVerdicts(verdicts); len(failing) > 0 {
 		focus = failing[0]
 	}
-	application := resourceName(focus.GetResource())
+	component := resourceName(focus.GetResource())
 	atTermination := !focus.GetHealthy()
 
 	request := &kelsonv1alpha1.QueryLogsRequest{
 		Selector: &kelsonv1alpha1.LogSelector{
-			Namespace:   status.GetNamespace(),
-			Application: application,
+			Namespace: status.GetNamespace(),
+			// LogSelector.application is the v1alpha1 wire name for the component
+			// (ADR-0027 renamed the vocabulary and the label, not the wire field).
+			Application: component,
 		},
 	}
 	window := "tail"
@@ -175,7 +177,7 @@ func (c *clients) reportLogs(ctx context.Context, r *report, status *kelsonv1alp
 		request.Tail = diagnoseLogLines
 	}
 
-	r.section(fmt.Sprintf("LOGS (%s, %s, at most %d lines)", application, window, diagnoseLogLines))
+	r.section(fmt.Sprintf("LOGS (%s, %s, at most %d lines)", component, window, diagnoseLogLines))
 	if status.GetNamespace() == "" {
 		r.addf("  skipped: the server reported no namespace for this environment, so the pods cannot be selected.")
 		return
@@ -210,7 +212,7 @@ func writeLogLines(r *report, lines []*kelsonv1alpha1.LogLine, max int) {
 	}
 }
 
-func (c *clients) reportHistory(ctx context.Context, r *report, in diagnoseApplicationInput) {
+func (c *clients) reportHistory(ctx context.Context, r *report, in diagnoseComponentInput) {
 	r.section(fmt.Sprintf("HISTORY (last %d)", maxHistory))
 	res, err := c.deploy.History(ctx, connect.NewRequest(&kelsonv1alpha1.HistoryRequest{
 		Spec:        specRef(in.Project),
@@ -240,7 +242,7 @@ func (c *clients) reportHistory(ctx context.Context, r *report, in diagnoseAppli
 // is an environment-scoped fact since ADR-0016: an Environment can pin a
 // component's image (rule P3, the promotion primitive), so the pin for the
 // diagnosed environment is read alongside the Project document.
-func (c *clients) reportSpec(ctx context.Context, r *report, in diagnoseApplicationInput) {
+func (c *clients) reportSpec(ctx context.Context, r *report, in diagnoseComponentInput) {
 	r.section("SPEC")
 	res, err := c.spec.GetSpec(ctx, connect.NewRequest(&kelsonv1alpha1.GetSpecRequest{Project: in.Project}))
 	if err != nil {
@@ -275,7 +277,7 @@ func (c *clients) reportSpec(ctx context.Context, r *report, in diagnoseApplicat
 // or one whose credentials cannot list Secrets, degrades to a line rather than
 // taking the diagnosis with it. And it can only ever print names and keys —
 // ListSecrets has no field a value could arrive in.
-func (c *clients) reportSecrets(ctx context.Context, r *report, in diagnoseApplicationInput) {
+func (c *clients) reportSecrets(ctx context.Context, r *report, in diagnoseComponentInput) {
 	r.section("SECRETS (kelson-managed, keys only — values are never readable)")
 	res, err := c.secrets.ListSecrets(ctx, connect.NewRequest(&kelsonv1alpha1.ListSecretsRequest{
 		Target: &kelsonv1alpha1.SecretTarget{Project: in.Project, Environment: in.Environment},

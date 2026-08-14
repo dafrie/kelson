@@ -86,7 +86,7 @@ func (s *Server) Explain(ctx context.Context, req *connect.Request[kelsonv1alpha
 // rather than as an error.
 //
 // The window asked for is the crash-loop window: the lines before the container
-// terminated, which is the same query diagnose_application issues and the one
+// terminated, which is the same query diagnose_component issues and the one
 // observation.Around was built for (issue #54).
 func (s *Server) explainLogs() explain.LogFn {
 	if s.logs == nil {

@@ -302,7 +302,7 @@ one side and the spec store on the other, with `dry_run` and `idempotency_key` f
 ladder and optimistic concurrency on the spec `version`. It returns the pins it wrote, the source
 revision they came from, and the resulting diff with the same `exit_semantics` `Diff` reports, so a
 caller needs no second call to find out what the promotion changes. Agents reach the same operation
-through the `promote_application` MCP tool ([docs/mcp.md](mcp.md)), which previews by default.
+through the `promote_component` MCP tool ([docs/mcp.md](mcp.md)), which previews by default.
 
 Two refusals worth knowing before you meet them. Promotion reads a delivery mode's *rendered history*,
 so it works where that history exists — direct mode today — and says so plainly where it does not

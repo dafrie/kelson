@@ -29,7 +29,7 @@ import (
 // So the verdict here is an ordinary [Verdict], in the same list as the
 // workload verdicts, carrying the controller's own reason and message. It
 // reaches `kelson status`, the Status RPC, the event stream and
-// diagnose_application without any of them learning a new shape.
+// diagnose_component without any of them learning a new shape.
 //
 // # What is read, and what is deliberately not
 //

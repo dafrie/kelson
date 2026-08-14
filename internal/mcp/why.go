@@ -9,7 +9,7 @@ import (
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
 )
 
-// The WHY section of diagnose_application: the server's structured causes
+// The WHY section of diagnose_component: the server's structured causes
 // (issue #77, ADR-0023).
 //
 // # This is composition, not diagnosis
@@ -46,7 +46,7 @@ import (
 // view.
 const maxWhyEvidenceLines = 8
 
-func (c *clients) reportWhy(ctx context.Context, r *report, in diagnoseApplicationInput) {
+func (c *clients) reportWhy(ctx context.Context, r *report, in diagnoseComponentInput) {
 	r.section("WHY (the server's causes, with confidence and evidence)")
 	if c.explain == nil {
 		r.addf("  unavailable — this build has no explain client")

@@ -97,7 +97,7 @@ func TestSurfaceIsSmallAndDescribed(t *testing.T) {
 	// Nine since #116 added set_secret. The count moved deliberately: writing a
 	// credential is a task an agent has, so it earned a tool, while *listing*
 	// secrets did not — it is something an agent needs mid-diagnosis, so it
-	// extended diagnose_application instead of arriving as a tenth tool. That
+	// extended diagnose_component instead of arriving as a tenth tool. That
 	// is the trade this number exists to make explicit (ADR-0008).
 	if len(tools) != 9 {
 		t.Errorf("the surface has %d tools, want 9: adding one is a deliberate design change (ADR-0008), not a detail", len(tools))

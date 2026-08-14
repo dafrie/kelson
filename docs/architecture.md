@@ -274,7 +274,7 @@ kelson's agent story is an API design commitment, not a chatbot.
 capability the API lacks, which is what stops it becoming a privileged backdoor with its own logic. But its
 *shape* is deliberately different: tools are task-shaped rather than resource-shaped, because a
 sixty-endpoint API mapped one-to-one gives sixty tools and makes "why is checkout broken" cost eight round
-trips. One `diagnose_application` that composes status, events, a bounded log window and the recent
+trips. One `diagnose_component` that composes status, events, a bounded log window and the recent
 revision is the same capability in a form an agent can actually use. That surface ships as `kelson-mcp`
 — seven tools over stdio, unauthenticated like the server beneath it ([the MCP server](mcp.md)).
 
@@ -315,7 +315,7 @@ has no forge credentials to use it with.
 `explain` endpoints — "why is this application degraded?" returns causal, machine-readable data
 (failing probes, recent revision, events, resource pressure), not a log dump for an LLM to guess at.
 That one is built: `ExplainService.Explain`, `kelson explain` and the `WHY` section of
-`diagnose_application` are three surfaces over one capability in `internal/explain`, and every cause it
+`diagnose_component` are three surfaces over one capability in `internal/explain`, and every cause it
 returns carries a stable code, a confidence, the evidence behind it and — where the recorded history
 shows one — the revision that introduced the change being blamed
 ([ADR-0023](adr/0023-explain-structured-causes.md)).

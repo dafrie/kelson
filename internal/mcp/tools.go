@@ -35,7 +35,7 @@ var (
 
 	rpcGetProfile = rpc{kelsonv1alpha1connect.ProfileServiceName, "GetProfile"}
 
-	// rpcExplain is the causal capability of issue #77. diagnose_application
+	// rpcExplain is the causal capability of issue #77. diagnose_component
 	// composes it rather than deriving causes here: ADR-0023 put the
 	// structured-cause machinery in the API layer precisely so this surface,
 	// the CLI and the UI read one answer.
@@ -67,14 +67,14 @@ type tool struct {
 // set_secret is a tool. *Listing* secrets is not a task: it is something an
 // agent needs to know while doing another one, which is precisely when
 // ADR-0008's task-shape rule says to extend an existing tool rather than add a
-// read tool beside it. It went into diagnose_application, because the question
+// read tool beside it. It went into diagnose_component, because the question
 // it answers is a diagnosis: a workload in CreateContainerConfigError is the
 // failure a missing Secret or a missing key produces, and ADR-0018 records that
 // kelson has nothing else that correlates a reference with the Secret it names.
 func surface(c *clients) []tool {
 	return []tool{
-		listApplicationsTool(c),
-		diagnoseApplicationTool(c),
+		listComponentsTool(c),
+		diagnoseComponentTool(c),
 		logsWindowTool(c),
 		deployTool(c),
 		rollbackTool(c),
@@ -107,8 +107,8 @@ func readOnlyTool(name, title, description string) *mcpsdk.Tool {
 }
 
 // mutatingTool builds the definition of a tool that can change the cluster or
-// the spec store. destructive marks the ones that can take a running
-// application away from what it is currently serving.
+// the spec store. destructive marks the ones that can take a running workload
+// away from what it is currently serving.
 func mutatingTool(name, title, description string, destructive bool) *mcpsdk.Tool {
 	return &mcpsdk.Tool{
 		Name:        name,
