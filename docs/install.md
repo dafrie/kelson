@@ -10,6 +10,9 @@ to, and the thing that holds project specs and deployment history. That is what 
 [#58](https://github.com/dafrie/kelson/issues/58); the chart's own reference is
 `deploy/chart/kelson/README.md`.
 
+Just want to try it on your machine? `make kind-up` stands up all of it — cluster, registry,
+server, UI — in one command ([local](local.md)).
+
 ## Helm
 
 ```sh

@@ -17,7 +17,7 @@ LDFLAGS := -s -w \
   -X github.com/dafrie/kelson/internal/version.Version=$(VERSION) \
   -X github.com/dafrie/kelson/internal/version.Commit=$(COMMIT)
 
-.PHONY: all build binaries server ui ui-clean proto test test-e2e lint fmt clean install release release-snapshot e2e-up e2e e2e-down
+.PHONY: all build binaries server ui ui-clean proto test test-e2e lint fmt clean install release release-snapshot e2e-up e2e e2e-down kind-up kind-down
 
 all: lint test build
 
@@ -107,6 +107,15 @@ e2e: e2e-up
 
 e2e-down:
 	hack/e2e/down.sh
+
+# A complete local kelson on kind (docs/local.md): cluster, in-cluster
+# registry, and a Helm install of a dev image built from this checkout with
+# the web UI inside. Idempotent; re-running rebuilds and redeploys the image.
+kind-up:
+	hack/local/up.sh
+
+kind-down:
+	hack/local/down.sh
 
 # The Go end-to-end suite (test/e2e, behind the `e2e` build tag) — the shape CI
 # runs. It provisions the same kind cluster first and leaves it up afterwards.

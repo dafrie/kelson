@@ -13,6 +13,7 @@ const sidebars: SidebarsConfig = {
     {type: 'doc', id: 'index', label: 'Home'},
     {type: 'doc', id: 'vision', label: 'Vision'},
     {type: 'doc', id: 'install', label: 'Install'},
+    {type: 'doc', id: 'local', label: 'Local (kind)'},
     {type: 'doc', id: 'architecture', label: 'Architecture'},
     {type: 'doc', id: 'roadmap', label: 'Roadmap'},
     {type: 'doc', id: 'competitive-analysis', label: 'Competitive analysis'},
