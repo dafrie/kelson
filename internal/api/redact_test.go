@@ -12,6 +12,7 @@ import (
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
 	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/redact"
+	"github.com/dafrie/kelson/internal/secret"
 )
 
 // The sentinel property, one test per output surface (issue #117).
@@ -27,9 +28,16 @@ import (
 // resolvedCredential stands for a credential kelson has itself resolved
 // (registry.Resolver, #51) and is caught by the known-value scrubber, which is
 // the only thing that can help in text kelson does not own the shape of.
+// authoredSecretValue is the third case, and the one #116 introduced: a value a
+// user handed kelson deliberately, through SetSecret. It is neither structural
+// (it never rides inside a manifest) nor resolved by kelson (nobody looked it
+// up) — kelson was told it. The registration that covers it happens in the
+// handler before anything else, and internal/secret registers it again on
+// arrival; TestAuthoredSecretValueReachesNoOutputSurface is what holds that.
 const (
 	secretManifestValue = "cGFzc3dvcmQtU0VOVElORUwtOTFhYw=="
 	resolvedCredential  = "resolved-credential-SENTINEL-3f7b"
+	authoredSecretValue = "authored-secret-SENTINEL-7c2e"
 )
 
 // recordedSecret is what an overlay-injected Secret looks like once it has been
@@ -262,6 +270,90 @@ func TestRenderedManifestsAreUntouchedWhenThereIsNothingToRedact(t *testing.T) {
 		if bytes.Contains(m.GetYaml(), []byte(redact.Sentinel)) {
 			t.Errorf("%s/%s was redacted with nothing to redact:\n%s", m.GetKind(), m.GetName(), m.GetYaml())
 		}
+	}
+}
+
+// Surface 6: a value authored through SecretService (#116). This is the first
+// RPC in the schema that receives a credential, so it is the first place a
+// caller could put one into kelson's own output — and the surfaces that would
+// carry it are the response, the listing, and every error the request produces
+// afterwards.
+//
+// The failing path is asserted with a value that has already been written, so
+// the error is produced by a request the store has seen the value from: the
+// question is whether the *value* travels, not whether an error mentioning it
+// can be constructed at all.
+func TestAuthoredSecretValueReachesNoOutputSurface(t *testing.T) {
+	store := newFakeSecrets()
+	c := serve(t, Options{Secrets: store})
+
+	set, err := c.secrets.SetSecret(context.Background(), connect.NewRequest(&kelsonv1alpha1.SetSecretRequest{
+		Target: secretTargetOf("hello", "development"),
+		Name:   "hello-db",
+		Values: map[string]string{"url": authoredSecretValue},
+	}))
+	if err != nil {
+		t.Fatalf("SetSecret: %v", err)
+	}
+	assertNoSentinel(t, "SetSecret response", []byte(set.Msg.String()), authoredSecretValue)
+	if got := store.held("hello-development", "hello-db")["url"]; got != authoredSecretValue {
+		t.Fatalf("the value did not reach the store, so this test is asserting nothing: %q", got)
+	}
+
+	list, err := c.secrets.ListSecrets(context.Background(), connect.NewRequest(&kelsonv1alpha1.ListSecretsRequest{
+		Target: secretTargetOf("hello", "development"),
+	}))
+	if err != nil {
+		t.Fatalf("ListSecrets: %v", err)
+	}
+	assertNoSentinel(t, "ListSecrets response", []byte(list.Msg.String()), authoredSecretValue)
+	if keys := list.Msg.GetSecrets()[0].GetKeys(); len(keys) != 1 || keys[0] != "url" {
+		t.Errorf("keys = %v: the listing must still say what the Secret holds", keys)
+	}
+
+	// Now make the backend fail with a message that quotes the value, which is
+	// the mistake a future plane could make. The registration is what has to
+	// catch it, not the discipline of whoever wrote the message.
+	store.err = secret.Error{
+		Code:        secret.ErrWriteFailed,
+		Resource:    "Secret/hello-development/hello-db",
+		Message:     "the API server rejected the write of " + authoredSecretValue,
+		Remediation: "retry with " + authoredSecretValue,
+		Cause:       "invalid value: " + authoredSecretValue,
+	}
+	_, err = c.secrets.SetSecret(context.Background(), connect.NewRequest(&kelsonv1alpha1.SetSecretRequest{
+		Target: secretTargetOf("hello", "development"),
+		Name:   "hello-db",
+		Values: map[string]string{"url": authoredSecretValue},
+	}))
+	if err == nil {
+		t.Fatal("the failing write did not surface as an error")
+	}
+	assertNoSentinel(t, "connect error message", []byte(err.Error()), authoredSecretValue)
+
+	var cerr *connect.Error
+	if !errors.As(err, &cerr) {
+		t.Fatalf("want a *connect.Error, got %T", err)
+	}
+	details := 0
+	for _, d := range cerr.Details() {
+		value, verr := d.Value()
+		if verr != nil {
+			continue
+		}
+		wire, ok := value.(*kelsonv1alpha1.Error)
+		if !ok {
+			continue
+		}
+		details++
+		assertNoSentinel(t, "structured error",
+			[]byte(wire.GetMessage()+wire.GetRemediation()+wire.GetCause()), authoredSecretValue)
+		if wire.GetCode() != string(secret.ErrWriteFailed) {
+			t.Errorf("the code was rewritten by the scrub: %q", wire.GetCode())
+		}
+	}
+	if details == 0 {
+		t.Error("the structured detail was dropped; scrubbing must not cost the taxonomy")
 	}
 }
 

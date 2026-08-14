@@ -43,6 +43,7 @@ type clients struct {
 	logs    kelsonv1alpha1connect.LogServiceClient
 	events  kelsonv1alpha1connect.EventServiceClient
 	builds  kelsonv1alpha1connect.BuildServiceClient
+	secrets kelsonv1alpha1connect.SecretServiceClient
 }
 
 func serve(t *testing.T, opts Options) clients {
@@ -69,6 +70,7 @@ func serveServer(t *testing.T, server *Server) clients {
 		logs:    kelsonv1alpha1connect.NewLogServiceClient(hc, srv.URL),
 		events:  kelsonv1alpha1connect.NewEventServiceClient(hc, srv.URL),
 		builds:  kelsonv1alpha1connect.NewBuildServiceClient(hc, srv.URL),
+		secrets: kelsonv1alpha1connect.NewSecretServiceClient(hc, srv.URL),
 	}
 }
 

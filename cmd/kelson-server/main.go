@@ -49,6 +49,7 @@ import (
 	"github.com/dafrie/kelson/internal/delivery/kube"
 	"github.com/dafrie/kelson/internal/delivery/rollback"
 	"github.com/dafrie/kelson/internal/observation"
+	"github.com/dafrie/kelson/internal/secret"
 	"github.com/dafrie/kelson/internal/serverstate"
 	"github.com/dafrie/kelson/internal/version"
 )
@@ -343,6 +344,11 @@ func connectServer(cfg config) (*api.Server, error) {
 		Preview:  previewConnector(cfg),
 		Logs:     api.LogQueryEngine{Engine: logs},
 		Build:    buildConnector(cfg),
+		// The secret backend rides the startup clientset for the same reason
+		// the state stores do: it only ever gets, lists, applies and deletes
+		// Secrets, so no discovery mapper is involved and nothing about it goes
+		// stale when a CRD is registered later (issue #116).
+		Secrets: secret.New(cluster.Typed),
 		BuildDefaults: api.BuildDefaults{
 			Registry:   cfg.registry,
 			PushSecret: cfg.pushSecret,

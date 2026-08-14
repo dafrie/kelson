@@ -13,6 +13,7 @@ import (
 	"github.com/dafrie/kelson/internal/promote"
 	"github.com/dafrie/kelson/internal/redact"
 	"github.com/dafrie/kelson/internal/renderer"
+	"github.com/dafrie/kelson/internal/secret"
 	"github.com/dafrie/kelson/internal/serverstate"
 )
 
@@ -107,6 +108,11 @@ func planeErrors(err error) []*kelsonv1alpha1.Error {
 	if errors.As(err, &promoteErr) {
 		return []*kelsonv1alpha1.Error{fromPromote(promoteErr)}
 	}
+
+	var secretErr secret.Error
+	if errors.As(err, &secretErr) {
+		return []*kelsonv1alpha1.Error{fromSecret(secretErr)}
+	}
 	return nil
 }
 
@@ -186,6 +192,25 @@ func fromStore(e serverstate.Error) *kelsonv1alpha1.Error {
 	}
 }
 
+// fromSecret carries a secret-backend refusal onto the wire (issue #116).
+//
+// Like a build error it has no field: `secret/not-managed` and its siblings are
+// statements about an object in a namespace, not findings against a line of a
+// document, so Resource carries `Secret/<namespace>/<name>` and Field stays
+// empty. The message, remediation and cause pass through scrubErrors like every
+// other free-text field — which for this service is the one that has to hold:
+// it is the only RPC in the schema that receives secret values.
+func fromSecret(e secret.Error) *kelsonv1alpha1.Error {
+	return &kelsonv1alpha1.Error{
+		Code:        string(e.Code),
+		Resource:    e.Resource,
+		Message:     e.Message,
+		Remediation: e.Remediation,
+		DocsUrl:     e.DocsURL,
+		Cause:       e.Cause,
+	}
+}
+
 func fromPromote(e promote.Error) *kelsonv1alpha1.Error {
 	return &kelsonv1alpha1.Error{
 		Code:        string(e.Code),
@@ -244,6 +269,33 @@ func failPromote(err error) error {
 	switch pe.Code {
 	case promote.ErrNothingDeployed, promote.ErrDocumentUnwritable:
 		return fail(connect.CodeFailedPrecondition, err)
+	default:
+		return fail(connect.CodeInvalidArgument, err)
+	}
+}
+
+// failSecret maps a secret-backend refusal onto its ConnectRPC code.
+//
+// The split that matters is between "your request is wrong" and "the world
+// refuses it". A malformed key or a missing project is the caller's to fix by
+// editing the request; a Secret kelson does not manage, or a namespace that
+// does not exist, is a well-formed request the cluster's state refuses — a
+// failed precondition, which is what tells an agent to look at the cluster
+// rather than at its own arguments. A read or write the API server would not
+// answer is the server's dependency failing, so it is Unavailable for the same
+// reason unavailableError exists.
+func failSecret(err error) error {
+	var se secret.Error
+	if !errors.As(err, &se) {
+		return failRequest(err)
+	}
+	switch se.Code {
+	case secret.ErrNotManaged, secret.ErrNamespaceMissing:
+		return fail(connect.CodeFailedPrecondition, err)
+	case secret.ErrNotFound:
+		return fail(connect.CodeNotFound, err)
+	case secret.ErrReadFailed, secret.ErrWriteFailed:
+		return fail(connect.CodeUnavailable, err)
 	default:
 		return fail(connect.CodeInvalidArgument, err)
 	}
