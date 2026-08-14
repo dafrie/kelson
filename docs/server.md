@@ -13,6 +13,9 @@ kelson-server                                   # 127.0.0.1:8420, namespace kels
 kelson-server --namespace kelson-system --registry ghcr.io/acme
 ```
 
+In a cluster it is a Helm install, and every flag below is a values knob — see
+[installing kelson](install.md).
+
 ## Flags
 
 | Flag | Environment | Default | What it does |
