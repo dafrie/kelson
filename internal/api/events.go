@@ -137,7 +137,7 @@ func sortScopes(scopes []Scope) []Scope {
 //
 // It renders the stored spec with no image override and no cluster profile,
 // which is what a client calling Status without either gets — the UI's own
-// call (ui/src/pages/AppsPage.tsx). That parity is the point: a scope whose
+// call (ui/src/pages/ProjectsPage.tsx). That parity is the point: a scope whose
 // Status a client cannot read has no events either, rather than a second,
 // quieter definition of what this environment's state is.
 func (s *Server) observeScope(ctx context.Context, sc Scope) (Snapshot, error) {
