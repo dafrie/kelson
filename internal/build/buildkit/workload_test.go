@@ -428,3 +428,61 @@ func TestWorkloadAnnotatesTheDestination(t *testing.T) {
 		t.Error("an untagged build must not annotate a tag")
 	}
 }
+
+// TestInsecureRegistriesMarkOnlyTheListedHosts: a plain-HTTP registry is an
+// operator decision, per host. buildkitd learns it from a generated config —
+// `http = true`, and deliberately not `insecure = true`, which would force
+// HTTPS with no fallback (moby/buildkit#5872) — and the exporter is marked
+// only when the destination itself was listed.
+func TestInsecureRegistriesMarkOnlyTheListedHosts(t *testing.T) {
+	req := baseRequest()
+	req.Image = "localhost:5000/acme/checkout"
+	cfg := Config{Namespace: testNS, InsecureRegistries: []string{"localhost:5000", "registry.internal:5000"}}
+	cmd := buildContainer(workloadFor(t, req, cfg)).Command[2]
+
+	for _, want := range []string{
+		`[registry."localhost:5000"]`,
+		`[registry."registry.internal:5000"]`,
+		"http = true",
+		"--config " + buildkitConfigPath,
+		"registry.insecure=true",
+	} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("build command must contain %q\ncommand:\n%s", want, cmd)
+		}
+	}
+	if strings.Contains(cmd, "insecure = true") {
+		t.Errorf("`insecure = true` forces HTTPS with no fallback and must not be paired with `http = true`\n%s", cmd)
+	}
+}
+
+// A destination that was not listed is not marked insecure, even when other
+// registries were: the exception is per host, not a mode the build runs in.
+func TestInsecureRegistriesLeaveOtherDestinationsAlone(t *testing.T) {
+	cfg := Config{Namespace: testNS, InsecureRegistries: []string{"localhost:5000"}}
+	cmd := buildContainer(workloadFor(t, baseRequest(), cfg)).Command[2] // pushes to ghcr.io
+	if strings.Contains(cmd, "registry.insecure=true") {
+		t.Errorf("ghcr.io was not listed and must not be pushed to insecurely\n%s", cmd)
+	}
+	if !strings.Contains(cmd, `[registry."localhost:5000"]`) {
+		t.Errorf("the listed host is still configured for pulls\n%s", cmd)
+	}
+
+	plain := buildContainer(workloadFor(t, baseRequest(), Config{Namespace: testNS})).Command[2]
+	for _, forbidden := range []string{"registry.insecure=true", "--config", "http = true"} {
+		if strings.Contains(plain, forbidden) {
+			t.Errorf("with no insecure registries configured the command must not contain %q\n%s", forbidden, plain)
+		}
+	}
+}
+
+// TestInsecureRegistriesAreValidated: an entry with a scheme or a repository
+// path would become a buildkitd registry key matching nothing.
+func TestInsecureRegistriesAreValidated(t *testing.T) {
+	for _, entry := range []string{"http://localhost:5000", "localhost:5000/acme"} {
+		cfg := Config{Namespace: testNS, InsecureRegistries: []string{entry}}
+		if _, err := cfg.Workload(baseRequest()); err == nil {
+			t.Errorf("insecure registry %q must be refused", entry)
+		}
+	}
+}

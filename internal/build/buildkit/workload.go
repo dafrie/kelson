@@ -9,6 +9,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/dafrie/kelson/internal/build"
+	"github.com/dafrie/kelson/internal/build/registry"
 	"github.com/dafrie/kelson/internal/model"
 )
 
@@ -146,6 +147,9 @@ func validate(req build.Request, c Config) error {
 	if err := validateSecrets(c.Secrets); err != nil {
 		return err
 	}
+	if err := registry.ValidateInsecure(c.InsecureRegistries); err != nil {
+		return err
+	}
 	return validateArgs(req.Args)
 }
 
@@ -268,7 +272,8 @@ func buildCommand(req build.Request, cfg Config) string {
 	// Not `set -o pipefail`: this script is run by the image's /bin/sh, and
 	// the shells that stand behind it are not all bash.
 	b.WriteString("set -eu\n")
-	fmt.Fprintf(&b, "buildkitd --oci-worker-no-process-sandbox --oci-worker-snapshotter=native --addr unix://%s &\n", sock)
+	daemonFlags := insecureRegistryConfig(&b, cfg.InsecureRegistries)
+	fmt.Fprintf(&b, "buildkitd --oci-worker-no-process-sandbox --oci-worker-snapshotter=native%s --addr unix://%s &\n", daemonFlags, sock)
 	fmt.Fprintf(&b, "until buildctl --addr unix://%s debug workers >/dev/null 2>&1; do sleep 1; done\n", sock)
 
 	b.WriteString("exec buildctl --addr unix://")
@@ -307,7 +312,46 @@ func buildCommand(req build.Request, cfg Config) string {
 		dest += ":" + req.Tag
 	}
 	fmt.Fprintf(&b, " --output type=image,image-format=oci,name=%s,push=true", dest)
+	if registry.IsInsecure(cfg.InsecureRegistries, req.Image) {
+		// The exporter's own knob, which covers a registry serving TLS the
+		// build cannot verify. It does not by itself make the push plain HTTP
+		// — the resolver decides the scheme, and that is what the buildkitd
+		// config above is for — so the two are set together, and only for a
+		// destination the operator listed.
+		b.WriteString(",registry.insecure=true")
+	}
 	return b.String()
+}
+
+// buildkitConfigPath is where the generated buildkitd registry configuration
+// is written. It is under the tmp emptyDir because the rootless image's
+// filesystem is not writable elsewhere.
+const buildkitConfigPath = "/tmp/buildkitd.toml"
+
+// insecureRegistryConfig writes a buildkitd configuration marking exactly the
+// listed registries as plain HTTP, and returns the daemon flag that loads it
+// (or "" when nothing is listed).
+//
+// `http = true` is the key that matters, and it is deliberately not paired
+// with `insecure = true` in the same stanza: buildkit's resolver forces HTTPS
+// when a registry is marked insecure, with no fallback to HTTP, so writing
+// both would break the plain-HTTP registry this exists to reach
+// (moby/buildkit#5872). `registry.insecure=true` on the exporter, above, is
+// the separate knob for a registry that speaks TLS the build cannot verify.
+//
+// Hosts are validated before rendering (registry.ValidateInsecure), so nothing
+// user-controlled reaches the heredoc as anything but a bare host; the
+// delimiter is quoted so the shell performs no expansion inside it either.
+func insecureRegistryConfig(b *strings.Builder, hosts []string) string {
+	if len(hosts) == 0 {
+		return ""
+	}
+	fmt.Fprintf(b, "cat > %s <<'KELSON_BUILDKITD_CONFIG'\n", buildkitConfigPath)
+	for _, h := range hosts {
+		fmt.Fprintf(b, "[registry.%q]\n  http = true\n", h)
+	}
+	b.WriteString("KELSON_BUILDKITD_CONFIG\n")
+	return " --config " + buildkitConfigPath
 }
 
 // --- typed manifest shapes -------------------------------------------------

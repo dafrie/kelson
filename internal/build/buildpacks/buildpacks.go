@@ -119,6 +119,11 @@ type Config struct {
 	// registry (kind, a cluster-internal registry) and fails at push time for
 	// anything that requires auth.
 	PushSecret string
+	// InsecureRegistries are registry hosts (host[:port]) served over plain
+	// HTTP, named by the operator because nothing may guess one. They reach
+	// the lifecycle as CNB_INSECURE_REGISTRIES and cover exactly the listed
+	// hosts.
+	InsecureRegistries []string
 	// Resources applied to the build container. May be zero.
 	Resources ResourceRequirements
 	// Timeout bounds the whole build; "" means no deadline. Non-empty values

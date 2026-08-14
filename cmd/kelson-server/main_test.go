@@ -383,8 +383,9 @@ func TestAuthBannerSaysWhichPostureItStartedIn(t *testing.T) {
 // repository with BuildKit fails deep in buildctl with a message about a
 // missing file, which says nothing about the strategy that was chosen.
 func TestBuildDriverForStrategy(t *testing.T) {
+	cfg := config{insecureRegistries: []string{"localhost:5000"}}
 	for _, strategy := range []string{"dockerfile", "buildpacks"} {
-		driver, err := buildDriver(api.BuildTarget{Strategy: strategy, Namespace: "shop-production"}, nopExecutor{})
+		driver, err := buildDriver(cfg, api.BuildTarget{Strategy: strategy, Namespace: "shop-production"}, nopExecutor{})
 		if err != nil {
 			t.Fatalf("buildDriver(%q): %v", strategy, err)
 		}
@@ -393,9 +394,36 @@ func TestBuildDriverForStrategy(t *testing.T) {
 		}
 	}
 	for _, strategy := range []string{"", "none", "railpack"} {
-		if _, err := buildDriver(api.BuildTarget{Strategy: strategy}, nopExecutor{}); err == nil {
+		if _, err := buildDriver(cfg, api.BuildTarget{Strategy: strategy}, nopExecutor{}); err == nil {
 			t.Errorf("strategy %q has no driver and must be refused", strategy)
 		}
+	}
+}
+
+// The insecure-registry list is the operator's, parsed once at startup so a
+// typo is reported before a build Job exists rather than as a TLS error on the
+// first push. It is deliberately not a request field: a caller who could name
+// a registry insecure could make this server push a credential in clear to a
+// host of their choosing.
+func TestInsecureRegistriesAreParsedAtStartup(t *testing.T) {
+	cfg, err := parseFlags([]string{"--insecure-registries", "localhost:5000, registry.internal:5000"}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("parseFlags: %v", err)
+	}
+	if strings.Join(cfg.insecureRegistries, "|") != "localhost:5000|registry.internal:5000" {
+		t.Errorf("insecureRegistries = %v", cfg.insecureRegistries)
+	}
+	if _, err := parseFlags([]string{"--insecure-registries", "http://localhost:5000"}, &bytes.Buffer{}); err == nil {
+		t.Error("an entry with a scheme was accepted; it would match no image at all")
+	}
+
+	t.Setenv(insecureRegistriesEnv, "localhost:5000")
+	cfg, err = parseFlags(nil, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("parseFlags: %v", err)
+	}
+	if len(cfg.insecureRegistries) != 1 || cfg.insecureRegistries[0] != "localhost:5000" {
+		t.Errorf("the environment variable must supply the default, got %v", cfg.insecureRegistries)
 	}
 }
 

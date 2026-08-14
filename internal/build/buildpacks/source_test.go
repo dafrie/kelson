@@ -208,6 +208,39 @@ func TestPushSecretIsProjectedAsADockerConfig(t *testing.T) {
 	}
 }
 
+// TestInsecureRegistriesReachTheLifecycle: plain HTTP is an operator decision,
+// per host. The lifecycle takes the list as CNB_INSECURE_REGISTRIES, and a
+// registry that was not listed must not appear in it.
+func TestInsecureRegistriesReachTheLifecycle(t *testing.T) {
+	cfg := Config{Namespace: testNS, InsecureRegistries: []string{"localhost:5000", "registry.internal:5000"}}
+	ctr := buildContainer(workloadFor(t, baseRequest(), cfg))
+
+	got := envOf(ctr, "CNB_INSECURE_REGISTRIES")
+	if got != "localhost:5000,registry.internal:5000" {
+		t.Errorf("CNB_INSECURE_REGISTRIES = %q, want the listed hosts comma-separated", got)
+	}
+	if strings.Contains(got, "ghcr.io") {
+		t.Errorf("the destination registry was not listed and must not be marked insecure: %q", got)
+	}
+
+	// Nothing listed, nothing marked.
+	if e := envOf(buildContainer(workloadFor(t, baseRequest(), Config{Namespace: testNS})), "CNB_INSECURE_REGISTRIES"); e != "" {
+		t.Errorf("with no insecure registries configured the variable must be absent, got %q", e)
+	}
+}
+
+// TestInsecureRegistriesAreValidated: an entry with a scheme or a repository
+// path matches no image, so the push fails on TLS with nothing pointing at the
+// typo. Refuse it at render time instead.
+func TestInsecureRegistriesAreValidated(t *testing.T) {
+	for _, entry := range []string{"http://localhost:5000", "localhost:5000/acme"} {
+		cfg := Config{Namespace: testNS, InsecureRegistries: []string{entry}}
+		if _, err := cfg.Workload(baseRequest()); err == nil {
+			t.Errorf("insecure registry %q must be refused", entry)
+		}
+	}
+}
+
 func envOf(ctr container, name string) string {
 	for _, e := range ctr.Env {
 		if e.Name == name {

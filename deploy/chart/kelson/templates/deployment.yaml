@@ -60,6 +60,9 @@ spec:
             {{- with .Values.server.buildNamespace }}
             - --build-namespace={{ . }}
             {{- end }}
+            {{- with .Values.server.insecureRegistries }}
+            - --insecure-registries={{ join "," . }}
+            {{- end }}
             {{- with .Values.server.extraArgs }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

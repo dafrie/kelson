@@ -92,6 +92,12 @@ type Config struct {
 	// Timeout bounds the whole build; "" means no deadline. Non-empty values
 	// must be a valid time.Duration.
 	Timeout Duration
+	// InsecureRegistries are registry hosts (host[:port]) served over plain
+	// HTTP, named by the operator because neither BuildKit nor kelson may
+	// guess one: a push that silently downgrades to HTTP is a credential on
+	// the wire in clear. The local-kind story needs it (localhost:5000 has no
+	// TLS), and it is marked for exactly the listed hosts and no others.
+	InsecureRegistries []string
 }
 
 // ResourceRequirements is a thin re-declaration of the Kubernetes resource

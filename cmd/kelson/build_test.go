@@ -459,6 +459,56 @@ func TestBuildDriverForStrategy(t *testing.T) {
 	}
 }
 
+// A local registry has no TLS, so the hosts that may be reached over plain
+// HTTP are named — by flag or by the same environment variable kelson-server
+// reads — and reach the driver through the target. Nothing else is affected,
+// and a malformed entry is refused before a build Job exists.
+func TestInsecureRegistriesReachTheTarget(t *testing.T) {
+	spec := writeBuildSpec(t, buildSpecOptions{strategy: "dockerfile"})
+
+	var target buildTarget
+	_, _, code, msg := runBuildCmd(t, buildPlaneFor(&fakeBuilder{}, &fakeResolver{}, &target),
+		"build", "-f", spec, "--registry", "localhost:5000",
+		"--insecure-registries", "localhost:5000, registry.internal:5000")
+	if code != exitOK {
+		t.Fatalf("exit %d: %s", code, msg)
+	}
+	if strings.Join(target.insecureRegistries, "|") != "localhost:5000|registry.internal:5000" {
+		t.Errorf("insecureRegistries = %v", target.insecureRegistries)
+	}
+
+	// Nothing named, nothing insecure.
+	target = buildTarget{}
+	if _, _, code, msg = runBuildCmd(t, buildPlaneFor(&fakeBuilder{}, &fakeResolver{}, &target),
+		"build", "-f", spec, "--registry", "ghcr.io/acme"); code != exitOK {
+		t.Fatalf("exit %d: %s", code, msg)
+	}
+	if target.insecureRegistries != nil {
+		t.Errorf("no registry was named insecure, got %v", target.insecureRegistries)
+	}
+
+	// The environment supplies the default, as $KELSON_REGISTRY does.
+	t.Setenv(insecureRegistriesEnv, "localhost:5000")
+	target = buildTarget{}
+	if _, _, code, msg = runBuildCmd(t, buildPlaneFor(&fakeBuilder{}, &fakeResolver{}, &target),
+		"build", "-f", spec, "--registry", "localhost:5000"); code != exitOK {
+		t.Fatalf("exit %d: %s", code, msg)
+	}
+	if len(target.insecureRegistries) != 1 || target.insecureRegistries[0] != "localhost:5000" {
+		t.Errorf("the environment variable must supply the default, got %v", target.insecureRegistries)
+	}
+
+	// A malformed entry is a typo, and the message names the flag.
+	if _, _, code, msg = runBuildCmd(t, buildPlaneFor(&fakeBuilder{}, &fakeResolver{}, nil),
+		"build", "-f", spec, "--registry", "ghcr.io/acme",
+		"--insecure-registries", "http://localhost:5000"); code != exitErr {
+		t.Fatalf("exit %d, want %d", code, exitErr)
+	}
+	if !strings.Contains(msg, "--insecure-registries") {
+		t.Errorf("the refusal should name the flag: %s", msg)
+	}
+}
+
 // nopExecutor satisfies the cluster seam both drivers take. buildDriver only
 // constructs them, so it never runs.
 type nopExecutor struct{}

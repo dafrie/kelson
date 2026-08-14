@@ -8,6 +8,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/dafrie/kelson/internal/build"
+	"github.com/dafrie/kelson/internal/build/registry"
 )
 
 // DefaultBuilder is the zero-config builder image the generated Job runs when
@@ -87,6 +88,19 @@ const (
 	// uid the lifecycle runs as.
 	pushSecretMode int32 = 0o444
 )
+
+// envInsecureRegistries is the lifecycle's own name for the plain-HTTP
+// registry list (buildpacks/spec platform.md, `<insecure-registry>...`). The
+// value is comma-separated, which is what the lifecycle splits on
+// (platform/lifecycle_inputs.go: sliceEnv).
+//
+// It is passed as an environment variable rather than as `-insecure-registry`
+// flags on purpose: a lifecycle older than v0.18.0, where the input was
+// introduced, exits immediately on an unknown flag, while an environment
+// variable it does not read is simply ignored. The failure is then "the push
+// could not use TLS", which says what is wrong, rather than "flag provided but
+// not defined".
+const envInsecureRegistries = "CNB_INSECURE_REGISTRIES"
 
 // withDefaults fills unset parts of the config: the builder, run and git
 // images and a zero timeout.
@@ -176,7 +190,7 @@ func validate(req build.Request, c Config) error {
 	if c.Timeout < 0 {
 		return fmt.Errorf("buildpacks: negative build timeout %s", time.Duration(c.Timeout))
 	}
-	return nil
+	return registry.ValidateInsecure(c.InsecureRegistries)
 }
 
 // jobName derives a stable, DNS-1123-safe name for the Job from the request so
@@ -237,6 +251,14 @@ func podContainer(req build.Request, cfg Config) container {
 			ReadOnly:  true,
 		})
 		env = append(env, envVar{Name: "DOCKER_CONFIG", Value: dockerConfigDir})
+	}
+	if len(cfg.InsecureRegistries) > 0 {
+		// Exactly the listed hosts, in the operator's order, comma-separated:
+		// the lifecycle drops TLS for these and for nothing else.
+		env = append(env, envVar{
+			Name:  envInsecureRegistries,
+			Value: strings.Join(cfg.InsecureRegistries, ","),
+		})
 	}
 
 	ctr := container{

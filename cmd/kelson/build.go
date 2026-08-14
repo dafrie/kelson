@@ -69,6 +69,8 @@ func newBuildCmdFactory(connect buildConnector) *cobra.Command {
 	f.StringArrayVarP(&opts.files, "file", "f", nil, "spec YAML file holding Project and/or Environment documents (repeatable)")
 	f.StringVar(&opts.env, "env", "", "name of the Environment to build for (optional when the input holds exactly one)")
 	f.StringVar(&opts.registry, "registry", "", "destination registry and namespace, e.g. ghcr.io/acme (default: $KELSON_REGISTRY)")
+	f.StringVar(&opts.insecureRegistries, "insecure-registries", "",
+		"comma-separated registry hosts served over plain HTTP, e.g. localhost:5000 (default: $"+insecureRegistriesEnv+"); only the listed hosts are affected")
 	f.StringVar(&opts.pushSecret, "push-secret", "", "name of an existing kubernetes.io/dockerconfigjson Secret in the build namespace that authenticates the push")
 	f.StringVar(&opts.ref, "ref", "", "git branch, tag or commit to build (default: the Project's spec.source.ref, else the default branch)")
 	f.StringVarP(&opts.sourceDir, "source-dir", "C", "", "local checkout of the source, used only to detect the build strategy when it is not named in the spec")
@@ -88,17 +90,24 @@ const defaultBuildTimeout = 30 * time.Minute
 // operator sets the destination once per shell rather than per invocation.
 const registryEnv = "KELSON_REGISTRY"
 
+// insecureRegistriesEnv supplies --insecure-registries for the same reason and
+// with the same variable kelson-server reads: which registries have no TLS is
+// a property of the environment, not of one invocation, and a local cluster's
+// registry is the same one for every build against it.
+const insecureRegistriesEnv = "KELSON_INSECURE_REGISTRIES"
+
 type buildOptions struct {
-	files      []string
-	env        string
-	registry   string
-	pushSecret string
-	ref        string
-	sourceDir  string
-	kubeconfig string
-	namespace  string
-	timeout    time.Duration
-	connect    buildConnector
+	files              []string
+	env                string
+	registry           string
+	insecureRegistries string
+	pushSecret         string
+	ref                string
+	sourceDir          string
+	kubeconfig         string
+	namespace          string
+	timeout            time.Duration
+	connect            buildConnector
 }
 
 func runBuild(cmd *cobra.Command, opts *buildOptions) error {
@@ -232,6 +241,23 @@ func registryPrefix(opts *buildOptions) string {
 	return os.Getenv(registryEnv)
 }
 
+// insecureRegistries is the parsed --insecure-registries list, falling back to
+// the environment. Parsing here rather than in the connector means a typo is
+// reported before a build Job is created, and it is registry.ParseInsecure
+// rather than a local strings.Split so `kelson build` and kelson-server cannot
+// read the same variable two ways.
+func insecureRegistries(opts *buildOptions) ([]string, error) {
+	list := opts.insecureRegistries
+	if list == "" {
+		list = os.Getenv(insecureRegistriesEnv)
+	}
+	hosts, err := registry.ParseInsecure(list)
+	if err != nil {
+		return nil, fmt.Errorf("--insecure-registries: %w", err)
+	}
+	return hosts, nil
+}
+
 // specArgs rebuilds the -f/--env part of the command line for the deploy hint,
 // so the suggestion is one that actually runs.
 func specArgs(opts *buildOptions) string {
@@ -331,7 +357,10 @@ type buildTarget struct {
 	kubeconfig string
 	namespace  string
 	pushSecret string
-	timeout    time.Duration
+	// insecureRegistries are hosts served over plain HTTP. It reaches both
+	// drivers, which mark exactly these and nothing else.
+	insecureRegistries []string
+	timeout            time.Duration
 }
 
 // revisionResolver answers "what commit does this ref name?" against a remote
@@ -402,9 +431,10 @@ func buildDriver(t buildTarget, cluster buildExecutor) (build.Builder, error) {
 		return buildkit.New(buildkit.Options{
 			Cluster: cluster,
 			Config: buildkit.Config{
-				Namespace:  t.namespace,
-				PushSecret: t.pushSecret,
-				Timeout:    buildkit.Duration(t.timeout),
+				Namespace:          t.namespace,
+				PushSecret:         t.pushSecret,
+				InsecureRegistries: t.insecureRegistries,
+				Timeout:            buildkit.Duration(t.timeout),
 			},
 		})
 	case detect.StrategyBuildpacks:
@@ -415,9 +445,10 @@ func buildDriver(t buildTarget, cluster buildExecutor) (build.Builder, error) {
 		return buildpacks.New(buildpacks.Options{
 			Cluster: cluster,
 			Config: buildpacks.Config{
-				Namespace:  t.namespace,
-				PushSecret: t.pushSecret,
-				Timeout:    buildpacks.Duration(t.timeout),
+				Namespace:          t.namespace,
+				PushSecret:         t.pushSecret,
+				InsecureRegistries: t.insecureRegistries,
+				Timeout:            buildpacks.Duration(t.timeout),
 			},
 		})
 	default:
@@ -429,12 +460,17 @@ func connectBuildPlane(opts *buildOptions, namespace string, strategy detect.Str
 	if opts.connect == nil {
 		return nil, fmt.Errorf("the build plane is unavailable in this build")
 	}
+	insecure, err := insecureRegistries(opts)
+	if err != nil {
+		return nil, err
+	}
 	plane, err := opts.connect(buildTarget{
-		strategy:   strategy,
-		kubeconfig: opts.kubeconfig,
-		namespace:  namespace,
-		pushSecret: opts.pushSecret,
-		timeout:    opts.timeout,
+		strategy:           strategy,
+		kubeconfig:         opts.kubeconfig,
+		namespace:          namespace,
+		pushSecret:         opts.pushSecret,
+		insecureRegistries: insecure,
+		timeout:            opts.timeout,
 	})
 	if err != nil {
 		return nil, err
