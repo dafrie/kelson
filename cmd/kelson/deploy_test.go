@@ -194,7 +194,7 @@ func capturingConnector(inner deliveryConnector, seen *deliveryTarget) deliveryC
 
 func rootWithPlane(connect deliveryConnector) *cobra.Command {
 	root := newRootCmd()
-	replaced := map[string]bool{"deploy": true, "status": true, "rollback": true, "promote": true}
+	replaced := map[string]bool{"deploy": true, "status": true, "rollback": true, "promote": true, "explain": true}
 	for _, c := range root.Commands() {
 		if replaced[c.Name()] {
 			root.RemoveCommand(c)
@@ -204,6 +204,7 @@ func rootWithPlane(connect deliveryConnector) *cobra.Command {
 	root.AddCommand(newStatusCmdFactory(connect))
 	root.AddCommand(newRollbackCmdFactory(connect))
 	root.AddCommand(newPromoteCmdFactory(connect))
+	root.AddCommand(newExplainCmdFactory(connect))
 	return root
 }
 
