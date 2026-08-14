@@ -23,12 +23,14 @@ import (
 // the `from:` bindings left this table when the renderer began emitting
 // CloudNativePG resources for them (issue #89), and nothing else had to move.
 //
-// A row may also *narrow* rather than disappear. `secrets:` was gated whole
-// until ADR-0018; now `backend` is consumed — `cluster` renders secret
-// references as secretKeyRefs and the other two backends are a structured
-// render refusal naming their issue — while `store`, which configures only the
-// externalSecrets backend, stays gated. Narrowing keeps the rule intact: what
-// remains in the table is exactly what still renders nothing.
+// A row may also *narrow* rather than disappear, and then disappear later.
+// `secrets:` was gated whole until ADR-0018, which narrowed it to `store` alone
+// once `backend` began deciding the rendered shape; ADR-0020 then removed that
+// last row when `store` and `refreshInterval` became the ExternalSecret's own
+// `secretStoreRef` and `spec.refreshInterval` (issue #80). `sops` is still a
+// structured render refusal naming issue #81, which is the other half of the
+// rule: what leaves this table has to be *consumed*, and refusing a backend by
+// name is consumption — changing the value changes the outcome.
 //
 // What replaced their rows is *not* silence. A data component the renderer
 // cannot emit — `preset: branch`, `preset: shared`, or a preset that is not a
@@ -82,16 +84,6 @@ var notImplementedFields = []notImplemented{
 		TrackedBy: "milestone M7 · Agent surface & MCP",
 	},
 	{
-		Kind: KindProject,
-		Path: "$.spec.defaults.secrets.store",
-		What: "the external-secrets ClusterSecretStore selector",
-		// The row narrowed from `$.spec.defaults.secrets` when ADR-0018 landed:
-		// `backend` is consumed now (cluster renders, the other two are a
-		// structured render refusal naming their issue), and `store` configures
-		// only the externalSecrets backend, which is #80's work.
-		TrackedBy: "milestone M8 · Secrets, issue #80",
-	},
-	{
 		Kind:      KindEnvironment,
 		Path:      "$.spec.cluster",
 		What:      "multi-cluster targeting",
@@ -102,12 +94,6 @@ var notImplementedFields = []notImplemented{
 		Path:      "$.spec.policy",
 		What:      "deployment policy",
 		TrackedBy: "milestone M7 · Agent surface & MCP",
-	},
-	{
-		Kind:      KindEnvironment,
-		Path:      "$.spec.secrets.store",
-		What:      "the external-secrets ClusterSecretStore selector",
-		TrackedBy: "milestone M8 · Secrets, issue #80",
 	},
 }
 

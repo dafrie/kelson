@@ -136,12 +136,38 @@ type Policy struct {
 // SecretBackend selects where secret values live (ADR-0009). The schema
 // accommodates all three backends from day one so v0.2 backends are not a
 // breaking change.
+//
+// `store` and `refreshInterval` configure the `externalSecrets` backend and
+// nothing else (ADR-0020); setting either under `cluster` or `sops` is refused
+// rather than ignored.
 type SecretBackend struct {
 	Backend SecretBackendType `yaml:"backend" json:"backend" jsonschema:"required,enum=cluster,enum=externalSecrets,enum=sops"`
 
-	// Store names the ClusterSecretStore for backend externalSecrets.
-	Store string `yaml:"store,omitempty" json:"store,omitempty"`
+	// Store names the SecretStore or ClusterSecretStore that backend
+	// externalSecrets reads from. It is a *name*, resolved against the
+	// ClusterProfile at render time: a namespaced SecretStore in this
+	// environment's namespace, or a cluster-scoped ClusterSecretStore.
+	//
+	// It is optional. When the profile offers exactly one store the renderer
+	// uses it; when it offers several and the spec names none, or when the name
+	// matches both a SecretStore and a ClusterSecretStore, the render is
+	// refused rather than resolved by a tiebreak nobody wrote down (ADR-0020).
+	Store string `yaml:"store,omitempty" json:"store,omitempty" jsonschema:"description=externalSecrets only; name of a SecretStore in this namespace or a ClusterSecretStore — optional when the cluster offers exactly one"`
+
+	// RefreshInterval is how often external-secrets re-reads the value from the
+	// backing store, as a Go duration (30s, 15m, 1h). Empty means
+	// DefaultSecretRefreshInterval, which is external-secrets' own default
+	// written out explicitly so the manifest always says what the cluster will
+	// do.
+	RefreshInterval string `yaml:"refreshInterval,omitempty" json:"refreshInterval,omitempty" jsonschema:"default=1h,description=externalSecrets only; how often the value is re-read from the backing store; a positive Go duration such as 30s or 15m or 1h"`
 }
+
+// DefaultSecretRefreshInterval is the ExternalSecret refresh interval kelson
+// writes when the spec sets none. It is external-secrets' own default (its
+// kubebuilder default is 1h0m0s), spelled the way an author would write it, and
+// it is emitted explicitly rather than left implicit for the reason the previews
+// interval is: a manifest should say what the cluster will do.
+const DefaultSecretRefreshInterval = "1h"
 
 // PreviewProvider is the forge whose change requests become previews. The
 // enum is deliberately two values wide: flux-operator also speaks Azure

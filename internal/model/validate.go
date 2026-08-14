@@ -474,26 +474,21 @@ func (v *validator) policy(field string, p *Policy) {
 }
 
 // secrets validates the Environment-scoped backend selector (ADR-0009,
-// ADR-0018). The enum is checked here and nothing else is: whether kelson can
-// *render* the selected backend is a render error, because it is the renderer
-// that turns a reference into a secretKeyRef and the renderer that has to
-// refuse when it cannot. `store` stays gated (issue #141) — it configures the
-// externalSecrets backend alone, and that backend is issue #80.
+// ADR-0018, ADR-0020).
+//
+// What is checked here is shape: the enum, the applicability of the two
+// externalSecrets-only fields, and that a refresh interval is a duration a
+// controller will accept. What is deliberately NOT checked here is whether the
+// named store exists — that is a ClusterProfile question, validation has no
+// cluster (ADR-0001), and the renderer answers it where the profile is an
+// input. `store` is optional for the same reason: with exactly one store on the
+// cluster the renderer picks it, and only the renderer can know that.
 func (v *validator) secrets(field string, s *SecretBackend) {
 	if s == nil {
 		return
 	}
-	if s.Store != "" {
-		v.gate(field+".store", field+".store")
-	}
 	switch s.Backend {
-	case SecretsCluster, SecretsSOPS:
-	case SecretsExternalSecrets:
-		if s.Store == "" {
-			v.err(ErrMissingRequired, field+".store",
-				"backend externalSecrets requires store",
-				"set store to a ClusterSecretStore name from the ClusterProfile, e.g. vault-backend")
-		}
+	case SecretsCluster, SecretsSOPS, SecretsExternalSecrets:
 	case "":
 		v.err(ErrMissingRequired, field+".backend",
 			"secrets.backend is required when secrets is set",
@@ -503,10 +498,48 @@ func (v *validator) secrets(field string, s *SecretBackend) {
 			fmt.Sprintf("unknown secret backend %q", s.Backend),
 			"valid backends: cluster, externalSecrets, sops")
 	}
-	if s.Store != "" && s.Backend != "" && s.Backend != SecretsExternalSecrets {
-		v.err(ErrMutuallyExclusive, field+".store",
-			fmt.Sprintf("store is only meaningful with backend externalSecrets, not %q", s.Backend),
-			"remove store, or set backend to externalSecrets")
+	// The two externalSecrets-only fields are refused elsewhere rather than
+	// ignored: a store name under `cluster` configures nothing, and silently
+	// accepting it is the quiet success issue #141 exists to prevent.
+	for _, f := range []struct{ name, value string }{
+		{"store", s.Store},
+		{"refreshInterval", s.RefreshInterval},
+	} {
+		if f.value != "" && s.Backend != "" && s.Backend != SecretsExternalSecrets {
+			v.err(ErrMutuallyExclusive, field+"."+f.name,
+				fmt.Sprintf("%s is only meaningful with backend externalSecrets, not %q", f.name, s.Backend),
+				"remove "+f.name+", or set backend to externalSecrets")
+		}
+	}
+	if s.RefreshInterval != "" {
+		v.secretRefreshInterval(field+".refreshInterval", s.RefreshInterval)
+	}
+}
+
+// secretRefreshInterval checks that a refresh interval is a positive Go
+// duration. The renderer may not import `time` (ADR-0001, issue #20), so the
+// parse happens here and the renderer writes the string through verbatim.
+//
+// A non-positive interval is refused rather than passed on. external-secrets
+// reads `0` as "sync once and never again", which is a real behaviour with a
+// real use — and it is not one an author reaches by typing `0` into a field
+// named refreshInterval, so accepting it would mean a credential that silently
+// stops rotating. There is deliberately no spelling for it yet; ADR-0020 says
+// so and names what would have to be decided to add one.
+func (v *validator) secretRefreshInterval(field, value string) {
+	d, err := time.ParseDuration(value)
+	if err != nil {
+		v.err(ErrInvalidFormat, field,
+			fmt.Sprintf("%q is not a duration", value),
+			"write a Go duration: 30s, 15m, 1h, 24h")
+		return
+	}
+	if d <= 0 {
+		v.err(ErrInvalidFormat, field,
+			fmt.Sprintf("refreshInterval %q is not positive", value),
+			"write a positive Go duration, e.g. 1h (the default when the field is omitted); "+
+				"there is no spelling for \"never refresh\", because a credential that stops rotating "+
+				"without anyone asking is the failure this field exists to prevent")
 	}
 }
 

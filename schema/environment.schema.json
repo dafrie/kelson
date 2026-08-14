@@ -129,7 +129,13 @@
               ]
             },
             "store": {
-              "type": "string"
+              "type": "string",
+              "description": "externalSecrets only; name of a SecretStore in this namespace or a ClusterSecretStore — optional when the cluster offers exactly one"
+            },
+            "refreshInterval": {
+              "type": "string",
+              "description": "externalSecrets only; how often the value is re-read from the backing store; a positive Go duration such as 30s or 15m or 1h",
+              "default": "1h"
             }
           },
           "additionalProperties": false,
