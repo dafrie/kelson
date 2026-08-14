@@ -1,0 +1,13 @@
+{
+  "name": "greeter",
+  "version": "1.0.0",
+  "description": "A Dockerfile-less hello-world, built by Cloud Native Buildpacks",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": "20.x"
+  },
+  "license": "Apache-2.0"
+}
