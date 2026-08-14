@@ -128,7 +128,7 @@ kubernetes:      { version: v1.31.2, platform: k3s, nodeArchitectures: [amd64] }
 gatewayAPI:      { version: v1.6.0, classes: [envoy] }
 ingressClasses:  [{ name: nginx, controller: k8s.io/ingress-nginx, default: true }]
 certManager:     { clusterIssuers: [letsencrypt-prod] }
-externalSecrets: { clusterSecretStores: [vault-backend] }
+externalSecrets: { clusterSecretStores: [vault-backend], secretStores: [{ name: team-vault, namespace: shop-staging }] }
 prometheus:      { serviceMonitor: true, podMonitor: true }
 flux:            { version: v2.4.0 }
 fluxOperator:    {}

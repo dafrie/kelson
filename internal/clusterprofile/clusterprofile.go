@@ -336,11 +336,49 @@ type CertManager struct {
 	ClusterIssuers []string `yaml:"clusterIssuers,omitempty" json:"clusterIssuers,omitempty"`
 }
 
-// ExternalSecrets is the external-secrets operator and its configured stores.
+// ExternalSecrets is the external-secrets operator and its configured stores
+// (issue #80, ADR-0020).
+//
+// The two store lists are shaped differently because the API shapes them
+// differently, and flattening that would lose the fact the renderer needs. A
+// ClusterSecretStore is cluster-scoped, so a name identifies it. A SecretStore
+// is namespaced and only usable from its own namespace, so a bare name would
+// make a store in `team-a` look available to `team-b` — which is exactly the
+// guess ADR-0020 refuses to make.
+//
+// Secret *values* never appear here — a profile is a capability report and is
+// safe to print (ADR-0009). What a store holds is the store's business; kelson
+// records that it exists and where.
 type ExternalSecrets struct {
-	Version             string   `yaml:"version,omitempty" json:"version,omitempty"`
-	SecretStores        []string `yaml:"secretStores,omitempty" json:"secretStores,omitempty"`
+	Version string `yaml:"version,omitempty" json:"version,omitempty"`
+	// SecretStores are the namespaced SecretStores, with the namespace each
+	// one lives in. Empty means none were found or the list could not be read;
+	// a Gap on "externalSecrets.secretStores" records the difference.
+	SecretStores []SecretStore `yaml:"secretStores,omitempty" json:"secretStores,omitempty"`
+	// ClusterSecretStores are the cluster-scoped stores, by name. They are
+	// usable from every namespace, which is why they carry no namespace here.
 	ClusterSecretStores []string `yaml:"clusterSecretStores,omitempty" json:"clusterSecretStores,omitempty"`
+}
+
+// SecretStore is one namespaced external-secrets SecretStore: its name and the
+// namespace it is usable from.
+type SecretStore struct {
+	Name      string `yaml:"name" json:"name"`
+	Namespace string `yaml:"namespace,omitempty" json:"namespace,omitempty"`
+}
+
+// SecretStoresIn returns the namespaced SecretStores usable from one namespace,
+// in the order detection recorded them (sorted). A SecretStore is readable only
+// from its own namespace, so this is the whole of what a workload there can
+// reference without a ClusterSecretStore.
+func (e ExternalSecrets) SecretStoresIn(namespace string) []string {
+	var out []string
+	for _, s := range e.SecretStores {
+		if s.Namespace == namespace {
+			out = append(out, s.Name)
+		}
+	}
+	return out
 }
 
 // PolicyEngine is an admission-policy controller.
