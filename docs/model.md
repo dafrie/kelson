@@ -43,7 +43,9 @@ errors, because the check needs a ClusterProfile and validation deliberately has
 [docs/data-services.md](data-services.md). A `kind: helm` component in a non-Flux environment is a
 render error for a different reason — the refusal depends on the *Environment*, and a Project document
 is valid on its own terms against every environment it will ever meet (`render/helm-requires-flux`,
-[below](#the-flux-only-gate-and-why-it-exists)).
+[below](#the-flux-only-gate-and-why-it-exists)). `Environment.spec.previews` carries the same gate for
+the same reason, and is the only other field that does (`render/previews-require-flux`,
+[Previews](#previews-a-child-environment-per-pull-request)).
 
 And not every refusal is either: a field that belongs to another kind is a plain validation error, because
 one list means one type carrying fields only some of its kinds use. `preset` on a worker, `port` on a
@@ -471,6 +473,134 @@ a flux-operator `FluxInstance` naming just those two components is a supported a
 ([#60](https://github.com/dafrie/kelson/issues/60)), and `kelson profile` reports which of them a cluster
 has.
 
+## Previews: a child environment per pull request
+
+> Partially implemented since [ADR-0017](adr/0017-pr-previews.md), which decides the design;
+> [ADR-0016](adr/0016-delivery-flows-v0.md) decision 5 decided the shape. Available in **Flux mode
+> only**. **Stage 1 renders the cluster-side machinery and nothing publishes the artifacts yet** —
+> read "What stage 1 does not do" below before turning this on.
+
+An environment may spawn a child environment per open pull request. kelson does not poll the forge and
+does not garbage-collect: a flux-operator `ResourceSetInputProvider` finds the change requests and a
+`ResourceSet` creates, updates and deletes one preview per change request. What kelson supplies is the
+manifests — rendered **concretely**, per pull request, and published as an OCI artifact the preview's
+`Kustomization` applies.
+
+```yaml
+spec:
+  previews:
+    provider: github                                   # github | gitlab
+    repo: https://github.com/acme/checkout             # whose pull requests become previews
+    secretRef: github-auth                             # a Secret NAME, never a token
+    interval: 10m                                      # how often the forge is polled
+    filter:
+      labels: [deploy/preview]                         # only labelled change requests
+      includeBranch: "^feat/.*"                        # Go regular expressions
+      excludeBranch: "^wip/.*"
+      limit: 10                                        # simultaneous previews; default 10
+    skip:
+      labels: [deploy/preview-pause, "!ci/passed"]     # pause updates; ! means "while absent"
+    artifacts:
+      repository: oci://ghcr.io/acme/checkout-previews # no tag — kelson chooses it
+      secretRef: ghcr-auth                             # optional pull secret
+```
+
+| Field | Meaning |
+|---|---|
+| `provider` | the forge. `github` → `GitHubPullRequest`, `gitlab` → `GitLabMergeRequest` |
+| `repo` | HTTP(S) URL of the repository whose change requests become previews |
+| `secretRef` | name of a Secret holding forge credentials, in the environment's namespace |
+| `interval` | forge polling interval; default `10m` |
+| `filter.labels` | only change requests carrying one of these labels get a preview |
+| `filter.includeBranch` / `filter.excludeBranch` | Go regular expressions against the branch name |
+| `filter.limit` | maximum simultaneous previews. Default **10** |
+| `skip.labels` | pause *updates* while a label is present; `!label` pauses while it is absent |
+| `artifacts.repository` | the `oci://` repository per-pull-request manifests are published to |
+| `artifacts.secretRef` | a docker-registry Secret for a private artifact repository |
+
+`repo` is the **source** repository and `delivery.git.repo` is the **delivery** repository. They are
+usually different, kelson defaults neither from the other, and an SSH remote in `repo` is
+`schema/invalid-format`: the forge is reached over its HTTP API.
+
+`filter.limit` defaults to 10 rather than flux-operator's own 100. The ceiling is a cost control, and
+an environment that quietly stands up a hundred preview namespaces the first time somebody bulk-labels
+a backlog is a surprise that arrives as a cluster bill. The value is always written into the rendered
+manifest, so what the cluster will enforce is readable without knowing anyone's defaults.
+
+### What kelson renders
+
+Two objects, in the environment's own namespace:
+
+- a **`ResourceSetInputProvider`**, carrying the provider type, the repository URL, the `secretRef`,
+  the filter, the skip labels, and the polling interval as the
+  `fluxcd.controlplane.io/reconcileEvery` annotation;
+- a **`ResourceSet`**, whose `resourcesTemplate` instantiates an `OCIRepository` and a `Kustomization`
+  per change request — and **nothing else**.
+
+Each preview lands in a namespace of its own, `<project>-<environment>-pr<number>`, which is also the
+name of its `OCIRepository` and `Kustomization`. The `Kustomization` sets `prune: true`, `wait: true`
+and `targetNamespace`, so teardown on merge or close is one delete and a mis-published artifact cannot
+deploy outside the pull request's namespace.
+
+`<project>-<environment>` may be at most **54 characters**, or the render fails with
+`render/preview-name-too-long`. Both derived names add nine: `-previews` for the two lifecycle
+objects, and `-pr` plus a change request number of up to six digits for the preview. Sixty-three is
+the DNS-1123 limit a namespace must satisfy.
+
+The artifact is addressed by the pull request's **head commit SHA**, not by its number. A per-PR tag
+would be mutable by construction, which makes "what is running in preview 412" depend on when you ask;
+a SHA tag is one artifact per push and is already what CI tags the image with.
+
+### Preview databases are inside the preview
+
+A data component renders per pull request exactly as it renders anywhere else, so a preview's database
+is applied by the preview's own `Kustomization` and pruned by it. There is no second thing to remember
+to delete, which is the whole reason [ADR-0016](adr/0016-delivery-flows-v0.md) put preview databases
+inside the `ResourceSet` lifecycle ([#103](https://github.com/dafrie/kelson/issues/103)). The
+storage-capability gate is unchanged: a preset the cluster cannot host fails the preview's render the
+same way it fails the parent environment's (see [data services](data-services.md)).
+
+### What stage 1 does not do
+
+**Nothing publishes the artifacts yet.** The `previews:` block renders the cluster-side machinery and
+that is all it renders. Until the publisher lands, flux-operator will find the labelled pull requests,
+create an `OCIRepository` for each, and report that the artifact does not exist. That is the honest
+state of the feature: a rendered `ResourceSet` waiting for something to push to
+`artifacts.repository`.
+
+**kelson does not enumerate preview children.** A preview is an environment kelson did not record: no
+Environment document describes it and no delivery history entry exists for it. The Status and History
+RPCs do not walk preview namespaces, do not aggregate preview health and cannot answer "which pull
+requests are deployed". What exists instead is the naming scheme above and the provenance labels
+`app.kubernetes.io/managed-by: kelson`, `kelson.dev/project` and `kelson.dev/environment`, which the
+`ResourceSet` carries onto everything it generates via `commonMetadata` — so `kubectl get` with a
+selector answers the question today.
+
+**There is no TTL.** A preview lives as long as its pull request is open and labelled; a pull request
+open for three months holds a database for three months. `filter.limit` is the only cost control
+there is. flux-operator has no expiry either, so this is future work with nobody's name on it, not a
+setting somebody forgot to expose.
+
+**The `ResourceSet` runs with flux-operator's own permissions.** kelson sets no `serviceAccountName`
+on either object, because there is no field for one. On a multi-tenant cluster that is more authority
+than a preview should have, and the fix is a spec field plus an RBAC story that ADR-0017 does not
+attempt.
+
+### The Flux-only gate
+
+`previews:` renders **only** when the target Environment's `delivery.mode` is `flux`. Anything else is
+the structured render error `render/previews-require-flux`, naming the environment, the mode and the
+fix.
+
+This is the same gate `kind: helm` carries and the second field in the model to carry one, which
+ADR-0016 asked any future exemption to argue for deliberately. The argument: previews *are*
+flux-operator's `ResourceSet` lifecycle, and outside Flux mode there is nothing to reconcile one —
+usually not even a served CRD, so a direct-mode apply fails on an unknown kind with a message about
+`fluxcd.controlplane.io/v1` that says nothing about previews. As with Helm, the gate is decided from
+**spec data** in the pure renderer, so the same document renders the same way against every cluster;
+whether flux-operator is actually installed is a capability finding
+([`internal/clusterprofile`](detection.md)), never a rendering decision.
+
 ## Secrets: references, never literals
 
 Per [ADR-0009](adr/0009-secrets.md), enforcement lives in one place and validation mirrors it so authors
@@ -520,6 +650,12 @@ spec:
     deployers: [team-platform]       # who may deploy; default: the Project's team
   secrets:                           # whole block rejected until M8 (#141)
     backend: sops                    # cluster | externalSecrets | sops
+  previews:                          # Flux mode only — see "Previews" below
+    provider: github                 # github | gitlab
+    repo: https://github.com/acme/checkout           # the SOURCE repo, not delivery.git.repo
+    secretRef: github-auth           # a Secret name, never a token
+    artifacts:
+      repository: oci://ghcr.io/acme/checkout-previews
   components:                        # one override list, matched by name
     - name: web                      # must name a Component in the Project
       image: ghcr.io/acme/checkout@sha256:9f6ad2c1…   # P3: the promotion pin

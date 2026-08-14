@@ -27,6 +27,11 @@ type EnvironmentSpec struct {
 	Policy   *Policy        `yaml:"policy,omitempty" json:"policy,omitempty"`
 	Secrets  *SecretBackend `yaml:"secrets,omitempty" json:"secrets,omitempty"`
 
+	// Previews declares that this environment spawns a child environment per
+	// open pull request (ADR-0017). It is available in Flux mode only, the
+	// same gate shape `kind: helm` carries.
+	Previews *Previews `yaml:"previews,omitempty" json:"previews,omitempty"`
+
 	// Components carry per-Component overrides, matched by name. Names must
 	// exist in the Project, and what an override may set follows the kind of
 	// the component it names: image/replicas/resources/env for a workload
@@ -137,6 +142,109 @@ type SecretBackend struct {
 	// Store names the ClusterSecretStore for backend externalSecrets.
 	Store string `yaml:"store,omitempty" json:"store,omitempty"`
 }
+
+// PreviewProvider is the forge whose change requests become previews. The
+// enum is deliberately two values wide: flux-operator also speaks Azure
+// DevOps, Gitea/Forgejo and AWS CodeCommit, and each is a one-line mapping
+// away, but an enum value is a promise that the shape has been run
+// (ADR-0017).
+type PreviewProvider string
+
+const (
+	PreviewGitHub PreviewProvider = "github"
+	PreviewGitLab PreviewProvider = "gitlab"
+)
+
+// Previews is the per-pull-request child-environment declaration (ADR-0017).
+//
+// It describes two halves of one pipeline. `provider`, `repo`, `secretRef`,
+// `interval`, `filter` and `skip` say which change requests become previews —
+// they become a flux-operator ResourceSetInputProvider. `artifacts` says where
+// the rendered manifests for those previews are pulled from — it becomes the
+// OCIRepository inside the ResourceSet's template.
+//
+// Nothing here is a credential. `secretRef` on both halves is a Secret *name*;
+// the Secret exists out of band and kelson never reads it (ADR-0009, #79).
+type Previews struct {
+	// Provider selects the forge. github → GitHubPullRequest,
+	// gitlab → GitLabMergeRequest.
+	Provider PreviewProvider `yaml:"provider" json:"provider" jsonschema:"required,enum=github,enum=gitlab,description=the forge whose change requests become previews"`
+
+	// Repo is the HTTP(S) URL of the repository whose pull requests become
+	// previews. It is the *source* repository, not delivery.git.repo — those
+	// are usually different repositories and kelson defaults neither from the
+	// other.
+	Repo string `yaml:"repo" json:"repo" jsonschema:"required,description=HTTP(S) URL of the source repository whose change requests become previews; not delivery.git.repo"`
+
+	// SecretRef names the Secret holding forge credentials, in the
+	// environment's namespace. Its keys are flux-operator's: username and
+	// password for basic auth, or the githubApp* keys.
+	SecretRef string `yaml:"secretRef" json:"secretRef" jsonschema:"required,description=name of the Secret holding forge credentials; never a token"`
+
+	// Interval is how often the forge is polled for change requests. It
+	// becomes the fluxcd.controlplane.io/reconcileEvery annotation.
+	Interval string `yaml:"interval,omitempty" json:"interval,omitempty" jsonschema:"default=10m,description=how often the forge is polled for change requests"`
+
+	Filter *PreviewFilter `yaml:"filter,omitempty" json:"filter,omitempty"`
+	Skip   *PreviewSkip   `yaml:"skip,omitempty" json:"skip,omitempty"`
+
+	// Artifacts is where the per-pull-request rendered manifests live.
+	Artifacts PreviewArtifacts `yaml:"artifacts" json:"artifacts" jsonschema:"required"`
+}
+
+// PreviewFilter narrows which change requests become previews.
+type PreviewFilter struct {
+	// Labels selects change requests carrying any of these labels. Empty
+	// means every open change request that passes the branch filters, which
+	// is a broad default and why Limit exists.
+	Labels []string `yaml:"labels,omitempty" json:"labels,omitempty" jsonschema:"description=only change requests carrying one of these labels become previews"`
+
+	// IncludeBranch and ExcludeBranch are regular expressions matched against
+	// the change request's branch name.
+	IncludeBranch string `yaml:"includeBranch,omitempty" json:"includeBranch,omitempty" jsonschema:"description=regular expression; only matching branches become previews"`
+	ExcludeBranch string `yaml:"excludeBranch,omitempty" json:"excludeBranch,omitempty" jsonschema:"description=regular expression; matching branches are excluded"`
+
+	// Limit caps how many previews may exist at once. Unset means
+	// PreviewDefaultLimit, which is deliberately far below flux-operator's own
+	// default of 100 (ADR-0017): the ceiling is a cost control and a surprising
+	// one is expensive.
+	//
+	// It is a pointer so that `limit: 0` is representable and can be refused.
+	// flux-operator reads a zero as "use my default", which would turn the one
+	// spelling an author might reach for to mean "no previews" into the
+	// broadest setting there is.
+	Limit *int `yaml:"limit,omitempty" json:"limit,omitempty" jsonschema:"default=10,minimum=1,maximum=10000,description=maximum number of simultaneous previews"`
+}
+
+// PreviewSkip gates preview *updates* on CI, which is a different question
+// from which change requests get a preview at all.
+type PreviewSkip struct {
+	// Labels pauses updates for a change request carrying any of these
+	// labels. A label prefixed with `!` pauses while the label is *absent*,
+	// which is how a "tests passed" gate is written.
+	Labels []string `yaml:"labels,omitempty" json:"labels,omitempty" jsonschema:"description=pause preview updates while one of these labels is present; a ! prefix inverts the test"`
+}
+
+// PreviewArtifacts is the OCI repository the per-pull-request manifests are
+// published to and pulled from.
+type PreviewArtifacts struct {
+	// Repository is an oci:// URL without a tag: the tag is the change
+	// request's head commit SHA, chosen per pull request at reconcile time
+	// (ADR-0017 decision 2).
+	Repository string `yaml:"repository" json:"repository" jsonschema:"required,description=oci:// URL of the repository holding per-pull-request manifests; no tag"`
+
+	// SecretRef names an image-pull Secret for a private artifact repository.
+	SecretRef string `yaml:"secretRef,omitempty" json:"secretRef,omitempty" jsonschema:"description=name of a docker-registry Secret for a private artifact repository"`
+}
+
+// PreviewDefaultLimit is the ceiling kelson applies when the spec sets none.
+// See ADR-0017 for why it is not flux-operator's 100.
+const PreviewDefaultLimit = 10
+
+// PreviewDefaultInterval is the forge polling interval kelson applies when the
+// spec sets none. It matches flux-operator's own default and is written out
+// explicitly so the manifest always says what the cluster will do.
+const PreviewDefaultInterval = "10m"
 
 type SecretBackendType string
 

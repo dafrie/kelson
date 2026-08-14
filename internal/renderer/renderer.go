@@ -71,6 +71,11 @@ func Render(resolved *model.Resolved, profile clusterprofile.ClusterProfile, res
 	if errs := helmRequiresFlux(resolved); len(errs) > 0 {
 		return nil, errs
 	}
+	// The same gate for previews (ADR-0017), which cites the Helm precedent
+	// deliberately: a ResourceSet outside Flux mode has nothing to reconcile it.
+	if errs := previewsRequireFlux(resolved); len(errs) > 0 {
+		return nil, errs
+	}
 	// The Namespace leads the set: delivery.ManifestSet documents apply order as
 	// "namespaces first", and every following resource targets it (issue #150).
 	// Overlays append after the core resources, so nothing can displace it.
@@ -109,6 +114,19 @@ func Render(resolved *model.Resolved, profile clusterprofile.ClusterProfile, res
 
 	for i := range resolved.Components {
 		ms, err := componentManifests(resolved, &resolved.Components[i], profile, services)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, ms...)
+	}
+	// The previews pair goes last of the core resources. It is environment-level
+	// machinery about *other* namespaces: it depends on this environment's
+	// Namespace existing and nothing in this environment depends on it, so the
+	// ordering contract — the things workloads need, before the workloads — has
+	// nothing to say about where it goes, and the end is where a reader looks
+	// for what is not part of the running application.
+	if resolved.Environment.Previews != nil {
+		ms, err := previewsManifests(resolved)
 		if err != nil {
 			return nil, err
 		}

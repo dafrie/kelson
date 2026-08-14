@@ -45,6 +45,39 @@ type ResolvedEnvironment struct {
 	Mode      DeliveryMode  // after the P4 default chain
 	Policy    Policy        // after the P4 default chain
 	Secrets   SecretBackend // after the P4 default chain
+
+	// Previews is nil unless the Environment declares one. It carries kelson's
+	// defaults already applied, so the renderer never has to know what an
+	// unset interval or an unset limit means.
+	Previews *ResolvedPreviews
+}
+
+// ResolvedPreviews is the previews declaration with defaults filled in
+// (ADR-0017). Nothing merges into it — there is no per-project preview default
+// and no override — so resolution is defaulting and nothing else.
+//
+// The environment's delivery mode is deliberately not copied here, for the
+// same reason ResolvedChart does not copy it: it lives once, on
+// ResolvedEnvironment, and the renderer's Flux-only gate reads it there.
+type ResolvedPreviews struct {
+	Provider  PreviewProvider       `json:"provider"`
+	Repo      string                `json:"repo"`
+	SecretRef string                `json:"secretRef"`
+	Interval  string                `json:"interval"`
+	Filter    ResolvedPreviewFilter `json:"filter"`
+	// Skip is the CI-gating label list, flattened: PreviewSkip has one field
+	// and a struct with one field buys nothing downstream.
+	Skip      []string         `json:"skip,omitempty"`
+	Artifacts PreviewArtifacts `json:"artifacts"`
+}
+
+// ResolvedPreviewFilter is the filter with Limit defaulted. Limit is never
+// zero here: kelson always writes a ceiling (ADR-0017).
+type ResolvedPreviewFilter struct {
+	Labels        []string `json:"labels,omitempty"`
+	IncludeBranch string   `json:"includeBranch,omitempty"`
+	ExcludeBranch string   `json:"excludeBranch,omitempty"`
+	Limit         int      `json:"limit"`
 }
 
 type ResolvedRouting struct {
@@ -163,6 +196,7 @@ func resolve(p *Project, e *Environment) *Resolved {
 	if sb := e.Spec.Secrets; sb != nil {
 		r.Environment.Secrets = *sb
 	}
+	r.Environment.Previews = resolvePreviews(e.Spec.Previews)
 
 	// P6: project overlays first.
 	r.Overlays = append(r.Overlays, p.Spec.Overlays...)
@@ -200,6 +234,38 @@ func resolveDataService(c Component, kind ComponentKind, ov ComponentOverride) R
 		preset = ov.Preset
 	}
 	return ResolvedDataService{Name: c.Name, Kind: kind, Preset: preset}
+}
+
+// resolvePreviews fills in the two defaults kelson has an opinion about, so
+// the rendered ResourceSetInputProvider always states its polling interval and
+// its ceiling rather than inheriting flux-operator's (ADR-0017).
+func resolvePreviews(p *Previews) *ResolvedPreviews {
+	if p == nil {
+		return nil
+	}
+	rp := &ResolvedPreviews{
+		Provider:  p.Provider,
+		Repo:      p.Repo,
+		SecretRef: p.SecretRef,
+		Interval:  p.Interval,
+		Artifacts: p.Artifacts,
+		Filter:    ResolvedPreviewFilter{Limit: PreviewDefaultLimit},
+	}
+	if rp.Interval == "" {
+		rp.Interval = PreviewDefaultInterval
+	}
+	if f := p.Filter; f != nil {
+		rp.Filter.Labels = f.Labels
+		rp.Filter.IncludeBranch = f.IncludeBranch
+		rp.Filter.ExcludeBranch = f.ExcludeBranch
+		if f.Limit != nil {
+			rp.Filter.Limit = *f.Limit
+		}
+	}
+	if s := p.Skip; s != nil {
+		rp.Skip = s.Labels
+	}
+	return rp
 }
 
 // resolveChart carries a helm component through unchanged. It takes no

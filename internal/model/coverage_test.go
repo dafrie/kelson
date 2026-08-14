@@ -87,6 +87,18 @@ var renderedFields = map[string]map[string]string{
 		"$.spec.routing.gatewayClass": "renderer: HTTPRoute parentRef",
 		"$.spec.routing.tls":          "renderer: Certificate and HTTPRoute TLS",
 
+		"$.spec.previews.provider":             "renderer: ResourceSetInputProvider spec.type (GitHubPullRequest / GitLabMergeRequest)",
+		"$.spec.previews.repo":                 "renderer: ResourceSetInputProvider spec.url",
+		"$.spec.previews.secretRef":            "renderer: ResourceSetInputProvider spec.secretRef.name",
+		"$.spec.previews.interval":             "renderer: the fluxcd.controlplane.io/reconcileEvery annotation on the ResourceSetInputProvider",
+		"$.spec.previews.filter.labels":        "renderer: ResourceSetInputProvider spec.filter.labels",
+		"$.spec.previews.filter.includeBranch": "renderer: ResourceSetInputProvider spec.filter.includeBranch",
+		"$.spec.previews.filter.excludeBranch": "renderer: ResourceSetInputProvider spec.filter.excludeBranch",
+		"$.spec.previews.filter.limit":         "renderer: ResourceSetInputProvider spec.filter.limit (default 10, ADR-0017)",
+		"$.spec.previews.skip.labels":          "renderer: ResourceSetInputProvider spec.skip.labels",
+		"$.spec.previews.artifacts.repository": "renderer: the per-preview OCIRepository url in the ResourceSet template",
+		"$.spec.previews.artifacts.secretRef":  "renderer: the per-preview OCIRepository secretRef.name in the ResourceSet template",
+
 		"$.spec.delivery.mode":       "internal/delivery: adapter selection",
 		"$.spec.delivery.git.repo":   "internal/delivery/git: deployment repository",
 		"$.spec.delivery.git.branch": "internal/delivery/git: target branch",

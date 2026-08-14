@@ -1,0 +1,156 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: shop-review
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/environment: review
+    kelson.dev/project: shop
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:7183b123ae059de8e54764687a8e6f15aabc840275de9eec1868bb3dcd49c540
+    kelson.dev/namespace-ownership: declared
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: api
+  namespace: shop-review
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: api
+    kelson.dev/environment: review
+    kelson.dev/project: shop
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:5657757850affed53b3c12fa92485687c227c7037ff81ece4a51c974ed5947c4
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: shop-review
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: api
+    kelson.dev/environment: review
+    kelson.dev/project: shop
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:5657757850affed53b3c12fa92485687c227c7037ff81ece4a51c974ed5947c4
+spec:
+  selector:
+    kelson.dev/project: shop
+    kelson.dev/application: api
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: shop-review
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: api
+    kelson.dev/environment: review
+    kelson.dev/project: shop
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:5657757850affed53b3c12fa92485687c227c7037ff81ece4a51c974ed5947c4
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      kelson.dev/project: shop
+      kelson.dev/application: api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/managed-by: kelson
+        kelson.dev/application: api
+        kelson.dev/environment: review
+        kelson.dev/project: shop
+    spec:
+      serviceAccountName: api
+      containers:
+        - name: api
+          image: registry.gitlab.com/acme/shop:2.0.0
+          ports:
+            - name: http
+              containerPort: 3000
+---
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSetInputProvider
+metadata:
+  name: shop-review-previews
+  namespace: shop-review
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/environment: review
+    kelson.dev/project: shop
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:88892caa0bc2018358ebf484a25a2bb29ca4454920ab569d27a3756086fb5709
+    fluxcd.controlplane.io/reconcileEvery: 10m
+spec:
+  type: GitLabMergeRequest
+  url: https://gitlab.com/acme/shop
+  secretRef:
+    name: gitlab-auth
+  filter:
+    limit: 10
+---
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata:
+  name: shop-review-previews
+  namespace: shop-review
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/environment: review
+    kelson.dev/project: shop
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:88892caa0bc2018358ebf484a25a2bb29ca4454920ab569d27a3756086fb5709
+spec:
+  inputsFrom:
+    - apiVersion: fluxcd.controlplane.io/v1
+      kind: ResourceSetInputProvider
+      name: shop-review-previews
+  commonMetadata:
+    labels:
+      app.kubernetes.io/managed-by: kelson
+      kelson.dev/environment: review
+      kelson.dev/project: shop
+  wait: true
+  resourcesTemplate: |
+    ---
+    apiVersion: source.toolkit.fluxcd.io/v1beta2
+    kind: OCIRepository
+    metadata:
+      name: shop-review-pr<< inputs.id >>
+      namespace: shop-review
+    spec:
+      interval: 10m
+      url: oci://registry.gitlab.com/acme/shop-previews
+      ref:
+        tag: << inputs.sha >>
+    ---
+    apiVersion: kustomize.toolkit.fluxcd.io/v1
+    kind: Kustomization
+    metadata:
+      name: shop-review-pr<< inputs.id >>
+      namespace: shop-review
+    spec:
+      interval: 10m
+      prune: true
+      wait: true
+      targetNamespace: shop-review-pr<< inputs.id >>
+      sourceRef:
+        kind: OCIRepository
+        name: shop-review-pr<< inputs.id >>
+      path: ./
