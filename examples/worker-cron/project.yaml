@@ -17,14 +17,25 @@ spec:
     - name: seen
       kind: valkey
       preset: small
+      # Without this the cache has no password and anything in the namespace can
+      # read it. `auth` names a Secret — never a value — that kelson writes into
+      # the operator's ACL user and into the binding below, so one credential
+      # has two consumers and appears in no manifest. Write it first, per
+      # environment:
+      #   kelson secret set seen-auth --project mailroom --env <env> \
+      #     --from-stdin password
+      auth: { secret: seen-auth, key: password }
 
     - name: worker            # no port, no schedule → worker (Deployment)
       command: ["mailroom", "work"]
       replicas: { min: 2 }
       env:
-        # A cache binding is a plain value: a Service name and a port are not
-        # credentials, and a valkey component has no password at all.
+        # The address is a plain value: a Service name and a port are not
+        # credentials. The URI stays passwordless at every setting — a URI with
+        # the password in it would be a secret value in a manifest — so an
+        # authenticated client takes the two apart (docs/data-services.md).
         SEEN_URL: { from: { service: seen, key: uri } }
+        SEEN_PASSWORD: { from: { service: seen, key: password } }
 
     - name: digest            # schedule present → CronJob
       schedule: "30 6 * * 1-5"

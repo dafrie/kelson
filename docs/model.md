@@ -331,9 +331,15 @@ spec:
     - name: db
       kind: postgres           # postgres | valkey — always explicit, never derived
       preset: ha-small         # shared | small | ha-small | ha-medium | branch
+    - name: cache
+      kind: valkey
+      preset: small
+      auth: { secret: cache-auth, key: password }   # kind: valkey only
   env:
     DATABASE_URL:
       from: { service: db, key: uri }
+    CACHE_PASSWORD:
+      from: { service: cache, key: password }
 ```
 
 The binding key stays `service:` after the rename: what it names is the service a data component provides,
@@ -346,8 +352,18 @@ operator generates — for a dedicated postgres preset that is CloudNativePG's `
 it. kelson's key names are the spec's contract and are mapped onto the operator's own (`database` is
 CNPG's `dbname`). A key that is *not* a credential — a cache's host, port and URI — renders as a plain
 value, because minting a Secret to hold a Service name would obey the letter of
-[ADR-0009](adr/0009-secrets.md) and make the manifest harder to read. A cache has no `password` at all;
-[docs/data-services.md](data-services.md) says why, and what that means for who can reach it.
+[ADR-0009](adr/0009-secrets.md) and make the manifest harder to read.
+
+**`auth:` is the third source of a credential, and the only one an author names.** A `kind: valkey`
+component takes `auth: {secret, key}` — the same `{secret, key}` shape as an env reference, because it
+is the same promise — and kelson writes that name into two places: the operator's ACL user, and the
+`secretKeyRef` its `password` binding resolves to. Without it a cache has no `password` key to bind
+and no password at all, which the refusal says along with the two commands that fix it. `auth:` is
+refused on every other kind (`schema/mutually-exclusive`): postgres gets its credential from the
+operator that generates it, and a workload or a chart uses an env reference, which is the same two
+fields in the place they take effect. A cache's `uri` never carries the password at any setting —
+[docs/data-services.md](data-services.md) has the two-command flow and the reasoning.
+
 Well-known keys per data kind:
 
 | Kind | Keys |

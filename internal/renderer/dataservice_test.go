@@ -272,7 +272,7 @@ func TestValkeyBindings(t *testing.T) {
 		}
 	})
 
-	t.Run("password is withheld with a reason", func(t *testing.T) {
+	t.Run("password without auth is withheld, and the refusal names the fix", func(t *testing.T) {
 		resolved := cacheFixture(model.PresetSmall)
 		resolved.Components[0].Env["CACHE_PASSWORD"] = model.EnvValue{
 			From: &model.ServiceBinding{Service: "cache", Key: "password"},
@@ -288,8 +288,57 @@ func TestValkeyBindings(t *testing.T) {
 		if errs[0].Code != ErrBindingUnavailableKey {
 			t.Fatalf("code = %q, want %q", errs[0].Code, ErrBindingUnavailableKey)
 		}
-		if !strings.Contains(errs[0].Remediation, "no application credential") {
-			t.Errorf("the refusal must explain why, not list alternatives: %q", errs[0].Remediation)
+		// The refusal has to explain *and* dispatch: the reason kelson cannot
+		// invent a password, and the two commands that supply one. Before the
+		// ADR-0015 amendment it could only do the first (#98).
+		for _, want := range []string{
+			"pure renderer has no random source",
+			"kelson secret set cache-auth",
+			"auth: {secret: cache-auth, key: password}",
+		} {
+			if !strings.Contains(errs[0].Remediation, want) {
+				t.Errorf("remediation is missing %q: %s", want, errs[0].Remediation)
+			}
+		}
+	})
+
+	// TestValkeyBindings/authenticated: the whole point of #98's remaining
+	// acceptance criterion. One Secret name written once in the spec reaches two
+	// places — the operator's ACL user and the workload's env — and the password
+	// itself appears in neither.
+	t.Run("auth makes password a secretKeyRef against the same Secret", func(t *testing.T) {
+		resolved := cacheFixture(model.PresetSmall)
+		resolved.DataServices[0].Auth = &model.SecretRef{Name: "cache-auth", Key: "password"}
+		resolved.Components[0].Env["CACHE_PASSWORD"] = model.EnvValue{
+			From: &model.ServiceBinding{Service: "cache", Key: "password"},
+		}
+		ms, err := Render(resolved, valkeyProfile(), nil)
+		if err != nil {
+			t.Fatalf("Render failed: %v", err)
+		}
+		out, err := Encode(ms)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := string(out)
+		for _, want := range []string{
+			// the operator's side
+			"- name: default",
+			"passwordSecret:",
+			"name: cache-auth",
+			"- password",
+			// the workload's side
+			"secretKeyRef:",
+			"key: password",
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("missing %q in rendered output:\n%s", want, got)
+			}
+		}
+		// A cache that authenticates still must not put the value anywhere: the
+		// spec never held it and the renderer has no way to read it (ADR-0018).
+		if strings.Contains(got, "stringData") || strings.Contains(got, "kind: Secret") {
+			t.Errorf("auth must reference a Secret, never render one:\n%s", got)
 		}
 	})
 

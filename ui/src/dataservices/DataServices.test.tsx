@@ -249,5 +249,39 @@ describe("DataServices", () => {
     expect(screen.getByText(/no snapshot class serves rancher.io\/local-path/)).toBeTruthy();
     expect(screen.getByText("snapshot driver: none detected")).toBeTruthy();
     expect(screen.getByText(/CloudNativePG: detected \(1.30.0, in cnpg-system\)/)).toBeTruthy();
+    // This profile records no helm-controller, and the panel says so in the
+    // same shape as the line above rather than staying silent (#107).
+    expect(screen.getByText(/helm-controller: not detected/)).toBeTruthy();
+    expect(screen.getByText(/installs nothing/)).toBeTruthy();
+  });
+
+  it("reports a detected helm-controller beside the operator that runs databases", async () => {
+    const withHelm = `${PROFILE}helmController:
+    version: 1.3.0
+    namespace: flux-system
+    crds:
+        - helmreleases
+`;
+    renderAt(
+      createRouterTransport((router) => {
+        router.service(ProfileService, {
+          getProfile: () => ({ yaml: new TextEncoder().encode(withHelm) }),
+        });
+        router.service(RenderService, { render: () => ({ errors: [] }) });
+      }),
+      "/",
+      "/",
+      <DataServices
+        project="checkout"
+        environment="production"
+        projectDoc={PROJECT}
+        environmentDoc=""
+        health={{ state: "read", verdicts: [] }}
+      />,
+    );
+
+    expect(
+      await screen.findByText(/helm-controller: detected \(1.3.0, in flux-system\)/),
+    ).toBeTruthy();
   });
 });

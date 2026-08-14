@@ -409,57 +409,126 @@ and no amount of it working in staging changes that. The honest options are:
 A first-class durable Valkey type is not a flag on this one; it is a different type with a
 different ADR.
 
-### There is no password
+### Authentication: `auth:` and two commands
 
-**Anything that can reach the cache's Service in its namespace can read and write it.** This is
-stated here rather than left to be assumed either way, because it is the largest consequence of
-ADR-0015 and the one most likely to matter to a reader.
+**A cache has no password unless you give it one.** Without `auth:`, anything that can reach the
+cache's Service in its namespace can read and write it — kelson renders no `users:`, so Valkey's
+own `default` user stays in place with `nopass`, and kelson renders no NetworkPolicy either, so
+the namespace is the whole boundary. That was ADR-0015's largest negative and it is still the
+behaviour of a component that says nothing.
 
-kelson renders no ACL user, so the operator leaves Valkey's own `default` user in place — which
-is the operator's own default and what its quickstart documents. The reason is the same
-constraint that shaped the Postgres path in the opposite direction: CloudNativePG's `initdb`
-bootstrap *generates* a credential and publishes it, so kelson can point a `secretKeyRef` at
-it; the Valkey operator *reads* application user passwords from a Secret it never creates, and
-a pure renderer has no random source to create one with
-([#20](https://github.com/dafrie/kelson/issues/20)). Rendering a password into the manifest
-instead is what [ADR-0009](adr/0009-secrets.md) exists to forbid.
+`auth:` is how a component says something. It is two lines in the spec and one command before
+the first apply:
 
-So the boundary around a kelson cache is the namespace, and kelson renders no NetworkPolicy —
-the namespace is the whole boundary. ADR-0015's *Revisit when* names the two things that would
-change this: the operator generating an application credential, or kelson's secrets plane (M8)
-being able to supply one. Either turns the `password` binding from a refusal into a
-`secretKeyRef` with nothing else in the renderer moving.
+```sh
+kelson secret set cache-auth --project checkout --env staging --from-stdin password
+```
 
-The second of those is now built on both ends. [ADR-0018](adr/0018-secret-references.md) gives the
-workload side its spelling — `{secret: <name>, key: password}` reads a password out of a Secret
-kelson references and never creates — and
-[#116](https://github.com/dafrie/kelson/issues/116) has landed the authoring side: author the user
-Secret with `kelson secret set <name> --project <p> --env <e> password=…`. What is still missing is
-the piece in between: a spec surface for a Valkey ACL user rendered against that Secret's name, which
-is [#98](https://github.com/dafrie/kelson/issues/98)'s remaining work and not a decision ADR-0018
-takes. **The renderer is unchanged** — the `password` binding is still the structured refusal below.
+```yaml
+components:
+  - name: cache
+    kind: valkey
+    preset: small
+    auth: { secret: cache-auth, key: password }   # a name and a key, never a value
+```
+
+`--from-stdin password` reads the value from stdin so it never reaches your shell history;
+`password=<value>` inline works too, and so does
+`kubectl -n checkout-staging create secret generic cache-auth --from-literal=password=…` on a
+machine with kubectl and no kelson. The Secret lives in the environment's namespace, so **the
+same two spec lines are a different Secret in every environment** — write one per environment
+under the same name and nothing in the Project changes.
+
+That one name then reaches two places in the rendered set, and the password itself reaches
+neither:
+
+```yaml
+spec:
+  users:
+    - name: default
+      passwordSecret:
+        name: cache-auth
+        keys: [password]
+      keys:     {readWrite: ["*"]}
+      channels: {patterns:  ["*"]}
+      commands: {allow:     ["@all"]}
+```
+
+```yaml
+env:
+  - name: CACHE_PASSWORD
+    valueFrom:
+      secretKeyRef: {name: cache-auth, key: password}
+```
+
+The operator reads the Secret, SHA-256-hashes whatever it finds and writes the hash into the ACL
+file it mounts into every node; the kubelet projects the same key into the workload. kelson
+reads it in neither direction — it cannot, being pure ([ADR-0001](adr/0001-hybrid-state-model.md))
+— which is what makes this the reference model of [ADR-0018](adr/0018-secret-references.md) rather
+than a second mechanism beside it. `auth:` is a `SecretRef`, the same type an env value's
+`{secret, key}` decodes into, with the same validation.
+
+Three consequences worth knowing before you use it:
+
+- **It redefines `default`, it does not add a user.** An ACL file that never mentions `default`
+  leaves the built-in `on nopass ~* &* +@all` exactly as it was, so a *new* user would add a
+  password nobody is obliged to use and the cache would still be open. Redefining `default` is
+  the edit that closes the hole. The permissions written are the ones `default` already had — all
+  keys, all channels, all commands — restated because an ACL line replaces a user's rules rather
+  than adding to them. The change is authentication and nothing else.
+- **The value's format is free.** The operator hashes plaintext; a value that is already a
+  `#`-prefixed 64-character SHA-256 digest is used as-is. `kelson secret set` needs no special
+  shape, and nothing has to hash anything on kelson's side.
+- **The Secret must exist before the cluster reconciles.** With `auth:` set and the Secret or the
+  key missing, the operator refuses to build the ACL (`no password or reference found`, or
+  `missing password key in secret`) and the cache does not become ready. kelson cannot check this
+  — validation has no cluster and the renderer must not read one — so the order is: write the
+  Secret, then apply. Adding `auth:` to a cache that is already running is applied live with
+  `ACL LOAD` and does not roll its pods.
 
 ### Cache bindings
 
-A cache answers three of the four keys `model.ServiceKeys` declares for `kind: valkey`, and
-they render as **plain env values, not `secretKeyRef`s**:
+`model.ServiceKeys` declares four keys for `kind: valkey`. Three are **plain env values**; the
+fourth is a `secretKeyRef` when the component declares `auth:` and a structured refusal when it
+does not:
 
 | kelson key | Rendered value |
 |---|---|
 | `host` | `valkey-<cluster>.<namespace>.svc` |
 | `port` | `"6379"` |
-| `uri` | `redis://valkey-<cluster>.<namespace>.svc:6379` |
-| `password` | **structured error** — see [There is no password](#there-is-no-password) |
+| `uri` | `redis://valkey-<cluster>.<namespace>.svc:6379` — **no password, ever** |
+| `password` | `secretKeyRef{name: <auth.secret>, key: <auth.key>}`, or a structured error naming `auth:` and `kelson secret set` when the component has none |
 
 `valkey-<cluster>` is the headless Service the operator creates. Plain values rather than a
 Secret because a Service name and a port are not credentials: ADR-0009 forbids a *secret* in a
 spec, and minting a Secret to hold a hostname would obey the letter of that while making the
 manifest harder to read.
 
+**The URI never carries the password, and this does not change when `auth:` is set.**
+`redis://:<password>@host:6379` would be a credential written into a container's `env[].value`,
+in a manifest that is diffed, previewed, stored in the delivery repository and read back through
+the API — precisely the thing ADR-0009 forbids and ADR-0018 makes structurally impossible. So
+`uri` stays the address form at every setting, and **an authenticated client assembles its
+connection from the parts**: bind `host`, `port` and `password` (or `uri` *and* `password`, which
+every mainstream client accepts as a URL plus a separate credential option) and hand them to the
+client constructor. There is no spelling for a URI with the password in it, which is the same
+reason there is no string interpolation in an env value.
+
 **The URI scheme is `redis://` on purpose.** Valkey is wire- and URL-compatible with Redis, and
 `redis://` is what the client library an application already has will parse. Emitting
 `valkey://` would name the product correctly and be rejected by most of them, which is the
 wrong trade for a value whose only job is to be handed to a client constructor.
+
+**There is no `username` key**, and `auth:` is why there does not have to be one: the user kelson
+renders is `default`, so `AUTH <password>` authenticates it and no client needs to be told a name.
+
+**`auth:` is `kind: valkey` only.** On `kind: postgres` it is refused
+(`schema/mutually-exclusive`): CloudNativePG's `initdb` bootstrap *generates* the application
+user and its password and publishes them as `<cluster>-app`, so a Secret an author wrote would be
+a second credential the database never accepts. Bind `password` there and kelson points the
+`secretKeyRef` at the one the operator made. On a workload or a `kind: helm` component it is
+refused too, and the remediation names the spelling that does work in those places — an env value
+written `{secret: <name>, key: <key>}`.
 
 ### Naming
 
@@ -541,11 +610,13 @@ A workload component binds to a data component by key: `env: {DATABASE_URL: {fro
 Validation checks the key against `model.ServiceKeys`; the renderer resolves it against the
 bound service, in one of three ways. A **credential** becomes a `secretKeyRef` against a Secret
 the operator generated — for postgres, `<cluster>-app` (type `basic-auth`). A **connection
-detail that is not a credential** becomes a plain value, which is how every cache binding
-renders. A key the kind declares that the service genuinely cannot supply is
+detail that is not a credential** becomes a plain value, which is how a cache's address binds. A
+key the kind declares that the service genuinely cannot supply is
 `render/binding-unavailable-key`, with the reason rather than a list of alternatives that does
-not contain the answer — today that is exactly one key,
-[a cache's `password`](#there-is-no-password).
+not contain the answer — today that is exactly one key, and only in one configuration:
+[a cache's `password` when the component declares no `auth:`](#authentication-auth-and-two-commands).
+With `auth:` set it is a credential like any other, and the Secret it resolves against is one the
+author named rather than one an operator generated — the first binding where those two differ.
 
 **A binding is one of the two reference forms, not a separate mechanism.** The other is
 `{secret: <name>, key: <key>}`, which names a Secret kelson does not manage
@@ -635,8 +706,11 @@ their pods run under is the operator's to create, not kelson's
 | `preset: branch` | **structured error**, [#99](https://github.com/dafrie/kelson/issues/99); refused for `kind: valkey` as not a cache topology |
 | `kind: valkey` `small`, `ha-small`, `ha-medium` → `ValkeyCluster` | rendered ([ADR-0015](adr/0015-valkey-operator.md)) |
 | bindings against a cache | rendered as plain values (`uri`, `host`, `port`) |
-| a cache's `password` binding | **structured error**: the operator generates no credential, [ADR-0015](adr/0015-valkey-operator.md) |
-| valkey persistence, TLS, ACL users, external access | not authorable; the operator supports them, kelson renders none of them |
+| `auth: {secret, key}` on `kind: valkey` → `spec.users[]` | rendered ([ADR-0015 amendment](adr/0015-valkey-operator.md#amendment-2026-08-14--auth-a-cache-with-a-password), [#98](https://github.com/dafrie/kelson/issues/98)) |
+| a cache's `password` binding | `secretKeyRef` against the `auth:` Secret; **structured error** naming `auth:` when the component declares none |
+| `auth:` on postgres, on a workload, on a chart | **structured error** `schema/mutually-exclusive`, each naming what to write instead |
+| a URI with the password in it | **not authorable and never rendered** — `uri` is the address form at every setting (ADR-0009, ADR-0018) |
+| valkey persistence, TLS, per-application ACL users, external access | not authorable; the operator supports them, kelson renders only the `default` user and only when `auth:` is set |
 | backups, WAL archiving, PITR | deferred, [#94](https://github.com/dafrie/kelson/issues/94)-[#96](https://github.com/dafrie/kelson/issues/96); see [Backups](#backups). No counterpart for `kind: valkey` — it has nothing durable to back up |
 | declarative schemas and extensions | not authorable; the capability is judged, nothing consumes it |
 | preset transitions beyond rendering | not enforced, [#105](https://github.com/dafrie/kelson/issues/105) |
@@ -657,13 +731,24 @@ CloudNativePG `release-1.30`, read directly rather than from memory:
 valkey-io/valkey-operator, read the same way at `main` and at tag `v0.5.0`:
 
 - `api/v1alpha1/valkeycluster_types.go` — `shards`, `replicas` ("replicas for each shard
-  group"), `resources`, `config` ("additional Valkey configuration parameters"),
-  `persistence`, `exporter`, `podDisruptionBudget`, `networking`.
+  group"), `resources`, `users`, `config` ("additional Valkey configuration parameters"),
+  `persistence`, `exporter`, `podDisruptionBudget`, `networking`, in that field order.
 - `api/v1alpha1/persistence_types.go` — `PersistenceSpec` is a pointer, so an omitted
   `persistence` is no PVC at all.
-- `api/v1alpha1/valkeyacls_types.go` and `internal/controller/users.go` — `PasswordSecretSpec`
-  defaults to `<cluster>-users` and is only ever *read*; the only generated Secret is
-  `internal-<cluster>-system-passwords`, for the operator's own `_`-prefixed system users.
+- `api/v1alpha1/valkeyacls_types.go` — `UserAclSpec` (`name`, `enabled` defaulting to true,
+  `passwordSecret`, `nopass`, `resetpass`, `commands`, `keys`, `channels`, `permissions`) and
+  `PasswordSecretSpec` (`name`, `keys []string`), with the one validation rule: a username may
+  not start with `_`. `docs/valkeycluster.md#users` is the field reference for the same shape.
+- `internal/controller/users.go` — `PasswordSecretSpec.Name` defaults to `<cluster>-users` and
+  `Keys` to the username; a Secret's value is SHA-256-hashed unless it is already a
+  `#`-prefixed 64-hex digest; a missing Secret or key fails the reconcile; the Secret is only
+  ever *read*, and the only generated one is `internal-<cluster>-system-passwords`, for the
+  operator's own `_`-prefixed system users. `buildUserAcl` is the exact ACL line each user
+  becomes, which is how `keys`/`channels`/`commands` were checked to reproduce `default`'s own
+  `~* &* +@all`.
+- `internal/controller/valkeynode_resources.go` — the probes authenticate as `_operator` with
+  `VALKEY_USER`/`VALKEYCLI_AUTH`, not as `default`, so giving `default` a password does not
+  break the operator's own health checks.
 - `internal/controller/config.go` — `cluster-enabled yes` in the base config, and the
   live-settable allow-list containing `maxmemory` and `maxmemory-policy`.
 - `internal/controller/valkeycluster_controller.go` — the headless `valkey-<cluster>` Service

@@ -56,6 +56,8 @@ var renderedFields = map[string]map[string]string{
 		"$.spec.components[].valuesFrom[].secretRef":    "renderer: HelmRelease spec.valuesFrom, kind Secret (kind: helm)",
 		"$.spec.components[].valuesFrom[].configMapRef": "renderer: HelmRelease spec.valuesFrom, kind ConfigMap (kind: helm)",
 		"$.spec.components[].preset":                    "renderer: operator topology and sizing (docs/data-services.md)",
+		"$.spec.components[].auth.secret":               "renderer: ValkeyCluster spec.users[].passwordSecret.name, and the secretKeyRef name of the component's password binding (ADR-0015 amendment)",
+		"$.spec.components[].auth.key":                  "renderer: ValkeyCluster spec.users[].passwordSecret.keys[0], and the secretKeyRef key of the component's password binding (ADR-0015 amendment)",
 		"$.spec.components[].image":                     "renderer: container image (P3 override)",
 		"$.spec.components[].command":                   "renderer: container command",
 		"$.spec.components[].port":                      "renderer: Service, containerPort, derived kind",

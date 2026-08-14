@@ -7,9 +7,11 @@
 # binding is a plain value, because a Service hostname and a port are not
 # credentials and wrapping them in a Secret nobody wrote would be theatre.
 #
-# The cache has no `password` key to bind: the Valkey operator generates no
-# application credential, so kelson renders no ACL user and refuses that key
-# with the reason (ADR-0015). Everything a cache *can* answer is exercised here.
+# The cache here declares no `auth:`, so it has no `password` key to bind:
+# kelson renders no ACL user and refuses that key with the reason and the two
+# commands that fix it (ADR-0015 amendment 2026-08-14). Everything a cache
+# without auth can answer is exercised here; the authenticated shape, where
+# `password` becomes a secretKeyRef, is valkey-auth's fixture.
 apiVersion: kelson.dev/v1alpha1
 kind: Project
 metadata:

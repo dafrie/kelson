@@ -12,14 +12,15 @@ import {
   DeployService,
 } from "../gen/kelson/v1alpha1/deploy_pb";
 import { LogService } from "../gen/kelson/v1alpha1/logs_pb";
+import { SecretService } from "../gen/kelson/v1alpha1/secret_pb";
 import {
   EventService,
   WatchResponseSchema,
 } from "../gen/kelson/v1alpha1/events_pb";
 
 /**
- * Proves the generated schemas and the client wiring actually fit together, for
- * all six services, without a server.
+ * Proves the generated schemas and the client wiring actually fit together,
+ * service by service, without a server.
  *
  * This is deliberately a wiring test, not a behaviour test: the value is that
  * it fails to compile — or fails to route — the moment protoc-gen-es output,
@@ -66,6 +67,20 @@ const transport = createRouterTransport((router) => {
   router.service(LogService, {
     queryLogs: () => ({
       lines: [{ pod: "web-0", container: "web", message: "listening" }],
+    }),
+  });
+
+  router.service(SecretService, {
+    listSecrets: (req) => ({
+      namespace: `${req.target?.project}-${req.target?.environment}`,
+      secrets: [
+        {
+          name: "checkout-db",
+          namespace: "checkout-production",
+          keys: ["url"],
+          ageSeconds: 3600n,
+        },
+      ],
     }),
   });
 
@@ -133,6 +148,18 @@ describe("generated clients", () => {
   it("round-trips LogService.QueryLogs", async () => {
     const res = await clients.log.queryLogs({});
     expect(res.lines[0]?.message).toBe("listening");
+  });
+
+  it("round-trips SecretService.ListSecrets, keys and ages only", async () => {
+    const res = await clients.secret.listSecrets({
+      target: { project: "checkout", environment: "production" },
+    });
+
+    expect(res.namespace).toBe("checkout-production");
+    expect(res.secrets[0]?.keys).toEqual(["url"]);
+    // int64 arrives as a bigint, which is what the panel formats. A number here
+    // would mean the generated code changed shape underneath it.
+    expect(res.secrets[0]?.ageSeconds).toBe(3600n);
   });
 
   it("consumes EventService.Watch as a server stream, both oneof arms", async () => {

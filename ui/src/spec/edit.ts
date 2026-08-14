@@ -1,5 +1,15 @@
 import type { Error as WireError } from "../gen/kelson/v1alpha1/common_pb";
-import { errorTarget, yamlScalar, type EnvVar } from "./documents";
+import {
+  bindingEnv,
+  envValueText,
+  errorTarget,
+  namedEnv,
+  plainEnv,
+  secretEnv,
+  yamlScalar,
+  type EnvValue,
+  type EnvVar,
+} from "./documents";
 
 /**
  * Editing a spec that is already stored (#65).
@@ -40,10 +50,40 @@ import { errorTarget, yamlScalar, type EnvVar } from "./documents";
  *
  * The parser is deliberately small and deliberately strict. It reads the
  * restricted grammar the builders emit (2-space indentation, block mappings,
- * block sequences, one flow mapping for `replicas`, plain and double-quoted
- * scalars) and gives up on everything else. It is not a YAML implementation and
- * must never grow into one: a document it cannot read costs the reader the form
- * tab, which is the correct outcome, not a broken edit.
+ * block sequences, flow mappings for `replicas` and for the two env reference
+ * forms, plain and double-quoted scalars) and gives up on everything else. It
+ * is not a YAML implementation and must never grow into one: a document it
+ * cannot read costs the reader the form tab, which is the correct outcome, not
+ * a broken edit.
+ *
+ * # Env values, and exactly what round-trips (ADR-0018)
+ *
+ * An env value is one of three things — a scalar, `{secret, key}` or
+ * `{from: {service, key}}` — and the form displays all three as themselves
+ * (src/spec/documents.ts: EnvValue). What it can *write back* byte-faithfully
+ * is narrower than what it can read, and the difference is the byte guard's to
+ * enforce rather than anyone's to remember:
+ *
+ *   - **Round-trips byte-identically:** the single-line flow styling this
+ *     module writes, with its spacing and its key order —
+ *     `KEY: { secret: db, key: url }`,
+ *     `KEY: { from: { service: db, key: uri } }` — and plain (unquoted) inner
+ *     scalars. That is the styling ADR-0018 and docs/model.md show, and the
+ *     styling `kelson secret set` prints.
+ *   - **Read and displayed, then read-only:** the same references written as
+ *     block mappings (`KEY:` on its own line, `secret:`/`key:` under it), a
+ *     block `from:`, and a flow mapping whose keys are in the other order
+ *     (`{ key: url, secret: db }`). These parse into the identical edit state,
+ *     so the form shows the reference correctly; the rebuild emits the
+ *     canonical flow styling, the bytes differ, and the document goes to the
+ *     YAML tab whole. Nothing is lost and nothing is rewritten silently.
+ *   - **Refused outright, no form at all:** a flow mapping with different
+ *     spacing (`{secret: db,key: url}`), a quoted inner scalar, a mapping whose
+ *     key set is neither reference form, and any plain env value whose text
+ *     begins with `{`. The last is the one deliberate refusal rather than a
+ *     consequence: a mapping this reader could not decode must never reach the
+ *     form as a *string* that happens to look like one, because that would show
+ *     a reader a credential reference as ordinary configuration.
  */
 
 /** The two documents of a spec, as text. The store's own shape. */
@@ -115,7 +155,7 @@ export function buildProjectDocument(p: ProjectEdit): string {
   if (env.length > 0) {
     lines.push("", "  env:");
     for (const { key, value } of env) {
-      lines.push(`    ${yamlScalar(key)}: ${yamlScalar(value)}`);
+      lines.push(`    ${yamlScalar(key)}: ${envValueText(value)}`);
     }
   }
 
@@ -153,7 +193,7 @@ function componentLines(app: ComponentEdit): string[] {
   if (env.length > 0) {
     lines.push("      env:");
     for (const { key, value } of env) {
-      lines.push(`        ${yamlScalar(key)}: ${yamlScalar(value)}`);
+      lines.push(`        ${yamlScalar(key)}: ${envValueText(value)}`);
     }
   }
   return lines;
@@ -162,17 +202,6 @@ function componentLines(app: ComponentEdit): string[] {
 /** Whether a field was filled in at all — the builder's one presence rule. */
 function set(value: string): boolean {
   return value.trim() !== "";
-}
-
-/**
- * The variables that have a name.
- *
- * A row with no name is a row the user has started and not finished, and the
- * form keeps showing it; the document does not, because `"": value` is not a
- * variable. It is the same rule documents.ts applies on create.
- */
-function namedEnv(env: EnvVar[]): EnvVar[] {
-  return env.map(({ key, value }) => ({ key: key.trim(), value })).filter((e) => e.key !== "");
 }
 
 export function buildEnvironmentDocument(e: EnvironmentEdit): string {
@@ -288,11 +317,52 @@ function readEnv(node: YNode | undefined): EnvVar[] | undefined {
   if (node === undefined) return [];
   if (!isMap(node)) return undefined;
   const out: EnvVar[] = [];
-  for (const [key, value] of node) {
-    if (typeof value !== "string") return undefined;
+  for (const [key, node2] of node) {
+    const value = readEnvValue(node2);
+    if (value === undefined) return undefined;
     out.push({ key, value });
   }
   return out;
+}
+
+/**
+ * One env value as the union it is (ADR-0018): a scalar is a value, a mapping
+ * is a reference, and which reference is decided by its own key.
+ *
+ * Both stylings of both mapping forms arrive here identically — the YAML-lite
+ * reader has already turned a flow mapping and a block mapping into the same
+ * Map — so this decides only the shape, and the byte guard decides whether the
+ * document can be written back. A mapping whose keys are neither reference form
+ * is refused rather than guessed at: `schema/invalid-format` is the server's
+ * answer to it and inventing a third arm here would put the browser ahead of
+ * the model.
+ */
+function readEnvValue(node: YNode): EnvValue | undefined {
+  if (typeof node === "string") {
+    // A value that begins with `{` is a flow mapping this reader could not
+    // decode, never a string somebody meant. Letting it through would draw a
+    // credential reference in the form as ordinary configuration.
+    return node.startsWith("{") ? undefined : plainEnv(node);
+  }
+  if (!isMap(node)) return undefined;
+
+  if (node.size === 2 && node.has("secret") && node.has("key")) {
+    const secret = node.get("secret");
+    const key = node.get("key");
+    if (typeof secret !== "string" || typeof key !== "string") return undefined;
+    return secretEnv(secret, key);
+  }
+
+  if (node.size === 1 && node.has("from")) {
+    const from = node.get("from");
+    if (!isMap(from) || from.size !== 2) return undefined;
+    const service = from.get("service");
+    const key = from.get("key");
+    if (typeof service !== "string" || typeof key !== "string") return undefined;
+    return bindingEnv(service, key);
+  }
+
+  return undefined;
 }
 
 export function parseEnvironmentDocument(text: string): EnvironmentEdit | undefined {
@@ -473,8 +543,22 @@ function parseSequence(
 
 const FLOW = /^\{ (.*) \}$/;
 const FLOW_ENTRY = /^([A-Za-z0-9_][A-Za-z0-9_.-]*): ([^,{}"]*)$/;
+/**
+ * One flow mapping wrapping one more, which is exactly `{ from: { service: …,
+ * key: … } }` and nothing wider. The nesting is one level because the model has
+ * one nested form; a general flow parser would be a YAML implementation, which
+ * this module's comment forbids.
+ */
+const FLOW_NESTED = /^\{ ([A-Za-z0-9_][A-Za-z0-9_.-]*): (\{ [^{}]* \}) \}$/;
 
 function decodeValue(text: string): YNode | undefined {
+  const nested = FLOW_NESTED.exec(text);
+  if (nested?.[1] !== undefined && nested[2] !== undefined) {
+    const inner = decodeValue(nested[2]);
+    if (inner === undefined) return undefined;
+    return new Map<string, YNode>([[nested[1], inner]]);
+  }
+
   const flow = FLOW.exec(text);
   if (flow?.[1] !== undefined) {
     const out = new Map<string, YNode>();

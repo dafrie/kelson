@@ -18,6 +18,7 @@ import { DataServices } from "../dataservices/DataServices";
 import { isDataServiceVerdict } from "../dataservices/parse";
 import { PhaseRail } from "../deploy/PhaseRail";
 import { parseCause, type RailInput } from "../deploy/rail";
+import { SecretsPanel } from "../secrets/SecretsPanel";
 
 /**
  * One project: its environments' delivery state, its documents, its actions.
@@ -397,6 +398,12 @@ function EnvironmentPanel({
                 : { state: "unavailable" }
           }
         />
+
+        {/* Beside the data services, and outside the status block for the same
+            reason: the Secrets an environment holds are readable whether or not
+            its workloads are. A spec's `{secret: <name>, key: <key>}` points
+            here, and #116 is what writes what it points at. */}
+        <SecretsPanel project={project} environment={environment} />
       </div>
     </section>
   );

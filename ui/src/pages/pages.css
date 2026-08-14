@@ -251,6 +251,29 @@
   border-color: var(--kelson-accent);
 }
 
+/* The env row's form picker (plain | secret ref | service binding). It wears
+   the input's own chrome rather than a control of its own: it sits inside a row
+   of inputs and reads as one of them, and `color-scheme` on the theme block is
+   what makes the native dropdown follow the page instead of staying light. */
+.k-select {
+  padding: 8px 10px;
+  background: var(--kelson-inset);
+  border: 1px solid var(--kelson-inset-border);
+  border-radius: 4px;
+  font-family: var(--kelson-font-mono);
+  font-size: 12.5px;
+  color: var(--kelson-text);
+}
+
+.k-select:focus {
+  outline: none;
+  border-color: var(--kelson-accent);
+}
+
+.k-select:disabled {
+  color: var(--kelson-muted);
+}
+
 .k-check {
   display: inline-flex;
   align-items: center;

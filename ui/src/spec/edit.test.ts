@@ -2,7 +2,13 @@ import { describe, expect, it } from "vitest";
 import { create } from "@bufbuild/protobuf";
 
 import { ErrorSchema } from "../gen/kelson/v1alpha1/common_pb";
-import { buildDocuments, EMPTY_FORM } from "./documents";
+import {
+  bindingEnv,
+  buildDocuments,
+  EMPTY_FORM,
+  plainEnv,
+  secretEnv,
+} from "./documents";
 import {
   buildProjectDocument,
   editFieldForError,
@@ -147,7 +153,7 @@ describe("round trip", () => {
     expect(web?.domains).toEqual(["hello.dev.acme.run"]);
     expect(web?.replicasMin).toBe("2");
     expect(web?.replicasMax).toBe("10");
-    expect(web?.env).toEqual([{ key: "ROLE", value: "web" }]);
+    expect(web?.env).toEqual([{ key: "ROLE", value: plainEnv("web") }]);
 
     const worker = edit?.project.components[1];
     expect(worker?.name).toBe("worker");
@@ -158,8 +164,8 @@ describe("round trip", () => {
     // A quoted env value survives as its string: `PORT: "3000"` is the value
     // model.EnvValue accepts, and rewriting it as an integer would break it.
     expect(edit?.project.env).toEqual([
-      { key: "LOG_LEVEL", value: "info" },
-      { key: "PORT", value: "3000" },
+      { key: "LOG_LEVEL", value: plainEnv("info") },
+      { key: "PORT", value: plainEnv("3000") },
     ]);
 
     expect(writeSpec(edit!)).toEqual(rich);
@@ -309,7 +315,7 @@ describe("environment variables through the form", () => {
 
   it("adds a project-level variable under spec.env, shared by every component", () => {
     const project = base();
-    project.env = [{ key: "LOG_LEVEL", value: "info" }];
+    project.env = [{ key: "LOG_LEVEL", value: plainEnv("info") }];
 
     expect(buildProjectDocument(project)).toBe(`apiVersion: kelson.dev/v1alpha1
 kind: Project
@@ -332,7 +338,7 @@ spec:
     const project = base();
     const web = project.components[0];
     if (web === undefined) throw new Error("the fixture must have a component");
-    web.env = [{ key: "ROLE", value: "web" }];
+    web.env = [{ key: "ROLE", value: plainEnv("web") }];
 
     const doc = buildProjectDocument(project);
     expect(doc).toContain("    - name: web\n      port: 8080\n      env:\n        ROLE: web\n");
@@ -343,8 +349,8 @@ spec:
   it("quotes a value YAML would resolve as something other than a string", () => {
     const project = base();
     project.env = [
-      { key: "PORT", value: "3000" },
-      { key: "DEBUG", value: "on" },
+      { key: "PORT", value: plainEnv("3000") },
+      { key: "DEBUG", value: plainEnv("on") },
     ];
     const doc = buildProjectDocument(project);
     expect(doc).toContain('    PORT: "3000"\n');
@@ -356,19 +362,165 @@ spec:
   it("changes and removes variables in place", () => {
     const project = base();
     project.env = [
-      { key: "LOG_LEVEL", value: "info" },
-      { key: "REGION", value: "eu" },
+      { key: "LOG_LEVEL", value: plainEnv("info") },
+      { key: "REGION", value: plainEnv("eu") },
     ];
     const changed = parseProjectDocument(buildProjectDocument(project));
     expect(changed?.env).toEqual(project.env);
 
-    project.env = [{ key: "LOG_LEVEL", value: "debug" }];
+    project.env = [{ key: "LOG_LEVEL", value: plainEnv("debug") }];
     const after = parseProjectDocument(buildProjectDocument(project));
-    expect(after?.env).toEqual([{ key: "LOG_LEVEL", value: "debug" }]);
+    expect(after?.env).toEqual([{ key: "LOG_LEVEL", value: plainEnv("debug") }]);
 
     project.env = [];
     expect(buildProjectDocument(project)).toBe(MINIMAL_PROJECT);
   });
+});
+
+/**
+ * The two mapping forms an env value can take (ADR-0018), and the exact line
+ * between "the form may write this back" and "the YAML tab owns this".
+ *
+ * The fixture is the styling ADR-0018 and docs/model.md show an author writing,
+ * which is also what `kelson secret set` prints and what this builder emits —
+ * one variable, one line.
+ */
+const REFERENCED_PROJECT = `apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: hello
+
+spec:
+  image: ghcr.io/acme/hello:1.4.2
+
+  env:
+    LOG_LEVEL: info
+    DATABASE_URL: { secret: checkout-db, key: url }
+
+  components:
+    - name: web
+      port: 8080
+      env:
+        CACHE_URL: { from: { service: cache, key: uri } }
+`;
+
+const REFERENCED: SpecTextSet = {
+  project: REFERENCED_PROJECT,
+  environments: { development: MINIMAL_ENVIRONMENT },
+};
+
+describe("secret references and bindings", () => {
+  it("reads both mapping forms as themselves, not as strings", () => {
+    const project = parseProjectDocument(REFERENCED_PROJECT);
+
+    expect(project?.env).toEqual([
+      { key: "LOG_LEVEL", value: plainEnv("info") },
+      { key: "DATABASE_URL", value: secretEnv("checkout-db", "url") },
+    ]);
+    expect(project?.components[0]?.env).toEqual([
+      { key: "CACHE_URL", value: bindingEnv("cache", "uri") },
+    ]);
+  });
+
+  it("rewrites a reference-carrying document byte for byte", () => {
+    const edit = readSpec(REFERENCED);
+    expect(edit).toBeDefined();
+    expect(writeSpec(edit!)).toEqual(REFERENCED);
+    expect(isRebuildable(REFERENCED)).toBe(true);
+  });
+
+  it("edits a plain value into a reference and back", () => {
+    const edit = readSpec(REFERENCED);
+    if (edit === undefined) throw new Error("the fixture must parse");
+    edit.project.env = [
+      { key: "LOG_LEVEL", value: secretEnv("app-config", "log-level") },
+      { key: "DATABASE_URL", value: plainEnv("postgres://localhost/dev") },
+    ];
+
+    const written = writeSpec(edit).project;
+    expect(written).toContain("    LOG_LEVEL: { secret: app-config, key: log-level }\n");
+    expect(written).toContain("    DATABASE_URL: postgres://localhost/dev\n");
+    // And the rewrite is readable by the same parser, which is what makes the
+    // guard a proof rather than a hope.
+    expect(parseProjectDocument(written)?.env).toEqual(edit.project.env);
+  });
+
+  /**
+   * The stylings that are shown but not written back. Each parses into the same
+   * edit state as the canonical form — so the reader sees their reference as a
+   * reference — and each rebuilds into the canonical flow line, so the bytes
+   * differ and the byte guard sends the document to the YAML tab whole.
+   */
+  const readOnlyStylings: { name: string; env: string }[] = [
+    {
+      name: "a block-styled secret reference",
+      env: "    DATABASE_URL:\n      secret: checkout-db\n      key: url\n",
+    },
+    {
+      name: "a block-styled binding",
+      env: "    DATABASE_URL:\n      from:\n        service: db\n        key: uri\n",
+    },
+    {
+      name: "a binding whose `from` is block and whose inner mapping is flow",
+      env: "    DATABASE_URL:\n      from: { service: db, key: uri }\n",
+    },
+    {
+      name: "a flow mapping with the keys the other way round",
+      env: "    DATABASE_URL: { key: url, secret: checkout-db }\n",
+    },
+  ];
+
+  for (const { name, env } of readOnlyStylings) {
+    it(`shows ${name} in the form, and refuses to rewrite it`, () => {
+      const project = MINIMAL_PROJECT.replace(
+        "spec:\n",
+        `spec:\n\n  env:\n${env}`,
+      );
+
+      // Displayed faithfully…
+      const parsed = parseProjectDocument(project);
+      expect(parsed?.env[0]?.value.kind, name).not.toBe("plain");
+      // …and read-only, because the rebuild would restyle the file.
+      expect(isRebuildable({ ...MINIMAL, project }), name).toBe(false);
+    });
+  }
+
+  /**
+   * The stylings with no form at all. A value this reader cannot decode must
+   * never arrive in the form as something else — a reference shown as the
+   * string "{ secret: … }" would be a lie about what the spec says — so the
+   * parser gives up and the whole document goes to the YAML tab.
+   */
+  const refused: { name: string; env: string }[] = [
+    {
+      name: "a flow mapping with different spacing",
+      env: "    DATABASE_URL: {secret: checkout-db, key: url}\n",
+    },
+    {
+      name: "a quoted scalar inside the mapping",
+      env: '    DATABASE_URL: { secret: "checkout-db", key: url }\n',
+    },
+    {
+      name: "a mapping that is neither reference form",
+      env: "    DATABASE_URL: { vault: checkout-db, key: url }\n",
+    },
+    {
+      name: "a `from` binding missing half of itself",
+      env: "    DATABASE_URL: { from: { service: db } }\n",
+    },
+  ];
+
+  for (const { name, env } of refused) {
+    it(`refuses the form outright for ${name}`, () => {
+      const project = MINIMAL_PROJECT.replace(
+        "spec:\n",
+        `spec:\n\n  env:\n${env}`,
+      );
+
+      expect(parseProjectDocument(project), name).toBeUndefined();
+      expect(isRebuildable({ ...MINIMAL, project }), name).toBe(false);
+    });
+  }
 });
 
 describe("editFieldForError", () => {

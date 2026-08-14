@@ -5,8 +5,10 @@
 # The two absences are the assertions that matter. There is no `persistence:`,
 # which is what makes a kelson valkey component a cache: with none, the operator
 # gives each node an emptyDir and a restart starts empty. And there is no
-# `users:`, because the operator generates no application credential and a pure
-# renderer has no random source to invent one with (#20) — see ADR-0015.
+# `users:`, because this component declares no `auth:` — the unauthenticated
+# cache ADR-0015 documents as its largest negative, kept as a fixture because it
+# is still what a component that says nothing renders. valkey-auth is the other
+# half of that pair.
 #
 # No bindings here. Binding rendering is valkey-binding's fixture, so a change
 # to the ValkeyCluster shape and a change to the env shape fail separately.

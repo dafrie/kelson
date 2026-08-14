@@ -155,6 +155,28 @@ type Component struct {
 	// workload (ADR-0007, docs/data-services.md).
 	Preset ServicePreset `yaml:"preset,omitempty" json:"preset,omitempty" jsonschema:"default=shared,enum=shared,enum=small,enum=ha-small,enum=ha-medium,enum=branch,description=data components only"`
 
+	// Auth turns on password authentication for a data component whose operator
+	// reads a user password from a Secret it does not create, and names the
+	// Secret to read it from:
+	//
+	//	- name: cache
+	//	  kind: valkey
+	//	  preset: small
+	//	  auth: { secret: cache-auth, key: password }
+	//
+	// It is a SecretRef and therefore exactly the shape ADR-0018 standardised
+	// for an env value, because it is the same promise: a name and a key, never
+	// a value, resolved by somebody other than kelson. One Secret then has two
+	// consumers — the operator hashes it into the ACL user, and a workload
+	// binding to `password` reads it back as a secretKeyRef — and the password
+	// itself exists in neither the spec nor the rendered manifests.
+	//
+	// `kind: valkey` only, for now. `kind: postgres` refuses it: CloudNativePG's
+	// initdb bootstrap *generates* the application credential and publishes it,
+	// so a Secret an author writes would be a second, unused credential rather
+	// than the one the database accepts (ADR-0015 amendment, 2026-08-14).
+	Auth *SecretRef `yaml:"auth,omitempty" json:"auth,omitempty" jsonschema:"description=valkey components only; names the Secret holding the cache password — kelson references it and never creates or reads it"`
+
 	// Chart is the chart a `kind: helm` component installs, by name — the name
 	// inside the repository, not a path and not a URL. Meaningless on every
 	// other kind (ADR-0016 decision 4).

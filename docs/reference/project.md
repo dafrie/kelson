@@ -40,6 +40,7 @@ This reference is **generated** from the committed JSON Schema [`schema/project.
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
+| `auth` | object | no |  | valkey components only; names the Secret holding the cache password — kelson references it and never creates or reads it |
 | `chart` | string | no |  | helm components only; the chart name within its source |
 | `chartVersion` | string | no |  | helm components only; the exact chart version — required because an unpinned chart is not reproducible |
 | `command` | array of string | no |  | container command; wins over the image default |
@@ -58,6 +59,13 @@ This reference is **generated** from the committed JSON Schema [`schema/project.
 | `tools` | array of string | no |  | agent components only; refused until issue #75 |
 | `values` | object | no |  | helm components only; chart values rendered verbatim into the HelmRelease — plain configuration only and never secret material (put that in valuesFrom) |
 | `valuesFrom` | array of object | no |  | helm components only; Secrets and ConfigMaps merged into the chart values by helm-controller |
+
+##### `spec.components[].auth`
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `key` | string | yes |  | key within that Secret |
+| `secret` | string | yes |  | name of a Secret in the environment's namespace; kelson references it and never creates or reads it |
 
 ##### `spec.components[].replicas`
 

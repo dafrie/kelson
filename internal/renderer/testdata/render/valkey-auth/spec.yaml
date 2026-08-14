@@ -1,0 +1,50 @@
+# Fixture: an authenticated cache — #98's remaining acceptance criterion,
+# "adding a Valkey service and referencing it yields a working connection with
+# no manual credential handling" (ADR-0015 amendment, 2026-08-14).
+#
+# One name, `cache-auth`, is written once in the spec and reaches two places in
+# the rendered set:
+#
+#   - the ValkeyCluster's spec.users[0].passwordSecret, where the operator reads
+#     the password and hashes it into the `default` user's ACL line;
+#   - the worker's CACHE_PASSWORD, as an ordinary valueFrom.secretKeyRef.
+#
+# The password itself is in neither, and could not be: the renderer is pure and
+# the spec carries references, never values (ADR-0009, ADR-0018). What creates
+# the Secret is `kelson secret set cache-auth --project checkout --env staging
+# password=…` (#116), out of band and before the first apply.
+#
+# The ACL user redefines `default` rather than adding a new one. An ACL file
+# that does not mention `default` leaves the built-in `on nopass ~* &* +@all`
+# exactly as it is, so a new user would add a password nobody has to use — see
+# the comment on valkeyAuthUser.
+#
+# `uri` is bound alongside `password` on purpose: it is still the passwordless
+# `redis://host:port` form, because a URI with the password in it would be a
+# secret value in a manifest. An authenticated client is handed the parts.
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: checkout
+spec:
+  image: ghcr.io/acme/checkout:1.4.2
+
+  components:
+    - name: cache
+      kind: valkey
+      preset: small
+      auth: { secret: cache-auth, key: password }
+
+    - name: worker
+      command: ["bundle", "exec", "sidekiq"]
+      env:
+        CACHE_URL: { from: { service: cache, key: uri } }
+        CACHE_PASSWORD: { from: { service: cache, key: password } }
+---
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: staging
+spec:
+  project: checkout
+  namespace: checkout-staging

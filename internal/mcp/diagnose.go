@@ -365,7 +365,21 @@ func componentShape(c model.Component) string {
 		if preset == "" {
 			preset = model.PresetShared
 		}
-		return fmt.Sprintf("%s preset %s", kind, preset)
+		shape := fmt.Sprintf("%s preset %s", kind, preset)
+		// Whether a cache has a password is the second thing anyone diagnosing
+		// one wants to know, and it is the answer to two different questions at
+		// once: why a client gets NOAUTH, and why one does not have to. The
+		// Secret is named because this tool already lists the environment's
+		// kelson-managed Secrets, so a missing one is visible in one answer
+		// (ADR-0018's successor note).
+		if kind == model.ComponentValkey {
+			if c.Auth != nil {
+				shape += fmt.Sprintf(", auth from secret %s key %s", c.Auth.Name, c.Auth.Key)
+			} else {
+				shape += ", no auth (reachable without a password in this namespace)"
+			}
+		}
+		return shape
 	case model.ComponentHelm:
 		// The version belongs in the summary: it is the whole of what a chart
 		// component pins, and the field a diagnosis most often turns on.

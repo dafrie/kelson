@@ -4,6 +4,7 @@ import { Code, ConnectError, createRouterTransport } from "@connectrpc/connect";
 
 import { DeployService } from "../gen/kelson/v1alpha1/deploy_pb";
 import { ProfileService } from "../gen/kelson/v1alpha1/profile_pb";
+import { SecretService } from "../gen/kelson/v1alpha1/secret_pb";
 import { SpecService } from "../gen/kelson/v1alpha1/spec_pb";
 import { renderAt } from "../test/render";
 import { healthEvent, transitionEvent, watchStub } from "../test/watch";
@@ -24,6 +25,23 @@ const transport = createRouterTransport((router) => {
           environments: { production: new TextEncoder().encode(ENV_YAML) },
         },
       },
+    }),
+  });
+
+  // The environment's Secrets panel (#116) reads this as soon as the page
+  // opens, so the stub answers it rather than leaving a failed list between the
+  // assertions below.
+  router.service(SecretService, {
+    listSecrets: () => ({
+      namespace: "checkout-production",
+      secrets: [
+        {
+          name: "checkout-db",
+          namespace: "checkout-production",
+          keys: ["url"],
+          ageSeconds: 3600n,
+        },
+      ],
     }),
   });
 
@@ -83,6 +101,19 @@ describe("AppDetailPage", () => {
     expect(
       screen.getByRole("link", { name: "Edit configuration" }).getAttribute("href"),
     ).toBe("/apps/checkout/edit");
+  });
+
+  it("lists the environment's kelson-managed Secrets beside it (#116)", async () => {
+    renderDetail();
+
+    // Per environment, because a Secret's lifecycle is the environment's: the
+    // panel addresses the namespace this tab names, not the project's.
+    expect(await screen.findByText("Secrets (1)")).toBeTruthy();
+    expect(screen.getByText("checkout-db")).toBeTruthy();
+    expect(screen.getByText("url")).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Write the Secret" }),
+    ).toBeTruthy();
   });
 
   it("links each environment to its release history (#67)", async () => {
