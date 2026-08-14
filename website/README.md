@@ -15,6 +15,18 @@ npm run typecheck
 Node >= 20 (`engines` in `package.json`). Dependencies are pinned to exact versions and
 `package-lock.json` is committed.
 
+## Deployment
+
+`.github/workflows/docs.yml` builds the site on every push and PR that touches `docs/`,
+`website/`, or the workflow itself. On push to `main` (and on manual dispatch) it also publishes
+`website/build` to the `gh-pages` branch, which GitHub Pages serves at
+<https://dafrie.github.io/kelson/>. PR builds only validate — they never publish.
+
+It publishes to a branch rather than using `actions/deploy-pages` because creating the Pages site
+through the API needs repo-admin rights the workflow token doesn't have. One manual step remains,
+once, and it takes an admin: Settings → Pages → Source: "Deploy from a branch" → `gh-pages` /
+`/ (root)`. After that, every publish to `gh-pages` goes live automatically.
+
 ## The content lives in `../docs`, not here
 
 `docusaurus.config.ts` points the docs plugin at `path: '../docs'`. Nothing is copied or synced —
