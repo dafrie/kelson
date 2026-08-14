@@ -204,7 +204,7 @@ export function componentWorkload(c: ComponentEdit): "service" | "worker" | "cro
 /**
  * The Project document, in examples/hello-single's shape.
  *
- * This is a superset of what documents.ts writes for a new app and produces
+ * This is a superset of what documents.ts writes for a new project and produces
  * byte-identical output for that subset — which is what makes the round-trip
  * guard usable at all: a document the create form stored yesterday is editable
  * today. Components are separated by a blank line, as examples/checkout-multi

@@ -22,7 +22,7 @@ import {
  *
  * There is no value input for either reference form, and that is the point: the
  * spec carries references, never credentials (ADR-0009). Where the credential
- * itself is written is the Secrets panel on the app page, or `kelson secret
+ * itself is written is the Secrets panel on the project page, or `kelson secret
  * set` — the hint beside every env block says so.
  */
 export function EnvValueFields({

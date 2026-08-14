@@ -21,7 +21,7 @@ import {
 import "./dataservices.css";
 
 /**
- * Data services, as their own section of the app detail page.
+ * Data services, as their own section of the project detail page.
  *
  * A database is not a workload and reading it as one is the mistake this
  * section exists to prevent: it has no replicas to scale, no image to roll, and

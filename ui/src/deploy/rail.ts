@@ -456,7 +456,7 @@ function diagnose({
       title: `Live, but ${workloads} are unhealthy`,
       detail: `The revision arrived — the delivery phase is ${phase}. The health verdicts below are what is failing.`,
       nextStep:
-        "Debug the workload — the delivery side is done, so this is the application's own problem.",
+        "Debug the workload — the delivery side is done, so this is the component's own problem.",
       action: { kind: "logs", label: "Open logs" },
       component: cause.component,
     };

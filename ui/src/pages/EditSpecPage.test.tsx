@@ -194,7 +194,7 @@ function renderEditor(stub: Stub = {}) {
         path: "/projects/:project",
         element: (
           <div>
-            <span>the app detail screen</span>
+            <span>the project detail screen</span>
             <Link to="/projects/hello/edit">back to the editor</Link>
           </div>
         ),
@@ -674,7 +674,7 @@ spec:
     fireEvent.click(screen.getByRole("link", { name: "← hello" }));
 
     expect(await screen.findByText("This spec has unsaved changes")).toBeTruthy();
-    expect(screen.queryByText("the app detail screen")).toBeNull();
+    expect(screen.queryByText("the project detail screen")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Stay on this page" }));
     await waitFor(() =>
@@ -684,7 +684,7 @@ spec:
 
     fireEvent.click(screen.getByRole("link", { name: "← hello" }));
     fireEvent.click(await screen.findByRole("button", { name: "Discard and leave" }));
-    expect(await screen.findByText("the app detail screen")).toBeTruthy();
+    expect(await screen.findByText("the project detail screen")).toBeTruthy();
   });
 
   it("lets a navigation through when nothing has been edited", async () => {
@@ -692,6 +692,6 @@ spec:
     await openedOnForm();
 
     fireEvent.click(screen.getByRole("link", { name: "← hello" }));
-    expect(await screen.findByText("the app detail screen")).toBeTruthy();
+    expect(await screen.findByText("the project detail screen")).toBeTruthy();
   });
 });

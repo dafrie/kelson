@@ -11,7 +11,7 @@ import { mappingFields, sequenceItems } from "./miniyaml";
  * space, a full-copy snapshot is minutes and a second copy of the database,
  * and the k3s default has no snapshot driver at all".
  *
- * This module turns that into the sentence a person reading their own app's
+ * This module turns that into the sentence a person reading their own project's
  * page needs, at the point where it matters (issue #107). Two rules shape
  * every string below:
  *

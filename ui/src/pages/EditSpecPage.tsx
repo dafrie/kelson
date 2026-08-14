@@ -1042,11 +1042,11 @@ function EnvRows({
       <span className="k-field__note k-mono">{note}</span>
       {/* Where a credential actually goes, one link away. A reference names a
           Secret in this environment's namespace and the panel that writes it is
-          on the app page (#116). */}
+          on the project page (#116). */}
       <span className="k-field__note k-mono">
         a reference carries no value — write the Secret itself in the{" "}
         <Link to={`/projects/${encodeURIComponent(project)}`}>Secrets panel</Link> on
-        this app's page, or with `kelson secret set`
+        this project's page, or with `kelson secret set`
       </span>
     </div>
   );
@@ -1341,7 +1341,7 @@ function Saved({ project }: { project: string }) {
       </span>
       <div className="k-actions">
         <Link className="k-button k-button--primary" to={base}>
-          View app
+          View project
         </Link>
       </div>
     </div>

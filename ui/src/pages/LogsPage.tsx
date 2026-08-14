@@ -30,14 +30,19 @@ import "./LogsPage.css";
  * Logs for one environment, in the engine's two shapes: a bounded Query and an
  * unbounded Follow (proto/kelson/v1alpha1/logs.proto).
  *
- * LogSelector wants a namespace and an application. The namespace is the
- * server's answer: StatusResponse carries the resolved one (#161), so the input
- * prefills from Status and a spec that sets `spec.namespace` is right without
- * anyone correcting it. Status needs a delivery plane, and a build started
- * without one answers Unimplemented — so the model's documented default
+ * LogSelector wants a namespace and a component. The namespace is the server's
+ * answer: StatusResponse carries the resolved one (#161), so the input prefills
+ * from Status and a spec that sets `spec.namespace` is right without anyone
+ * correcting it. Status needs a delivery plane, and a build started without one
+ * answers Unimplemented — so the model's documented default
  * `<project>-<environment>` (docs/model.md) stays as the fallback for exactly
- * that case, and the field stays an editable input either way. The application
+ * that case, and the field stays an editable input either way. The component
  * list is read out of the stored Project document.
+ *
+ * The selector's wire field is still `application`, and so is the label its
+ * pods carry: ADR-0014 renamed the authoring word and deliberately left
+ * `kelson.dev/application` alone (docs/model.md), so the request that goes out
+ * spells it the way the cluster does while the screen says what the model says.
  *
  * The bounds rules are the engine's and are not duplicated here: a query must
  * carry tail, since or around, and around and tail are mutually exclusive. The
@@ -121,7 +126,7 @@ export function LogsPage() {
         </label>
 
         <label className="k-field">
-          <span className="k-eyebrow">Application</span>
+          <span className="k-eyebrow">Component</span>
           <input
             className="k-input k-mono"
             value={application}

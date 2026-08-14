@@ -57,7 +57,7 @@ export function ProjectDetailPage() {
         <h1>{project}</h1>
       </div>
       <div className="k-page-sub">
-        <Link to="/projects">← all apps</Link>
+        <Link to="/projects">← all projects</Link>
         <span>·</span>
         <span>version {spec.data?.spec?.version || "—"}</span>
       </div>
@@ -166,7 +166,7 @@ function EnvironmentPanel({
     [clients, project, environment],
   );
 
-  // The same watch the apps list opens (#76), narrowed to this one
+  // The same watch the project list opens (#76), narrowed to this one
   // environment: the status block follows transitions, the workload list
   // follows health changes.
   const [live, setLive] = useState<PanelLive>(NO_LIVE);

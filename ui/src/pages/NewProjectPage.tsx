@@ -206,10 +206,10 @@ export function NewProjectPage() {
   return (
     <>
       <div className="k-page-head">
-        <h1>New app</h1>
+        <h1>New project</h1>
       </div>
       <div className="k-page-sub">
-        <Link to="/projects">← all apps</Link>
+        <Link to="/projects">← all projects</Link>
         <span>·</span>
         <span>
           {form.sourceMode === "git"
@@ -624,9 +624,9 @@ function Rows({
  * variable that sends someone looking for one — a Stripe key, an SMTP password
  * — is exactly the variable this form used to reject with `secret/literal` and
  * no next step. Picking it emits `{ secret: <name>, key: <key> }`, which is a
- * pointer; the credential itself is written in the Secrets panel on the app's
- * page, or with `kelson secret set`, and the note below says so because the
- * Secret does not exist yet at create time.
+ * pointer; the credential itself is written in the Secrets panel on the
+ * project's page, or with `kelson secret set`, and the note below says so
+ * because the Secret does not exist yet at create time.
  */
 function EnvRows({
   env,
@@ -702,8 +702,8 @@ function EnvRows({
         a plain value is stored in the spec as written, so it is never a
         credential (ADR-0009) — a secret-shaped name is rejected. Choose “secret
         ref” for a credential: it writes {"{ secret: <name>, key: <key> }"} and
-        the value goes into the Secret itself, in the app's Secrets panel or with
-        `kelson secret set`.
+        the value goes into the Secret itself, in the project's Secrets panel or
+        with `kelson secret set`.
       </span>
     </div>
   );
@@ -905,7 +905,7 @@ function Stored({ created }: { created: Created }) {
         <h1>{created.project}</h1>
       </div>
       <div className="k-page-sub">
-        <Link to="/projects">← all apps</Link>
+        <Link to="/projects">← all projects</Link>
         <span>·</span>
         <span className="k-chip k-mono">{created.environment}</span>
       </div>
@@ -927,7 +927,7 @@ function Stored({ created }: { created: Created }) {
             </Link>
           )}
           <Link className="k-button" to={base}>
-            View app
+            View project
           </Link>
         </div>
       </div>

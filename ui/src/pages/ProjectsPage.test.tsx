@@ -86,7 +86,7 @@ describe("ProjectsPage", () => {
     expect(screen.getByText("3 environments")).toBeTruthy();
     // The one way into the create flow (#63).
     expect(
-      screen.getByRole("link", { name: "New app" }).getAttribute("href"),
+      screen.getByRole("link", { name: "New project" }).getAttribute("href"),
     ).toBe("/projects/new");
   });
 

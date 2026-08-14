@@ -190,8 +190,8 @@ describe("NewProjectPage", () => {
                 code: "semantic/no-image-source",
                 resource: "Project/hello",
                 field: "$.spec.components[0]",
-                message: 'application "web" has no image source',
-                remediation: "set image on the application or the Project",
+                message: 'component "web" has no image source',
+                remediation: "set image on the component or the Project",
               },
               {
                 code: "secret/literal",
@@ -230,7 +230,7 @@ describe("NewProjectPage", () => {
     expect(field("Port")).toContain("schema/out-of-range");
     expect(field("Port")).toContain("set a valid TCP port");
     expect(field("Health path")).toContain('health path "healthz" must start with /');
-    // A no-image-source error is about the application, but the only thing the
+    // A no-image-source error is about the component, but the only thing the
     // form owns there is the image, so it points at the image.
     expect(field("Image")).toContain("has no image source");
     expect(screen.getByText(/DB_PASSWORD" looks like a secret/)).toBeTruthy();
@@ -360,7 +360,7 @@ describe("NewProjectPage", () => {
       screen.getByRole("link", { name: "Deploy now" }).getAttribute("href"),
     ).toBe("/projects/hello/development/deploy");
     expect(
-      screen.getByRole("link", { name: "View app" }).getAttribute("href"),
+      screen.getByRole("link", { name: "View project" }).getAttribute("href"),
     ).toBe("/projects/hello");
   });
 

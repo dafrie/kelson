@@ -1,5 +1,5 @@
 /*
- * The previews section of the app detail page.
+ * The previews section of the project detail page.
  *
  * Every colour is a --kelson-* token (src/styles/tokens.css, whose test fails
  * if the two palettes stop defining the same names). Nothing in this file may

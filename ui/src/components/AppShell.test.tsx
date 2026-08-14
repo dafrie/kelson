@@ -25,7 +25,7 @@ describe("AppShell", () => {
     const nav = screen.getByRole("navigation", { name: "Primary" });
     expect(
       Array.from(nav.querySelectorAll("a")).map((a) => a.textContent),
-    ).toEqual(["Apps", "Cluster"]);
+    ).toEqual(["Projects", "Cluster"]);
   });
 
   it("marks the current destination active", () => {
@@ -33,7 +33,7 @@ describe("AppShell", () => {
     expect(screen.getByRole("link", { name: "Cluster" }).className).toContain(
       "k-nav__item--active",
     );
-    expect(screen.getByRole("link", { name: "Apps" }).className).not.toContain(
+    expect(screen.getByRole("link", { name: "Projects" }).className).not.toContain(
       "k-nav__item--active",
     );
   });
