@@ -130,6 +130,11 @@ const sidebars: SidebarsConfig = {
           id: 'adr/0016-delivery-flows-v0',
           label: '0016 — Delivery flows v0',
         },
+        {
+          type: 'doc',
+          id: 'adr/0017-pr-previews',
+          label: '0017 — PR previews',
+        },
       ],
     },
   ],
