@@ -27,6 +27,7 @@ wrong, open an issue — it is far cheaper to reverse a decision now than after 
 | [0020](0020-external-secrets.md) | The `externalSecrets` backend — an ExternalSecret per referenced Secret (refines 0018) | Accepted |
 | [0021](0021-installing-missing-components.md) | Installing missing platform components — pinned upstream manifests, per-object provenance | Accepted |
 | [0022](0022-sops-age.md) | The `sops` backend — encrypt on write, decrypt in-cluster, kelson holds no key (refines 0018) | Accepted |
+| [0023](0023-explain-structured-causes.md) | `explain` — structured causes with confidence, evidence and revision provenance | Accepted |
 
 *Process note (2026-08-12):* ADR-0003 and ADR-0005 were revised in place before the immutability rule
 below hardened; their in-place revisions stand as recorded. From ADR-0012 on, changes supersede.

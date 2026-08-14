@@ -162,6 +162,11 @@ const sidebars: SidebarsConfig = {
           id: 'adr/0022-sops-age',
           label: '0022 — SOPS + age',
         },
+        {
+          type: 'doc',
+          id: 'adr/0023-explain-structured-causes',
+          label: '0023 — Explain: structured causes',
+        },
       ],
     },
   ],

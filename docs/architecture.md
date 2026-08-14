@@ -307,6 +307,11 @@ agent safety mechanism — one thing to build, one thing to reason about.
 **Observation, not polling.** A watch/SSE event stream lets agents react to outcomes. Plus structured
 `explain` endpoints — "why is this application degraded?" returns causal, machine-readable data
 (failing probes, recent revision, events, resource pressure), not a log dump for an LLM to guess at.
+That one is built: `ExplainService.Explain`, `kelson explain` and the `WHY` section of
+`diagnose_application` are three surfaces over one capability in `internal/explain`, and every cause it
+returns carries a stable code, a confidence, the evidence behind it and — where the recorded history
+shows one — the revision that introduced the change being blamed
+([ADR-0023](adr/0023-explain-structured-causes.md)).
 
 ## Secrets
 

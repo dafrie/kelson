@@ -53,6 +53,8 @@ type fakeServer struct {
 	listSecrets func(*kelsonv1alpha1.ListSecretsRequest) (*kelsonv1alpha1.ListSecretsResponse, error)
 
 	getProfile func(*kelsonv1alpha1.GetProfileRequest) (*kelsonv1alpha1.GetProfileResponse, error)
+
+	explain func(*kelsonv1alpha1.ExplainRequest) (*kelsonv1alpha1.ExplainResponse, error)
 }
 
 var (
@@ -62,7 +64,16 @@ var (
 	_ kelsonv1alpha1connect.EventServiceHandler  = (*fakeServer)(nil)
 	_ kelsonv1alpha1connect.SecretServiceHandler = (*fakeServer)(nil)
 	_ kelsonv1alpha1connect.ProfileServiceHandler = (*fakeServer)(nil)
+	_ kelsonv1alpha1connect.ExplainServiceHandler = (*fakeServer)(nil)
 )
+
+func (f *fakeServer) Explain(_ context.Context, req *connect.Request[kelsonv1alpha1.ExplainRequest]) (*connect.Response[kelsonv1alpha1.ExplainResponse], error) {
+	if f.explain == nil {
+		return nil, notWired("Explain")
+	}
+	msg, err := f.explain(req.Msg)
+	return respond(msg, err)
+}
 
 func notWired(what string) error {
 	return connect.NewError(connect.CodeUnimplemented, fmt.Errorf("this test did not wire %s", what))
@@ -220,6 +231,7 @@ func startWith(t *testing.T, fake *fakeServer, password string) *harness {
 	mux.Handle(kelsonv1alpha1connect.NewEventServiceHandler(fake))
 	mux.Handle(kelsonv1alpha1connect.NewSecretServiceHandler(fake))
 	mux.Handle(kelsonv1alpha1connect.NewProfileServiceHandler(fake))
+	mux.Handle(kelsonv1alpha1connect.NewExplainServiceHandler(fake))
 	srv := httptest.NewServer(record(fake, mux))
 	t.Cleanup(srv.Close)
 

@@ -34,6 +34,7 @@ type clients struct {
 	events  kelsonv1alpha1connect.EventServiceClient
 	secrets kelsonv1alpha1connect.SecretServiceClient
 	profile kelsonv1alpha1connect.ProfileServiceClient
+	explain kelsonv1alpha1connect.ExplainServiceClient
 }
 
 // fail renders a failed RPC as a tool error.
