@@ -152,11 +152,29 @@ func isDegraded(v observation.Verdict) bool {
 // kelson rendered for this project and environment, carrying the provenance the
 // adapter just matched against the cluster. No probe means no verdicts, which
 // printVerdicts reports as such rather than as "nothing is failing".
+//
+// The ExternalSecrets come first, and that order is the diagnosis. Under the
+// externalSecrets backend a Secret that never synced is why the pods below it
+// are stuck, and reading the cause before the symptom is what turns a
+// CreateContainerConfigError into an answer (issue #80, ADR-0020).
 func workloadVerdicts(ctx context.Context, plane *deliveryPlane, set delivery.ManifestSet, namespace string) ([]observation.Verdict, error) {
 	if plane.health == nil {
 		return nil, nil
 	}
 	var out []observation.Verdict
+	// The sync evaluator is an optional capability: an Evaluator that is only a
+	// workload probe (a test fake, or a future health source) keeps working and
+	// simply reports no sync verdicts, rather than forcing every implementation
+	// to grow a method for a backend it may never see.
+	if sync, ok := plane.health.(observation.SecretSyncEvaluator); ok {
+		for _, w := range externalSecrets(set, namespace) {
+			verdict, err := sync.EvaluateSecretSync(ctx, w.namespace, w.name)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, verdict)
+		}
+	}
 	for _, w := range deployments(set, namespace) {
 		verdict, err := plane.health.Evaluate(ctx, w.namespace, w.name)
 		if err != nil {
@@ -209,10 +227,28 @@ func containerReason(c observation.Container) string {
 	return fmt.Sprintf("%s (%s)", c.Code, c.Reason)
 }
 
-// workloadRef is one Deployment the observation plane can be asked about.
+// workloadRef is one resource the observation plane can be asked about.
 type workloadRef struct {
 	namespace string
 	name      string
+}
+
+// externalSecrets picks the ExternalSecrets out of a rendered set. They are
+// there only under the externalSecrets backend, so every other environment gets
+// an empty list and pays nothing (ADR-0020).
+func externalSecrets(set delivery.ManifestSet, fallbackNamespace string) []workloadRef {
+	var out []workloadRef
+	for _, m := range set.Manifests {
+		if m.Kind != "ExternalSecret" {
+			continue
+		}
+		ns := m.Namespace
+		if ns == "" {
+			ns = fallbackNamespace
+		}
+		out = append(out, workloadRef{namespace: ns, name: m.Name})
+	}
+	return out
 }
 
 // deployments picks the Deployments out of a rendered set. The observation

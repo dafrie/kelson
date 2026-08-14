@@ -272,30 +272,58 @@ func (s *Server) Status(ctx context.Context, req *connect.Request[kelsonv1alpha1
 	}), nil
 }
 
-// workloadVerdicts evaluates the observation verdict for every Deployment the
-// rendered set declares. The set IS the correlation: these are the resources
-// kelson rendered for this project and environment. No probe means no verdicts,
-// which is reported as an empty list rather than as "nothing is failing".
+// workloadVerdicts evaluates the observation verdict for every resource in the
+// rendered set that carries a health signal. The set IS the correlation: these
+// are the resources kelson rendered for this project and environment. No probe
+// means no verdicts, which is reported as an empty list rather than as "nothing
+// is failing".
+//
+// Two kinds qualify today. Deployments carry the workload verdict. And under
+// the externalSecrets backend, ExternalSecrets carry a sync verdict — which is
+// listed first, because a Secret that never synced is the reason the pods below
+// it are stuck, and the cause belongs above the symptom (issue #80, ADR-0020).
+// Every other kind carries no signal the probe can classify, and reporting
+// "unknown" for them as if it were a verdict would be worse than saying nothing.
 func workloadVerdicts(ctx context.Context, plane *Plane, set delivery.ManifestSet, namespace string) ([]*kelsonv1alpha1.WorkloadVerdict, error) {
 	if plane.Health == nil {
 		return nil, nil
 	}
-	var out []*kelsonv1alpha1.WorkloadVerdict
+	nsOf := func(m delivery.Manifest) string {
+		if m.Namespace != "" {
+			return m.Namespace
+		}
+		return namespace
+	}
+	var verdicts []observation.Verdict
+	// Sync verdicts are an optional capability of the configured Evaluator: a
+	// health source that is only a workload probe keeps working and simply
+	// reports none, rather than forcing every implementation to grow a method
+	// for a backend it may never see.
+	if sync, ok := plane.Health.(observation.SecretSyncEvaluator); ok {
+		for _, m := range set.Manifests {
+			if m.Kind != "ExternalSecret" {
+				continue
+			}
+			verdict, err := sync.EvaluateSecretSync(ctx, nsOf(m), m.Name)
+			if err != nil {
+				return nil, err
+			}
+			verdicts = append(verdicts, verdict)
+		}
+	}
 	for _, m := range set.Manifests {
-		// The probe reads Deployments and the pods in their selector set; other
-		// kinds carry no health signal it can classify, and reporting "unknown"
-		// for them as if it were a verdict would be worse than saying nothing.
 		if m.Kind != "Deployment" {
 			continue
 		}
-		ns := m.Namespace
-		if ns == "" {
-			ns = namespace
-		}
-		verdict, err := plane.Health.Evaluate(ctx, ns, m.Name)
+		verdict, err := plane.Health.Evaluate(ctx, nsOf(m), m.Name)
 		if err != nil {
 			return nil, err
 		}
+		verdicts = append(verdicts, verdict)
+	}
+
+	out := make([]*kelsonv1alpha1.WorkloadVerdict, 0, len(verdicts))
+	for _, verdict := range verdicts {
 		out = append(out, &kelsonv1alpha1.WorkloadVerdict{
 			Resource:    verdict.Resource,
 			Code:        string(verdict.Code),
@@ -304,6 +332,9 @@ func workloadVerdicts(ctx context.Context, plane *Plane, set delivery.ManifestSe
 			Message:     verdict.String(),
 			Remediation: verdict.Remediation,
 		})
+	}
+	if len(out) == 0 {
+		return nil, nil
 	}
 	return out, nil
 }
