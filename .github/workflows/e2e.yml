@@ -17,11 +17,15 @@
 
 name: E2E
 
+# TEMPORARILY manual-only: the account is out of Actions minutes and every
+# automatic run insta-fails as noise (owner decision, 2026-08-14). To re-enable,
+# delete the workflow_dispatch line and uncomment the original triggers below.
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
+  # push:
+  #   branches: [main]
+  # pull_request:
+  #   branches: [main]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
