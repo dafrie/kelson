@@ -242,20 +242,14 @@ func TestDeliverySpine(t *testing.T) {
 
 	t.Log("== a spec edit under the pin is new intent, and publishes ==")
 	// ADR-0028 decision 5 names two ways out of a rollback: remove the
-	// annotation, or edit the spec. This is the second one, and what is
-	// asserted about it is the half that is unambiguous — new intent is
-	// published, so the edit reaches the registry and the history mirror.
-	//
-	// What the OCIRepository points at *afterwards* is deliberately NOT
-	// asserted, and that is not an oversight. Today the annotation re-arms:
-	// the inert reconcile clears `status.rollbackRevision`
-	// (internal/controller/environment.go writes rb.Generation only when
-	// rb.Active), and the next reconcile therefore reads a standing annotation
-	// against an empty status field, calls it a *new* rollback and pins again
-	// — so a spec edit under the annotation publishes once and then flaps back.
-	// rollbackFor computes the generation an inert rollback should keep
-	// precisely to prevent that, and its answer is discarded. Recorded in
-	// docs/e2e.md; the way out that is stable is the one asserted below.
+	// annotation, or edit the spec. This is the second one: the edit
+	// publishes, and the standing annotation goes *inert* — a stable state
+	// whose bookkeeping (status.rollbackRevision at the generation the
+	// rollback arrived) survives the reconcile so the annotation is not
+	// re-read as a new rollback. (It once was: the inert reconcile cleared
+	// the fields and the environment flapped back to the pinned tag one
+	// reconcile after the edit. Caught while writing this stage; the
+	// regression test lives in internal/controller/reconcile_test.go.)
 	h.patchEnvironment(fmt.Sprintf(
 		`{"spec":{"components":[{"name":%q,"image":%q,"replicas":{"min":%d}}]}}`,
 		spineComponent, nextImage, spineResumedReplicas))
@@ -276,6 +270,24 @@ func TestDeliverySpine(t *testing.T) {
 	}
 	h.assertTagsInclude(registry, repository, rev1, rev2, rev3)
 	h.assertArtifactProvenance(registry, repository, rev3, gen3, env.Status.History[0])
+
+	// The annotation is still on the object and now inert: the bookkeeping is
+	// retained (that is what keeps it inert), the condition says so out loud,
+	// and the pointer follows the *edit*, not the stale pin.
+	env = h.awaitEnvironment("the standing annotation to go inert", spineSettleTimeout,
+		func(e *v1alpha1.Environment) (bool, string) {
+			progressing := conditionOf(e, v1alpha1.ConditionProgressing)
+			if !strings.Contains(progressing.Message, "inert") {
+				return false, "Progressing is " + progressing.String()
+			}
+			return true, "Progressing says the annotation is inert"
+		})
+	if env.Status.RollbackRevision != rev1 || env.Status.RollbackGeneration != gen2 {
+		t.Errorf("the inert rollback lost its bookkeeping (%q at generation %d, want %q at %d); "+
+			"without it the next reconcile re-reads the annotation as a new rollback and re-pins",
+			env.Status.RollbackRevision, env.Status.RollbackGeneration, rev1, gen2)
+	}
+	h.assertFluxPair(rev3)
 
 	t.Log("== removing the annotation resumes tracking the spec ==")
 	h.kubectlOK("-n", spineNamespace, "annotate", "environment", spineEnvName,

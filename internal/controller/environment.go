@@ -239,8 +239,13 @@ func (r *EnvironmentReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 	env.Status.Phase = nextPhase(env.Status.Phase, outcome.Phase)
 	env.Status.History = recordHistory(env.Status.History, outcome, specHash, metav1.Now())
+	// Both the active and the inert case keep their bookkeeping: an inert
+	// rollback that lost its status.rollbackGeneration would be re-read as a
+	// *new* rollback on the next reconcile (case 1 of rollbackFor) and pin
+	// again — the spec edit would publish once and flap back to the pinned
+	// tag. Only a removed annotation clears the fields.
 	env.Status.RollbackRevision, env.Status.RollbackGeneration = "", 0
-	if rb.Active {
+	if rb.Active || rb.Inert {
 		env.Status.RollbackRevision, env.Status.RollbackGeneration = rb.Requested, rb.Generation
 	}
 

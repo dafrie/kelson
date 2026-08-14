@@ -123,6 +123,7 @@ func rollbackPinnedMessage(target string) string {
 func rollbackInertMessage(target string, at int64) string {
 	return fmt.Sprintf(
 		"%s=%s is inert: the spec was edited after the rollback (generation is past %d), which resumes "+
-			"normal publishing. Remove the annotation — it will pin again if the spec is edited no further.",
+			"normal publishing. Remove the annotation — it stays inert until then, and re-applying it "+
+			"with a different target starts a new rollback.",
 		v1alpha1.AnnotationRollbackTo, target, at)
 }

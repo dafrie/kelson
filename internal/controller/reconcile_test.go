@@ -156,14 +156,33 @@ func TestRollbackGoesInertOnASpecEdit(t *testing.T) {
 		t.Error("normal publishing did not resume: nothing was rendered")
 	}
 	got := readEnvironment(t, c, "production")
-	if got.Status.RollbackRevision != "" {
-		t.Errorf("the status still claims a rollback: %q", got.Status.RollbackRevision)
+	// The bookkeeping survives the inert reconcile. Clearing it here would
+	// hand the next reconcile a standing annotation against an empty
+	// status.rollbackRevision — case 1 of rollbackFor, a *new* rollback —
+	// and the environment would flap back to the pinned tag one reconcile
+	// after publishing the edit.
+	if got.Status.RollbackRevision != "6-9f0a1b2c" || got.Status.RollbackGeneration != 7 {
+		t.Errorf("the inert rollback lost its bookkeeping: %q at generation %d",
+			got.Status.RollbackRevision, got.Status.RollbackGeneration)
 	}
 	// An annotation that silently stopped mattering is worse than one that
 	// never worked, so the condition says it is inert.
 	prog := progressing(t, got.Status.Conditions)
 	if !strings.Contains(prog.Message, "inert") {
 		t.Errorf("Progressing does not say the annotation is inert: %q", prog.Message)
+	}
+
+	// And it stays inert: the annotation is untouched, so the next reconcile
+	// must read the same state, not re-pin.
+	spy.outcome = Outcome{Revision: "8-abcdef01", Phase: v1alpha1.PhaseCommitted}
+	if _, err := r.Reconcile(context.Background(), request("production")); err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+	if spy.got.PinnedTo != "" {
+		t.Fatalf("the inert rollback re-armed on the next reconcile: pinned to %q", spy.got.PinnedTo)
+	}
+	if len(spy.got.Manifests) == 0 {
+		t.Error("the second reconcile did not render: the inert rollback suspended publishing")
 	}
 }
 

@@ -123,20 +123,16 @@ left:
 8. a spec edit under the pin publishes a third revision — new intent wins;
 9. removing the annotation resumes tracking, and revision 3 goes live.
 
-### Known: an inert rollback re-arms
+### Note: why step 8 asserts the registry, not the pointer
 
-ADR-0028 decision 5 names two ways out of a rollback — remove the annotation, or edit the spec — and
-only the first is stable today. `rollbackFor` (`internal/controller/rollback.go`) correctly computes
-the generation an *inert* rollback should keep, but `EnvironmentReconciler.Reconcile`
-(`internal/controller/environment.go`) writes `status.rollbackRevision` / `status.rollbackGeneration`
-only when the rollback is **active**, and clears them otherwise. So the inert reconcile publishes the
-edited spec and then wipes the field the next reconcile needs: that reconcile sees a standing
-annotation against an empty `status.rollbackRevision`, calls it a *new* rollback, and pins again. A
-spec edit under the annotation therefore publishes once and flaps back.
-
-Step 8 above asserts only the half that holds either way — the edit is published, and the artifact
-and the history record it — and step 9 uses the way out that is stable. Fixing the reconciler is a
-change to `internal/controller`, not to this harness.
+ADR-0028 decision 5 names two ways out of a rollback — remove the annotation, or edit the spec. The
+second goes *inert*: the edit publishes, the standing annotation stops mattering, and
+`status.rollbackRevision` / `status.rollbackGeneration` keep the bookkeeping that makes the next
+reconcile read the same state instead of re-pinning (the reconciler once cleared them here, which
+made an inert rollback re-arm and flap back one reconcile after the edit — caught while writing this
+stage, fixed in `internal/controller`, regression-tested in `reconcile_test.go`). Step 8 asserts the
+durable evidence — the edit's artifact and history entry — and step 9 removes the annotation
+explicitly, exercising the first way out end to end.
 
 ## The example
 

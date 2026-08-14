@@ -35,9 +35,9 @@ only scenario that applies nothing but a `Project` and an `Environment`:
    `Ready=RolledBack`, `Progressing=False/RollbackPinned`, and no new history entry, because a
    rollback publishes nothing.
 7. Nothing is republished while the pin is in force, observed over a quiet window.
-8. A spec edit under the pin publishes revision 3 (new intent wins), and removing the annotation
-   makes revision 3 live. Only the second of those two ways out is stable today — see the note in
-   [docs/e2e.md](../../docs/e2e.md#known-an-inert-rollback-re-arms).
+8. A spec edit under the pin publishes revision 3 (new intent wins), the standing annotation goes
+   inert without re-pinning, and removing the annotation makes revision 3 live — see the note in
+   [docs/e2e.md](../../docs/e2e.md#note-why-step-8-asserts-the-registry-not-the-pointer).
 
 It needs Flux, an in-cluster registry and kelson-controller, which `hack/e2e/spine.sh` installs and
 `make test-e2e` runs first. Missing prerequisites are a loud failure naming that script, never a
