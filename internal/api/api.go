@@ -39,6 +39,7 @@ package api
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -75,6 +76,22 @@ type SpecStore interface {
 	Get(ctx context.Context, project string) (serverstate.Stored, error)
 	List(ctx context.Context) ([]serverstate.Stored, error)
 	Delete(ctx context.Context, project string, opts serverstate.DeleteOptions) error
+}
+
+// AgentStore is the agent-identity seam (issue #74, ADR-0023).
+// *serverstate.AgentStore implements it. A nil one is a server with no agent
+// principals: AgentService answers CodeUnimplemented and the gate in auth.go
+// recognises no agent tokens, which is the pre-#74 posture exactly.
+//
+// Authenticate is on this interface rather than on a narrower one because the
+// gate and the handlers must not be able to disagree about which store an
+// identity lives in — a revocation written through one and not seen by the
+// other would be precisely the bug #74 exists to prevent.
+type AgentStore interface {
+	Create(ctx context.Context, spec serverstate.AgentSpec) (serverstate.Agent, string, error)
+	List(ctx context.Context) ([]serverstate.Agent, error)
+	Revoke(ctx context.Context, name string) (serverstate.Agent, error)
+	Authenticate(ctx context.Context, token string) (serverstate.Agent, error)
 }
 
 // ProfileCapture captures a ClusterProfile from the server's own cluster. In
@@ -271,9 +288,19 @@ type Options struct {
 	Logs     LogEngine
 	Build    BuildConnector
 	Secrets  SecretStore
+	Agents   AgentStore
 
 	// BuildDefaults is the destination configuration builds fall back to.
 	BuildDefaults BuildDefaults
+
+	// Logger receives the audit attribution line every authenticated request
+	// leaves (issue #74, the seam #78 builds on). Nil discards it, which is
+	// what a test wants and what a server started without --log-format gets.
+	Logger *slog.Logger
+
+	// Now is the clock the authorization interceptor checks expiry and refills
+	// rate-limit buckets against. Nil selects time.Now.
+	Now func() time.Time
 
 	// DeployTimeout is the fallback budget for a Deploy whose request carries
 	// no timeout. Zero selects [DefaultDeployTimeout].
@@ -286,7 +313,7 @@ type Options struct {
 	WatchInterval time.Duration
 }
 
-// Server implements all ten kelson.v1alpha1 services.
+// Server implements all eleven kelson.v1alpha1 services.
 type Server struct {
 	specs    SpecStore
 	profile  ProfileCapture
@@ -295,6 +322,12 @@ type Server struct {
 	logs     LogEngine
 	build    BuildConnector
 	secrets  SecretStore
+	agents   AgentStore
+
+	// authz is the scope, rate-limit and audit-attribution interceptor. It is
+	// built here and mounted by Register so no caller can serve these handlers
+	// without it (issue #74).
+	authz *authorizer
 
 	buildDefaults BuildDefaults
 
@@ -318,6 +351,7 @@ var (
 	_ kelsonv1alpha1connect.SecretServiceHandler  = (*Server)(nil)
 	_ kelsonv1alpha1connect.PreviewServiceHandler = (*Server)(nil)
 	_ kelsonv1alpha1connect.ExplainServiceHandler = (*Server)(nil)
+	_ kelsonv1alpha1connect.AgentServiceHandler   = (*Server)(nil)
 )
 
 // New returns a Server over the given seams.
@@ -330,6 +364,8 @@ func New(opts Options) *Server {
 		logs:          opts.Logs,
 		build:         opts.Build,
 		secrets:       opts.Secrets,
+		agents:        opts.Agents,
+		authz:         newAuthorizer(opts.Now, opts.Logger),
 		buildDefaults: opts.BuildDefaults,
 		deployTimeout: opts.DeployTimeout,
 		pollInterval:  opts.PollInterval,
@@ -347,7 +383,13 @@ func New(opts Options) *Server {
 // Register mounts every service on mux. Keeping the mounting here means a
 // service added to the schema is wired in one place rather than in every
 // caller that serves the API.
+//
+// The authorization interceptor is prepended to whatever the caller passes, so
+// there is no way to serve these handlers without it (issue #74). It is inert
+// for a human or anonymous principal — the password path of #84 is unchanged —
+// and it is the only thing standing between an agent credential and an RPC.
 func (s *Server) Register(mux *http.ServeMux, opts ...connect.HandlerOption) {
+	opts = append([]connect.HandlerOption{connect.WithInterceptors(s.authz)}, opts...)
 	handlers := []func() (string, http.Handler){
 		func() (string, http.Handler) { return kelsonv1alpha1connect.NewSpecServiceHandler(s, opts...) },
 		func() (string, http.Handler) { return kelsonv1alpha1connect.NewRenderServiceHandler(s, opts...) },
@@ -359,6 +401,7 @@ func (s *Server) Register(mux *http.ServeMux, opts ...connect.HandlerOption) {
 		func() (string, http.Handler) { return kelsonv1alpha1connect.NewSecretServiceHandler(s, opts...) },
 		func() (string, http.Handler) { return kelsonv1alpha1connect.NewPreviewServiceHandler(s, opts...) },
 		func() (string, http.Handler) { return kelsonv1alpha1connect.NewExplainServiceHandler(s, opts...) },
+		func() (string, http.Handler) { return kelsonv1alpha1connect.NewAgentServiceHandler(s, opts...) },
 	}
 	for _, build := range handlers {
 		mux.Handle(build())
