@@ -350,7 +350,7 @@ function stageStates({
   if (at === 4) {
     // Healthy. A live revision with a bad verdict underneath is a real and
     // important thing to see, so the health stage reports the verdicts rather
-    // than the phase (AppDetailPage makes the same point about its two halves).
+    // than the phase (ProjectDetailPage makes the same point about its two halves).
     states[4] = unhealthy > 0 ? "failed" : "done";
     return states;
   }

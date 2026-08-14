@@ -112,7 +112,7 @@ interface Created {
   buildsFromSource: boolean;
 }
 
-export function NewAppPage() {
+export function NewProjectPage() {
   const clients = useClients();
   const [form, setForm] = useState<NewAppForm>(EMPTY_FORM);
   const [touched, setTouched] = useState<Partial<Record<FieldKey, true>>>({});
@@ -209,7 +209,7 @@ export function NewAppPage() {
         <h1>New app</h1>
       </div>
       <div className="k-page-sub">
-        <Link to="/apps">← all apps</Link>
+        <Link to="/projects">← all apps</Link>
         <span>·</span>
         <span>
           {form.sourceMode === "git"
@@ -250,7 +250,7 @@ export function NewAppPage() {
             {taken ? (
               <span className="k-field__problem k-mono" role="alert">
                 a project with this name already exists —{" "}
-                <Link to={`/apps/${encodeURIComponent(form.project.trim())}`}>
+                <Link to={`/projects/${encodeURIComponent(form.project.trim())}`}>
                   open it
                 </Link>{" "}
                 or choose another name
@@ -897,7 +897,7 @@ function Preview({
 }
 
 function Stored({ created }: { created: Created }) {
-  const base = `/apps/${encodeURIComponent(created.project)}`;
+  const base = `/projects/${encodeURIComponent(created.project)}`;
   const deploy = `${base}/${encodeURIComponent(created.environment)}/deploy`;
   return (
     <>
@@ -905,7 +905,7 @@ function Stored({ created }: { created: Created }) {
         <h1>{created.project}</h1>
       </div>
       <div className="k-page-sub">
-        <Link to="/apps">← all apps</Link>
+        <Link to="/projects">← all apps</Link>
         <span>·</span>
         <span className="k-chip k-mono">{created.environment}</span>
       </div>

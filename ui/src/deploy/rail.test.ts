@@ -354,7 +354,7 @@ describe("who is responsible", () => {
   });
 
   it("refuses to name a reconciler the wire never named", () => {
-    // The AppDetailPage case: Status carries no mode and no adapter.
+    // The ProjectDetailPage case: Status carries no mode and no adapter.
     const stage = buildRail({ phase: "Reconciling" }).stages[2];
     expect(stage?.actorKnown).toBe(false);
     expect(stage?.actor).toBe("reconciler");

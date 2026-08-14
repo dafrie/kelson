@@ -110,7 +110,7 @@ export function HistoryPage() {
   const statusFailure =
     status.error === undefined ? undefined : toFailure(status.error);
   const statusLoading = status.loading && status.data === undefined;
-  const base = `/apps/${encodeURIComponent(project)}/${encodeURIComponent(env)}`;
+  const base = `/projects/${encodeURIComponent(project)}/${encodeURIComponent(env)}`;
 
   return (
     <>
@@ -118,7 +118,7 @@ export function HistoryPage() {
         <h1>History</h1>
       </div>
       <div className="k-page-sub">
-        <Link to={`/apps/${encodeURIComponent(project)}`}>← {project}</Link>
+        <Link to={`/projects/${encodeURIComponent(project)}`}>← {project}</Link>
         <span>·</span>
         <span className="k-chip k-mono">{env}</span>
         <span>·</span>

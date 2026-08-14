@@ -186,16 +186,16 @@ function renderEditor(stub: Stub = {}) {
   const { transport, recorder } = stubTransport(stub);
   const view = renderAt(
     transport,
-    "/apps/hello/edit",
-    "/apps/:project/edit",
+    "/projects/hello/edit",
+    "/projects/:project/edit",
     <EditSpecPage />,
     [
       {
-        path: "/apps/:project",
+        path: "/projects/:project",
         element: (
           <div>
             <span>the app detail screen</span>
-            <Link to="/apps/hello/edit">back to the editor</Link>
+            <Link to="/projects/hello/edit">back to the editor</Link>
           </div>
         ),
       },

@@ -265,7 +265,7 @@ export function RequireSession() {
  */
 export function safeReturnPath(next: string | null): string {
   if (!next || !next.startsWith("/") || next.startsWith("//") || next.startsWith("/\\")) {
-    return "/apps";
+    return "/projects";
   }
   return next;
 }

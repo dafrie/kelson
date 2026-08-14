@@ -28,7 +28,7 @@ import "./AppShell.css";
 const DOCS_URL = "https://github.com/dafrie/kelson/tree/main/docs";
 
 const NAV = [
-  { to: "/apps", label: "Apps" },
+  { to: "/projects", label: "Apps" },
   { to: "/cluster", label: "Cluster" },
 ] as const;
 
@@ -62,8 +62,8 @@ export function AppShell() {
     <>
       <header className="k-header">
         {/* Link, not NavLink: the brand is a way home, not a nav item, and it
-            must not claim aria-current when /apps happens to be open. */}
-        <Link to="/apps" className="k-header__brand">
+            must not claim aria-current when /projects happens to be open. */}
+        <Link to="/projects" className="k-header__brand">
           <KelsonMark />
           <span className="k-header__wordmark">kelson</span>
         </Link>

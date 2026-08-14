@@ -45,7 +45,7 @@ interface CardLive {
   health?: string;
 }
 
-export function AppsPage() {
+export function ProjectsPage() {
   const clients = useClients();
   const specs = useAsync(
     (signal) => clients.spec.listSpecs({}, { signal }),
@@ -119,7 +119,7 @@ export function AppsPage() {
         {/* The mockup's one accent-outlined mono action, in the place it puts
             it. This is the only way into the create flow, so it stays visible
             whether the grid is full or empty. */}
-        <Link className="k-button k-button--primary" to="/apps/new">
+        <Link className="k-button k-button--primary" to="/projects/new">
           New app
         </Link>
       </div>
@@ -256,7 +256,7 @@ function AppCard({
       <div className="k-card__head">
         <div className="k-card__ident">
           <Link
-            to={`/apps/${encodeURIComponent(project)}`}
+            to={`/projects/${encodeURIComponent(project)}`}
             className="k-card__name"
           >
             {project}

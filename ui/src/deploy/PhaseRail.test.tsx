@@ -27,8 +27,8 @@ function renderRail(input: RailInput, props: Partial<Parameters<typeof PhaseRail
           />
         ),
       },
-      { path: "/apps/checkout/edit", element: <p>edit</p> },
-      { path: "/apps/checkout/production/logs", element: <p>logs</p> },
+      { path: "/projects/checkout/edit", element: <p>edit</p> },
+      { path: "/projects/checkout/production/logs", element: <p>logs</p> },
     ],
     { initialEntries: ["/"] },
   );
@@ -152,7 +152,7 @@ describe("PhaseRail", () => {
     expect(screen.getByText(/Debug the workload/)).toBeTruthy();
     expect(screen.getByText(/Deployment\/checkout has 1\/3 replicas ready/)).toBeTruthy();
     const link = screen.getByRole("link", { name: "Open logs" });
-    expect(link.getAttribute("href")).toBe("/apps/checkout/production/logs");
+    expect(link.getAttribute("href")).toBe("/projects/checkout/production/logs");
   });
 
   it("never renders the same panel for two different failures", () => {

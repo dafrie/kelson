@@ -9,7 +9,7 @@ import { SecretService } from "../gen/kelson/v1alpha1/secret_pb";
 import { SpecService } from "../gen/kelson/v1alpha1/spec_pb";
 import { renderAt } from "../test/render";
 import { healthEvent, transitionEvent, watchStub } from "../test/watch";
-import { AppDetailPage } from "./AppDetailPage";
+import { ProjectDetailPage } from "./ProjectDetailPage";
 
 const PROJECT_YAML = "kind: Project\nmetadata:\n  name: checkout\n";
 const ENV_YAML = "kind: Environment\nmetadata:\n  name: production\n";
@@ -88,10 +88,10 @@ const transport = createRouterTransport((router) => {
 });
 
 function renderDetail() {
-  return renderAt(transport, "/apps/checkout", "/apps/:project", <AppDetailPage />);
+  return renderAt(transport, "/projects/checkout", "/projects/:project", <ProjectDetailPage />);
 }
 
-describe("AppDetailPage", () => {
+describe("ProjectDetailPage", () => {
   it("shows the phase and the workload verdicts, which are different answers", async () => {
     renderDetail();
 
@@ -113,7 +113,7 @@ describe("AppDetailPage", () => {
     // Editing is reached from the documents, next to the bytes it changes.
     expect(
       screen.getByRole("link", { name: "Edit configuration" }).getAttribute("href"),
-    ).toBe("/apps/checkout/edit");
+    ).toBe("/projects/checkout/edit");
   });
 
   it("lists the environment's kelson-managed Secrets beside it (#116)", async () => {
@@ -134,7 +134,7 @@ describe("AppDetailPage", () => {
 
     expect(
       (await screen.findByRole("link", { name: "History" })).getAttribute("href"),
-    ).toBe("/apps/checkout/production/history");
+    ).toBe("/projects/checkout/production/history");
   });
 
   it("offers promotion into the environment on screen, named from its side (#11)", async () => {
@@ -148,7 +148,7 @@ describe("AppDetailPage", () => {
           name: "Promote into this environment",
         })
       ).getAttribute("href"),
-    ).toBe("/apps/checkout/production/promote");
+    ).toBe("/projects/checkout/production/promote");
   });
 
   it("disables promotion when the project declares nowhere to promote from", async () => {
@@ -162,7 +162,7 @@ describe("AppDetailPage", () => {
         status: () => ({ phase: "Healthy", revision: "8f2c1ad", verdicts: [] }),
       });
     });
-    renderAt(alone, "/apps/checkout", "/apps/:project", <AppDetailPage />);
+    renderAt(alone, "/projects/checkout", "/projects/:project", <ProjectDetailPage />);
 
     const promote = await screen.findByRole("button", {
       name: "Promote into this environment",
@@ -188,7 +188,7 @@ describe("AppDetailPage", () => {
   });
 });
 
-describe("AppDetailPage data services", () => {
+describe("ProjectDetailPage data services", () => {
   const DATA_PROJECT = `kind: Project
 metadata:
   name: checkout
@@ -250,7 +250,7 @@ spec:
   });
 
   it("gives a database its own section and keeps it out of the workload list", async () => {
-    renderAt(withData, "/apps/checkout", "/apps/:project", <AppDetailPage />);
+    renderAt(withData, "/projects/checkout", "/projects/:project", <ProjectDetailPage />);
 
     expect(await screen.findByText("Data services (1)")).toBeTruthy();
     expect(screen.getByText("1 instance")).toBeTruthy();
@@ -267,7 +267,7 @@ spec:
   });
 });
 
-describe("AppDetailPage live updates", () => {
+describe("ProjectDetailPage live updates", () => {
   it("updates the status block and the verdict the event names (#76)", async () => {
     const events = watchStub([]);
     const live = createRouterTransport((router) => {
@@ -298,7 +298,7 @@ describe("AppDetailPage live updates", () => {
       });
       events.install(router);
     });
-    renderAt(live, "/apps/checkout", "/apps/:project", <AppDetailPage />);
+    renderAt(live, "/projects/checkout", "/projects/:project", <ProjectDetailPage />);
 
     expect(
       await screen.findByText("reconciling", { selector: ".k-pill" }),
@@ -361,9 +361,9 @@ describe("AppDetailPage live updates", () => {
     });
     const { container } = renderAt(
       live,
-      "/apps/checkout",
-      "/apps/:project",
-      <AppDetailPage />,
+      "/projects/checkout",
+      "/projects/:project",
+      <ProjectDetailPage />,
     );
 
     // Compact, and honest about what it cannot know: StatusResponse carries no

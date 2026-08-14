@@ -177,7 +177,7 @@ export function PromotePage() {
     });
   }, [plan, applyRun, clients, project, env]);
 
-  const base = `/apps/${encodeURIComponent(project)}/${encodeURIComponent(env)}`;
+  const base = `/projects/${encodeURIComponent(project)}/${encodeURIComponent(env)}`;
   const counts = countStatuses(plan?.response.components ?? []);
   const refused = (plan?.response.errors.length ?? 0) > 0;
 
@@ -191,7 +191,7 @@ export function PromotePage() {
         <h1>Promote into {env}</h1>
       </div>
       <div className="k-page-sub">
-        <Link to={`/apps/${encodeURIComponent(project)}`}>← {project}</Link>
+        <Link to={`/projects/${encodeURIComponent(project)}`}>← {project}</Link>
         <span>·</span>
         <span className="k-chip k-mono">{env}</span>
         <span>·</span>
@@ -596,7 +596,7 @@ function Pinned({
         <h1>Promote into {env}</h1>
       </div>
       <div className="k-page-sub">
-        <Link to={`/apps/${encodeURIComponent(project)}`}>← {project}</Link>
+        <Link to={`/projects/${encodeURIComponent(project)}`}>← {project}</Link>
         <span>·</span>
         <span className="k-chip k-mono">{env}</span>
       </div>
@@ -645,7 +645,7 @@ function Pinned({
           <Link className="k-button" to={`${base}/diff`}>
             Diff first
           </Link>
-          <Link className="k-button" to={`/apps/${encodeURIComponent(project)}`}>
+          <Link className="k-button" to={`/projects/${encodeURIComponent(project)}`}>
             Back to {project}
           </Link>
         </div>

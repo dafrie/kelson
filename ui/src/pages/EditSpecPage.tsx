@@ -90,7 +90,7 @@ export function EditSpecPage() {
         <h1>{project}</h1>
       </div>
       <div className="k-page-sub">
-        <Link to={`/apps/${encodeURIComponent(project)}`}>← {project}</Link>
+        <Link to={`/projects/${encodeURIComponent(project)}`}>← {project}</Link>
         <span>·</span>
         <span>edit configuration</span>
         <span>·</span>
@@ -1045,7 +1045,7 @@ function EnvRows({
           on the app page (#116). */}
       <span className="k-field__note k-mono">
         a reference carries no value — write the Secret itself in the{" "}
-        <Link to={`/apps/${encodeURIComponent(project)}`}>Secrets panel</Link> on
+        <Link to={`/projects/${encodeURIComponent(project)}`}>Secrets panel</Link> on
         this app's page, or with `kelson secret set`
       </span>
     </div>
@@ -1328,7 +1328,7 @@ function ConflictState({
 }
 
 function Saved({ project }: { project: string }) {
-  const base = `/apps/${encodeURIComponent(project)}`;
+  const base = `/projects/${encodeURIComponent(project)}`;
   return (
     <div className="k-settled" role="status">
       <div className="k-settled__head">

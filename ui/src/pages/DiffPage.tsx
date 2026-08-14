@@ -47,7 +47,7 @@ export function DiffPage() {
         <h1>Diff</h1>
       </div>
       <div className="k-page-sub">
-        <Link to={`/apps/${encodeURIComponent(project)}`}>← {project}</Link>
+        <Link to={`/projects/${encodeURIComponent(project)}`}>← {project}</Link>
         <span>·</span>
         <span className="k-chip k-mono">{env}</span>
         <span>·</span>

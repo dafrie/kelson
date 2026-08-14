@@ -99,7 +99,7 @@ export function LogsPage() {
         <h1>Logs</h1>
       </div>
       <div className="k-page-sub">
-        <Link to={`/apps/${encodeURIComponent(project)}`}>← {project}</Link>
+        <Link to={`/projects/${encodeURIComponent(project)}`}>← {project}</Link>
         <span>·</span>
         <span className="k-chip k-mono">{env}</span>
       </div>
