@@ -27,6 +27,7 @@ import {
   type ComponentEdit,
   type EditFieldKey,
   type EnvironmentEdit,
+  type PreviewsEdit,
   type SpecEdit,
   type SpecTextSet,
 } from "../spec/edit";
@@ -539,10 +540,238 @@ function SpecForm({
                 errors={errorsFor(`environment.${env.name}.namespace`)}
                 note="override the model's default; blank leaves the default in place"
               />
+              <EditField
+                label="Delivery mode"
+                narrow
+                value={env.delivery.mode}
+                onChange={(v) =>
+                  setEnvironment(i, { delivery: { ...env.delivery, mode: v } })
+                }
+                readOnly={readOnly}
+                placeholder="direct"
+                errors={errorsFor(`environment.${env.name}.delivery.mode`)}
+                note="direct or flux; blank is the model's default (direct)"
+              />
             </div>
+
+            {env.delivery.mode.trim() === "" ? null : (
+              <div className="k-new__row">
+                <EditField
+                  label="Deployment repository"
+                  value={env.delivery.gitRepo}
+                  onChange={(v) =>
+                    setEnvironment(i, { delivery: { ...env.delivery, gitRepo: v } })
+                  }
+                  readOnly={readOnly}
+                  placeholder="git@github.com:acme/deploy.git"
+                  errors={errorsFor(`environment.${env.name}.delivery.gitRepo`)}
+                  note="where kelson commits rendered manifests — required in flux mode, and not the previews source repository"
+                />
+                <EditField
+                  label="Branch"
+                  narrow
+                  value={env.delivery.gitBranch}
+                  onChange={(v) =>
+                    setEnvironment(i, { delivery: { ...env.delivery, gitBranch: v } })
+                  }
+                  readOnly={readOnly}
+                  placeholder="main"
+                  errors={errorsFor(`environment.${env.name}.delivery.gitBranch`)}
+                />
+                <EditField
+                  label="Path"
+                  value={env.delivery.gitPath}
+                  onChange={(v) =>
+                    setEnvironment(i, { delivery: { ...env.delivery, gitPath: v } })
+                  }
+                  readOnly={readOnly}
+                  placeholder={`${env.project}/${env.name}`}
+                  errors={errorsFor(`environment.${env.name}.delivery.gitPath`)}
+                />
+              </div>
+            )}
+
+            <PreviewsFields
+              environment={env}
+              readOnly={readOnly}
+              onChange={(previews) => setEnvironment(i, { previews })}
+              errorsFor={errorsFor}
+            />
           </div>
         </section>
       ))}
+    </div>
+  );
+}
+
+/**
+ * `spec.previews` on an Environment (ADR-0017), authored here.
+ *
+ * Turning it on writes the block; turning it off removes it. There is no
+ * `enabled:` key in the schema and this does not invent one — an environment
+ * either declares previews or does not.
+ *
+ * Two things this form states rather than enforces. Previews render in flux
+ * delivery mode only, so a block written under any other mode is
+ * `render/previews-require-flux` from the server on Check — the note says so
+ * and the refusal arrives with its own remediation, which is better than a
+ * disabled control that cannot explain itself. And the block alone stands up no
+ * preview: a CI step running `kelson preview publish` is the other half, and
+ * the field notes point at it, because an environment configured here and
+ * nowhere else gets change requests whose artifacts never arrive.
+ */
+function PreviewsFields({
+  environment: env,
+  readOnly,
+  onChange,
+  errorsFor,
+}: {
+  environment: EnvironmentEdit;
+  readOnly: boolean;
+  onChange: (previews: PreviewsEdit) => void;
+  errorsFor: (field: EditFieldKey) => WireError[];
+}) {
+  const p = env.previews;
+  const set = (patch: Partial<PreviewsEdit>) => onChange({ ...p, ...patch });
+  const field = (name: string) =>
+    errorsFor(`environment.${env.name}.previews.${name}`);
+  const fluxMode = env.delivery.mode.trim() === "flux";
+
+  return (
+    <div className="k-edit__previews">
+      <label className="k-field__check">
+        <input
+          type="checkbox"
+          checked={p.enabled}
+          disabled={readOnly}
+          onChange={(e) => set({ enabled: e.target.checked })}
+        />
+        <span>Spawn a preview environment per open pull request</span>
+      </label>
+      <span className="k-field__note k-mono">
+        {p.enabled
+          ? fluxMode
+            ? "flux-operator polls the forge and stands up <project>-<environment>-pr<id> per change request. The manifests come from a CI step running `kelson preview publish` — without it, every preview waits for an artifact nobody pushed."
+            : "previews render in flux delivery mode only (ADR-0017): set the mode above, or Check will refuse this document with render/previews-require-flux."
+          : "off: this environment has no per-pull-request children."}
+      </span>
+
+      {!p.enabled ? null : (
+        <>
+          <div className="k-new__row">
+            <EditField
+              label="Forge"
+              narrow
+              value={p.provider}
+              onChange={(v) => set({ provider: v })}
+              readOnly={readOnly}
+              placeholder="github"
+              errors={field("provider")}
+              note="github or gitlab"
+            />
+            <EditField
+              label="Source repository"
+              value={p.repo}
+              onChange={(v) => set({ repo: v })}
+              readOnly={readOnly}
+              placeholder="https://github.com/acme/checkout"
+              errors={field("repo")}
+              note="whose pull requests become previews — the HTTP(S) URL, and not the deployment repository above"
+            />
+            <EditField
+              label="Forge credential"
+              value={p.secretRef}
+              onChange={(v) => set({ secretRef: v })}
+              readOnly={readOnly}
+              placeholder="github-auth"
+              errors={field("secretRef")}
+              note="the NAME of a Secret in this environment's namespace; never a token (ADR-0009)"
+            />
+          </div>
+
+          <div className="k-new__row">
+            <EditField
+              label="Poll interval"
+              narrow
+              value={p.interval}
+              onChange={(v) => set({ interval: v })}
+              readOnly={readOnly}
+              placeholder="10m"
+              errors={field("interval")}
+              note="blank means 10m"
+            />
+            <EditField
+              label="Labels"
+              value={p.filterLabels}
+              onChange={(v) => set({ filterLabels: v })}
+              readOnly={readOnly}
+              placeholder="deploy/preview"
+              errors={field("filterLabels")}
+              note="comma-separated; blank means every open change request, which is why the ceiling exists"
+            />
+            <EditField
+              label="Simultaneous previews"
+              narrow
+              value={p.limit}
+              onChange={(v) => set({ limit: v })}
+              readOnly={readOnly}
+              placeholder="10"
+              errors={field("limit")}
+              note="blank means 10 — a cost control, deliberately below flux-operator's own 100"
+            />
+          </div>
+
+          <div className="k-new__row">
+            <EditField
+              label="Include branches"
+              value={p.includeBranch}
+              onChange={(v) => set({ includeBranch: v })}
+              readOnly={readOnly}
+              placeholder="^feat/.*"
+              errors={field("includeBranch")}
+              note="a Go regular expression matched against the branch name"
+            />
+            <EditField
+              label="Exclude branches"
+              value={p.excludeBranch}
+              onChange={(v) => set({ excludeBranch: v })}
+              readOnly={readOnly}
+              placeholder="^wip/.*"
+              errors={field("excludeBranch")}
+            />
+            <EditField
+              label="Pause updates while labelled"
+              value={p.skipLabels}
+              onChange={(v) => set({ skipLabels: v })}
+              readOnly={readOnly}
+              placeholder="deploy/preview-pause, !ci/passed"
+              errors={field("skipLabels")}
+              note="comma-separated; a leading ! pauses while the label is ABSENT, which is how a tests-passed gate is written"
+            />
+          </div>
+
+          <div className="k-new__row">
+            <EditField
+              label="Artifact repository"
+              value={p.artifactsRepository}
+              onChange={(v) => set({ artifactsRepository: v })}
+              readOnly={readOnly}
+              placeholder="oci://ghcr.io/acme/checkout-previews"
+              errors={field("artifactsRepository")}
+              note="where `kelson preview publish` pushes each preview's manifests. No tag: kelson pins each one to its change request's head commit"
+            />
+            <EditField
+              label="Artifact pull secret"
+              value={p.artifactsSecretRef}
+              onChange={(v) => set({ artifactsSecretRef: v })}
+              readOnly={readOnly}
+              placeholder="ghcr-auth"
+              errors={field("artifactsSecretRef")}
+              note="only for a private artifact repository"
+            />
+          </div>
+        </>
+      )}
     </div>
   );
 }

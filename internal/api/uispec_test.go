@@ -120,6 +120,94 @@ spec:
 `
 )
 
+// The UI's previews form (ADR-0017 stage 3) writes this Environment: flux
+// delivery, because previews render in no other mode, and the whole `previews:`
+// block including both label lists in the flow styling the documentation shows.
+//
+// Same fixture convention as the pairs above — these bytes are
+// PREVIEWS_ENVIRONMENT in ui/src/spec/edit.test.ts, where the TypeScript half
+// asserts the form reads them and writes them back byte-identically. Only Go
+// can assert the half that matters more: that a document the browser writes
+// from a checkbox and eleven inputs is one the model validates and the renderer
+// turns into a ResourceSetInputProvider and a ResourceSet.
+const uiPreviewsEnvironmentDoc = `apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: staging
+
+spec:
+  project: hello
+  namespace: hello-staging
+  delivery:
+    mode: flux
+    git:
+      repo: git@github.com:acme/deploy.git
+      branch: main
+      path: hello/staging
+  previews:
+    provider: github
+    repo: https://github.com/acme/hello
+    secretRef: github-auth
+    interval: 10m
+    filter:
+      labels: [deploy/preview]
+      includeBranch: "^feat/.*"
+      excludeBranch: "^wip/.*"
+      limit: 5
+    skip:
+      labels: [deploy/preview-pause, "!ci/passed"]
+    artifacts:
+      repository: oci://ghcr.io/acme/hello-previews
+      secretRef: ghcr-auth
+`
+
+// TestUIPreviewsSpecValidatesAndRenders is the previews form's preflight: the
+// document the browser builds, through PutSpec at dry_run=RENDER.
+//
+// A clean answer means the block decodes, passes validation — the naming cap,
+// the label grammar, the oci:// URL rule, the Secret-name-not-a-token rule —
+// resolves with kelson's defaults, and renders. The rendered pair is asserted
+// too, because "the spec is valid" and "previews were actually rendered" are
+// different claims and the form promises the second.
+func TestUIPreviewsSpecValidatesAndRenders(t *testing.T) {
+	c := serve(t, Options{Specs: newFakeSpecStore()})
+
+	res, err := c.spec.PutSpec(context.Background(), connect.NewRequest(&kelsonv1alpha1.PutSpecRequest{
+		Documents: specDocuments(uiProjectDoc, map[string]string{"staging": uiPreviewsEnvironmentDoc}),
+		DryRun:    kelsonv1alpha1.DryRun_DRY_RUN_RENDER,
+	}))
+	if err != nil {
+		t.Fatalf("PutSpec: %v", err)
+	}
+	if errs := res.Msg.GetErrors(); len(errs) > 0 {
+		for _, e := range errs {
+			t.Errorf("the UI's previews spec was rejected: [%s] %s %s: %s", e.GetCode(), e.GetResource(), e.GetField(), e.GetMessage())
+		}
+		t.Fatalf("%d finding(s); the previews form and the model disagree", len(errs))
+	}
+
+	rendered, err := c.render.Render(context.Background(), connect.NewRequest(&kelsonv1alpha1.RenderRequest{
+		Spec:        inlineSpec(uiProjectDoc, map[string]string{"staging": uiPreviewsEnvironmentDoc}),
+		Environment: "staging",
+	}))
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if errs := rendered.Msg.GetErrors(); len(errs) > 0 {
+		t.Fatalf("Render reported errors: %v", errs)
+	}
+	kinds := map[string]string{}
+	for _, m := range rendered.Msg.GetManifests() {
+		kinds[m.GetKind()] = m.GetName()
+	}
+	if kinds["ResourceSetInputProvider"] != "hello-staging-previews" {
+		t.Errorf("ResourceSetInputProvider = %q, want hello-staging-previews", kinds["ResourceSetInputProvider"])
+	}
+	if kinds["ResourceSet"] != "hello-staging-previews" {
+		t.Errorf("ResourceSet = %q, want hello-staging-previews", kinds["ResourceSet"])
+	}
+}
+
 // TestUIMinimalSpecValidatesAndRenders runs the create flow's own preflight —
 // PutSpec at dry_run=RENDER — over the three-field documents the UI builds.
 //

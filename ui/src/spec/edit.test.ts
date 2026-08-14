@@ -12,6 +12,8 @@ import {
 import {
   buildProjectDocument,
   editFieldForError,
+  emptyDelivery,
+  emptyPreviews,
   isRebuildable,
   mapEditErrors,
   parseProjectDocument,
@@ -113,6 +115,176 @@ const RICH_PROJECT = EDITED_PROJECT.replace(
 
 const RICH_ENVIRONMENT = EDITED_ENVIRONMENT;
 
+/**
+ * The Environment the previews form writes (ADR-0017).
+ *
+ * These bytes are uiPreviewsEnvironmentDoc in internal/api/uispec_test.go under
+ * the same cross-side convention as the fixtures above: this half asserts the
+ * form reads them and writes them back unchanged, and the Go half asserts the
+ * model validates them and the renderer turns them into a
+ * ResourceSetInputProvider and a ResourceSet. Neither side can assert the
+ * other's.
+ *
+ * The label lists are flow sequences because that is the styling ADR-0017 and
+ * docs/model.md write them in, so a block pasted from the documentation is a
+ * block this form can still edit.
+ */
+const PREVIEWS_ENVIRONMENT = `apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: staging
+
+spec:
+  project: hello
+  namespace: hello-staging
+  delivery:
+    mode: flux
+    git:
+      repo: git@github.com:acme/deploy.git
+      branch: main
+      path: hello/staging
+  previews:
+    provider: github
+    repo: https://github.com/acme/hello
+    secretRef: github-auth
+    interval: 10m
+    filter:
+      labels: [deploy/preview]
+      includeBranch: "^feat/.*"
+      excludeBranch: "^wip/.*"
+      limit: 5
+    skip:
+      labels: [deploy/preview-pause, "!ci/passed"]
+    artifacts:
+      repository: oci://ghcr.io/acme/hello-previews
+      secretRef: ghcr-auth
+`;
+
+describe("previews on an Environment (ADR-0017)", () => {
+  const withPreviews: SpecTextSet = {
+    project: MINIMAL_PROJECT,
+    environments: { staging: PREVIEWS_ENVIRONMENT },
+  };
+
+  it("reads the whole block and writes it back byte-identically", () => {
+    const edit = readSpec(withPreviews);
+    expect(edit).toBeDefined();
+
+    const env = edit?.environments[0];
+    expect(env?.delivery).toEqual({
+      mode: "flux",
+      gitRepo: "git@github.com:acme/deploy.git",
+      gitBranch: "main",
+      gitPath: "hello/staging",
+    });
+    expect(env?.previews).toEqual({
+      enabled: true,
+      provider: "github",
+      repo: "https://github.com/acme/hello",
+      secretRef: "github-auth",
+      interval: "10m",
+      filterLabels: "deploy/preview",
+      includeBranch: "^feat/.*",
+      excludeBranch: "^wip/.*",
+      limit: "5",
+      skipLabels: "deploy/preview-pause, !ci/passed",
+      artifactsRepository: "oci://ghcr.io/acme/hello-previews",
+      artifactsSecretRef: "ghcr-auth",
+    });
+
+    expect(writeSpec(edit!)).toEqual(withPreviews);
+    expect(isRebuildable(withPreviews)).toBe(true);
+  });
+
+  it("writes nothing at all when previews are off", () => {
+    const edit = readSpec(withPreviews)!;
+    const off = {
+      ...edit,
+      environments: edit.environments.map((e) => ({
+        ...e,
+        previews: { ...e.previews, enabled: false },
+      })),
+    };
+    const doc = writeSpec(off).environments.staging ?? "";
+    expect(doc).not.toContain("previews:");
+    // Everything else is untouched: turning previews off is not a rewrite of
+    // the environment.
+    expect(doc).toContain("    mode: flux");
+    expect(doc).toContain("      path: hello/staging");
+  });
+
+  it("keeps a required field even when it is empty, so the server names it", () => {
+    const edit = readSpec(withPreviews)!;
+    const blank = {
+      ...edit,
+      environments: edit.environments.map((e) => ({
+        ...e,
+        previews: { ...e.previews, repo: "", filterLabels: "", skipLabels: "" },
+      })),
+    };
+    const doc = writeSpec(blank).environments.staging ?? "";
+    // An empty required field is written as an empty scalar rather than
+    // omitted: schema/missing-required then lands on `$.spec.previews.repo`,
+    // which the form has an input for, instead of on the block.
+    expect(doc).toContain('    repo: ""');
+    // Optional lists disappear entirely rather than becoming empty sequences.
+    expect(doc).not.toContain("labels:");
+    expect(doc).not.toContain("    skip:");
+  });
+
+  it("refuses a label spacing it could not reproduce", () => {
+    // `[a,b]` would have to be guessed at, so the document goes to the YAML tab
+    // whole rather than reaching the form as one label called "a,b".
+    const ambiguous = PREVIEWS_ENVIRONMENT.replace(
+      "labels: [deploy/preview]",
+      "labels: [deploy/preview,deploy/other]",
+    );
+    expect(
+      readSpec({ project: MINIMAL_PROJECT, environments: { staging: ambiguous } }),
+    ).toBeUndefined();
+  });
+
+  it("shows a block in another styling, then declines to rewrite it", () => {
+    // A block sequence parses into the same edit state — the reader sees their
+    // own labels — and the rebuild emits the flow styling, so the bytes differ
+    // and the byte guard sends the document to the YAML tab. Nothing is lost
+    // and nothing is silently reformatted.
+    const blockStyle = PREVIEWS_ENVIRONMENT.replace(
+      "      labels: [deploy/preview]\n",
+      "      labels:\n        - deploy/preview\n",
+    );
+    const text = { project: MINIMAL_PROJECT, environments: { staging: blockStyle } };
+    expect(readSpec(text)?.environments[0]?.previews.filterLabels).toBe(
+      "deploy/preview",
+    );
+    expect(isRebuildable(text)).toBe(false);
+  });
+
+  it("maps the server's previews findings onto the inputs that hold them", () => {
+    const at = (field: string) =>
+      editFieldForError(
+        create(ErrorSchema, {
+          code: "schema/missing-required",
+          resource: "Environment/staging",
+          field,
+        }),
+      );
+    expect(at("$.spec.previews.repo")).toBe("environment.staging.previews.repo");
+    expect(at("$.spec.previews.artifacts.repository")).toBe(
+      "environment.staging.previews.artifactsRepository",
+    );
+    expect(at("$.spec.previews.filter.limit")).toBe(
+      "environment.staging.previews.limit",
+    );
+    // An indexed label finding lands on the one input that holds the list.
+    expect(at("$.spec.previews.skip.labels[1]")).toBe(
+      "environment.staging.previews.skipLabels",
+    );
+    // A whole-stanza finding lands on the field that makes it go away.
+    expect(at("$.spec.delivery.git")).toBe("environment.staging.delivery.gitRepo");
+  });
+});
+
 describe("round trip", () => {
   it("parses a document the create form built and rebuilds it byte-identically", () => {
     const built = buildDocuments({
@@ -132,7 +304,13 @@ describe("round trip", () => {
     expect(edit?.project.components).toHaveLength(1);
     expect(edit?.project.components[0]?.port).toBe("8080");
     expect(edit?.environments).toEqual([
-      { name: "development", project: "hello", namespace: "" },
+      {
+        name: "development",
+        project: "hello",
+        namespace: "",
+        delivery: emptyDelivery(),
+        previews: emptyPreviews(),
+      },
     ]);
 
     expect(writeSpec(edit!)).toEqual(MINIMAL);
@@ -291,15 +469,31 @@ spec:
     expect(isRebuildable({ ...MINIMAL, project: handEdited })).toBe(false);
   });
 
+  it("reads a flow sequence and then declines to rewrite it", () => {
+    // `domains: [a]` is a list this reader can hold — the previews block writes
+    // its label lists in exactly that styling (ADR-0017) — but the component
+    // builder writes domains as a block sequence, so the rebuild differs and the
+    // byte guard says read-only. The reader sees their own domains either way.
+    const flow = MINIMAL_PROJECT.replace(
+      "      port: 8080\n",
+      "      port: 8080\n      domains: [hello.acme.run]\n",
+    );
+    expect(parseProjectDocument(flow)?.components[0]?.domains).toEqual([
+      "hello.acme.run",
+    ]);
+    expect(isRebuildable({ ...MINIMAL, project: flow })).toBe(false);
+  });
+
   it("refuses outright what it cannot represent at all", () => {
-    // A flow sequence is not a formatting difference the byte guard can catch
-    // later — `domains: [a]` is not a list this reader can hold — so there is
-    // no form to be read-only, and the YAML tab is the whole answer.
+    // A spacing this reader cannot reproduce is not a formatting difference the
+    // byte guard can catch later: it would have to guess where one element ends
+    // and the next begins. So there is no form to be read-only, and the YAML tab
+    // is the whole answer.
     expect(
       parseProjectDocument(
         MINIMAL_PROJECT.replace(
           "      port: 8080\n",
-          "      port: 8080\n      domains: [hello.acme.run]\n",
+          "      port: 8080\n      domains: [a.acme.run,b.acme.run]\n",
         ),
       ),
     ).toBeUndefined();

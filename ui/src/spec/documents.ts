@@ -583,7 +583,17 @@ export type ErrorTarget =
   | { doc: "project"; on: "env"; name: string }
   | { doc: "project"; on: "component"; index: number; field: ComponentField }
   | { doc: "project"; on: "component-env"; index: number; name: string }
-  | { doc: "environment"; on: "name" | "namespace"; environment: string };
+  | { doc: "environment"; on: "name" | "namespace"; environment: string }
+  // The two nested Environment stanzas the edit form reaches. `field` is the
+  // path after the stanza — "git.repo", "artifacts.repository",
+  // "filter.labels[1]" — left whole here and projected onto inputs by whichever
+  // form has them, exactly as a component's subfield is.
+  | {
+      doc: "environment";
+      on: "delivery" | "previews";
+      environment: string;
+      field: string;
+    };
 
 export function errorTarget(error: WireError): ErrorTarget | undefined {
   const [kind, name = ""] = error.resource.split("/");
@@ -595,6 +605,15 @@ export function errorTarget(error: WireError): ErrorTarget | undefined {
     }
     if (path === "$.spec.namespace") {
       return { doc: "environment", on: "namespace", environment: name };
+    }
+    const stanza = /^\$\.spec\.(delivery|previews)(?:\.(.+))?$/.exec(path);
+    if (stanza?.[1] !== undefined) {
+      return {
+        doc: "environment",
+        on: stanza[1] === "delivery" ? "delivery" : "previews",
+        environment: name,
+        field: stanza[2] ?? "",
+      };
     }
     return undefined;
   }
