@@ -76,3 +76,17 @@ metadata:
 spec:
   project: kelson-e2e
   namespace: kelson-e2e-adopted
+---
+# The third namespace case (issue #215). kelson creates THIS namespace, and the
+# test then plants another project's kelson-managed resource in it — which is
+# what an overridden `namespace:` makes possible. Uninstalling this environment
+# must delete its own resources and leave the namespace, because deleting it
+# would take the other project's with it.
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: shared
+
+spec:
+  project: kelson-e2e
+  namespace: kelson-e2e-shared
