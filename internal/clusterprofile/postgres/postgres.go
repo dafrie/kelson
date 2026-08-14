@@ -79,7 +79,7 @@ const (
 	CapabilityCluster Capability = "cluster"
 	// CapabilityManagedRoles is declarative role management via
 	// Cluster .spec.managed.roles (CNPG 1.20), which is how kelson renders
-	// per-application database users and credentials without imperative SQL.
+	// per-component database users and credentials without imperative SQL.
 	CapabilityManagedRoles Capability = "managed-roles"
 	// CapabilityDeclarativeDatabases is the Database CRD (CNPG 1.25): many
 	// databases in one Postgres cluster, which is what ADR-0007's `shared`

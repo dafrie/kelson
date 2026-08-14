@@ -18,7 +18,7 @@ const (
 	// ErrOverlayTarget: a patch names a resource that does not exist in
 	// the set rendered so far.
 	ErrOverlayTarget = "overlay/unknown-target"
-	// ErrImageUnresolved: an application reached the renderer without a usable
+	// ErrImageUnresolved: a component reached the renderer without a usable
 	// image — the spec builds it from source and no build result was supplied,
 	// so its image is still model.ImageUnresolved (issue #136).
 	ErrImageUnresolved = "image/unresolved"
@@ -139,17 +139,17 @@ const (
 // Error is one structured render problem.
 type Error struct {
 	Code        string `json:"code"`
-	Application string `json:"application,omitempty"` // application whose spec is at fault
-	Overlay     string `json:"overlay,omitempty"`     // overlay path, for overlay failures
-	Target      string `json:"target,omitempty"`      // "Kind/name", for targeting failures
+	Component   string `json:"component,omitempty"` // component whose spec is at fault
+	Overlay     string `json:"overlay,omitempty"`   // overlay path, for overlay failures
+	Target      string `json:"target,omitempty"`    // "Kind/name", for targeting failures
 	Message     string `json:"message"`
 	Remediation string `json:"remediation,omitempty"` // the fix, stated as an action
 }
 
 func (e Error) Error() string {
 	var loc []string
-	if e.Application != "" {
-		loc = append(loc, "application "+e.Application)
+	if e.Component != "" {
+		loc = append(loc, "component "+e.Component)
 	}
 	if e.Overlay != "" {
 		loc = append(loc, "overlay "+e.Overlay)

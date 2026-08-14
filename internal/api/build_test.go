@@ -256,8 +256,8 @@ func TestBuildStreamsStartedLogsAndFinished(t *testing.T) {
 	if req.SourceGit != "https://github.com/acme/shop.git" || req.SourceRef != buildCommit {
 		t.Errorf("the builder got source %s at %s", req.SourceGit, req.SourceRef)
 	}
-	if req.Application != "" {
-		t.Errorf("Application = %q, want empty: one build serves the whole Project", req.Application)
+	if req.Component != "" {
+		t.Errorf("Component = %q, want empty: one build serves the whole Project", req.Component)
 	}
 	// The namespace defaults to the environment's, exactly like the CLI's.
 	if target.Namespace != "shop-production" {

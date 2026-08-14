@@ -166,8 +166,10 @@ func fromModel(e model.Error) *kelsonv1alpha1.Error {
 
 func fromRenderer(e renderer.Error) *kelsonv1alpha1.Error {
 	return &kelsonv1alpha1.Error{
-		Code:        e.Code,
-		Application: e.Application,
+		Code: e.Code,
+		// The wire field keeps its v1alpha1 name; the renderer's does not
+		// (ADR-0027).
+		Application: e.Component,
 		Overlay:     e.Overlay,
 		Target:      e.Target,
 		Message:     e.Message,

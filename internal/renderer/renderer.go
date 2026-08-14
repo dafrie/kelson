@@ -172,7 +172,7 @@ func Render(resolved *model.Resolved, profile clusterprofile.ClusterProfile, res
 	// Namespace existing and nothing in this environment depends on it, so the
 	// ordering contract — the things workloads need, before the workloads — has
 	// nothing to say about where it goes, and the end is where a reader looks
-	// for what is not part of the running application.
+	// for what is not part of the running workload.
 	if resolved.Environment.Previews != nil {
 		ms, err := previewsManifests(resolved)
 		if err != nil {
@@ -194,7 +194,7 @@ func Render(resolved *model.Resolved, profile clusterprofile.ClusterProfile, res
 	return out, nil
 }
 
-// unresolvedImages rejects every application whose image is not a reference a
+// unresolvedImages rejects every component whose image is not a reference a
 // cluster could pull.
 //
 // A spec that builds from source resolves to model.ImageUnresolved until a
@@ -219,7 +219,7 @@ func unresolvedImages(resolved *model.Resolved) Errors {
 		}
 		errs = append(errs, Error{
 			Code:        ErrImageUnresolved,
-			Application: app.Name,
+			Component:   app.Name,
 			Message:     message,
 			Remediation: "pass the built reference with --image, or set spec.image on the Project or image on the component",
 		})

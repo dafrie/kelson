@@ -100,7 +100,7 @@ func TestCapabilityFloorsAreIndependent(t *testing.T) {
 }
 
 // TestManagedRolesFloor: declarative role management arrived in 1.20, and it is
-// how kelson renders application credentials — an operator below that floor
+// how kelson renders component credentials — an operator below that floor
 // blocks every preset, not only the shared one.
 func TestManagedRolesFloor(t *testing.T) {
 	p := installed("1.19.1", "clusters")

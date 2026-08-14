@@ -105,8 +105,8 @@ func helmRequiresFlux(resolved *model.Resolved) Errors {
 	for i := range resolved.Charts {
 		c := &resolved.Charts[i]
 		errs = append(errs, Error{
-			Code:        ErrHelmRequiresFlux,
-			Application: c.Name,
+			Code:      ErrHelmRequiresFlux,
+			Component: c.Name,
 			Message: "component " + quoted(c.Name) + " has kind " + quoted(string(model.ComponentHelm)) +
 				", which renders a HelmRelease for helm-controller to reconcile, but environment " +
 				quoted(resolved.Environment.Name) + " has delivery mode " +
@@ -127,8 +127,8 @@ func chartManifests(resolved *model.Resolved, chart *model.ResolvedChart) ([]Man
 	name := scopedResourceName(resolved.Project, resolved.Environment.Name, chart.Name)
 	if len(name) > maxChartResourceName {
 		return nil, Errors{{
-			Code:        ErrChartName,
-			Application: chart.Name,
+			Code:      ErrChartName,
+			Component: chart.Name,
 			Message: "the Helm release name for component " + quoted(chart.Name) + " would be " +
 				quoted(name) + ", " + strconv.Itoa(len(name)) + " characters",
 			Remediation: "shorten the project, environment or component name so that " +
@@ -140,7 +140,7 @@ func chartManifests(resolved *model.Resolved, chart *model.ResolvedChart) ([]Man
 
 	hash, herr := chartHash(resolved, chart, name)
 	if herr != nil {
-		return nil, Errors{{Code: ErrInternal, Application: chart.Name, Message: herr.Error()}}
+		return nil, Errors{{Code: ErrInternal, Component: chart.Name, Message: herr.Error()}}
 	}
 	prov := provenance{
 		project:      resolved.Project,
@@ -195,7 +195,7 @@ func chartSourceManifest(chart *model.ResolvedChart, prov provenance) (Manifest,
 	// plane, and a chart with no source must never render half a release.
 	return Manifest{}, "", Errors{{
 		Code:        ErrInternal,
-		Application: chart.Name,
+		Component:   chart.Name,
 		Message:     "component " + quoted(chart.Name) + " reached the renderer with no chart source",
 		Remediation: "set source.repository or source.oci on the component",
 	}}

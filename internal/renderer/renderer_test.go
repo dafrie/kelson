@@ -76,7 +76,7 @@ func cnpgProfile() clusterprofile.ClusterProfile {
 }
 
 // boundFixture is the standard fixture with one postgres service at the given
-// preset and the web application bound to it.
+// preset and the web component bound to it.
 func boundFixture(preset model.ServicePreset) *model.Resolved {
 	r := resolvedFixture()
 	r.DataServices = []model.ResolvedDataService{{Name: "db", Kind: model.ComponentPostgres, Preset: preset}}
@@ -100,7 +100,7 @@ func valkeyProfile() clusterprofile.ClusterProfile {
 }
 
 // cacheFixture is the standard fixture with one valkey component at the given
-// preset and the web application bound to its uri.
+// preset and the web component bound to its uri.
 func cacheFixture(preset model.ServicePreset) *model.Resolved {
 	r := resolvedFixture()
 	r.DataServices = []model.ResolvedDataService{{Name: "cache", Kind: model.ComponentValkey, Preset: preset}}
@@ -375,7 +375,7 @@ func TestRenderGatewayAPIPresentUnaffected(t *testing.T) {
 }
 
 // TestSpecHashStable: equal inputs hash identically; a changed input changes
-// only that application's hash.
+// only that component's hash.
 func TestSpecHashStable(t *testing.T) {
 	resolved := resolvedFixture()
 	h1, err := specHash(resolved, &resolved.Components[0])
@@ -403,7 +403,7 @@ func TestSpecHashStable(t *testing.T) {
 		t.Fatalf("specHash failed: %v", err)
 	}
 	if h3 == h4 {
-		t.Fatalf("specHash did not change when the application changed")
+		t.Fatalf("specHash did not change when the component changed")
 	}
 }
 

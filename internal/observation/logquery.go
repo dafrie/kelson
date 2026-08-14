@@ -2,7 +2,7 @@ package observation
 
 // The log query engine (issue #54, the buildable half). This is the Go-level
 // API that a later transport — the ConnectRPC schema of #69 — will wrap: a
-// query addresses an application (never a pod), returns bounded, structured,
+// query addresses a component (never a pod), returns bounded, structured,
 // deterministically-ordered lines, and can follow live. It deliberately carries
 // no HTTP or protobuf types anywhere, so a CLI, the UI and the MCP server can
 // each bind to it without reshaping it.
@@ -86,13 +86,13 @@ type Match struct {
 	Regex string
 }
 
-// Query is one log query against an application's pods. It is bounded by
+// Query is one log query against a component's pods. It is bounded by
 // default; a query with no bound at all is a validation error, so unbounded
 // reading is only ever the deliberate Follow mode.
 type Query struct {
-	// Namespace and Application select the workload's pods. Required.
-	Namespace   string
-	Application string
+	// Namespace and Component select the workload's pods. Required.
+	Namespace string
+	Component string
 	// Containers restricts the query to these container names; empty means all
 	// containers in every selected pod.
 	Containers []string
@@ -140,8 +140,8 @@ func (r Result) Text() string {
 // validate checks that a query has an explicit bound or follow, and that its
 // options are consistent. This is what makes "bounded is the default".
 func (q Query) validate() error {
-	if q.Namespace == "" || q.Application == "" {
-		return errors.New("observation: a log query needs a namespace and application")
+	if q.Namespace == "" || q.Component == "" {
+		return errors.New("observation: a log query needs a namespace and component")
 	}
 	if q.Around != nil && q.Tail > 0 {
 		return errors.New("observation: a log query cannot set both Tail and Around")
@@ -193,7 +193,7 @@ func (c *compiledMatch) matches(msg string) bool {
 	return true
 }
 
-// LogQuery executes log queries against an application's pods. It takes an
+// LogQuery executes log queries against a component's pods. It takes an
 // injected typed clientset for pod enumeration and an optional StreamSource for
 // log fetching, so a test drives it with a fake clientset and a fake source and
 // no cluster is ever touched.
@@ -204,7 +204,7 @@ type LogQuery struct {
 
 // LogQueryConfig configures a LogQuery.
 type LogQueryConfig struct {
-	// Client enumerates the application's pods. Required; the typed clientset
+	// Client enumerates the component's pods. Required; the typed clientset
 	// fake serves tests.
 	Client kubernetes.Interface
 	// Source fetches logs. When nil, a ClientGoLogSource over Client is used.
@@ -228,17 +228,17 @@ func NewLogQuery(cfg LogQueryConfig) (*LogQuery, error) {
 // turned into a concrete set, and it never ranges over a map.
 func (q *LogQuery) refs(ctx context.Context, qry Query) ([]ContainerRef, error) {
 	list, err := q.client.CoreV1().Pods(qry.Namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: componentLabel + "=" + qry.Application,
+		LabelSelector: componentLabel + "=" + qry.Component,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("observation: listing pods for %s/%s: %w", qry.Namespace, qry.Application, err)
+		return nil, fmt.Errorf("observation: listing pods for %s/%s: %w", qry.Namespace, qry.Component, err)
 	}
 	pods := list.Items
 	sort.Slice(pods, func(i, j int) bool { return pods[i].Name < pods[j].Name })
 
 	var refs []ContainerRef
 	for i := range pods {
-		if pods[i].Labels[componentLabel] != qry.Application {
+		if pods[i].Labels[componentLabel] != qry.Component {
 			continue
 		}
 		for _, c := range pods[i].Spec.Containers {

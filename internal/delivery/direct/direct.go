@@ -296,7 +296,7 @@ func (a *Adapter) applySet(ctx context.Context, set delivery.ManifestSet, rec Re
 	// pruned, so the previous revision keeps serving.
 	//
 	// A rollback deliberately does not re-run release commands. Rolling the
-	// application back does not roll a migration back — a schema change is not
+	// workload back does not roll a migration back — a schema change is not
 	// in the rendered output and kelson has no down-migration to run — so
 	// re-running the old revision's release command would at best repeat work
 	// the database has already done. The rolled-back workloads meet the newer

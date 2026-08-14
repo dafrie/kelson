@@ -326,7 +326,7 @@ Data components render none: CloudNativePG creates and owns the identity its clu
 what delegating topology to an operator means ([ADR-0005](adr/0005-delegate-to-operators.md)).
 
 The rendered identity labels carry the same vocabulary as the spec: pods carry `kelson.dev/component`
-and Deployments select on it. ADR-0014 originally held that label at `kelson.dev/application` because a
+and Deployments select on it. ADR-0014 originally held that label at the old spelling because a
 Deployment's selector is immutable and renaming it would orphan every running workload;
 [ADR-0027](adr/0027-finish-the-component-rename.md) finished the rename while nothing was deployed
 that could be orphaned. The consequence is real and has no migration path: a workload deployed before
@@ -493,7 +493,7 @@ worth using already tracks what it has applied.
 
 ### Rollback does not undo a migration
 
-Rolling the application back re-applies the previous revision's manifests and **deliberately does not
+Rolling the workload back re-applies the previous revision's manifests and **deliberately does not
 re-run its release command**. A schema change is not in the rendered output and kelson has no
 down-migration to run, so there is nothing to roll back to: the rolled-back workloads meet the newer
 schema. Plan for that — keep migrations backwards-compatible with the revision you might roll back to

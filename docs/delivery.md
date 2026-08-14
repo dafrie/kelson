@@ -72,7 +72,7 @@ Three consequences, all of them the point:
 - **The wait is visible.** The adapter reports the Job through `Options.Progress` in the same
   `delivery.Status` shape the state machine consumes: `Reconciling` while it runs, `Rejected` when it
   fails, with the Job in `Cause` and in `Detail["releaseJob"]`. No new phase — see the ADR.
-- **A rollback does not re-run it.** Rolling the application back does not roll a migration back, so
+- **A rollback does not re-run it.** Rolling the workload back does not roll a migration back, so
   re-running the old revision's release command would only repeat work the database has already done.
 
 **Flux mode refuses the field rather than pretending.** kelson commits files and a `Kustomization`

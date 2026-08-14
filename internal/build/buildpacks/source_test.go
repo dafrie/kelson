@@ -9,13 +9,13 @@ import (
 
 func srcReq() build.Request {
 	return build.Request{
-		Project:     testProject,
-		Application: "web",
-		SourceGit:   "https://github.com/acme/shop.git",
-		SourceRef:   "9f1c0de",
-		Revision:    "9f1c0de",
-		Image:       "ghcr.io/acme/web",
-		Tag:         "shop-web-9f1c0de",
+		Project:   testProject,
+		Component: "web",
+		SourceGit: "https://github.com/acme/shop.git",
+		SourceRef: "9f1c0de",
+		Revision:  "9f1c0de",
+		Image:     "ghcr.io/acme/web",
+		Tag:       "shop-web-9f1c0de",
 	}
 }
 
@@ -81,7 +81,7 @@ func TestNoSourceMeansNoCloneContainer(t *testing.T) {
 }
 
 // TestContextDirSelectsMonorepoSubtree: the repository clones whole and the
-// application the lifecycle builds is a subdirectory of it.
+// component the lifecycle builds is a subdirectory of it.
 func TestContextDirSelectsMonorepoSubtree(t *testing.T) {
 	req := srcReq()
 	req.ContextDir = "apps/web"

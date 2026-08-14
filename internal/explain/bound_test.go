@@ -125,7 +125,7 @@ func TestPathologicalInputStaysInsideTheBudget(t *testing.T) {
 }
 
 // TestTruncationIsMarkedInline: a clamped string says so where it was clamped,
-// so a reader can tell kelson's cut from the application's own output.
+// so a reader can tell kelson's cut from the workload's own output.
 func TestTruncationIsMarkedInline(t *testing.T) {
 	long := strings.Repeat("a", MaxLineBytes*3)
 	got := clampLine(long, MaxLineBytes)

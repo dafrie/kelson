@@ -169,7 +169,7 @@ func (s *Server) resolve(ctx context.Context, ref *kelsonv1alpha1.SpecRef, envNa
 	}
 	if image != "" {
 		// --image stands in for spec.image, so it is subject to the same
-		// precedence: an application that names its own image still wins
+		// precedence: a component that names its own image still wins
 		// (rule P3, docs/model.md).
 		spec.project.Spec.Image = image
 	}

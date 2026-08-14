@@ -21,11 +21,11 @@ import (
 // side, which is why the prefix arrives as a flag/env (--registry,
 // KELSON_REGISTRY) instead.
 //
-// # Why one repository per Project, not per Application
+// # Why one repository per Project, not per Component
 //
 // The source is project-level (Project.spec.source) and so is the build. Model
-// rule P3 resolves an Application's image to its own image: if it has one,
-// otherwise the Project's — so every application that does not name its own
+// rule P3 resolves a Component's image to its own image: if it has one,
+// otherwise the Project's — so every component that does not name its own
 // image shares exactly one built image. One build, one repository, one digest
 // pinned into every workload that shares it.
 //

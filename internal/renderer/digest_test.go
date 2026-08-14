@@ -18,14 +18,14 @@ func TestDigestPinnedImageRendersUnchanged(t *testing.T) {
 		"aaaabbbbccccddddeeeeffff00001111222233334444555566667777888899990"
 
 	resolved := resolvedFixture()
-	// Every application, not just the first: the fixture's second app would
+	// Every component, not just the first: the fixture's second one would
 	// otherwise supply a tagged reference to the same repository and make the
 	// "no mutable tag" assertion below meaningless.
 	for i := range resolved.Components {
 		resolved.Components[i].Image = pinned
 	}
 
-	// A gateway profile, because the fixture's web application declares
+	// A gateway profile, because the fixture's web component declares
 	// domains and a profile without Gateway API is now a capability gap (#140).
 	manifests, err := Render(resolved, gatewayProfile(), nil)
 	if err != nil {

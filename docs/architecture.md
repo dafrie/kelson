@@ -9,9 +9,9 @@ properties fall out of keeping them honest.
 ┌──────────────────────────────────────────────────────────────────────┐
 │  AUTHORING          CLI · Web UI · HTTP API · MCP server             │
 │                     four peer clients of one typed API               │
-│                     intent → validated Application spec              │
+│                     intent → validated Project spec                  │
 └─────────────────────────────┬────────────────────────────────────────┘
-                              │  Application spec
+                              │  Project spec
 ┌─────────────────────────────▼────────────────────────────────────────┐
 │  RENDERING          pure function: (spec, ClusterProfile) → manifests │
 │                     no cluster · no network · no clock · no DB        │
@@ -48,11 +48,12 @@ Purity is not aesthetics. It buys, concretely:
 
 ## The model
 
-Three concepts ([ADR-0006](adr/0006-project-application-environment.md)), and no more without a strong
-argument. Deliberately not an OAM-style hierarchy: developers should deploy before learning vocabulary.
+Three concepts ([ADR-0006](adr/0006-project-application-environment.md), leaf renamed by
+[ADR-0014](adr/0014-components.md)), and no more without a strong argument. Deliberately not an
+OAM-style hierarchy: developers should deploy before learning vocabulary.
 
 - **Project** — shared configuration and ownership. Image, common environment, service bindings, team.
-- **Application** — one deployable, rendering to one workload.
+- **Component** — one deployable, rendering to one workload.
 - **Environment** — where it runs and what differs there.
 
 ```yaml
@@ -312,7 +313,7 @@ above — `propose-only` today refuses the mutation and points at the proposal (
 has no forge credentials to use it with.
 
 **Observation, not polling.** A watch/SSE event stream lets agents react to outcomes. Plus structured
-`explain` endpoints — "why is this application degraded?" returns causal, machine-readable data
+`explain` endpoints — "why is this component degraded?" returns causal, machine-readable data
 (failing probes, recent revision, events, resource pressure), not a log dump for an LLM to guess at.
 That one is built: `ExplainService.Explain`, `kelson explain` and the `WHY` section of
 `diagnose_component` are three surfaces over one capability in `internal/explain`, and every cause it
@@ -354,7 +355,7 @@ than build arguments or image layers, and no secret value is ever written to a l
 
 Delegated to CloudNativePG for `kind: postgres` and to
 [valkey-io/valkey-operator](https://github.com/valkey-io/valkey-operator) for `kind: valkey`, with
-kelson owning only the application-facing abstraction. Full reasoning in
+kelson owning only the component-facing abstraction. Full reasoning in
 [ADR-0007](adr/0007-data-services.md) and, for the choice of Valkey operator and what it costs,
 [ADR-0015](adr/0015-valkey-operator.md). What each preset actually renders is
 [docs/data-services.md](data-services.md).
@@ -429,5 +430,5 @@ it — most visibly Kubero, whose vendored Bitnami charts broke working installa
 catalog was withdrawn.
 
 This constrains **what kelson promises**, not what you can run. Any workload or Helm chart is installable;
-kelson runs it, routes to it and binds applications to it. It just makes no durability claim about
+kelson runs it, routes to it and binds components to it. It just makes no durability claim about
 anything it did not provision as a managed type. See [ADR-0005](adr/0005-delegate-to-operators.md).

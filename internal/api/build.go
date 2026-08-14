@@ -143,8 +143,8 @@ func (s *Server) Build(ctx context.Context, req *connect.Request[kelsonv1alpha1.
 	request := build.Request{
 		Project:     project.Metadata.Name,
 		Environment: environment.Metadata.Name,
-		// Application stays empty: one build serves the whole Project, so
-		// naming one of its applications would put a false label on the Job
+		// Component stays empty: one build serves the whole Project, so
+		// naming one of its components would put a false label on the Job
 		// and on the image (build.DestinationTag says the same thing).
 		SourceGit:  source.Git,
 		SourceRef:  revision,

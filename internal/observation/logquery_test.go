@@ -19,7 +19,7 @@ func mkLine(pod, cont, msg string, ts time.Time) Line {
 	return Line{Timestamp: ts, Pod: pod, Container: cont, Message: msg}
 }
 
-// fakePod builds a pod carrying the provenance application label.
+// fakePod builds a pod carrying the provenance component label.
 func fakePod(name string, containers ...string) *corev1.Pod {
 	cs := make([]corev1.Container, 0, len(containers))
 	for _, c := range containers {
@@ -127,7 +127,7 @@ func eqStrings(a, b []string) bool {
 
 func TestQueryRequiresBound(t *testing.T) {
 	q := newTestQuery([]runtime.Object{fakePod("web-0", "web")}, newFakeStream())
-	_, err := q.Query(context.Background(), Query{Namespace: testNS, Application: testApp})
+	_, err := q.Query(context.Background(), Query{Namespace: testNS, Component: testApp})
 	if err == nil {
 		t.Fatal("an unbounded query must be rejected; unbounded must be deliberate (Follow)")
 	}
@@ -139,7 +139,7 @@ func TestQueryRequiresBound(t *testing.T) {
 func TestQueryRejectsAroundAndTailTogether(t *testing.T) {
 	q := newTestQuery([]runtime.Object{fakePod("web-0", "web")}, newFakeStream())
 	_, err := q.Query(context.Background(), Query{
-		Namespace: testNS, Application: testApp, Tail: 5,
+		Namespace: testNS, Component: testApp, Tail: 5,
 		Around: &Around{Lines: 5, AtTermination: true},
 	})
 	if err == nil {
@@ -159,7 +159,7 @@ func TestTailBounded(t *testing.T) {
 	src.add(ref, fixSeq(lines))
 
 	q := newTestQuery([]runtime.Object{fakePod("web-0", "web")}, src)
-	res, err := q.Query(context.Background(), Query{Namespace: testNS, Application: testApp, Tail: 10})
+	res, err := q.Query(context.Background(), Query{Namespace: testNS, Component: testApp, Tail: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestTimeRange(t *testing.T) {
 	until := t0().Add(5 * time.Second)
 	q := newTestQuery([]runtime.Object{fakePod("web-0", "web")}, src)
 	res, err := q.Query(context.Background(), Query{
-		Namespace: testNS, Application: testApp, Since: &since, Until: &until,
+		Namespace: testNS, Component: testApp, Since: &since, Until: &until,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -216,7 +216,7 @@ func TestAroundTermination(t *testing.T) {
 
 	q := newTestQuery([]runtime.Object{fakePod("web-0", "web")}, src)
 	res, err := q.Query(context.Background(), Query{
-		Namespace: testNS, Application: testApp, Around: &Around{Lines: 5, AtTermination: true},
+		Namespace: testNS, Component: testApp, Around: &Around{Lines: 5, AtTermination: true},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -239,7 +239,7 @@ func TestAroundTime(t *testing.T) {
 	anchor := t0().Add(4500 * time.Millisecond)
 	q := newTestQuery([]runtime.Object{fakePod("web-0", "web")}, src)
 	res, err := q.Query(context.Background(), Query{
-		Namespace: testNS, Application: testApp, Around: &Around{Lines: 3, Time: &anchor},
+		Namespace: testNS, Component: testApp, Around: &Around{Lines: 3, Time: &anchor},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -266,7 +266,7 @@ func TestMultiReplicaMergeOrderedByTimestamp(t *testing.T) {
 	}))
 
 	q := newTestQuery([]runtime.Object{fakePod("web-0", "web"), fakePod("web-1", "web")}, src)
-	res, err := q.Query(context.Background(), Query{Namespace: testNS, Application: testApp, Tail: 100})
+	res, err := q.Query(context.Background(), Query{Namespace: testNS, Component: testApp, Tail: 100})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +290,7 @@ func TestEqualTimestampTiebreakByPodName(t *testing.T) {
 	}))
 
 	q := newTestQuery([]runtime.Object{fakePod("web-9", "web"), fakePod("web-1", "web")}, src)
-	res, err := q.Query(context.Background(), Query{Namespace: testNS, Application: testApp, Tail: 100})
+	res, err := q.Query(context.Background(), Query{Namespace: testNS, Component: testApp, Tail: 100})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,7 +307,7 @@ func TestEqualTimestampWithinContainerKeepsOrder(t *testing.T) {
 		mkLine("web-0", "web", "second", t0()),
 	}))
 	q := newTestQuery([]runtime.Object{fakePod("web-0", "web")}, src)
-	res, err := q.Query(context.Background(), Query{Namespace: testNS, Application: testApp, Tail: 100})
+	res, err := q.Query(context.Background(), Query{Namespace: testNS, Component: testApp, Tail: 100})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -340,7 +340,7 @@ func TestMergeDeterministicAcrossRuns(t *testing.T) {
 			src.add(refA, fixSeq(la))
 		}
 		q := newTestQuery([]runtime.Object{fakePod("web-a", "web"), fakePod("web-b", "web")}, src)
-		res, err := q.Query(context.Background(), Query{Namespace: testNS, Application: testApp, Tail: 100})
+		res, err := q.Query(context.Background(), Query{Namespace: testNS, Component: testApp, Tail: 100})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -368,7 +368,7 @@ func TestFilterSubstringThenTail(t *testing.T) {
 
 	q := newTestQuery([]runtime.Object{fakePod("web-0", "web")}, src)
 	res, err := q.Query(context.Background(), Query{
-		Namespace: testNS, Application: testApp, Tail: 3, Match: &Match{Substring: "ERR"},
+		Namespace: testNS, Component: testApp, Tail: 3, Match: &Match{Substring: "ERR"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -390,7 +390,7 @@ func TestFilterRegex(t *testing.T) {
 
 	q := newTestQuery([]runtime.Object{fakePod("web-0", "web")}, src)
 	res, err := q.Query(context.Background(), Query{
-		Namespace: testNS, Application: testApp, Tail: 100, Match: &Match{Regex: `status 5\d\d`},
+		Namespace: testNS, Component: testApp, Tail: 100, Match: &Match{Regex: `status 5\d\d`},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -403,7 +403,7 @@ func TestFilterRegex(t *testing.T) {
 func TestInvalidRegexIsError(t *testing.T) {
 	q := newTestQuery([]runtime.Object{fakePod("web-0", "web")}, newFakeStream())
 	_, err := q.Query(context.Background(), Query{
-		Namespace: testNS, Application: testApp, Tail: 10, Match: &Match{Regex: "("},
+		Namespace: testNS, Component: testApp, Tail: 10, Match: &Match{Regex: "("},
 	})
 	if err == nil {
 		t.Fatal("an invalid filter regex must be an error, not silent")
@@ -428,7 +428,7 @@ func TestFollowDeliversLinesAndCloses(t *testing.T) {
 	// between sends, which is a coin flip that lands differently on a loaded
 	// CI runner. Overflow behaviour has its own tests that force the overflow
 	// rather than racing for it.
-	ch, st, err := q.Follow(context.Background(), Query{Namespace: testNS, Application: testApp})
+	ch, st, err := q.Follow(context.Background(), Query{Namespace: testNS, Component: testApp})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -480,7 +480,7 @@ func TestFollowContextCancellationCloses(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	ch, _, err := q.Follow(ctx, Query{Namespace: testNS, Application: testApp, Backlog: 2})
+	ch, _, err := q.Follow(ctx, Query{Namespace: testNS, Component: testApp, Backlog: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -510,7 +510,7 @@ func TestBackpressureDropCountsDroppedLines(t *testing.T) {
 
 	q := newTestQuery([]runtime.Object{fakePod("web-0", "web")}, src)
 	ch, st, err := q.Follow(context.Background(), Query{
-		Namespace: testNS, Application: testApp, Backlog: 4, OnOverflow: OverflowDrop,
+		Namespace: testNS, Component: testApp, Backlog: 4, OnOverflow: OverflowDrop,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -554,7 +554,7 @@ func TestBackpressureBlockLosesNothing(t *testing.T) {
 
 	q := newTestQuery([]runtime.Object{fakePod("web-0", "web")}, src)
 	ch, st, err := q.Follow(context.Background(), Query{
-		Namespace: testNS, Application: testApp, Backlog: 2, OnOverflow: OverflowBlock,
+		Namespace: testNS, Component: testApp, Backlog: 2, OnOverflow: OverflowBlock,
 	})
 	if err != nil {
 		t.Fatal(err)
