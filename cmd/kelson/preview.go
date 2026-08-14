@@ -39,7 +39,7 @@ func newPreviewCmd() *cobra.Command {
 	return newPreviewCmdFactory(connectRegistrySecrets, connectPusher)
 }
 
-func newPreviewCmdFactory(connect secretConnector, push pusherConnector) *cobra.Command {
+func newPreviewCmdFactory(connect registrySecretConnector, push pusherConnector) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "preview",
 		Short: "Render and publish the manifests for one pull request's preview",
@@ -63,7 +63,7 @@ type previewOptions struct {
 	pr      string
 	sha     string
 	output  string
-	connect secretConnector
+	connect registrySecretConnector
 	push    pusherConnector
 
 	// registrySecret names a kubernetes.io/dockerconfigjson Secret to resolve
@@ -81,7 +81,7 @@ type previewOptions struct {
 // hung registry into a hung CI job.
 const defaultPublishTimeout = 2 * time.Minute
 
-func newPreviewPublishCmd(connect secretConnector, push pusherConnector) *cobra.Command {
+func newPreviewPublishCmd(connect registrySecretConnector, push pusherConnector) *cobra.Command {
 	opts := &previewOptions{connect: connect, push: push}
 	cmd := &cobra.Command{
 		Use:   "publish -f spec.yaml --env <name> --pr <number> --sha <commit>",
@@ -306,10 +306,15 @@ func connectPusher(cred registry.Credential, insecure bool) artifactPusher {
 	return &preview.Pusher{Credential: cred, Insecure: insecure}
 }
 
-// secretConnector builds a registry credential resolver. It is the seam the
-// command tests replace, mirroring buildConnector: the real one needs a
+// registrySecretConnector builds a registry credential resolver. It is the seam
+// the command tests replace, mirroring buildConnector: the real one needs a
 // cluster and none of the wiring under test does.
-type secretConnector func(kubeconfig string) (registry.Resolver, error)
+//
+// The name says "registry" because `kelson secret` now has a connector of its
+// own (secret.go) and the two reach for different things through the same
+// clientset: this one reads a dockerconfigjson Secret to authenticate a push,
+// that one writes the Secrets a spec's references point at.
+type registrySecretConnector func(kubeconfig string) (registry.Resolver, error)
 
 // connectRegistrySecrets is the production connector.
 func connectRegistrySecrets(kubeconfig string) (registry.Resolver, error) {
