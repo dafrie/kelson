@@ -643,7 +643,8 @@ has.
 > [ADR-0016](adr/0016-delivery-flows-v0.md) decision 5 decided the shape. Available in **Flux mode
 > only**. **Two halves have to be in place**: the `previews:` block below, and a CI step that runs
 > `kelson preview publish` — read [Publishing the artifacts](#publishing-the-artifacts) before turning
-> this on. Enumerating previews through kelson's own API is still to come.
+> this on. Once they are, `PreviewService.ListPreviews` and the web UI's previews section say which
+> change requests are running ([Seeing your previews](#seeing-your-previews)).
 
 An environment may spawn a child environment per open pull request. kelson does not poll the forge and
 does not garbage-collect: a flux-operator `ResourceSetInputProvider` finds the change requests and a
@@ -810,6 +811,35 @@ or a reconciliation problem instead.
 The artifact is deterministic — same render, same digest, timestamps included — so re-running a job
 for an unchanged commit uploads nothing.
 
+### Seeing your previews
+
+`PreviewService.ListPreviews` answers which change requests are running, and the web UI draws it as a
+**Previews** section on each environment of the app detail screen. Both read the cluster; neither
+creates or destroys anything, because a preview appears when CI publishes an artifact and disappears
+when the change request closes.
+
+Per change request you get its number, the **head commit the `OCIRepository` actually pins** — what is
+running, not what should be — the preview's namespace, the hostnames its HTTPRoutes claim, its age, and
+one phase:
+
+| Phase | What it means |
+|---|---|
+| `ready` | the artifact was fetched and applied |
+| `applying` | fetched; the apply has not settled |
+| `awaiting-artifact` | nothing published for this commit — usually the CI step, not the manifests |
+| `failed` | fetched, and the apply failed |
+| `unknown` | neither condition has reported yet |
+
+Above the list is the lifecycle pair itself, because an empty list has three very different causes and
+they are not interchangeable: flux-operator is not installed, the `ResourceSet` pair has never been
+deployed to the cluster, or the poller cannot reach the forge. Each says so in its own words.
+
+Two limits worth knowing. **Hostnames need a read of the preview's own namespace**, which is created at
+reconcile time and so cannot be in a namespaced RBAC grant — the deploy chart grants the four flux
+reads in the environment's namespace and not that one, so an install with the chart's RBAC sees its
+previews without their hostnames. That read fails soft, and "no hostnames" is therefore not a claim
+that the preview serves nothing. And **there is no preview history**: see below.
+
 ### What previews do not do
 
 **A preview never serves the hostname the spec asks for.** Every hostname gains the change request in
@@ -820,13 +850,11 @@ and wildcard DNS record that already serve the environment serve its previews to
 configured with its own hostname (an OAuth redirect URI, a cookie domain) is configured with the wrong
 one, and kelson does not tell it what its preview hostname is.
 
-**kelson does not enumerate preview children.** A preview is an environment kelson did not record: no
-Environment document describes it and no delivery history entry exists for it. The Status and History
-RPCs do not walk preview namespaces, do not aggregate preview health and cannot answer "which pull
-requests are deployed". What exists instead is the naming scheme above and the provenance labels
-`app.kubernetes.io/managed-by: kelson`, `kelson.dev/project` and `kelson.dev/environment`, which the
-`ResourceSet` carries onto everything it generates via `commonMetadata` — so `kubectl get` with a
-selector answers the question today.
+**A preview has no history and nothing to roll back to.** A preview is an environment kelson did not
+record: no Environment document describes it and no delivery history entry exists for it. `kelson
+history` and `kelson rollback` are about environments kelson deployed, and a preview is not one — its
+past is the registry's, one artifact per push, and the forge's. `ListPreviews`
+([below](#seeing-your-previews)) answers what is running now; nothing answers what ran before.
 
 **There is no TTL.** A preview lives as long as its pull request is open and labelled; a pull request
 open for three months holds a database for three months. `filter.limit` is the only cost control

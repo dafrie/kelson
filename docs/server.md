@@ -158,9 +158,40 @@ Two things bound it, and neither is authorization:
 Least-privilege RBAC for this path belongs to #84 along with the rest of the threat model. Until it
 lands, run the server with a service account scoped to the namespaces it is meant to serve.
 
+## PreviewService reads flux-operator's objects, and one read it cannot be granted
+
+`PreviewService.ListPreviews` ([ADR-0017](adr/0017-pr-previews.md)) reports which pull requests of an
+environment are running. It reads four kinds in the **environment's own** namespace — the
+`ResourceSetInputProvider` and `ResourceSet` kelson renders, and the per-change-request `OCIRepository`
+and `Kustomization` flux-operator instantiates from them — and the chart grants `get` and `list` on all
+four in every namespace it serves. Nothing is granted for writing: previews are published by CI and
+torn down by flux-operator, and no RPC in this schema creates or deletes one.
+
+The exception is hostnames. A preview's HTTPRoutes live in the preview's own namespace,
+`<project>-<environment>-pr<id>`, which is created at reconcile time and cannot be listed in
+`rbac.targetNamespaces` when the chart is installed. So that read needs cluster scope, the chart does
+not grant it, and without it the preview list is complete except for its hostnames — the read fails
+soft rather than failing the call. Bind this yourself if you want them:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kelson-preview-routes
+rules:
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["httproutes"]
+    verbs: ["get", "list"]
+```
+
+It is a cluster-wide read of routing objects and nothing else; kelson narrows the query to the
+`app.kubernetes.io/managed-by: kelson` provenance labels and to namespaces named for this
+environment's previews.
+
 ## Where the code lives
 
 - `cmd/kelson-server` — flags, the mux, the bind check.
 - `internal/api` — the ConnectRPC handlers (`api.go`) and the auth gate (`auth.go`).
 - `internal/serverstate` — the ConfigMap-backed spec and history stores.
 - `internal/secret` — the cluster secret backend behind `SecretService`.
+- `internal/delivery/flux` — the preview read behind `PreviewService` (`previews.go`).
