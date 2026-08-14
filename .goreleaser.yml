@@ -123,7 +123,10 @@ changelog:
       - "^Merge branch"
 
 release:
-  draft: true
+  # Published immediately, not draft: releases here are cut deliberately (one
+  # tag or one dispatch), and a draft only adds a manual click that hides the
+  # release from the public page until someone remembers it.
+  draft: false
   prerelease: auto
   github:
     owner: dafrie
