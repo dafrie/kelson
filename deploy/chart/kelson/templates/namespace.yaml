@@ -1,0 +1,9 @@
+{{- include "kelson.authGate" . -}}
+{{- if .Values.namespace.create }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ default .Release.Namespace .Values.namespace.name }}
+  labels:
+    {{- include "kelson.labels" . | nindent 4 }}
+{{- end }}

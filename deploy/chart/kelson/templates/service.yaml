@@ -1,0 +1,25 @@
+{{- include "kelson.authGate" . -}}
+# ClusterIP only. There is no Ingress or HTTPRoute in this chart on purpose:
+# kelson-server terminates no TLS, and how you expose it is your cluster's
+# routing decision, not the installer's (README.md). Reach it with
+# `kubectl port-forward`, or put your own TLS-terminating proxy in front.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "kelson.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kelson.labels" . | nindent 4 }}
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "kelson.selectorLabels" . | nindent 4 }}
