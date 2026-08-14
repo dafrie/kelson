@@ -71,12 +71,12 @@ a deploy or a log tail is a link that keeps working.
 | --- | --- | --- |
 | `/projects` | One card per (project, environment): phase pill, revision, cause, live/degraded counts | `ListSpecs`, then one `DeployService.Status` per card |
 | `/projects/new` | Create a project and its first component: three fields, a rendered preview, then the store | `PutSpec` at `RENDER`, then with an idempotency key |
-| `/projects/:project` | Environment tabs with status, workload verdicts, data services, the environment's PR previews and Secrets, and the stored documents; buttons into the four flows | `GetSpec`, `Status`, `GetProfile`, `ListPreviews`, `ListSecrets`, `Render` (deferred presets only), `SetSecret`/`DeleteSecret` on use |
-| `/projects/:project/edit` | Edit the stored spec: a form tab and a raw YAML tab, a diff before saving, an optimistic-concurrency save. The form reaches `spec.previews` and the `delivery:` stanza it needs (ADR-0017) | `GetSpec`, `PutSpec` at `RENDER` then for real, `Diff` |
+| `/projects/:project` | The project's components with their kinds, then environment tabs with status, workload verdicts, data services, the environment's PR previews and Secrets, and the stored documents; buttons into the four flows | `GetSpec`, `Status`, `GetProfile`, `ListPreviews`, `ListSecrets`, `Render` (deferred presets only), `SetSecret`/`DeleteSecret` on use |
+| `/projects/:project/edit` | Edit the stored spec: a form tab and a raw YAML tab, a diff before saving, an optimistic-concurrency save. The form reaches `spec.previews` and the `delivery:` stanza it needs (ADR-0017), and appends a component to `spec.components` (`?add=component` opens on it) | `GetSpec`, `PutSpec` at `RENDER` then for real, `Diff` |
 | `/projects/:project/:env/deploy` | Preview (render dry-run) then a confirm that streams the deployment live | `Deploy` at `RENDER`, then at `NONE`; optional `Diff` at `SERVER` |
 | `/projects/:project/:env/diff` | Two tabs: the live cluster's own dry-run verdict, or today's render against a recorded revision. `?from=<revision>` opens the second one preselected | `Diff` at `SERVER`, or with `from_revision`; `History` for the picker |
 | `/projects/:project/:env/history` | The recorded revisions, newest first: what each was, when, the spec hash, the author the mode recorded, and a phase pill on the live one. Links out to diff and rollback | `History`, `Status` |
-| `/projects/:project/:env/logs` | Bounded Query, and a live tail that pauses, filters, reconnects and saves | `QueryLogs`, `FollowLogs` |
+| `/projects/:project/:env/logs` | Bounded Query, and a live tail that pauses, filters, reconnects and saves. `?component=<name>` opens on one component — the link the project page's component list carries | `QueryLogs`, `FollowLogs` |
 | `/projects/:project/:env/promote` | The environment in the path is the **target**: pick a source, read the plan and the diff it produces, then write the pins. It never deploys | `GetSpec`, `Promote` at `RENDER` then `NONE` |
 | `/projects/:project/:env/rollback` | Revision picker, irreversibility preview, then the apply. `?to=<revision>` preselects and previews a target, never applies it | `History`, `Rollback` at `RENDER` then `NONE` |
 | `/cluster` | Server build and the detected ClusterProfile | `/healthz`, `GetProfile` |
@@ -293,13 +293,15 @@ reason — CloudNativePG, without which a rendered `Cluster` is just a manifest,
 and Flux's helm-controller, without which a rendered `HelmRelease` installs
 nothing ([ADR-0016](../docs/adr/0016-delivery-flows-v0.md)).
 
-Both parsers (`parse.ts` for the spec, `capability.ts` for the profile) sit on
-`miniyaml.ts`, which reads block mappings, block sequences and one-line flow
-mappings and nothing else. It is separate from `src/spec/edit.ts`'s parser on
+Three parsers (`parse.ts` for the spec's data components, `capability.ts` for
+the profile, `src/spec/components.ts` for the project page's component list) sit
+on `miniyaml.ts`, which reads block mappings, block sequences and one-line flow
+mappings and nothing else. They are separate from `src/spec/edit.ts`'s parser on
 purpose: that one feeds a form whose honesty rests on a byte-identical rebuild,
-so a key it cannot write is a key it must not read. This one only describes a
-document, and a document it cannot follow yields no data components rather than
-wrong ones.
+so a key it cannot write is a key it must not read, and a document outside its
+grammar has no form at all. These only *describe* a document — a hand-written
+Project is still a Project whose components a reader is entitled to see listed —
+and a document they cannot follow yields nothing rather than something wrong.
 
 ## Building spec documents in the browser
 
@@ -354,10 +356,38 @@ a document the UI can rebuild byte-identically**:
 
 Step 3 is a **total** guard, not a heuristic, and that is what makes so simple a
 strategy honest: anything the parser fails to capture — a comment, a key order,
-a data component, an anchor — is missing from the rebuild and shows up as a
+a `preset:`, an anchor — is missing from the rebuild and shows up as a
 byte difference. There is no path where the module drops something *and* still
 claims the document is editable. The reader is never asked to trust the parser;
 they are shown its output compared against their own bytes.
+
+**Adding a component goes through the same guard**
+([#214](https://github.com/dafrie/kelson/issues/214)). A Project is a container
+of components (ADR-0014) and the UI could edit the ones a document already had
+but never add one, so a second component meant hand-writing YAML nothing
+advertised. `appendComponent` in `src/spec/edit.ts` is the whole mechanism, and
+its contract is an equality rather than a promise: the rebuilt Project document
+must be **the stored bytes, a blank line, and the new entry** — asserted in the
+function and pinned in `edit.test.ts`, so "the original file is untouched" is a
+checked fact and not a property of how the builder happens to order its output
+today. When the stored document is not rebuildable there is no append at all:
+the panel says so and hands over the exact block to paste into the YAML tab,
+which is the same trade the read-only form makes.
+
+The kinds it offers are the ones it can write whole: `service`, `worker` and
+`cron` asked as the shape questions the model derives them from (a port, a
+schedule, neither), plus `postgres` and `valkey`, which are a name and a
+`kind:`. `helm` and `agent` are named on the panel rather than shown disabled —
+a chart is a `chart:` plus `values:` these fields do not have, and an agent's
+one distinguishing field is rejected until M7 ([#75](https://github.com/dafrie/kelson/issues/75)).
+
+That data pair is the one place the parser's vocabulary grew with the builder's:
+both learned `kind: postgres` / `kind: valkey` and nothing else, so a project
+that gains a database stays rebuildable, while a `preset:` — or any other key a
+data, agent or chart component can carry — still sends the document to the YAML
+tab whole. The form *states* a data component instead of editing it: it has no
+image to roll and no replicas to scale, and its preset is the data-services
+section's subject ([#107](https://github.com/dafrie/kelson/issues/107)).
 
 The parser is small and strict on purpose. It reads the grammar the builders
 emit — two-space indentation, block mappings and sequences, flow mappings for

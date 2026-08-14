@@ -157,13 +157,11 @@ function droppingTransport() {
   return { transport, queries };
 }
 
-function renderLogs(t: Transport = transport) {
-  return renderAt(
-    t,
-    "/projects/checkout/production/logs",
-    "/projects/:project/:env/logs",
-    <LogsPage />,
-  );
+function renderLogs(
+  t: Transport = transport,
+  path = "/projects/checkout/production/logs",
+) {
+  return renderAt(t, path, "/projects/:project/:env/logs", <LogsPage />);
 }
 
 describe("componentNames", () => {
@@ -212,6 +210,19 @@ describe("LogsPage", () => {
     await waitFor(() =>
       expect(screen.getByText(/from the stored Project document/)).toBeTruthy(),
     );
+  });
+
+  it("opens on the component the link named (#214)", async () => {
+    // The project page's component list links here per component, so the row a
+    // reader pressed is the component they get — and it wins over the picker's
+    // own "first component in the spec" fill-in.
+    renderLogs(transport, "/projects/checkout/production/logs?component=worker");
+    const component = screen.getByPlaceholderText("web") as HTMLInputElement;
+    expect(component.value).toBe("worker");
+    await waitFor(() =>
+      expect(screen.getByText(/from the stored Project document/)).toBeTruthy(),
+    );
+    expect(component.value).toBe("worker");
   });
 
   it("keeps the model's default when the server cannot resolve one", async () => {

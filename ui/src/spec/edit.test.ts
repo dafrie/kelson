@@ -10,8 +10,12 @@ import {
   secretEnv,
 } from "./documents";
 import {
+  appendComponent,
   buildProjectDocument,
+  componentDraftProblems,
+  componentSnippet,
   editFieldForError,
+  emptyComponentDraft,
   emptyDelivery,
   emptyPreviews,
   isRebuildable,
@@ -19,6 +23,7 @@ import {
   parseProjectDocument,
   readSpec,
   writeSpec,
+  type ComponentDraft,
   type ProjectEdit,
   type SpecTextSet,
 } from "./edit";
@@ -715,6 +720,176 @@ describe("secret references and bindings", () => {
       expect(isRebuildable({ ...MINIMAL, project }), name).toBe(false);
     });
   }
+});
+
+/**
+ * Adding a component to a project that already exists (#214).
+ *
+ * The property under test is not "the document contains the new component" — a
+ * rewrite would satisfy that. It is that the *stored bytes are untouched*: the
+ * rebuilt document is the one that was stored, followed by the new entry and
+ * nothing else. That is what makes an append safe on a file the user owns
+ * (ADR-0013 §1), and it is asserted as a string equality rather than inferred
+ * from a round trip.
+ */
+describe("appending a component", () => {
+  const draft = (patch: Partial<ComponentDraft> = {}): ComponentDraft => ({
+    ...emptyComponentDraft(),
+    ...patch,
+  });
+
+  it("leaves the stored bytes alone and adds one entry after them", () => {
+    const result = appendComponent(
+      MINIMAL,
+      draft({ name: "worker", kind: "worker" }),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    // The whole contract, spelled out: prefix, separator, entry.
+    expect(result.text.project).toBe(`${MINIMAL_PROJECT}\n    - name: worker\n`);
+    expect(result.text.project.startsWith(MINIMAL_PROJECT)).toBe(true);
+    expect(result.text.environments).toEqual(MINIMAL.environments);
+    // …and the result is a document the form can go on editing, which is what
+    // keeps a project editable after it grows a second component.
+    expect(isRebuildable(result.text)).toBe(true);
+  });
+
+  it("writes the shape each kind is made of, and never a kind the shape derives", () => {
+    const shapes: { draft: ComponentDraft; entry: string }[] = [
+      {
+        draft: draft({ name: "api", kind: "service", port: "9090" }),
+        entry: "    - name: api\n      port: 9090\n",
+      },
+      {
+        draft: draft({ name: "nightly", kind: "cron", schedule: "0 3 * * *" }),
+        // Quoted, because `0 3 * * *` is not a plain scalar: the same rule that
+        // keeps `PORT: "3000"` a string (documents.ts: yamlScalar).
+        entry: '    - name: nightly\n      schedule: "0 3 * * *"\n',
+      },
+      { draft: draft({ name: "worker", kind: "worker" }), entry: "    - name: worker\n" },
+      {
+        draft: draft({ name: "db", kind: "postgres" }),
+        entry: "    - name: db\n      kind: postgres\n",
+      },
+      {
+        draft: draft({ name: "cache", kind: "valkey" }),
+        entry: "    - name: cache\n      kind: valkey\n",
+      },
+    ];
+
+    for (const { draft: d, entry } of shapes) {
+      const result = appendComponent(MINIMAL, d);
+      expect(result.ok, d.kind).toBe(true);
+      if (!result.ok) continue;
+      expect(result.text.project, d.kind).toBe(`${MINIMAL_PROJECT}\n${entry}`);
+      // The snippet the handoff hands over is the same block, byte for byte.
+      expect(componentSnippet(d), d.kind).toBe(entry);
+      // A data component is as editable as anything else here — the parser and
+      // the builder learned the same one key, so the guard still holds.
+      expect(isRebuildable(result.text), d.kind).toBe(true);
+    }
+  });
+
+  it("writes no image at all for a component that inherits the project's (rule P3)", () => {
+    const inherited = appendComponent(MINIMAL, draft({ name: "worker", kind: "worker" }));
+    expect(inherited.ok && inherited.added).toBe("    - name: worker\n");
+
+    const own = appendComponent(
+      MINIMAL,
+      draft({
+        name: "worker",
+        kind: "worker",
+        ownImage: true,
+        image: "ghcr.io/acme/hello-worker:1.4.2",
+      }),
+    );
+    expect(own.ok && own.added).toBe(
+      "    - name: worker\n      image: ghcr.io/acme/hello-worker:1.4.2\n",
+    );
+  });
+
+  it("drops the fields the chosen kind does not use", () => {
+    // A port typed before the reader chose "worker" is not a port the document
+    // should carry: the kind is the question and the shape follows it.
+    const result = appendComponent(
+      MINIMAL,
+      draft({ name: "worker", kind: "worker", port: "8080", schedule: "0 3 * * *" }),
+    );
+    expect(result.ok && result.text.project).toBe(`${MINIMAL_PROJECT}\n    - name: worker\n`);
+  });
+
+  it("hands over the block instead of rewriting a document it cannot rebuild", () => {
+    const handWritten = MINIMAL_PROJECT.replace(
+      "spec:",
+      "# the thing that serves traffic\nspec:",
+    );
+    const text = { ...MINIMAL, project: handWritten };
+    expect(isRebuildable(text)).toBe(false);
+
+    const result = appendComponent(text, draft({ name: "worker", kind: "worker" }));
+    expect(result.ok).toBe(false);
+    // The comment is still there, because nothing was rewritten…
+    expect(text.project).toContain("# the thing that serves traffic");
+    // …and what the reader gets instead is the exact entry to paste.
+    expect(result.added).toBe("    - name: worker\n");
+  });
+
+  it("refuses a document whose environment half is hand-edited, not only the project", () => {
+    const result = appendComponent(
+      {
+        ...MINIMAL,
+        environments: { development: `# staging copies this\n${MINIMAL_ENVIRONMENT}` },
+      },
+      draft({ name: "worker", kind: "worker" }),
+    );
+    expect(result.ok).toBe(false);
+  });
+});
+
+describe("what the browser refuses to send about a new component", () => {
+  const draft = (patch: Partial<ComponentDraft> = {}): ComponentDraft => ({
+    ...emptyComponentDraft(),
+    ...patch,
+  });
+  const messages = (d: ComponentDraft, existing: string[] = ["web", "worker"]) =>
+    componentDraftProblems(d, existing).map((p) => `${p.field}: ${p.message}`);
+
+  it("holds the name to what makes it a component name", () => {
+    expect(messages(draft({ name: "", kind: "worker" }))[0]).toContain(
+      "a component name is required",
+    );
+    expect(messages(draft({ name: "Web Worker", kind: "worker" }))[0]).toContain(
+      "not a DNS-1123 label",
+    );
+    // The model's uniqueness rule (internal/model/validate.go), answered while
+    // someone types rather than after a round trip.
+    expect(messages(draft({ name: "web", kind: "worker" }))[0]).toContain(
+      'already has a component called "web"',
+    );
+    expect(messages(draft({ name: "web-2", kind: "worker" }))).toEqual([]);
+  });
+
+  it("requires the one field the chosen kind is made of", () => {
+    expect(messages(draft({ name: "api", kind: "service" }))[0]).toContain(
+      "a service is a component with a port",
+    );
+    expect(messages(draft({ name: "api", kind: "service", port: "http" }))[0]).toContain(
+      "not a whole number",
+    );
+    expect(messages(draft({ name: "nightly", kind: "cron" }))[0]).toContain(
+      "a cron job is a component with a schedule",
+    );
+    // A data component is a name and a kind; there is nothing else to require.
+    expect(messages(draft({ name: "db", kind: "postgres" }))).toEqual([]);
+  });
+
+  it("asks for an image only from a component that said it has its own", () => {
+    expect(messages(draft({ name: "mailer", kind: "worker", ownImage: true }))[0]).toContain(
+      "an image reference is required",
+    );
+    expect(messages(draft({ name: "mailer", kind: "worker" }))).toEqual([]);
+  });
 });
 
 describe("editFieldForError", () => {
