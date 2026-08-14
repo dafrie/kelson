@@ -7,6 +7,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/dafrie/kelson/internal/model"
+	"github.com/dafrie/kelson/internal/preview/naming"
 )
 
 // PR previews, rendered as the two flux-operator resources that own the
@@ -49,13 +50,15 @@ import (
 // against every cluster; whether flux-operator is *installed* is a ClusterProfile
 // finding (issue #157), never a rendering decision.
 //
-// # What this does not do
+// # Who else knows this scheme
 //
-// Nothing publishes the artifacts yet. Stage 1 renders the cluster-side
-// machinery; the publisher is stage 2, and until it lands flux-operator will
-// create an OCIRepository per pull request and report that the artifact does not
-// exist. docs/model.md says so in those words rather than describing a working
-// preview system.
+// The namespace this template writes, the tag it pins and the cap it enforces
+// are not local decisions: the publisher (internal/preview) has to render into
+// that namespace and push to that tag, or flux-operator creates an
+// OCIRepository pointing at an artifact nobody will ever push. Both sides call
+// internal/preview/naming, which is why ADR-0017's "agree by convention"
+// negative is now "agree by shared code". Nothing in this file spells a preview
+// name itself.
 
 const (
 	// resourceSetAPIVersion is flux-operator's API. kelson writes it and never
@@ -83,28 +86,6 @@ const previewInterval = "10m"
 // previewArtifactPath is the directory inside the artifact the Kustomization
 // builds. kelson's rendered output is a flat manifest set at the artifact root.
 const previewArtifactPath = "./"
-
-const (
-	// previewsSuffix names the lifecycle pair: <project>-<environment>-previews.
-	previewsSuffix = "previews"
-	// previewNameInfix separates the environment from the change request
-	// number: <project>-<environment>-pr<id>.
-	previewNameInfix = "pr"
-)
-
-// maxPreviewBase caps <project>-<environment>, and one number covers both
-// derived names because both add exactly nine characters: `-previews` for the
-// lifecycle pair, and `-pr` plus a change request number of up to
-// previewIDDigits digits for the preview itself. A preview's name is also its
-// namespace, and a namespace is a DNS-1123 label capped at 63.
-//
-// Refusing here costs nothing and points at the field. The alternative is
-// flux-operator templating a name the API server rejects at reconcile time,
-// which surfaces as a ResourceSet condition far from the spec that caused it.
-const (
-	previewIDDigits = 6
-	maxPreviewBase  = 63 - len("-"+previewNameInfix) - previewIDDigits
-)
 
 // previewProviderType maps kelson's forge enum onto flux-operator's provider
 // types. The enum is two wide on purpose (ADR-0017): the operator also speaks
@@ -143,19 +124,22 @@ func previewsRequireFlux(resolved *model.Resolved) Errors {
 // expresses sequencing only through order (issue #89).
 func previewsManifests(resolved *model.Resolved) ([]Manifest, error) {
 	previews := resolved.Environment.Previews
-	base := resolved.Project + "-" + resolved.Environment.Name
-	if len(base) > maxPreviewBase {
+	base := naming.Base(resolved.Project, resolved.Environment.Name)
+	// Refusing here costs nothing and points at the field. The alternative is
+	// flux-operator templating a name the API server rejects at reconcile time,
+	// which surfaces as a ResourceSet condition far from the spec that caused it.
+	if naming.BaseTooLong(base) {
 		return nil, Errors{{
 			Code: ErrPreviewName,
-			Message: "previews name every child " + quoted(base+"-"+previewNameInfix+"<change request>") +
+			Message: "previews name every child " + quoted(base+"-"+naming.Infix+"<change request>") +
 				", and " + quoted(base) + " is already " + strconv.Itoa(len(base)) + " characters",
 			Remediation: "shorten the project or environment name so that <project>-<environment> is at most " +
-				strconv.Itoa(maxPreviewBase) + " characters. A preview's name is also its namespace, which is a " +
-				"DNS-1123 label capped at 63, and kelson reserves " + strconv.Itoa(previewIDDigits) +
+				strconv.Itoa(naming.MaxBase) + " characters. A preview's name is also its namespace, which is a " +
+				"DNS-1123 label capped at 63, and kelson reserves " + strconv.Itoa(naming.IDDigits) +
 				" digits for the change request number",
 		}}
 	}
-	name := base + "-" + previewsSuffix
+	name := naming.Lifecycle(resolved.Project, resolved.Environment.Name)
 
 	hash, err := previewsHash(resolved, previews, name)
 	if err != nil {
@@ -170,7 +154,7 @@ func previewsManifests(resolved *model.Resolved) ([]Manifest, error) {
 	}
 	return []Manifest{
 		previewInputProvider(previews, prov),
-		previewResourceSet(resolved, previews, base, prov),
+		previewResourceSet(resolved, previews, prov),
 	}, nil
 }
 
@@ -210,7 +194,7 @@ func previewInputProvider(previews *model.ResolvedPreviews, prov provenance) Man
 // previewResourceSet renders the fan-out: one OCIRepository and one
 // Kustomization per input, and the provenance labels that make the children
 // discoverable by the selector everything else kelson writes answers to.
-func previewResourceSet(resolved *model.Resolved, previews *model.ResolvedPreviews, base string, prov provenance) Manifest {
+func previewResourceSet(resolved *model.Resolved, previews *model.ResolvedPreviews, prov provenance) Manifest {
 	spec := mapNode(
 		"inputsFrom", seqNode(mapNode(
 			"apiVersion", resourceSetAPIVersion,
@@ -223,7 +207,7 @@ func previewResourceSet(resolved *model.Resolved, previews *model.ResolvedPrevie
 		// flux-operator reports it on the ResourceSet rather than leaving it to
 		// be discovered per object.
 		"wait", true,
-		"resourcesTemplate", blockNode(previewResourcesTemplate(resolved, previews, base)),
+		"resourcesTemplate", blockNode(previewResourcesTemplate(resolved, previews)),
 	)
 	return baseManifest(resourceSetAPIVersion, "ResourceSet", prov, spec)
 }
@@ -236,11 +220,12 @@ func previewResourceSet(resolved *model.Resolved, previews *model.ResolvedPrevie
 // `<< inputs.sha >>` is not something a YAML encoder should be asked to have an
 // opinion about. Assembly is plain concatenation of resolved spec values, so it
 // is deterministic byte-for-byte, which the golden fixtures assert.
-func previewResourcesTemplate(resolved *model.Resolved, previews *model.ResolvedPreviews, base string) string {
+func previewResourcesTemplate(resolved *model.Resolved, previews *model.ResolvedPreviews) string {
 	// The per-preview name and its namespace are the same string: the objects
 	// that manage a preview live beside the environment, and what they apply
-	// lives in a namespace of its own (ADR-0017 decision 3).
-	child := base + "-" + previewNameInfix + "<< inputs.id >>"
+	// lives in a namespace of its own (ADR-0017 decision 3). It is spelled by
+	// the package the publisher renders from, so the two cannot drift.
+	child := naming.PreviewTemplate(resolved.Project, resolved.Environment.Name)
 	ns := resolved.Environment.Namespace
 
 	var b strings.Builder
@@ -254,7 +239,7 @@ func previewResourcesTemplate(resolved *model.Resolved, previews *model.Resolved
 	b.WriteString("  interval: " + previewInterval + "\n")
 	b.WriteString("  url: " + previews.Artifacts.Repository + "\n")
 	b.WriteString("  ref:\n")
-	b.WriteString("    tag: << inputs.sha >>\n")
+	b.WriteString("    tag: " + naming.InputSHA + "\n")
 	if previews.Artifacts.SecretRef != "" {
 		b.WriteString("  secretRef:\n")
 		b.WriteString("    name: " + previews.Artifacts.SecretRef + "\n")

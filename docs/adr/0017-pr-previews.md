@@ -2,6 +2,8 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-14
+- **Amended:** 2026-08-14 — [Stage 2, the publisher](#stage-2--the-publisher-amended-2026-08-14)
+  (decisions 8–11)
 
 ## Context
 
@@ -228,13 +230,15 @@ The work splits three ways, and this ADR commits only the first:
    the same renderer and pushes the manifests as an OCI artifact tagged with the head SHA, to
    `previews.artifacts.repository`. It reuses `internal/build/registry` for the reference and
    credential machinery and `internal/delivery/eject`'s layout vocabulary for what goes in the
-   artifact.
+   artifact. **Landed 2026-08-14 — see decisions 8–11, which settle "the server or a CI job" as a CI
+   job.**
 3. **Stage 3.** Surfacing previews in the UI and the API.
 
 **Until stage 2 lands, a rendered `ResourceSet` waits for artifacts nobody publishes.** flux-operator
 will find the labelled pull requests, create an `OCIRepository` per pull request, and report that the
-artifact does not exist. That is the honest state of the feature after stage 1 and the documentation
-says so in those words rather than describing a working preview system.
+artifact does not exist. That was the honest state of the feature after stage 1. It is now the state
+of an environment whose CI does not run `kelson preview publish`, which is the same symptom with a
+documented cause.
 
 ### 7. Preview children are not enumerated by kelson's Status and History RPCs
 
@@ -248,6 +252,103 @@ What exists instead is the provenance labels and the naming scheme: `kelson.dev/
 `kelson.dev/environment` on every generated object, in namespaces named `<project>-<environment>-pr<id>`.
 A `kubectl get` with a selector answers the question today. An API that answers it is stage 3, and it
 is a new decision about what a preview *is* to kelson's model — not an extension of this one.
+
+## Stage 2 — the publisher (amended 2026-08-14)
+
+Stage 1 left the artifacts unpublished and named three questions it did not answer: *who* publishes,
+*what exactly* the artifact contains, and what to do about the convention this ADR admitted was
+unchecked. This section answers them and is the second half of the decision above, not a new one.
+
+### 8. The publisher is a CLI verb in the application repository's CI
+
+`kelson preview publish -f <spec> --env <name> --pr <number> --sha <commit> [--image <ref>]`, run on
+pull request events, beside the build that produced the image.
+
+That is where the inputs already are. The checkout of the pull request's head is on the runner, the
+image was built there seconds earlier, and the registry credential is in the environment because the
+build step just pushed with it. Nothing has to be fetched, impersonated or stored for the publish to
+happen, and the composition is one line of YAML: build, then publish the digest.
+
+The alternatives were real and are worth recording.
+
+**A server-side publisher on a forge webhook.** kelson-server receives a `pull_request` event, checks
+out the head, renders and pushes. It needs a webhook per repository, a forge credential kelson does
+not hold today (ADR-0009 keeps credentials in Secrets somebody else manages, and this would be a new
+class of them), a checkout of somebody else's source *inside the control plane*, and an answer to
+"which image does this preview run?" that CI already has and the server does not. It also puts the
+control plane in the data path for every pull request, which is the shape ADR-0010 avoided for builds.
+
+**An in-cluster job triggered by the `ResourceSetInputProvider`.** flux-operator already knows about
+each pull request, so a job could render on its behalf. But it would clone the source in the cluster,
+would have to discover the image by convention, and — decisively — the artifact would then be produced
+by the same lifecycle that consumes it, so a preview could never be published *before* its
+`OCIRepository` exists. The first reconcile would always fail.
+
+**A `Publish` RPC on kelson-server.** Not rejected, deferred: a server that renders and pushes on
+request is a small addition to this decision rather than a change to it, and nothing in the flow needs
+it. When it lands it will call the same package this CLI verb calls.
+
+The cost of choosing CI is that publishing is a step somebody has to add to a workflow, and a
+repository that forgets it gets exactly the stage 1 experience: an `OCIRepository` reporting a missing
+artifact. That is a visible failure with a documented fix, which is why it was preferred to the
+invisible ones above.
+
+`kelson preview render` is the same render printed instead of pushed — the dry rung of the same
+ladder `kelson diff` and `kelson deploy --dry-run` climb, and the place to look when a preview is not
+what it should be.
+
+### 9. The convention is now shared code
+
+This ADR's second negative — "the publisher and the renderer agree by convention, not by type" — is
+closed by `internal/preview/naming`: one package spelling the `-pr<id>` namespace, the lifecycle pair's
+name, the 54-character cap and its six-digit reservation, the tag, and the `<< inputs.id >>` /
+`<< inputs.sha >>` holes themselves. `internal/renderer/previews.go` builds the `ResourceSet` template
+out of it and `internal/preview` renders and tags out of it, so neither side spells a preview name
+itself. A contract test substitutes the inputs flux-operator would substitute and asserts that the tag
+the cluster pins and the namespace it targets are the ones a publish actually produces.
+
+It is shared code and not a shared *type*, deliberately: a type would have to be carried through the
+pure renderer's node builders and through the artifact's descriptors to be worth anything, and the
+failure it would prevent is one that four exported functions and one test already prevent.
+
+### 10. What the artifact is
+
+A Flux OCI artifact: config media type `application/vnd.cncf.flux.config.v1+json`, one layer of
+`application/vnd.cncf.flux.content.v1.tar+gzip` holding the rendered set as a flat directory of YAML
+files, inside an `application/vnd.oci.image.manifest.v1+json` manifest. The layout is
+`internal/delivery/git`'s `ManifestFiles` — the same function that lays out a Git-mode commit, as
+stage 1 said it would be — so an artifact's contents and an ejected repository's contents are the same
+bytes with the same names, and the `Kustomization`'s `path: ./` finds them at the root.
+
+It carries `org.opencontainers.image.revision` (`pr-<id>@sha1:<commit>`), `.source` (the forge
+repository), `.created`, and `kelson.dev/project`, `kelson.dev/environment`, `kelson.dev/preview`, so
+an artifact in a registry answers the same "whose is this?" question a resource in a cluster does.
+
+**The artifact is deterministic, digest included.** The tar is written in render order with fixed
+modes, no ownership and a fixed timestamp, and `created` is that same fixed timestamp rather than the
+wall clock. Republishing an unchanged commit therefore produces a digest the registry already holds
+and uploads nothing. The build time is not lost — the commit's date is in the repository, the revision
+annotation names the commit, and the registry records the push — and what is gained is that "the same
+render produces the same artifact" is a property a test asserts instead of a hope. This is ADR-0001's
+determinism rule applied one layer out.
+
+### 11. A preview's hostnames belong to the change request
+
+The preview render is the parent environment's render with three substitutions and nothing else: the
+namespace becomes the preview's, the `previews:` block is dropped (a preview that kept it would render
+a `ResourceSetInputProvider` of its own and every pull request would spawn previews of itself), and
+every hostname gains the change request.
+
+The hostname rewrite suffixes the *first DNS label*: `web.staging.acme.run` becomes
+`web-pr412.staging.acme.run`. Inserting a label instead would fall outside the single-label wildcard
+certificate and wildcard DNS record that already serve the parent environment, and break TLS on the
+first preview.
+
+It applies to authored hostnames too, which is the uncomfortable half and the safety-critical one: a
+component that names `api.acme.com` must not have its preview claim `api.acme.com`. Two previews of
+one environment would otherwise fight over one hostname, and a preview would be able to take
+production's traffic. So a preview never serves the hostname the spec asks for, and that is deliberate
+rather than a limitation to fix later.
 
 ## Rationale
 
@@ -275,18 +376,40 @@ have a named reason not to be.
 
 **Negative — stated as plainly as the positives.**
 
-- **Stage 1 ships something that does not work yet.** An author can write `previews:`, render, deploy,
-  and watch flux-operator report missing artifacts indefinitely. That is a feature in a half-state, and
-  the mitigation is documentation rather than a gate: gating the field behind
-  [#141](https://github.com/dafrie/kelson/issues/141)'s `schema/not-implemented` would be the more
+- **Stage 1 ships something that does not work yet.** ~~An author can write `previews:`, render, deploy,
+  and watch flux-operator report missing artifacts indefinitely.~~ *Closed by stage 2 (decision 8): the
+  publisher exists, and an environment whose CI runs `kelson preview publish` gets working previews. A
+  repository that does not add the step still gets the half-state, now with a documented fix.* The
+  original argument stands as recorded: gating the field behind
+  [#141](https://github.com/dafrie/kelson/issues/141)'s `schema/not-implemented` would have been the more
   conservative call, and it was rejected because the cluster-side machinery is genuinely rendered,
-  genuinely correct and genuinely useful to review before the publisher exists. The coverage rule is
-  satisfied because every field is consumed by the renderer — the field is not silent, it is early.
-- **The publisher and the renderer agree by convention, not by type.** Stage 2 must render the preview
-  into the namespace decision 3 names and push to the tag decision 2 names. Nothing checks that, and
-  the failure mode of getting it wrong — a stray namespace, or an `OCIRepository` pointing at a tag
-  that will never exist — is quiet. A shared constant is the obvious mitigation and it is stage 2's to
-  add.
+  genuinely correct and genuinely useful to review before the publisher exists.
+- **The publisher and the renderer agree by convention, not by type.** ~~Nothing checks that.~~ *Closed
+  by stage 2 (decision 9): the scheme is `internal/preview/naming`, both sides call it, and a contract
+  test substitutes flux-operator's inputs to assert that the tag the cluster pins and the namespace it
+  targets are the ones a publish produces. It is shared code, not a shared type — the reason is in
+  decision 9.*
+- **A preview never serves the hostname the spec asks for.** Decision 11 rewrites every hostname,
+  authored ones included, because the alternative is a preview claiming production's traffic. The cost
+  is that a component whose behaviour depends on its own hostname — an OAuth redirect URI, a CORS
+  allow-list, a cookie domain — behaves differently in a preview than in the environment it previews,
+  and kelson does not tell it what its preview hostname is. An `env:` value carrying the rendered
+  hostname would fix that and is not attempted here.
+- **An artifact repository on a port cannot be authored.** `previews.artifacts.repository` is validated
+  by reading any `:` after `oci://` as a tag, so `oci://registry.internal:5000/acme/previews` is
+  rejected as "carries a tag or a digest". That is a stage 1 validation bug this stage exposed rather
+  than caused — the publisher itself parses the reference correctly — and it makes a self-hosted
+  registry on a non-default port unusable for previews until the check learns the distribution
+  grammar's rule (a `:` introduces a tag only when no `/` follows it).
+- **Nothing verifies who published an artifact.** The `OCIRepository` fetches whatever is tagged with
+  the head commit, from whoever could write to the repository. Flux supports cosign and notation
+  verification and kelson writes no `spec.verify`, so the trust boundary is the registry's write
+  access. Signing previews is a spec field plus a key story, and it belongs with the same decision for
+  the images kelson builds rather than being invented here for previews alone.
+- **Published artifacts are never deleted.** Teardown deletes the preview's namespace and its two
+  objects; the artifacts stay in the registry, one per push, forever. That is the deliberate cost of
+  the immutable-tag choice in decision 2 — the history is the feature — but it is storage nobody
+  reclaims, and registry retention policy is the only tool for it today.
 - **The `ResourceSet` runs with flux-operator's own permissions.** Neither `spec.serviceAccountName` on
   the `ResourceSet` nor on the generated `Kustomization` is set, because kelson has no field for it,
   which means previews reconcile with whatever the operator can do cluster-wide. On a multi-tenant
@@ -310,8 +433,17 @@ have a named reason not to be.
 
 ## Revisit when
 
-- **Stage 2 lands the publisher.** That is when the convention in this ADR's second negative becomes a
-  shared constant, and when the documentation stops having to say the feature waits for artifacts.
+- ~~**Stage 2 lands the publisher.**~~ *Done, 2026-08-14: decisions 8–11 above. The convention became
+  shared code rather than a shared constant, and the documentation no longer says the feature waits for
+  artifacts.*
+- **kelson-server grows a `Publish` RPC.** Decision 8 defers rather than rejects it. The question to
+  answer then is not "should the server publish?" but "where does the server get the source checkout
+  and the image reference that CI already has?" — and if the answer is "from the caller", the RPC is a
+  thin wrapper over the same package and this decision does not change.
+- **A preview needs to know its own hostname.** Decision 11's negative: an OAuth redirect URI or a
+  cookie domain configured for the parent environment is wrong in every preview. The fix is an
+  `env:` value carrying the rendered hostname, which is a new authoring surface and a question about
+  what else a preview should be told about itself.
 - **Anyone needs a preview to run under its own ServiceAccount.** That is a spec field, an RBAC
   decision and probably a per-preview `Role`; it meets multi-tenancy ([#60](https://github.com/dafrie/kelson/issues/60), [#84](https://github.com/dafrie/kelson/issues/84)) before it meets this
   ADR.

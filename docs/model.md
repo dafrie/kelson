@@ -475,10 +475,11 @@ has.
 
 ## Previews: a child environment per pull request
 
-> Partially implemented since [ADR-0017](adr/0017-pr-previews.md), which decides the design;
+> Implemented since [ADR-0017](adr/0017-pr-previews.md), which decides the design;
 > [ADR-0016](adr/0016-delivery-flows-v0.md) decision 5 decided the shape. Available in **Flux mode
-> only**. **Stage 1 renders the cluster-side machinery and nothing publishes the artifacts yet** —
-> read "What stage 1 does not do" below before turning this on.
+> only**. **Two halves have to be in place**: the `previews:` block below, and a CI step that runs
+> `kelson preview publish` — read [Publishing the artifacts](#publishing-the-artifacts) before turning
+> this on. Enumerating previews through kelson's own API is still to come.
 
 An environment may spawn a child environment per open pull request. kelson does not poll the forge and
 does not garbage-collect: a flux-operator `ResourceSetInputProvider` finds the change requests and a
@@ -560,13 +561,100 @@ inside the `ResourceSet` lifecycle ([#103](https://github.com/dafrie/kelson/issu
 storage-capability gate is unchanged: a preset the cluster cannot host fails the preview's render the
 same way it fails the parent environment's (see [data services](data-services.md)).
 
-### What stage 1 does not do
+### Publishing the artifacts
 
-**Nothing publishes the artifacts yet.** The `previews:` block renders the cluster-side machinery and
-that is all it renders. Until the publisher lands, flux-operator will find the labelled pull requests,
-create an `OCIRepository` for each, and report that the artifact does not exist. That is the honest
-state of the feature: a rendered `ResourceSet` waiting for something to push to
-`artifacts.repository`.
+The `previews:` block renders the cluster-side machinery and nothing else. The manifests each preview
+applies are pushed by **`kelson preview publish`, run in the application repository's CI on pull
+request events** — that is where the pull request's checkout and the image built from it already are
+([ADR-0017](adr/0017-pr-previews.md) decision 8). Without that step, flux-operator finds the labelled
+pull requests, creates an `OCIRepository` for each, and reports that the artifact does not exist.
+
+```yaml
+# .github/workflows/preview.yml
+name: preview
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+
+jobs:
+  publish:
+    # The label that gates the preview in `filter.labels` gates the job that
+    # feeds it, so a pull request nobody asked to preview costs nothing.
+    if: contains(github.event.pull_request.labels.*.name, 'deploy/preview')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      pull-requests: write        # only for the skip label below
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      # `skip.labels` pauses the preview while this label is present, so the
+      # cluster does not update to a commit whose image is still building.
+      # Add it before the build, remove it after the publish.
+      - run: gh pr edit "$PR" --add-label deploy/preview-pause
+        env:
+          PR: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Build first: publish needs the image the preview will actually run.
+      # The last line of `kelson build` is the digest-pinned reference.
+      - id: build
+        run: echo "image=$(kelson build -f spec.yaml --env staging --registry ghcr.io/acme | tail -1)" >> "$GITHUB_OUTPUT"
+
+      - run: |
+          kelson preview publish -f spec.yaml \
+            --environment staging \
+            --pr  ${{ github.event.pull_request.number }} \
+            --sha ${{ github.event.pull_request.head.sha }} \
+            --image ${{ steps.build.outputs.image }}
+
+      - run: gh pr edit "$PR" --remove-label deploy/preview-pause
+        env:
+          PR: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
+| Flag | Meaning |
+|---|---|
+| `-f` | the spec files, repeatable, exactly as `kelson render` takes them |
+| `--env` (or `--environment`) | the environment whose `previews:` this belongs to |
+| `--pr` | the change request number, as the forge numbers it |
+| `--sha` | the head commit **in full** — an abbreviation tags the artifact where nothing looks |
+| `--image` | the image the preview runs, standing in for `spec.image` (rule P3) |
+| `--registry-secret` | resolve the push credential from a cluster Secret instead of the runner's `docker login` |
+| `--profile` | the ClusterProfile to render against, as everywhere else |
+
+The push credential is the runner's `docker login` by default (`$DOCKER_CONFIG/config.json`, then
+`~/.docker/config.json`), which is what `docker/login-action` writes. A runner with cluster access and
+no login can use `--registry-secret <name>`, resolved from the **parent environment's** namespace —
+the preview's namespace does not exist yet, since creating it is what the artifact is for.
+
+`kelson preview render` takes the same flags and prints the manifests instead of pushing them. It is
+the rung to reach for when a preview is not what it should be: the artifact's contents are exactly
+those bytes, so anything wrong there is wrong in the cluster, and anything right there is a publishing
+or a reconciliation problem instead.
+
+The artifact is deterministic — same render, same digest, timestamps included — so re-running a job
+for an unchanged commit uploads nothing.
+
+### What previews do not do
+
+**A preview never serves the hostname the spec asks for.** Every hostname gains the change request in
+its first DNS label: `web.staging.acme.run` becomes `web-pr412.staging.acme.run`, and an authored
+`api.acme.com` becomes `api-pr412.acme.com`. Two previews would otherwise fight over one hostname and
+a preview could take production's traffic. Only the first label changes, so the wildcard certificate
+and wildcard DNS record that already serve the environment serve its previews too — but a component
+configured with its own hostname (an OAuth redirect URI, a cookie domain) is configured with the wrong
+one, and kelson does not tell it what its preview hostname is.
 
 **kelson does not enumerate preview children.** A preview is an environment kelson did not record: no
 Environment document describes it and no delivery history entry exists for it. The Status and History
@@ -585,6 +673,15 @@ setting somebody forgot to expose.
 on either object, because there is no field for one. On a multi-tenant cluster that is more authority
 than a preview should have, and the fix is a spec field plus an RBAC story that ADR-0017 does not
 attempt.
+
+**Published artifacts are never deleted, and nobody verifies who published them.** Teardown deletes
+the preview's namespace and its two objects; the artifacts stay in the registry, one per push. The
+`OCIRepository` fetches whatever carries the head commit's tag, from whoever could write to that
+repository — kelson writes no `spec.verify`, so the trust boundary is the registry's write access.
+
+**An artifact repository on a port cannot be authored.** `artifacts.repository` reads any `:` after
+`oci://` as a tag, so `oci://registry.internal:5000/acme/previews` is rejected as
+`schema/invalid-format`. A registry on a non-default port is therefore unusable for previews today.
 
 ### The Flux-only gate
 

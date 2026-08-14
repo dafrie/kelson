@@ -481,7 +481,14 @@ func (v *validator) previews(field string, p *Previews) {
 	} else {
 		v.remoteURL(field+".artifacts.repository", p.Artifacts.Repository, []string{"oci"},
 			"use an oci:// repository URL without a tag, e.g. oci://ghcr.io/acme/checkout-previews")
-		if strings.Contains(p.Artifacts.Repository, "@") || strings.Contains(strings.TrimPrefix(p.Artifacts.Repository, "oci://"), ":") {
+		// A colon introduces a tag only in the last path segment; before the
+		// first slash it is a registry port (oci://registry.internal:5000/x).
+		trimmed := strings.TrimPrefix(p.Artifacts.Repository, "oci://")
+		tagged := strings.Contains(p.Artifacts.Repository, "@")
+		if i := strings.LastIndex(trimmed, "/"); i >= 0 && strings.Contains(trimmed[i+1:], ":") {
+			tagged = true
+		}
+		if tagged {
 			v.err(ErrInvalidFormat, field+".artifacts.repository",
 				fmt.Sprintf("%q carries a tag or a digest", p.Artifacts.Repository),
 				"drop the tag: each preview is pulled at its pull request's head commit SHA, so a tag here would "+

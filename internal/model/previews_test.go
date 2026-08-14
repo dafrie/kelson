@@ -168,6 +168,17 @@ func TestPreviewsArtifactsRepositoryIsUntagged(t *testing.T) {
 	if e := findErr(errs, "$.spec.previews.artifacts.repository"); e == nil || e.Code != ErrInvalidFormat {
 		t.Errorf("the artifact repository must be an oci:// URL, got:\n%v", errs)
 	}
+
+	// A colon before the first path segment is a registry port, not a tag —
+	// an in-cluster registry on :5000 is a legitimate previews target.
+	errs = decodePreviews(t, `    provider: github
+    repo: https://github.com/acme/checkout
+    secretRef: github-auth
+    artifacts: {repository: "oci://registry.internal:5000/acme/checkout-previews"}
+`)
+	if e := findErr(errs, "$.spec.previews.artifacts.repository"); e != nil {
+		t.Errorf("a registry port must not be read as a tag, got:\n%v", errs)
+	}
 }
 
 func TestPreviewsBranchFiltersMustCompile(t *testing.T) {
