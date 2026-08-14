@@ -354,7 +354,35 @@ func refuse(c Component, prof clusterprofile.ClusterProfile, allMissing bool) (*
 			Remediation: "install it yourself from upstream; kelson detects and adopts it (ADR-0003)",
 		}, true
 	}
+	// envoy-gateway is the one row a sweep treats differently from an explicit
+	// name. Its pinned manifest claims no GatewayClass, so installing it cannot
+	// touch the traffic an existing ingress stack carries — but it is still a
+	// second routing implementation, and "install everything missing" is not
+	// the user deciding to run two. Detection can see the classes a cluster
+	// offers and not which of them matters (the pins table's history records
+	// why), so the sweep reports the choice instead of making it. An explicit
+	// `kelson install envoy-gateway` IS that decision, and proceeds.
+	if c.Name == "envoy-gateway" && allMissing && len(prof.IngressClasses) > 0 {
+		return &Refusal{
+			Name:    c.Name,
+			Outcome: clusterprofile.OutcomeNo,
+			Reason: "detection reports no Gateway API, but this cluster already routes through an ingress " +
+				"stack (" + ingressClassList(prof) + "), and a sweep must not add a second routing " +
+				"implementation beside it",
+			Remediation: "decide by name: `kelson install envoy-gateway` installs it — it claims no " +
+				"GatewayClass and carries no traffic until you create one — or keep your ingress stack and " +
+				"note that kelson renders Gateway API only (#140)",
+		}, true
+	}
 	return nil, false
+}
+
+func ingressClassList(prof clusterprofile.ClusterProfile) string {
+	names := make([]string, 0, len(prof.IngressClasses))
+	for _, c := range prof.IngressClasses {
+		names = append(names, c.Name)
+	}
+	return strings.Join(names, ", ")
 }
 
 // load fetches, verifies and decodes one component's manifest.

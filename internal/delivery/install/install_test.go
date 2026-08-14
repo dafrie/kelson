@@ -91,6 +91,50 @@ func TestPlanRefusesDeferredComponent(t *testing.T) {
 	}
 }
 
+// TestSweepDeclinesEnvoyGatewayBesideAnIngressStack: envoy-gateway's manifest
+// claims no GatewayClass, so installing it cannot touch existing traffic — but
+// a second routing implementation is still a decision, and --all-missing is
+// not the user making it. The sweep reports the choice; the explicit name IS
+// the choice and proceeds.
+func TestSweepDeclinesEnvoyGatewayBesideAnIngressStack(t *testing.T) {
+	eg, ok := Lookup("envoy-gateway")
+	if !ok {
+		t.Fatal("the pins table has no envoy-gateway row")
+	}
+	prof := clusterprofile.ClusterProfile{IngressClasses: []clusterprofile.IngressClass{
+		{Name: "nginx", Controller: "k8s.io/ingress-nginx", Default: true},
+	}}
+
+	refusal, refused := refuse(eg, prof, true)
+	if !refused || refusal == nil {
+		t.Fatal("a sweep added a second routing implementation beside a detected ingress stack")
+	}
+	if refusal.Outcome != clusterprofile.OutcomeNo {
+		t.Fatalf("outcome = %v, want no: the component genuinely is absent", refusal.Outcome)
+	}
+	if !strings.Contains(refusal.Reason, "nginx") {
+		t.Fatalf("reason %q does not name the detected ingress classes", refusal.Reason)
+	}
+	if !strings.Contains(refusal.Remediation, "kelson install envoy-gateway") {
+		t.Fatalf("remediation %q does not name the explicit command that decides", refusal.Remediation)
+	}
+
+	if _, refused := refuse(eg, prof, false); refused {
+		t.Fatal("an explicit `kelson install envoy-gateway` was refused; naming it is the routing decision")
+	}
+	if _, refused := refuse(eg, clusterprofile.ClusterProfile{}, true); refused {
+		t.Fatal("a cluster with no routing at all — the bootstrap case — was not swept")
+	}
+
+	// Presence still wins over everything: Gateway API CRDs in the cluster mean
+	// an implementation (whoever's) is there, and kelson never installs beside.
+	prof.GatewayAPI = &clusterprofile.GatewayAPI{Version: "v1"}
+	refusal, refused = refuse(eg, prof, false)
+	if !refused || refusal == nil || refusal.Outcome != clusterprofile.OutcomeYes {
+		t.Fatalf("refusal = %+v, want a yes-outcome refusal when the Gateway API is present", refusal)
+	}
+}
+
 // TestPlanRejectsUnknownComponent names the real answers instead of shrugging.
 func TestPlanRejectsUnknownComponent(t *testing.T) {
 	installer := newInstaller(t, newCluster(), &fakeFetcher{})
