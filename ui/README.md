@@ -71,7 +71,7 @@ a deploy or a log tail is a link that keeps working.
 | --- | --- | --- |
 | `/apps` | One card per (project, environment): phase pill, revision, cause, live/degraded counts | `ListSpecs`, then one `DeployService.Status` per card |
 | `/apps/new` | Create a component: three fields, a rendered preview, then the store | `PutSpec` at `RENDER`, then with an idempotency key |
-| `/apps/:project` | Environment tabs with status, workload verdicts, data services and the stored documents; buttons into the four flows | `GetSpec`, `Status`, `GetProfile`, `Render` (deferred presets only) |
+| `/apps/:project` | Environment tabs with status, workload verdicts, data services, the environment's Secrets and the stored documents; buttons into the four flows | `GetSpec`, `Status`, `GetProfile`, `ListSecrets`, `Render` (deferred presets only), `SetSecret`/`DeleteSecret` on use |
 | `/apps/:project/edit` | Edit the stored spec: a form tab and a raw YAML tab, a diff before saving, an optimistic-concurrency save | `GetSpec`, `PutSpec` at `RENDER` then for real, `Diff` |
 | `/apps/:project/:env/deploy` | Preview (render dry-run) then a confirm that streams the deployment live | `Deploy` at `RENDER`, then at `NONE`; optional `Diff` at `SERVER` |
 | `/apps/:project/:env/diff` | Two tabs: the live cluster's own dry-run verdict, or today's render against a recorded revision. `?from=<revision>` opens the second one preselected | `Diff` at `SERVER`, or with `from_revision`; `History` for the picker |
@@ -265,6 +265,22 @@ it, and each is there because the alternative would mislead:
   ([#94](https://github.com/dafrie/kelson/issues/94)) and branching are muted
   badges with one sentence and a link to the issue, never disabled buttons.
 
+`src/secrets/SecretsPanel.tsx` sits beside them
+([#116](https://github.com/dafrie/kelson/issues/116)): the Secrets kelson
+manages in this environment's namespace — what a `{secret: <name>, key: <key>}`
+reference points at — listed by name, keys and age, with an inline form that
+writes one. Four things it does not do, all of them the schema's decision rather
+than the screen's: it never shows a value (no message in `secret.proto` has a
+field one could arrive in), it never claims a write replaced a Secret (`SetSecret`
+merges, and the response says which keys were kept), it never adopts a Secret
+kelson did not label (`secret/not-managed` reaches the reader through the same
+`ErrorPanel` as every other structured refusal), and it offers no dry-run rung —
+the form submit is the confirm, because the person pressing it is looking at the
+form. A delete still confirms, because what it destroys is not on screen to be
+retyped. After a write it prints the ready-to-paste reference per key, from the
+same `secretReference` the spec builders use, so what is pasted is what the
+editor would have written.
+
 `CapabilityPanel` sits under them and answers the question a database raises
 about the cluster: does the storage have a snapshot driver, what does a clone
 cost, and how confidently was that decided. It reads `GetProfile`'s YAML —
@@ -433,7 +449,7 @@ cd .. && make proto
 
 Connect-ES v2 needs only `protoc-gen-es`: `createClient` consumes the service
 descriptors it emits, so there is no `protoc-gen-connect-es` counterpart to the
-Go plugin. `src/api/clients.test.ts` builds a client for all five services
+Go plugin. `src/api/clients.test.ts` builds a client per service
 against an in-memory `createRouterTransport` — it fails the moment the generated
 schemas and the client wiring stop agreeing, which is the check that catches a
 `src/gen/` left stale by a `.proto` change.
