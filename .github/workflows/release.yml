@@ -11,10 +11,24 @@
 
 name: release
 
+# Two ways in, one pipeline:
+#   - push a tag `vX.Y.Z` (the documented path, docs/release-policy.md), or
+#   - workflow_dispatch with the tag as input, for automation that can open
+#     PRs but cannot push tags. The dispatch path creates the tag at the
+#     dispatched ref if it does not exist yet, using the workflow's own token
+#     (contents: write below). A tag created that way does not re-trigger the
+#     push path — GitHub suppresses workflow-to-workflow events — so the run
+#     that created it carries the release itself.
 on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (vX.Y.Z). Created at the dispatched ref if it does not exist yet."
+        required: true
+        type: string
 
 permissions:
   contents: write   # goreleaser writes the GitHub release
@@ -29,6 +43,33 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0   # goreleaser needs full history for the changelog
+
+      # The dispatch path: make the input tag exist, then stand on it, so the
+      # rest of the pipeline sees exactly what a tag push would have given it.
+      - name: ensure tag (workflow_dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = context.payload.inputs.tag;
+            if (!/^v\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(tag)) {
+              core.setFailed(`tag ${tag} is not a vX.Y.Z version (docs/release-policy.md)`);
+              return;
+            }
+            try {
+              await github.rest.git.getRef({ ...context.repo, ref: `tags/${tag}` });
+              core.info(`tag ${tag} already exists; releasing it as-is`);
+            } catch (e) {
+              if (e.status !== 404) throw e;
+              await github.rest.git.createRef({ ...context.repo, ref: `refs/tags/${tag}`, sha: context.sha });
+              core.info(`created tag ${tag} at ${context.sha}`);
+            }
+
+      - name: checkout tag (workflow_dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          git fetch --tags --force origin
+          git checkout "refs/tags/${{ inputs.tag }}"
 
       - name: setup go
         uses: actions/setup-go@v5
