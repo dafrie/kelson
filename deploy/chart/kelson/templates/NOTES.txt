@@ -5,6 +5,9 @@ Reach it:
   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "kelson.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}
   curl http://127.0.0.1:{{ .Values.service.port }}/healthz
 
+The same port serves the web UI, which the server binary carries: open
+http://127.0.0.1:{{ .Values.service.port }}/ in a browser.
+
 {{ if .Values.auth.insecure -}}
 WARNING: this release serves with no authentication (auth.insecure=true, --insecure-bind).
 Anything that can reach the Service can deploy to your cluster. Set auth.existingSecret.name

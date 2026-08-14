@@ -35,6 +35,50 @@ In a cluster it is a Helm install, and every flag below is a values knob — see
 a probe holds no credential, and a server that failed its liveness check because nobody logged in
 would be restarted forever.
 
+## It also serves the web UI
+
+The same listener serves the API and the web UI (`ui/`). Open `http://127.0.0.1:8420/` and you get
+the application; in a cluster, `kubectl port-forward` at the Service is the whole of "install it and
+click around" — see [installing kelson](install.md) and `deploy/chart/kelson/README.md`.
+
+One origin is the point. The UI's base URL is `/` and its session is a cookie, so serving it from
+the process that answers `/kelson.v1alpha1.*` means there is no CORS to configure, no second
+hostname and no cross-site cookie — in development `ui/vite.config.ts` proxies the API to
+manufacture the same property, and in production it is simply true.
+
+**The API keeps precedence.** `/kelson.v1alpha1.*`, `/auth/*` and `/healthz` are answered by their
+own handlers, and a path under those prefixes that no handler claims is a 404 rather than a page —
+a ConnectRPC client must never be handed HTML to decode. Everything else that is not a file resolves
+to `index.html`, so reloading a deep link like `/projects/shop/environments/production` hands the
+browser the application instead of a 404 it cannot route. Content-addressed assets are cached
+immutably; `index.html` is not, because its name outlives its contents.
+
+**It is served unauthenticated**, exactly as the Vite dev server serves it: the login form is part
+of the application, so putting it behind the login would be a loop. The assets are public; every
+route that can touch the cluster is not.
+
+### Where the UI comes from, and the page that says it is missing
+
+`go:embed` needs a directory that exists when the compiler runs, `ui/dist` is a build artifact this
+repository does not commit, and `go build ./...` must work on a clone with no Node installed. So
+`make ui` builds `ui/` and copies the result into `internal/webui/static/` before compilation, and
+the release workflow does the same before goreleaser — released binaries and the
+`ghcr.io/dafrie/kelson-server` images carry the real UI.
+
+A binary compiled without that step — `go build ./cmd/kelson-server` on a fresh clone — carries a
+committed placeholder page instead. It serves at `/`, says the UI was not built into this binary
+and how to get one, and the startup banner says the same thing:
+
+```
+kelson-server v0.1.0 serving the kelson.v1alpha1 schema on http://127.0.0.1:8420 (namespace
+kelson-system, authentication: shared password, plus agent identities, audit trail: 30 days,
+web UI: not built into this binary (`make ui`))
+```
+
+`make server` builds both halves. The placeholder is deliberately not named `index.html`: the UI
+build writes an `index.html` into that directory, and a tracked one would be overwritten on every
+build and committed by accident.
+
 ## Who may reach it
 
 This is the **interim** answer, taken with the project owner on 2026-08-13, and it is deliberately
@@ -484,6 +528,7 @@ environment's previews.
 ## Where the code lives
 
 - `cmd/kelson-server` — flags, the mux, the bind check.
+- `internal/webui` — the embedded web UI, the SPA fallback and the placeholder.
 - `cmd/kelson` — `kelson agent create|list|revoke` (`agent.go`), which writes to the cluster.
 - `internal/api` — the ConnectRPC handlers (`api.go`), the credential gate (`auth.go`), the principal
   (`principal.go`), the RPC-to-scope table (`scope.go`), the authorization interceptor (`authz.go`)

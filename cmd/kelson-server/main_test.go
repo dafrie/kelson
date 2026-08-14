@@ -15,6 +15,7 @@ import (
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
 	"github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1/kelsonv1alpha1connect"
 	"github.com/dafrie/kelson/internal/version"
+	"github.com/dafrie/kelson/internal/webui"
 )
 
 var nonLoopback = []string{"0.0.0.0:8420", ":8420", "192.168.1.10:8420", "[::]:8420"}
@@ -210,6 +211,80 @@ spec:
 	}
 }
 
+// TestMuxServesTheWebUIWithoutDisturbingTheAPI is the routing half of "install
+// it, port-forward the Service, click around": the same listener answers the
+// SPA and the schema, and the SPA is the catch-all rather than a competitor —
+// every route the server registered still wins, and a path under the API's
+// prefix that it did not register answers as a missing endpoint rather than as
+// a page (internal/webui).
+func TestMuxServesTheWebUIWithoutDisturbingTheAPI(t *testing.T) {
+	srv := httptest.NewServer(newMux(api.New(api.Options{}), openAuth(t)))
+	defer srv.Close()
+
+	// "/" is a page — the UI, or the placeholder saying this binary has none.
+	res, err := srv.Client().Get(srv.URL + "/")
+	if err != nil {
+		t.Fatalf("GET /: %v", err)
+	}
+	res.Body.Close() //nolint:errcheck // read-only handle
+	if res.StatusCode != http.StatusOK {
+		t.Errorf("GET / = %d, want 200", res.StatusCode)
+	}
+	if ct := res.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Errorf("GET / Content-Type = %q, want text/html", ct)
+	}
+	// index.html must never be cached immutably: its name outlives its
+	// contents, so a cached copy would point at a previous build's assets.
+	if cc := res.Header.Get("Cache-Control"); strings.Contains(cc, "immutable") {
+		t.Errorf("GET / Cache-Control = %q, want a revalidating page", cc)
+	}
+
+	// A client-side route the server knows nothing about still hands the
+	// browser the application, so a reload of a deep link works.
+	res, err = srv.Client().Get(srv.URL + "/projects/shop/environments/production")
+	if err != nil {
+		t.Fatalf("GET a client-side route: %v", err)
+	}
+	res.Body.Close() //nolint:errcheck // read-only handle
+	if res.StatusCode != http.StatusOK {
+		t.Errorf("GET /projects/… = %d, want the SPA fallback", res.StatusCode)
+	}
+
+	// /healthz keeps its own handler rather than falling into the catch-all.
+	res, err = srv.Client().Get(srv.URL + "/healthz")
+	if err != nil {
+		t.Fatalf("GET /healthz: %v", err)
+	}
+	res.Body.Close() //nolint:errcheck // read-only handle
+	if ct := res.Header.Get("Content-Type"); ct != "application/json" {
+		t.Errorf("GET /healthz Content-Type = %q, want the health handler's JSON", ct)
+	}
+
+	// An unregistered path under the API's prefix is a missing endpoint, not a
+	// page: a ConnectRPC client must not be handed HTML to decode.
+	res, err = srv.Client().Get(srv.URL + "/kelson.v1alpha1.NoSuchService/Nope")
+	if err != nil {
+		t.Fatalf("GET an unregistered RPC path: %v", err)
+	}
+	res.Body.Close() //nolint:errcheck // read-only handle
+	if res.StatusCode != http.StatusNotFound {
+		t.Errorf("GET an unregistered RPC path = %d, want 404", res.StatusCode)
+	}
+}
+
+// TestWebBannerSaysWhetherTheUIIsInTheBinary: a server built without `make ui`
+// serves the API perfectly and the UI not at all, so the only other way to find
+// that out is to open a browser and be confused.
+func TestWebBannerSaysWhetherTheUIIsInTheBinary(t *testing.T) {
+	got := webBanner()
+	if !strings.Contains(got, "web UI") {
+		t.Fatalf("banner = %q, want it to name the UI", got)
+	}
+	if strings.Contains(got, "make ui") == webui.Built() {
+		t.Errorf("banner = %q, want it to agree with webui.Built() = %v", got, webui.Built())
+	}
+}
+
 // openAuth is the no-password gate: the pre-#84 posture, which is still what a
 // server started without --password serves.
 func openAuth(t *testing.T) *api.Auth {
@@ -241,6 +316,19 @@ func TestMuxWithAPasswordGatesTheAPIAndOnlyTheAPI(t *testing.T) {
 	res.Body.Close() //nolint:errcheck // read-only handle
 	if res.StatusCode != http.StatusOK {
 		t.Errorf("/healthz behind a password = %d, want 200", res.StatusCode)
+	}
+
+	// The UI stays open too, and for a reason worth stating: the login form is
+	// part of the SPA, so serving it behind the login would be a loop. It is
+	// the Vite dev server's trust model unchanged — the assets are public, the
+	// cluster is not.
+	res, err = srv.Client().Get(srv.URL + "/")
+	if err != nil {
+		t.Fatalf("GET /: %v", err)
+	}
+	res.Body.Close() //nolint:errcheck // read-only handle
+	if res.StatusCode != http.StatusOK {
+		t.Errorf("the web UI behind a password = %d, want it served so a user can log in", res.StatusCode)
 	}
 
 	// An RPC without a credential is refused, and refused as Unauthenticated so

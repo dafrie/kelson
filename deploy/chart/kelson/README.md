@@ -10,12 +10,28 @@ kubectl -n kelson-system create secret generic kelson-auth \
 
 helm install kelson ./deploy/chart/kelson \
   --namespace kelson-system \
-  --set image.tag=v0.1.0 \
+  --set image.tag=0.0.1 \
   --set auth.existingSecret.name=kelson-auth
 ```
 
 Two values have no default and the chart refuses to render without them. That is the whole
 design of this chart in one sentence, so both are spelled out below.
+
+## Port-forward the Service and you have the UI in a browser
+
+`kelson-server` carries the web UI inside its own binary and serves it from the same port as the
+API ([docs/server.md](../../../docs/server.md)), so there is nothing else to install and nothing
+else to expose:
+
+```sh
+kubectl -n kelson-system port-forward svc/kelson 8420:8420
+# then open http://127.0.0.1:8420 and log in with the shared password
+```
+
+The UI is served without authentication and the login happens inside it — the assets are public,
+the cluster is not. The published `ghcr.io/dafrie/kelson-server` images carry the real UI; an image
+you built yourself from a checkout that never ran `make ui` serves a placeholder page saying so,
+and the server says the same on startup.
 
 ## Authentication is required, or refused out loud
 

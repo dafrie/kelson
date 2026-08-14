@@ -77,6 +77,7 @@ import (
 	"github.com/dafrie/kelson/internal/secret"
 	"github.com/dafrie/kelson/internal/serverstate"
 	"github.com/dafrie/kelson/internal/version"
+	"github.com/dafrie/kelson/internal/webui"
 )
 
 func main() { os.Exit(cli()) }
@@ -194,7 +195,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	// The banner is courtesy, not a result: a failed write to stdout must not
 	// stop a server that is already listening.
 	_, _ = fmt.Fprintf(stdout, "kelson-server %s serving the kelson.v1alpha1 schema on http://%s (namespace %s, %s)\n",
-		version.String(), listener.Addr(), cfg.namespace, authBanner(auth)+", "+auditBanner(cfg))
+		version.String(), listener.Addr(), cfg.namespace,
+		strings.Join([]string{authBanner(auth), auditBanner(cfg), webBanner()}, ", "))
 
 	errs := make(chan error, 1)
 	go func() {
@@ -305,19 +307,26 @@ func isLoopback(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// newMux mounts the API, the session endpoints and the health endpoint, behind
-// the auth gate. It is separate from run so a test can exercise the routing
-// without a cluster or a listener.
+// newMux mounts the API, the session endpoints, the health endpoint and the web
+// UI, behind the auth gate. It is separate from run so a test can exercise the
+// routing without a cluster or a listener.
 //
 // The gate wraps the whole mux rather than only the RPC handlers because it has
 // to see the path to decide: it protects /kelson.v1alpha1.* and passes
-// everything else — /healthz answers a probe that holds no secret, and /auth/*
-// is how a client stops being unauthenticated (internal/api/auth.go).
+// everything else — /healthz answers a probe that holds no secret, /auth/* is
+// how a client stops being unauthenticated, and the UI must load before there
+// is any way to log in (internal/api/auth.go).
+//
+// The UI is the catch-all and is registered last, but neither fact is what
+// gives the API precedence: Go's ServeMux matches the most specific pattern,
+// so every route above wins over "/" whatever the order here. The UI handler
+// refuses those prefixes itself as well (internal/webui).
 func newMux(server *api.Server, auth *api.Auth) http.Handler {
 	mux := http.NewServeMux()
 	server.Register(mux)
 	auth.Register(mux)
 	mux.HandleFunc("/healthz", healthz)
+	mux.Handle("/", webui.Handler())
 	return auth.Middleware(mux)
 }
 
@@ -347,6 +356,18 @@ func auditBanner(cfg config) string {
 		return "audit trail: OFF (--audit-retention 0)"
 	}
 	return fmt.Sprintf("audit trail: %d days", cfg.auditRetention)
+}
+
+// webBanner says whether this binary carries the web UI or the placeholder that
+// stands in for it (internal/webui). It is on the banner for the same reason
+// the other two are: a binary built without `make ui` still serves the API
+// perfectly, so the only other way to find out is to open a browser and be
+// confused.
+func webBanner() string {
+	if webui.Built() {
+		return "web UI: served at /"
+	}
+	return "web UI: not built into this binary (`make ui`)"
 }
 
 func healthz(w http.ResponseWriter, _ *http.Request) {
