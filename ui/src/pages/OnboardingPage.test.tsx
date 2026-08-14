@@ -136,7 +136,7 @@ describe("OnboardingPage", () => {
     // instead, and the unknown row gets neither.
     const buttons = screen.getAllByRole("button", { name: /Install v/ });
     expect(buttons).toHaveLength(1);
-    expect(buttons[0].textContent).toContain("v1.8.3");
+    expect(buttons[0]?.textContent).toContain("v1.8.3");
     expect(screen.getByText(/kelson does not install this one/).textContent).toContain(
       "Helm chart",
     );
