@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>kelson — the web UI is not in this binary</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #fbfbfa;
+        --fg: #1a1d21;
+        --muted: #5a6672;
+        --rule: #d8dce0;
+        --code-bg: #eef0f2;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0d1218;
+          --fg: #e6eaee;
+          --muted: #94a3b1;
+          --rule: #232c36;
+          --code-bg: #161d25;
+        }
+      }
+      body {
+        margin: 0;
+        padding: 3rem 1.5rem;
+        background: var(--bg);
+        color: var(--fg);
+        font: 16px/1.6 ui-sans-serif, system-ui, sans-serif;
+      }
+      main {
+        max-width: 46rem;
+        margin: 0 auto;
+      }
+      h1 {
+        font-size: 1.5rem;
+        margin: 0 0 0.5rem;
+      }
+      p {
+        color: var(--muted);
+      }
+      pre {
+        background: var(--code-bg);
+        border: 1px solid var(--rule);
+        border-radius: 6px;
+        padding: 0.75rem 1rem;
+        overflow-x: auto;
+        color: var(--fg);
+        font-family: ui-monospace, SFMono-Regular, monospace;
+        font-size: 0.875rem;
+      }
+      code {
+        font-family: ui-monospace, SFMono-Regular, monospace;
+      }
+      hr {
+        border: 0;
+        border-top: 1px solid var(--rule);
+        margin: 2rem 0;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>kelson-server is running. The web UI is not in this binary.</h1>
+      <p>
+        The API is served and healthy — this page is what stands in for the UI
+        when a binary was compiled without one. The UI is built by Node and
+        copied into the server's embed directory before compilation, and this
+        build skipped that step.
+      </p>
+
+      <p>Build it and rebuild the server:</p>
+      <pre>make ui
+make server</pre>
+
+      <p>
+        Released binaries and the <code>ghcr.io/dafrie/kelson-server</code>
+        images carry the real UI; a binary you built yourself with
+        <code>go build ./cmd/kelson-server</code> does not.
+      </p>
+
+      <hr />
+
+      <p>
+        Meanwhile: <code>/healthz</code> reports liveness and the build, and
+        every <code>/kelson.v1alpha1.*</code> route answers as usual. Run the UI
+        against this server from a checkout with <code>npm run dev</code> in
+        <code>ui/</code>.
+      </p>
+    </main>
+  </body>
+</html>

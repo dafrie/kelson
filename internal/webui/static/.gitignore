@@ -1,0 +1,14 @@
+# `make ui` copies ui/dist/* into this directory so go:embed can compile it into
+# kelson-server (see ../webui.go). That output is a build artifact — the same
+# artifact ui/dist holds, which the repository root ignores for the same reason
+# — so everything here is ignored except the two files that are genuinely
+# source: this file, and the placeholder the binary serves when nobody ran the
+# build.
+#
+# Ignoring the copy rather than committing it is what keeps `git status` clean
+# after `make ui`, and it is why the placeholder is not named index.html: a
+# tracked index.html would be overwritten by every UI build and show up as a
+# modification waiting to be committed by accident.
+*
+!.gitignore
+!placeholder.html
