@@ -175,7 +175,8 @@ type Namespace struct {
 	// Ownership is the live value of delivery.AnnNamespaceOwnership: "created",
 	// "adopted", "declared", or empty when the annotation is absent.
 	Ownership string
-	// Delete is true when uninstall may remove the Namespace itself.
+	// Delete is true when uninstall may remove the Namespace itself: kelson
+	// created it AND nothing of another deployment's is still in it.
 	Delete bool
 	// Reason states why it stays, when it stays.
 	Reason string
@@ -328,9 +329,40 @@ func (u *Uninstaller) Plan(ctx context.Context, scope Scope) (*Plan, error) {
 		plan.Targets, plan.Kept = del, keep
 	}
 
+	// The namespace tier is the only deletion that reaches resources this scope
+	// never selected, so its licence is checked against who is living in the
+	// namespace as well as against who created it (issue #215). --keep-data has
+	// already spared every namespace, so the queries would buy nothing.
+	if !u.keepData {
+		u.checkTenancy(ctx, scope, plan, resources, gaps)
+	}
+
 	plan.appendNamespaces()
 	sortTargets(plan.Targets)
 	return plan, nil
+}
+
+// checkTenancy withdraws the licence to delete a namespace that another kelson
+// deployment is living in, and says whose it is.
+//
+// It runs at plan time so the PREVIEW is already honest: an operator who is
+// told the namespace goes, and then finds it standing afterwards, has been
+// misled twice. The same question is asked again immediately before the delete
+// (execute.go), because a plan is a snapshot and the window between them is
+// exactly when another project's first apply lands.
+func (u *Uninstaller) checkTenancy(ctx context.Context, scope Scope, plan *Plan, resources []APIResource, gaps []string) {
+	for i := range plan.Namespaces {
+		ns := &plan.Namespaces[i]
+		if !ns.Delete {
+			continue
+		}
+		tenants := u.otherTenants(ctx, scope, ns.Name, resources, gaps)
+		if tenants.clear() {
+			continue
+		}
+		ns.Delete = false
+		ns.Reason = tenants.reason()
+	}
 }
 
 // add appends a target to the plan.
@@ -468,7 +500,7 @@ func (u *Uninstaller) namespaces(ctx context.Context, scope Scope) ([]Namespace,
 	return out, nil
 }
 
-// namespaceVerdict decides whether the Namespace itself may be deleted.
+// namespaceVerdict decides whether the Namespace's ORIGIN permits deleting it.
 //
 // Only one answer is a yes, and it is the one the delivery plane recorded at
 // apply time: kelson created this namespace (delivery.AnnNamespaceOwnership).
@@ -476,6 +508,10 @@ func (u *Uninstaller) namespaces(ctx context.Context, scope Scope) ([]Namespace,
 // missing annotation, labels that do not match — leaves it standing. A
 // namespace delete cascades to everything inside it, and everything inside it
 // is precisely what kelson does not claim to own.
+//
+// That yes is half a licence, not a whole one. It is a fact about the past, and
+// a namespace kelson created can have acquired another project's resources
+// since; checkTenancy withdraws the licence when it has (issue #215).
 func namespaceVerdict(obj *unstructured.Unstructured, scope Scope) Namespace {
 	ns := Namespace{
 		Name:      obj.GetName(),

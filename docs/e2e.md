@@ -11,7 +11,7 @@ There are two harnesses over the same cluster, and they divide by audience:
 |---|---|---|
 | Shape | bash script | Go package behind the `e2e` build tag |
 | Spec | `examples/hello-e2e` | `test/e2e/testdata/minimal.yaml` |
-| Covers | deploy → induced `CrashLoopBackOff` → status → rollback | deploy → status → diff → redeploy → rollback, the label-selector additivity check, and `kelson uninstall` against both a kelson-created and an adopted namespace |
+| Covers | deploy → induced `CrashLoopBackOff` → status → rollback | deploy → status → diff → redeploy → rollback, the label-selector additivity check, and `kelson uninstall` against a kelson-created namespace, an adopted one, and one a second project shares |
 | Runs in CI | no | yes — `.github/workflows/e2e.yml`, not a required check yet |
 
 The Go suite is the one CI runs and the one to extend; the script keeps the failure-path scenario the

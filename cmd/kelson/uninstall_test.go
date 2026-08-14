@@ -462,3 +462,39 @@ func TestUninstallWarnsAboutReconciledResources(t *testing.T) {
 		t.Errorf("no warning that a reconciler puts these back\n%s", stdout)
 	}
 }
+
+// TestUninstallNamesANamespaceLeftToAnotherDeployment: a namespace another
+// kelson deployment moved into between the preview and the delete is refused by
+// the delivery plane (issue #215), and the command has to carry that refusal all
+// the way out — as a per-object result AND in the boundary, which is the list an
+// operator reads to find out what is still standing.
+func TestUninstallNamesANamespaceLeftToAnotherDeployment(t *testing.T) {
+	engine := &fakeUninstaller{
+		plan: fullPlan(),
+		report: &uninstall.Report{
+			Results: []uninstall.Result{{
+				Ref:     uninstall.Ref{APIVersion: "v1", Kind: "Namespace", Name: "checkout-production"},
+				Outcome: uninstall.OutcomeLeft,
+				Detail: "another kelson deployment lives in this namespace — left behind: 2 resource(s) of " +
+					"grocery/production live here, and deleting a namespace deletes everything inside it",
+			}},
+			Left: 1,
+		},
+	}
+	stdout, code, msg := runUninstallCmd(t, engine, &fakeHistory{}, "",
+		"uninstall", "--project", "checkout", "--env", "production", "--yes")
+	if code != exitOK {
+		t.Fatalf("exit = %d (%s)\n%s", code, msg, stdout)
+	}
+	for _, want := range []string{
+		"left    Namespace/checkout-production",
+		"grocery/production",
+		"left 1 resource(s) alone",
+		"namespace checkout-production and everything else in it",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("the output does not contain %q; a namespace that survived without being named reads as a "+
+				"namespace that was deleted\n%s", want, stdout)
+		}
+	}
+}

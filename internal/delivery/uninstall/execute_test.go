@@ -62,11 +62,19 @@ func TestExecuteRefusesWhatStoppedBeingKelsons(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	bystanders := report.Bystanders()
-	if len(bystanders) != 1 || bystanders[0].Ref.Name != "settings" {
-		t.Fatalf("bystanders = %+v, want the relabelled ConfigMap left alone and reported", bystanders)
+	// The namespace is left alone too, and for a second reason: the relabelled
+	// ConfigMap is now somebody-else's kelson resource living in it, so the
+	// namespace is no longer this deployment's to delete either (issue #215).
+	var configMap *Result
+	for i := range report.Results {
+		if report.Results[i].Ref.Name == "settings" {
+			configMap = &report.Results[i]
+		}
 	}
-	if bystanders[0].Detail == "" {
+	if configMap == nil || configMap.Outcome != OutcomeLeft {
+		t.Fatalf("results = %+v, want the relabelled ConfigMap left alone and reported", report.Results)
+	}
+	if configMap.Detail == "" {
 		t.Errorf("the refusal gives no reason; a resource silently skipped reads as a resource silently deleted")
 	}
 	if _, err := client.Resource(gvrFor(t, "ConfigMap")).Namespace(testNS).
