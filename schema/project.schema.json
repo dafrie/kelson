@@ -102,6 +102,24 @@
                 "required": [
                   "from"
                 ]
+              },
+              {
+                "properties": {
+                  "secret": {
+                    "type": "string",
+                    "description": "name of a Secret in the environment's namespace; kelson references it and never creates or reads it"
+                  },
+                  "key": {
+                    "type": "string",
+                    "description": "key within that Secret"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "secret",
+                  "key"
+                ]
               }
             ]
           },
@@ -239,6 +257,24 @@
                       "type": "object",
                       "required": [
                         "from"
+                      ]
+                    },
+                    {
+                      "properties": {
+                        "secret": {
+                          "type": "string",
+                          "description": "name of a Secret in the environment's namespace; kelson references it and never creates or reads it"
+                        },
+                        "key": {
+                          "type": "string",
+                          "description": "key within that Secret"
+                        }
+                      },
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "secret",
+                        "key"
                       ]
                     }
                   ]

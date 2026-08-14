@@ -430,6 +430,14 @@ change this: the operator generating an application credential, or kelson's secr
 being able to supply one. Either turns the `password` binding from a refusal into a
 `secretKeyRef` with nothing else in the renderer moving.
 
+The second of those is now half built. [ADR-0018](adr/0018-secret-references.md) gives the
+workload side its spelling — `{secret: <name>, key: password}` reads a password out of a Secret
+kelson references and never creates — and
+[#116](https://github.com/dafrie/kelson/issues/116) will give the authoring side the command
+that writes it. What is still missing is the piece in between: a spec surface for a Valkey ACL
+user rendered against that Secret's name, which is [#98](https://github.com/dafrie/kelson/issues/98)'s
+work and not a decision ADR-0018 takes.
+
 ### Cache bindings
 
 A cache answers three of the four keys `model.ServiceKeys` declares for `kind: valkey`, and
@@ -537,6 +545,15 @@ renders. A key the kind declares that the service genuinely cannot supply is
 `render/binding-unavailable-key`, with the reason rather than a list of alternatives that does
 not contain the answer — today that is exactly one key,
 [a cache's `password`](#there-is-no-password).
+
+**A binding is one of the two reference forms, not a separate mechanism.** The other is
+`{secret: <name>, key: <key>}`, which names a Secret kelson does not manage
+([ADR-0018](adr/0018-secret-references.md), [docs/model.md](model.md#secrets-references-never-literals)).
+Both are mappings in an env value, both render into the same `valueFrom.secretKeyRef` through
+the same function, and neither can carry a value. What differs is who names the Secret: a
+binding names a *component* and kelson derives the Secret its operator generates; a reference
+names the Secret directly. So a credential that is not a data service kelson manages — an API
+key, an SMTP password — is written the same way, in the same map, beside the binding.
 
 The postgres mapping follows.
 

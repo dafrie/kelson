@@ -198,12 +198,17 @@ func container(app *model.ResolvedComponent, env *yaml.Node) *yaml.Node {
 
 // envList renders the merged environment (precedence rule P1 already applied
 // by resolution) with keys sorted, so output never depends on map iteration.
-// A binding becomes a secretKeyRef against the Secret the service's operator
-// generates, or — for a connection detail that is not a credential, such as a
-// cache's host and port — the plain value it resolves to. A literal *secret*
-// value can never appear here because validation rejects it (ADR-0009), and
-// nothing in this path can produce one: bindingRef either names a Secret key or
-// returns a fact the renderer derived from names it already had.
+//
+// Three forms, two of which are references (ADR-0018). A secret reference
+// becomes a secretKeyRef against the Secret the author named, which kelson
+// never reads. A binding becomes a secretKeyRef against the Secret the
+// service's operator generates, or — for a connection detail that is not a
+// credential, such as a cache's host and port — the plain value it resolves to.
+// A literal *secret* value can never appear here because validation rejects it
+// (ADR-0009), and nothing in this path can produce one: a reference carries a
+// name and a key, and bindingRef either names a Secret key or returns a fact
+// the renderer derived from names it already had. That is the property issue
+// #82 asks for; internal/renderer/secrets.go states its boundary.
 //
 // Every unresolvable binding is reported, not just the first: one run should
 // list all the work.
@@ -222,14 +227,17 @@ func envList(app *model.ResolvedComponent, services map[string]boundService) (*y
 	for _, k := range keys {
 		v := app.Env[k]
 		entry := []any{"name", k}
-		if v.From != nil {
+		switch {
+		case v.Secret != nil:
+			entry = append(entry, "valueFrom", secretKeyRefNode(v.Secret.Name, v.Secret.Key))
+		case v.From != nil:
 			field, ref, err := bindingRef(app.Name, k, v.From, services)
 			if err != nil {
 				errs = append(errs, *err)
 				continue
 			}
 			entry = append(entry, field, ref)
-		} else {
+		default:
 			entry = append(entry, "value", v.Literal)
 		}
 		items = append(items, mapNode(entry...))

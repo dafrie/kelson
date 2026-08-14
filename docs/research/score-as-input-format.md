@@ -57,9 +57,11 @@ variables:
 ```
 
 [ADR-0009](../adr/0009-secrets.md) makes that value unrepresentable in kelson: an env value is a plain
-string or `{from: {service, key}}` and nothing else, and `internal/model` rejects a password-bearing URL
-with `secret/literal`. An importer can only translate the *whole-value* case
-(`${resources.db.uri}` → `{from: {service: db, key: uri}}`). Partially interpolated strings must be
+string, a `{secret: <name>, key: <key>}` reference or a `{from: {service, key}}` binding
+([ADR-0018](../adr/0018-secret-references.md)) and nothing else, and `internal/model` rejects a
+password-bearing URL with `secret/literal`. An importer can only translate the *whole-value* case
+(`${resources.db.uri}` → `{from: {service: db, key: uri}}`, or a reference where the value is not a
+kelson-managed service). Partially interpolated strings must be
 rejected with a real explanation, not silently flattened — flattening them would write a credential into
 the spec, which is the one thing the secrets model exists to prevent.
 

@@ -76,6 +76,12 @@ func Render(resolved *model.Resolved, profile clusterprofile.ClusterProfile, res
 	if errs := previewsRequireFlux(resolved); len(errs) > 0 {
 		return nil, errs
 	}
+	// And for the secret backend (ADR-0018): only `cluster` has a mechanism
+	// here, and a reference rendered for a backend nothing populates would
+	// apply cleanly and fail at pod start. See internal/renderer/secrets.go.
+	if errs := secretBackendSupported(resolved); len(errs) > 0 {
+		return nil, errs
+	}
 	// The Namespace leads the set: delivery.ManifestSet documents apply order as
 	// "namespaces first", and every following resource targets it (issue #150).
 	// Overlays append after the core resources, so nothing can displace it.

@@ -83,6 +83,12 @@ const (
 	// spelling is right, so the message must say what is missing rather than
 	// offer a list of alternatives that does not contain the answer.
 	ErrBindingUnavailableKey = "render/binding-unavailable-key"
+	// ErrSecretBackendUnsupported: the environment selects a secret backend the
+	// renderer has no mechanism for — `externalSecrets` (issue #80) or `sops`
+	// (issue #81). Only `cluster` renders today, and it renders by emitting
+	// nothing extra: a secretKeyRef already addresses a Secret in the
+	// namespace. See internal/renderer/secrets.go.
+	ErrSecretBackendUnsupported = "render/secret-backend-unsupported"
 	// ErrInternal: an invariant failed inside the renderer itself.
 	ErrInternal = "render/internal"
 )
