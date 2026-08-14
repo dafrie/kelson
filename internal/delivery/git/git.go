@@ -26,7 +26,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"path"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -211,6 +213,119 @@ func (w *Writer) Write(ctx context.Context, req WriteRequest) (WriteResult, erro
 	return s.Commit(ctx)
 }
 
+// PutRequest is one additive read-modify-write: files to write, files to
+// remove, and nothing else touched.
+//
+// It is [WriteRequest]'s sibling and the difference is the whole point.
+// [Writer.Write] makes the delivery path *match* a rendered set, pruning what
+// is no longer rendered; Put changes exactly the files it names. The sops
+// backend needs the second shape (issue #81): `kelson secret set` writes one
+// encrypted Secret into a directory full of manifests it did not render and
+// must not remove, and a prune there would delete the environment.
+type PutRequest struct {
+	// Files are written or overwritten, addressed relative to Target.Path.
+	Files []File
+	// Remove are deleted if tracked, addressed the same way. A path that is
+	// not in the repository is not an error: `delete` is idempotent, and the
+	// caller has already decided the Secret should not exist.
+	Remove  []string
+	Message Message
+}
+
+// Put performs an additive read-modify-write: clone at the latest HEAD, write
+// and remove the named files, commit and push. Everything else under the
+// delivery path is left exactly as it was.
+func (w *Writer) Put(ctx context.Context, req PutRequest) (WriteResult, error) {
+	s, err := w.Open(ctx, req.Message)
+	if err != nil {
+		return WriteResult{}, err
+	}
+	if err := s.Put(req.Files, req.Remove); err != nil {
+		return WriteResult{}, err
+	}
+	return s.Commit(ctx)
+}
+
+// Put stages an additive change: write these files, remove those, prune
+// nothing. See [PutRequest] for why the distinction from [Session.Stage] is
+// load-bearing rather than a convenience.
+func (s *Session) Put(files []File, remove []string) error {
+	for _, rel := range remove {
+		full, err := s.w.resolve(rel)
+		if err != nil {
+			return err
+		}
+		// A missing file is not an error. `kelson secret delete` is idempotent
+		// and go-git reports an absent path as a filesystem error that would
+		// otherwise surface as "failed while removing" for a Secret the user
+		// had already deleted.
+		if _, err := s.fs.Stat(full); err != nil {
+			continue
+		}
+		if _, err := s.wt.Remove(full); err != nil {
+			return wrap(err, "removing "+full)
+		}
+	}
+	for _, f := range files {
+		full, err := s.w.resolve(f.Path)
+		if err != nil {
+			return err
+		}
+		if err := writeFile(s.fs, full, f.Data); err != nil {
+			return wrap(err, "writing "+full)
+		}
+		if _, err := s.wt.Add(full); err != nil {
+			return wrap(err, "staging "+full)
+		}
+	}
+	return nil
+}
+
+// SecretFiles lists the tracked encrypted Secrets under the delivery path, as
+// paths relative to it, sorted.
+//
+// It reads the committed tree rather than walking the filesystem, exactly as
+// the prune does, so nothing outside the configured path is ever enumerated.
+func (s *Session) SecretFiles() ([]string, error) {
+	tracked, err := s.trackedUnderPath()
+	if err != nil {
+		return nil, err
+	}
+	prefix := s.w.secretsPrefix()
+	var out []string
+	for _, p := range tracked {
+		if !underPath(p, prefix) {
+			continue
+		}
+		if _, ok := SecretName(p); !ok {
+			continue
+		}
+		rel, err := filepath.Rel(s.w.cfg.Target.Path, p)
+		if err != nil {
+			continue
+		}
+		out = append(out, filepath.ToSlash(rel))
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// ReadFile reads one file from the session's checkout, addressed relative to
+// the delivery path. It is how the sops store reads an encrypted Secret's
+// public half — its key names and its recipients — without decrypting it.
+func (s *Session) ReadFile(rel string) ([]byte, error) {
+	full, err := s.w.resolve(rel)
+	if err != nil {
+		return nil, err
+	}
+	f, err := s.fs.Open(full)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close() //nolint:errcheck // read-only handle on an in-memory filesystem
+	return io.ReadAll(f)
+}
+
 // Open starts a write session by reading the repository at its current HEAD.
 // It is exported so callers (and tests) can observe the read point: the HEAD
 // recorded here is the one the eventual push is required to still find.
@@ -349,14 +464,14 @@ func (s *Session) startPRBranch(ctx context.Context) error {
 // Stage writes the rendered files and prunes the files kelson previously wrote
 // that are no longer rendered — both strictly within the configured path.
 //
-// Pruning is confined to the configured path and skips dotfiles, so repository
-// conventions that live alongside the manifests survive. `.sops.yaml` is the
-// motivating case: a SOPS-encrypted repository keeps its rule file in the
-// directory tree and kelson must not remove or rewrite it.
-//
-// TODO(#34): kelson does not yet encrypt Secret manifests with SOPS. Until it
-// does, a repository with .sops.yaml will have kelson's plaintext Secrets
-// rejected by a SOPS-enforcing policy — see docs/delivery.md.
+// Pruning is confined to the configured path and skips dotfiles and the
+// [SecretsDir] subtree, so what lives alongside the manifests without being
+// rendered survives. `.sops.yaml` is the original motivating case — a
+// SOPS-encrypted repository keeps its rule file in the directory tree — and
+// the encrypted Secrets `kelson secret set` writes under the sops backend are
+// the second (issue #81): they belong to the same path a deploy owns, and
+// nothing in a *render* knows they exist, because the renderer has no
+// plaintext and emits no Secret.
 func (s *Session) Stage(files []File) error {
 	want := make(map[string][]byte, len(files))
 	for _, f := range files {
@@ -380,7 +495,7 @@ func (s *Session) Stage(files []File) error {
 		if _, keep := want[p]; keep {
 			continue
 		}
-		if preserved(p) {
+		if s.w.preserved(p) {
 			continue
 		}
 		stale = append(stale, p)
@@ -824,11 +939,64 @@ func underPath(repoPath, prefix string) bool {
 	return repoPath == prefix || strings.HasPrefix(repoPath, prefix+"/")
 }
 
-// preserved reports whether a file under the configured path must survive
-// pruning. Dotfiles are repository conventions (.sops.yaml, .gitkeep,
-// .gitattributes) that kelson does not own even inside its own directory.
-func preserved(repoPath string) bool {
-	return strings.HasPrefix(path.Base(repoPath), ".")
+// SecretsDir is the subdirectory of the delivery path holding the encrypted
+// Secrets of the `sops` backend (issue #81, ADR-0021):
+// `<delivery path>/secrets/<name>.enc.yaml`.
+//
+// It is inside the delivery path because that is what makes the mechanism
+// work: Flux's kustomize-controller walks the path it reconciles recursively,
+// so a file here is applied by the same Kustomization as the workloads that
+// reference it, decrypted by that Kustomization's `spec.decryption`, and
+// pruned by it when the file goes. Putting the encrypted Secrets outside the
+// path would need a second Kustomization, a second decryption block and a
+// second thing to remember to delete.
+//
+// It is a *subdirectory* rather than a file-name convention so that "what a
+// deploy owns" and "what a secret write owns" are two directories rather than
+// two glob patterns over one, which is the difference between a prune rule a
+// reader can check and one they have to trust.
+const SecretsDir = "secrets"
+
+// preserved reports whether a file under the configured path must survive a
+// [Session.Stage] prune.
+//
+// Two kinds of file are not a deploy's to remove. Dotfiles are repository
+// conventions (.sops.yaml, .gitkeep, .gitattributes) that kelson does not own
+// even inside its own directory. And everything under [SecretsDir] is written
+// by `kelson secret set` and is invisible to a render — the renderer has no
+// plaintext and emits no Secret — so a deploy that pruned it would delete
+// every credential in the environment on the next commit.
+func (w *Writer) preserved(repoPath string) bool {
+	if strings.HasPrefix(path.Base(repoPath), ".") {
+		return true
+	}
+	return underPath(repoPath, w.secretsPrefix())
+}
+
+// secretsPrefix is [SecretsDir] resolved against the configured delivery path.
+func (w *Writer) secretsPrefix() string {
+	return path.Join(w.cfg.Target.Path, SecretsDir)
+}
+
+// SecretPath is where the encrypted form of the named Secret lives, relative
+// to the configured delivery path — the argument [Writer.Put] and
+// [Writer.Delete] take.
+//
+// It is a function rather than a format string in three places because the
+// writer, the reader and the prune rule must agree byte for byte: a `set` that
+// wrote one spelling and a `delete` that looked for another would leave a
+// credential in Git that kelson reports as gone.
+func SecretPath(name string) string { return path.Join(SecretsDir, name+".enc.yaml") }
+
+// SecretName is [SecretPath] read backwards: the Secret a repository path
+// names, or ok=false for a path that is not one of kelson's encrypted Secrets.
+func SecretName(repoPath string) (string, bool) {
+	base := path.Base(repoPath)
+	name, ok := strings.CutSuffix(base, ".enc.yaml")
+	if !ok || name == "" || path.Base(path.Dir(repoPath)) != SecretsDir {
+		return "", false
+	}
+	return name, true
 }
 
 func cleanPath(p string) (string, error) {
