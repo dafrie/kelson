@@ -52,3 +52,27 @@ metadata:
 spec:
   project: kelson-e2e
   namespace: kelson-e2e-additivity
+---
+# The uninstall scenario (issue #59) deletes its namespace as well as its
+# resources, so it needs one of its own that no other scenario looks at.
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: uninstall
+
+spec:
+  project: kelson-e2e
+  namespace: kelson-e2e-uninstall
+---
+# The other half of the namespace rule: this environment's namespace is created
+# by the test BEFORE the deploy, so kelson records it as adopted rather than
+# created and `kelson uninstall` must leave it — and everything in it that is
+# not kelson's — standing.
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: adopted
+
+spec:
+  project: kelson-e2e
+  namespace: kelson-e2e-adopted

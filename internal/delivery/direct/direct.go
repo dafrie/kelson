@@ -60,15 +60,17 @@ const AdapterName = "direct"
 const FieldManager = "kelson"
 
 // Provenance keys, mirroring what the renderer stamps
-// (docs/architecture.md, Provenance).
+// (docs/architecture.md, Provenance). The three the whole plane shares live in
+// internal/delivery so the uninstall path cannot drift from the apply path
+// (issue #59); the two annotations below are direct mode's own.
 const (
-	labelManagedBy   = "app.kubernetes.io/managed-by"
-	labelProject     = "kelson.dev/project"
-	labelEnvironment = "kelson.dev/environment"
+	labelManagedBy   = delivery.LabelManagedBy
+	labelProject     = delivery.LabelProject
+	labelEnvironment = delivery.LabelEnvironment
 	annSpecHash      = "kelson.dev/spec-hash"
 	annRevision      = "kelson.dev/revision"
 
-	managedByKelson = "kelson"
+	managedByKelson = delivery.ManagedByKelson
 )
 
 // Mapper resolves a GroupKind to the resource and scope needed for a dynamic
@@ -280,6 +282,10 @@ func (a *Adapter) applySet(ctx context.Context, set delivery.ManifestSet, rec Re
 		return delivery.Result{}, err
 	}
 
+// Record create-versus-adopt for every Namespace in the set, while the
+	// question can still be answered.
+	a.stampNamespaceOwnership(ctx, targets)
+
 	// The set is applied in renderer order, and the release hook is the one
 	// point in that order where the adapter stops. Everything before the Job is
 	// live before the migration starts (the namespace, the data services), and
@@ -488,6 +494,58 @@ func (a *Adapter) targets(set delivery.ManifestSet, revision string) ([]target, 
 		out = append(out, target{ref: ref, obj: obj, mapping: mapping})
 	}
 	return out, nil
+}
+
+// stampNamespaceOwnership records, on every Namespace in the set, whether this
+// apply is what brings it into existence.
+//
+// The renderer cannot answer that question: it stamps
+// kelson.dev/namespace-ownership=declared, which says its rendered set names
+// the Namespace and deliberately claims nothing about authorship
+// (internal/renderer/namespace.go). Authorship is observable exactly once — in
+// the instant before the apply — and only here, which is why the delivery plane
+// owns the fact. `kelson uninstall` accepts nothing else as licence to delete a
+// Namespace, because deleting one cascades to everything inside it, including
+// resources kelson never created (issue #59).
+//
+// Three readings, and every uncertain one resolves towards leaving the
+// namespace alone:
+//
+//   - absent → "created". This apply creates it.
+//   - present and already "created" → stays "created". A redeploy must not
+//     demote the namespace kelson made on the first one.
+//   - present otherwise → "adopted". It predates kelson, or a second
+//     environment sharing this namespace applied into it; in both cases
+//     deleting it would take somebody else's resources.
+//
+// A read that fails leaves the renderer's "declared" in place, which uninstall
+// also refuses to act on. Nothing here fails the deploy: not knowing whether
+// kelson created a namespace is not a reason to refuse to deploy into it.
+func (a *Adapter) stampNamespaceOwnership(ctx context.Context, targets []target) {
+	for _, t := range targets {
+		if !isNamespace(t.ref) {
+			continue
+		}
+		ownership := delivery.NamespaceOwnershipCreated
+		live, err := a.resource(t).Get(ctx, t.obj.GetName(), metav1.GetOptions{})
+		switch {
+		case apierrors.IsNotFound(err):
+			// The apply below brings it into existence.
+		case err != nil:
+			continue
+		default:
+			ownership = delivery.NamespaceOwnershipAdopted
+			if live.GetAnnotations()[delivery.AnnNamespaceOwnership] == delivery.NamespaceOwnershipCreated {
+				ownership = delivery.NamespaceOwnershipCreated
+			}
+		}
+		ann := t.obj.GetAnnotations()
+		if ann == nil {
+			ann = map[string]string{}
+		}
+		ann[delivery.AnnNamespaceOwnership] = ownership
+		t.obj.SetAnnotations(ann)
+	}
 }
 
 // checkProvenance refuses to apply a document that does not carry this

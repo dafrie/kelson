@@ -43,6 +43,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -336,6 +337,122 @@ func (s *Store) NextRevision(project, environment string) (string, error) {
 		}
 	}
 	return fmt.Sprintf("%s%0*d", revisionPre, revisionWidth, highest+1), nil
+}
+
+// Forget removes the recorded history for one environment and reports how many
+// revisions went with it. An environment with no recorded history is (0, nil):
+// forgetting what was never recorded is the outcome the caller asked for, not
+// an error.
+//
+// It exists for `kelson uninstall` (issue #59). An environment whose resources
+// have been deleted has a history describing a set that no longer exists, and
+// leaving it behind means the next `kelson deploy` of the same name inherits
+// revision numbers and a prune baseline from a deployment that is gone.
+//
+// Deliberately NOT part of the History interface. The interface is what the
+// direct adapter needs during a deploy, and the cluster-backed implementation
+// in internal/serverstate satisfies it (ADR-0013 §1); removing an environment's
+// history from the SERVER's state is a server-side authorization decision that
+// belongs to the API-mode uninstall (issue #84), not a method the adapter can
+// reach through a seam. This is the local CLI journal only.
+func (s *Store) Forget(project, environment string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := validSegment("project", project); err != nil {
+		return 0, err
+	}
+	if err := validSegment("environment", environment); err != nil {
+		return 0, err
+	}
+	dir := filepath.Join(s.dir, project, environment)
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		return 0, nil
+	}
+	recs, err := readJournal(dir)
+	if err != nil {
+		return 0, err
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return 0, fmt.Errorf("direct: remove history for %s/%s: %w", project, environment, err)
+	}
+	// A project directory holding nothing but removed environments is
+	// bookkeeping for a project that is no longer deployed anywhere.
+	s.removeIfEmpty(filepath.Join(s.dir, project))
+	return len(recs), nil
+}
+
+// ForgetProject removes the recorded history for every environment of a
+// project and reports how many revisions went with it — `kelson uninstall
+// --all-environments`.
+func (s *Store) ForgetProject(project string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := validSegment("project", project); err != nil {
+		return 0, err
+	}
+	dir := filepath.Join(s.dir, project)
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("direct: read history for project %s: %w", project, err)
+	}
+	total := 0
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		recs, err := readJournal(filepath.Join(dir, e.Name()))
+		if err != nil {
+			return 0, err
+		}
+		total += len(recs)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return 0, fmt.Errorf("direct: remove history for project %s: %w", project, err)
+	}
+	return total, nil
+}
+
+// Environments lists the environments of a project that have recorded history.
+// It is what an uninstall preview counts before it removes anything; a project
+// the store has never seen is an empty list, not an error.
+func (s *Store) Environments(project string) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := validSegment("project", project); err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(filepath.Join(s.dir, project))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("direct: read history for project %s: %w", project, err)
+	}
+	var out []string
+	for _, e := range entries {
+		if e.IsDir() {
+			out = append(out, e.Name())
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// removeIfEmpty drops a directory that holds nothing. Failure is ignored on
+// purpose: an empty directory left behind is untidy, never wrong, and it must
+// not turn a completed uninstall into a reported failure.
+func (s *Store) removeIfEmpty(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) > 0 {
+		return
+	}
+	_ = os.Remove(dir)
 }
 
 // retain enforces the keep-last-N policy: the journal is rewritten atomically

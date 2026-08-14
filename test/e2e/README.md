@@ -9,8 +9,10 @@ It runs in CI on `kind` (`.github/workflows/e2e.yml`), and identically on a lapt
 
 ## What runs
 
-Two scenarios, both against `testdata/minimal.yaml` — one service component, one port, no routing,
-no build, no data services. Everything it needs exists on a stock single-node kind cluster.
+Four scenarios, all against `testdata/minimal.yaml` — one service component, one port, no routing,
+no build, no data services. Everything it needs exists on a stock single-node kind cluster. Each
+scenario uses its own environment and therefore its own namespace, so the ones that delete things
+can never race the ones that do not.
 
 **`TestDeployLifecycle`** — the delivery spine, end to end:
 
@@ -30,10 +32,9 @@ no build, no data services. Everything it needs exists on a stock single-node ki
    than re-rendering ([#38](https://github.com/dafrie/kelson/issues/38)), and only the cluster can
    confirm it restored anything.
 
-**`TestDeleteByLabelIsExactlyTheRenderedSet`** — the non-destructive uninstall claim
-([#59](https://github.com/dafrie/kelson/issues/59)), scoped to what is provable today. There is no
-`kelson uninstall` command; building one is #59's feature work. What this asserts instead is the
-property such a command would depend on:
+**`TestDeleteByLabelIsExactlyTheRenderedSet`** — the property `kelson uninstall` is built on
+([#59](https://github.com/dafrie/kelson/issues/59)), proved with kubectl as the deleting tool so it
+holds independently of the command:
 
 1. The set selected by `kelson.dev/project=<project>` is **exactly** the set the renderer produced —
    nothing rendered went unlabelled (it would survive an uninstall), nothing extra got labelled (it
@@ -41,12 +42,28 @@ property such a command would depend on:
 2. Deleting by that selector removes exactly that set and leaves the rest of the namespace alone: an
    unlabelled bystander, a resource labelled for a different project, and the namespace's own
    furniture (`kube-root-ca.crt`, the `default` ServiceAccount).
-3. The Namespace survives and still carries `kelson.dev/namespace-ownership`. That annotation is
-   why deleting the namespace is not the uninstall path: it records that kelson *declared* the
-   namespace, not that it created it (`internal/renderer/namespace.go`).
+3. The Namespace survives that delete and carries `kelson.dev/namespace-ownership`, which is what
+   makes deleting it a separate decision. The renderer stamps `declared` and claims nothing about
+   authorship (`internal/renderer/namespace.go`); the delivery plane resolves it to `created` or
+   `adopted` at apply time.
 
-The two scenarios use different environments (`e2e`, `additivity`) and therefore different
-namespaces, so the one that deletes things can never race the one that does not.
+**`TestUninstallRemovesExactlyWhatKelsonDeployed`** — the same claim as the verb, in the case where
+kelson created the namespace:
+
+1. The deploy recorded `kelson.dev/namespace-ownership=created` — asserted *before* the uninstall,
+   so the namespace assertion below cannot pass for the wrong reason.
+2. Without `--yes` and with no terminal, it prints the preview, deletes nothing and exits non-zero.
+3. With `--yes` it previews, deletes and reports per object; no bystander appears on a `deleted`
+   line.
+4. Every rendered object is gone, and the namespace with it.
+5. A second run reports `nothing to do` and exits 0.
+
+**`TestUninstallLeavesAnAdoptedNamespaceAndItsBystanders`** — the half that carries the
+non-destructive claim. The test creates the namespace *before* the deploy, so kelson records
+`adopted`. After `kelson uninstall`: everything kelson labelled is gone, the namespace is still
+`Active`, and the unlabelled bystander, the other project's labelled object and the namespace's own
+furniture are all still there. It also asserts the local rendered history for the environment was
+removed.
 
 ## Running it locally
 

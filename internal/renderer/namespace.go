@@ -15,15 +15,19 @@ import (
 // This annotation therefore says exactly one thing — kelson's rendered set
 // declares this Namespace — and deliberately does not claim authorship. The
 // create-versus-adopt fact is only observable at apply time, which is the
-// delivery plane's business, not the renderer's (ADR-0001). #59 is expected to
-// record that fact against this key.
+// delivery plane's business, not the renderer's (ADR-0001). Since #59 the
+// direct adapter overwrites this value with "created" or "adopted" as it
+// applies (internal/delivery.NamespaceOwnershipCreated and its neighbours), and
+// "created" is the only value `kelson uninstall` accepts as licence to delete a
+// Namespace.
 const AnnNamespaceOwnership = "kelson.dev/namespace-ownership"
 
 // NamespaceOwnershipDeclared is the value the renderer stamps: kelson declares
-// the Namespace, authorship unknown. Reserved for the delivery plane to
-// distinguish later: "created" (kelson brought it into existence, so uninstall
-// may remove it) versus "adopted" (it predated kelson, so uninstall must leave
-// it).
+// the Namespace, authorship unknown. The delivery plane resolves it at apply
+// time into "created" (kelson brought it into existence, so uninstall may
+// remove it) or "adopted" (it predated kelson, so uninstall must leave it). A
+// Namespace still carrying this value is one whose authorship nothing recorded,
+// and uninstall leaves those alone too.
 const NamespaceOwnershipDeclared = "declared"
 
 // namespaceManifest renders the environment's Namespace. Without it a direct

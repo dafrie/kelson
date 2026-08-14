@@ -44,7 +44,7 @@ Direct mode is Git mode with an implicit repository. It still versions rendered 
 
 ## What's different
 
-**Uninstalling doesn't break anything.** Your apps keep running and you're left with a plain Kustomize repo. A CI test proving it is planned ([#59](https://github.com/dafrie/kelson/issues/59)) — until that test exists, treat this as a design goal, not a verified property.
+**Uninstalling doesn't break anything.** `kelson uninstall` removes what kelson deployed for one environment — previewed object by object, data called out separately, nothing deleted without an answer — and leaves everything else in the namespace untouched, including a namespace it adopted rather than created. `helm uninstall` removes the server and leaves your applications running. Both halves are covered by the end-to-end suite ([#59](https://github.com/dafrie/kelson/issues/59), [test/e2e](test/e2e/)); that suite is not yet a required CI check, so treat it as verified-on-demand rather than gated.
 
 **You see what will happen first.** Three levels: a rendered diff, a server-side dry-run against the real API server, and an ephemeral live environment. The middle one is the API server's own answer, including admission webhooks, policy rejections and quota checks. Nothing else in this category surfaces it.
 
