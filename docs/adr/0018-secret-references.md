@@ -286,11 +286,10 @@ reader) has to make is at least in one answer.
 - **The dependency between a reference and the Secret it names is invisible to kelson's own tooling.**
   Deleting a Secret breaks a workload with nothing in kelson saying so; `kelson secret unset` (#116)
   will have to decide whether to look for referrers.
-- **The UI's form editor cannot yet author a reference.** `ui/src/spec/edit.ts` round-trips env values
-  as strings, so a spec carrying references opens in YAML-only mode until the editor learns the shape.
-  This is safe automatically rather than by anyone remembering: the editor's byte-guard refuses to
-  write back a document it cannot represent faithfully, so the failure mode is "you must edit this in
-  YAML", not "your reference was silently flattened into the string `map[secret:…]`".
+- ~~**The UI's form editor cannot yet author a reference.**~~ *(Closed 2026-08-14: `ui/src/spec/edit.ts`
+  now reads both mapping forms and writes the canonical single-line flow styling; documents authored in
+  other stylings still open read-only in the form with a YAML-only save, which is the byte-guard doing
+  its job rather than a gap.)*
 - **Two mapping arms is one more shape than the schema had.** `oneOf: [string, {from}, {secret, key}]`
   is a union an author can get wrong in a new way, and the reference documentation now has to say
   "object {from}, object {secret, key}" where it used to say "object". The remediation on a malformed
