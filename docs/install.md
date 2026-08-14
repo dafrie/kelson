@@ -31,6 +31,9 @@ kubectl -n kelson-system port-forward svc/kelson 8420:8420
 curl http://127.0.0.1:8420/healthz
 ```
 
+That port is also the web UI — `kelson-server` carries it in the binary and serves it from the same
+listener ([the server](server.md)), so `http://127.0.0.1:8420/` in a browser is the whole of it.
+
 Two values have no default, and the chart refuses to render without them rather than guessing.
 
 ### Authentication is required unless you turn it off out loud
