@@ -87,10 +87,10 @@ func writeChange(b *strings.Builder, change *Change) {
 	}
 	fmt.Fprintf(b, "  %s\n", change.Summary)
 	for _, ic := range change.Images {
-		fmt.Fprintf(b, "  image  %s/%s  %s → %s\n", ic.Workload, ic.Container, orDash(ic.Before), orDash(ic.After))
+		fmt.Fprintf(b, "  image  %s container %s  %s → %s\n", ic.Workload, ic.Container, orDash(ic.Before), orDash(ic.After))
 	}
 	for _, ec := range change.Env {
-		fmt.Fprintf(b, "  env    %s/%s  %s %s %s\n", ec.Workload, ec.Container, ec.Name, ec.Kind, envDelta(ec))
+		fmt.Fprintf(b, "  env    %s container %s  %s %s %s\n", ec.Workload, ec.Container, ec.Name, ec.Kind, envDelta(ec))
 	}
 }
 

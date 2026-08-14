@@ -126,10 +126,10 @@ func writeRecentChange(r *report, change *kelsonv1alpha1.RecentChange) {
 	}
 	r.addf("  recent change: %s", change.GetSummary())
 	for _, ic := range change.GetImages() {
-		r.addf("    image  %s/%s  %s → %s", ic.GetWorkload(), ic.GetContainer(), orDash(ic.GetBefore()), orDash(ic.GetAfter()))
+		r.addf("    image  %s container %s  %s → %s", ic.GetWorkload(), ic.GetContainer(), orDash(ic.GetBefore()), orDash(ic.GetAfter()))
 	}
 	for _, ec := range change.GetEnv() {
-		r.addf("    env    %s/%s  %s %s %s", ec.GetWorkload(), ec.GetContainer(), ec.GetName(), ec.GetKind(), envDelta(ec))
+		r.addf("    env    %s container %s  %s %s %s", ec.GetWorkload(), ec.GetContainer(), ec.GetName(), ec.GetKind(), envDelta(ec))
 	}
 }
 
