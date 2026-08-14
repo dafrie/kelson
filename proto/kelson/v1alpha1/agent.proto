@@ -1,0 +1,141 @@
+// AgentService: agent identities as first-class principals (issue #74,
+// ADR-0024).
+//
+// An agent is a principal, not a human with a borrowed token. The shared
+// password of #84's interim cut says a caller may reach the server; it never
+// says who the caller is, so an action cannot be attributed, a permission
+// cannot be narrower than the human's, and revoking an agent means changing the
+// password on every human at once. This service issues credentials that answer
+// all three: a named identity, a scope narrower than the operator's, and a
+// revocation that touches nothing else.
+//
+// # The token is returned exactly once
+//
+// CreateAgentResponse.token is the only place a credential value appears in
+// this schema. The server stores a salted HMAC of it and nothing else, so
+// ListAgents cannot re-reveal it and neither can the server — a lost token is
+// re-issued (create a new identity, revoke the old one), never recovered. That
+// is the same rule ADR-0009 applies to secret values, for the same reason: a
+// surface that can read a credential back is a surface that leaks it.
+//
+// # Only a human may mint an identity
+//
+// Every RPC here is administrative and is refused to an agent credential
+// server-side, whatever its scope (ADR-0024). An agent that could mint an agent
+// could mint one wider than itself, which would make every scope advisory. The
+// same three operations are available to an operator with a kube context as
+// `kelson agent create|list|revoke`, authorized by the cluster's own RBAC.
+//
+// # Scope is (project, environment, operation)
+//
+// An empty project or environment list means "every one" — a deliberately
+// unscoped credential — and an empty list is therefore never the default the
+// CLI hands out. Operations are classes, not method names: READ covers status,
+// logs, render and diff; MUTATE covers deploy, promote, rollback, build, spec
+// writes and secret writes, and implies READ. The method-to-class mapping is
+// one table in internal/api with a coverage test over the registered schema, so
+// an RPC added without a class fails closed rather than defaulting to allowed.
+syntax = "proto3";
+
+package kelson.v1alpha1;
+
+option go_package = "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1;kelsonv1alpha1";
+
+// AgentOperation is the class of operation a credential may perform.
+//
+// Two classes rather than a permission per RPC: an agent's blast radius is
+// "can it change anything", and a per-method matrix would be a policy language
+// nobody could audit at a glance. Finer grain is the policy engine of #75.
+enum AgentOperation {
+  AGENT_OPERATION_UNSPECIFIED = 0;
+  // Read state: status, history, logs, events, render, diff, preview listing,
+  // secret listing (names and keys only — no value leaves the server).
+  AGENT_OPERATION_READ = 1;
+  // Change state: deploy, rollback, promote, build, spec writes, secret
+  // writes. Implies READ.
+  AGENT_OPERATION_MUTATE = 2;
+}
+
+// AgentScope bounds what a credential may reach.
+message AgentScope {
+  // Projects this credential may act on. Empty means every project.
+  repeated string projects = 1;
+  // Environments this credential may act on. Empty means every environment.
+  // This is the field the issue's acceptance criterion turns on: a credential
+  // scoped to `development` cannot mutate `production`, enforced server-side.
+  repeated string environments = 2;
+  // Operation classes granted. Empty is refused at issuance rather than read
+  // as "all" — a credential that granted everything by omission is exactly the
+  // accident this field exists to prevent.
+  repeated AgentOperation operations = 3;
+}
+
+// AgentLimit is the per-identity request budget. Zero on either field selects
+// the server's default.
+message AgentLimit {
+  int32 requests_per_minute = 1;
+  int32 burst = 2;
+}
+
+// AgentIdentity is one agent principal as the server holds it. It carries no
+// credential: there is no field a token could arrive in.
+message AgentIdentity {
+  string name = 1;
+  int64 created_unix_ms = 2;
+  int64 expires_unix_ms = 3;
+  bool revoked = 4;
+  // Zero unless revoked.
+  int64 revoked_unix_ms = 5;
+  AgentScope scope = 6;
+  AgentLimit limit = 7;
+}
+
+message CreateAgentRequest {
+  // Name is the principal's name and appears in every audit record it
+  // produces. It must be a DNS-1123 label.
+  string name = 1;
+  // Lifetime in seconds. Zero selects the server default; anything above the
+  // server maximum is refused rather than clamped, so a caller that asked for
+  // a year is told it did not get one.
+  int64 ttl_seconds = 2;
+  AgentScope scope = 3;
+  AgentLimit limit = 4;
+}
+
+message CreateAgentResponse {
+  AgentIdentity agent = 1;
+  // The bearer credential, returned exactly once. It is sent as
+  // `Authorization: Bearer <token>` and is never recoverable from the server
+  // afterwards. Rotation is: create the successor, then revoke this identity.
+  string token = 2;
+}
+
+message ListAgentsRequest {}
+
+message ListAgentsResponse {
+  // Every identity the server holds, including revoked and expired ones: a
+  // credential that vanished from the list on expiry would make "was this
+  // action taken by an identity that still exists?" unanswerable.
+  repeated AgentIdentity agents = 1;
+}
+
+message RevokeAgentRequest {
+  string name = 1;
+}
+
+message RevokeAgentResponse {
+  AgentIdentity agent = 1;
+}
+
+service AgentService {
+  // CreateAgent mints an identity and returns its token once.
+  rpc CreateAgent(CreateAgentRequest) returns (CreateAgentResponse);
+  // ListAgents reports every identity, never a credential.
+  rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
+  // RevokeAgent takes effect on the next request that credential makes: the
+  // server reads the identity from cluster state on every request and caches
+  // no allow decision, so there is no window in which a revoked credential
+  // still works. Revoking is idempotent and affects no other identity and no
+  // human session.
+  rpc RevokeAgent(RevokeAgentRequest) returns (RevokeAgentResponse);
+}

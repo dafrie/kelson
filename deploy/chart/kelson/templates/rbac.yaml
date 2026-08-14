@@ -29,6 +29,19 @@ rules:
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get", "list", "create", "update", "delete"]
+  # internal/serverstate's agent identity store (issue #74, ADR-0024): one
+  # Secret per agent identity, holding a salted HMAC of the credential and never
+  # the credential. Get on every request (revocation must be immediate, so no
+  # allow decision is cached), List for `kelson agent list`, Create at issuance,
+  # Update to revoke. No `delete`: a revoked identity is kept so a past action
+  # can still be attributed to a principal that exists.
+  #
+  # A Secret rather than a ConfigMap even though what is stored is not a
+  # credential — identity material belongs behind whatever RBAC an operator puts
+  # on Secrets, and this grant is one namespace wide.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "create", "update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

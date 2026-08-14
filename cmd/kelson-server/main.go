@@ -20,6 +20,21 @@
 // warning instead of refused, because the port is no longer an open door. There
 // is still no TLS: put a TLS-terminating proxy in front. This is #84's interim
 // cut (ADR-0013 §3, amended 2026-08-13); #84 still owns the real answer.
+//
+// # Agents authenticate as themselves
+//
+// Beside the password there are agent identities (issue #74, ADR-0024): named
+// principals with a scope, an expiry and a request budget, stored as Secrets in
+// the state namespace. An agent sends its own token as `Authorization: Bearer`;
+// the server resolves it from cluster state on every request, so a revocation
+// takes effect immediately, and enforces its scope in a ConnectRPC interceptor
+// before any handler runs. Issue them with `kelson agent create` or
+// AgentService — both refuse an agent credential, because an agent that could
+// mint an agent could mint one wider than itself.
+//
+// Every authenticated request leaves one JSON line on stderr naming the
+// principal, its type, the method and the outcome. That is the attribution the
+// audit trail of #78 will build on; it is not the audit trail itself.
 package main
 
 import (
@@ -29,6 +44,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -123,12 +139,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		_, _ = fmt.Fprintln(stderr, "warning:", warning)
 	}
 
-	auth, err := api.NewAuth(cfg.password)
+	// The audit line every authenticated request leaves (issue #74, the seam
+	// #78 builds on) goes to stderr as JSON, beside the banner and the
+	// warnings. stdout is left to the banner alone so a caller piping it is not
+	// handed a stream of records it did not ask for.
+	audit := slog.New(slog.NewJSONHandler(stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	server, agents, err := connectServer(cfg, audit)
 	if err != nil {
 		return err
 	}
 
-	server, err := connectServer(cfg)
+	auth, err := api.NewAuthWith(api.AuthOptions{Password: cfg.password, Agents: agents})
 	if err != nil {
 		return err
 	}
@@ -277,11 +299,15 @@ func newMux(server *api.Server, auth *api.Auth) http.Handler {
 // authBanner says which posture the process started in. An operator who set the
 // password in the environment and typo'd the variable name must not have to
 // discover it by finding the API open.
+//
+// Agent identities are named separately because they are a second credential
+// rather than a stronger version of the first: a server with no password still
+// resolves and enforces agent tokens (issue #74).
 func authBanner(auth *api.Auth) string {
 	if auth.Enabled() {
-		return "authentication: shared password"
+		return "authentication: shared password, plus agent identities"
 	}
-	return "authentication: none"
+	return "authentication: none, plus agent identities"
 }
 
 // healthz reports liveness and the build it is reporting for. Version is part
@@ -310,17 +336,17 @@ func healthz(w http.ResponseWriter, _ *http.Request) {
 // delivery plane is rebuilt per request instead — kube.Connect's REST mapper is
 // discovery-backed and never refreshed, so a long-running process reusing one
 // would not see a CRD registered after it started (see kube.Connect's doc).
-func connectServer(cfg config) (*api.Server, error) {
+func connectServer(cfg config, audit *slog.Logger) (*api.Server, *serverstate.AgentStore, error) {
 	cluster, err := kube.Connect(cfg.kubeconfig)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	specs, err := serverstate.NewSpecStore(serverstate.SpecStoreOptions{
 		Client:    cluster.Typed,
 		Namespace: cfg.namespace,
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	history, err := serverstate.NewHistoryStore(serverstate.HistoryOptions{
 		Client:    cluster.Typed,
@@ -328,15 +354,31 @@ func connectServer(cfg config) (*api.Server, error) {
 		Keep:      cfg.keep,
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	logs, err := observation.NewLogQuery(observation.LogQueryConfig{Client: cluster.Typed})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	// The agent identity store rides the startup clientset for the same reason
+	// the state stores do: it only ever gets, lists, creates and updates
+	// Secrets in one namespace, so no discovery mapper is involved (issue #74).
+	// It is returned as well as wired in because the HTTP gate needs it too —
+	// the gate resolves the credential and the handlers issue them, and both
+	// must be looking at the same store or a revocation would be visible to
+	// only one of them.
+	agents, err := serverstate.NewAgentStore(serverstate.AgentStoreOptions{
+		Client:    cluster.Typed,
+		Namespace: cfg.namespace,
+	})
+	if err != nil {
+		return nil, nil, err
 	}
 
 	return api.New(api.Options{
-		Specs: specs,
+		Specs:  specs,
+		Agents: agents,
+		Logger: audit,
 		Profile: api.CaptureFunc(func(context.Context) (clusterprofile.ClusterProfile, error) {
 			return detect.FromCluster(cfg.kubeconfig)
 		}),
@@ -354,7 +396,7 @@ func connectServer(cfg config) (*api.Server, error) {
 			PushSecret: cfg.pushSecret,
 			Namespace:  cfg.buildNamespace,
 		},
-	}), nil
+	}), agents, nil
 }
 
 // deliveryConnector is the server's connectDelivery: one cluster connection per

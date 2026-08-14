@@ -133,11 +133,134 @@ from "the server broke" without reading prose.
 
 ### What this is not
 
-It is not TLS, not per-user identity, not authorization, and not a defence against anyone who can read
-the process's environment or command line. It raises the floor from *anything that can reach the port
-is the operator* to *a caller must hold the shared secret*. Issue
-[#84](https://github.com/dafrie/kelson/issues/84) still owns the real answer — project-level team auth,
-OIDC, agent identities ([#74](https://github.com/dafrie/kelson/issues/74)) and TLS.
+It is not TLS, not per-user identity for humans, and not a defence against anyone who can read the
+process's environment or command line. It raises the floor from *anything that can reach the port is
+the operator* to *a caller must hold the shared secret*. Issue
+[#84](https://github.com/dafrie/kelson/issues/84) still owns the human half of the real answer —
+project-level team auth, OIDC and TLS. The agent half is below.
+
+## Agent identities
+
+An agent is a principal, not a human with a borrowed token
+([#74](https://github.com/dafrie/kelson/issues/74),
+[ADR-0024](adr/0024-agent-identities.md)). Beside the shared password the server accepts **agent
+tokens**: named credentials with a scope, an expiry and a request budget, each revocable on its own.
+
+### Issue one
+
+`kelson agent` talks to the cluster, not to the server. Its authority is your kube context and the
+RBAC on the state namespace — so someone holding only the server password cannot mint an identity,
+and your cluster's audit log records who did.
+
+```sh
+kelson agent create deploybot --project shop --env development --allow mutate --ttl 24h
+```
+
+```
+created agent identity deploybot
+  expires:      2026-08-15T09:00:00Z
+  projects:     shop
+  environments: development
+  operations:   mutate
+  budget:       120 requests/minute, burst 30
+
+token (shown once — the server keeps only a hash of it):
+kagt.deploybot.…
+```
+
+The token is returned **once**. The server stores a salted HMAC of it and nothing else, so it cannot
+be recovered — a lost token is replaced, not found. `kelson agent list` reports every identity,
+including revoked and expired ones, and never a credential.
+
+`AgentService.CreateAgent/ListAgents/RevokeAgent` is the same three operations over the API, for a
+human logged in with the password. **Both surfaces refuse an agent credential**: an agent that could
+mint an agent could mint one wider than itself.
+
+### Use one
+
+The token goes in the same header the password does:
+
+```sh
+curl -H "Authorization: Bearer $KELSON_AGENT_TOKEN" \
+  -H 'Content-Type: application/json' -d '{}' \
+  http://127.0.0.1:8420/kelson.v1alpha1.SpecService/ListSpecs
+```
+
+`kelson-mcp` reads `--token` / `KELSON_AGENT_TOKEN` and presents it on every call
+([the MCP server](mcp.md)).
+
+### What a scope means
+
+| Dimension | Empty means | Enforced as |
+|---|---|---|
+| `--project` | every project | the project the request names |
+| `--env` | every environment | the environment the request names |
+| `--allow` | *refused* — a grant must be explicit | `read`, or `mutate` (which implies `read`) |
+
+`read` covers status, history, logs, events, render, diff, preview listing and secret *listing*
+(names and keys — no RPC in the schema can return a value). `mutate` covers deploy, rollback,
+promote, build, spec writes and secret writes.
+
+Enforcement is server-side, in a ConnectRPC interceptor driven by a table that maps **every**
+registered method to a scope, with a coverage test over the generated descriptors. A method with no
+row is refused to everyone — a new RPC fails closed rather than shipping open.
+
+Two consequences of that table are worth knowing before you scope a credential:
+
+- **A credential restricted by project or environment is refused the calls whose target the request
+  cannot state.** That is `ListSpecs` (it spans every project), `PutSpec` (the project name is inside
+  the YAML), a `Watch` with no scopes, and any call carrying an inline spec instead of a project name.
+  Refused, not filtered: a scope that silently narrowed a response would be indistinguishable from one
+  that did not apply. An identity with no `--project` and no `--env` still reaches them.
+- **Log queries address a namespace**, so a scoped credential reaches one only through the renderer's
+  `<project>-<environment>` convention. An environment that sets `spec.namespace` is therefore not
+  readable by a scoped credential at all. ADR-0024 §4 records the collision case this leaves open.
+
+### Expiry, rotation and revocation
+
+`--ttl` defaults to 24h and is capped at 30 days; a longer request is refused rather than clamped.
+Expiry is checked on every request.
+
+Rotation is create-then-revoke — create the successor, configure the agent with its token, then
+revoke the predecessor. There is no `rotate` verb, because revoking before the successor is in place
+breaks the agent and revoking after needs to know when "after" is.
+
+```sh
+kelson agent revoke deploybot
+```
+
+Revocation takes effect on the **next request** that credential makes: the server reads the identity
+from cluster state on every request and caches no allow decision, so there is no window and no cache
+to wait out. It writes one object — no human session, no other identity and no password is affected.
+
+### Budgets
+
+`--rate` (requests per minute, default 120) and `--burst` (default 30) are a token bucket per
+identity. A breach is ConnectRPC `resource_exhausted`, not `permission_denied`, so a client knows to
+back off rather than to give up. **The buckets are in-memory and therefore per replica**: two
+replicas each grant the full budget. That is honest for a single-replica v0 and it is the reason to
+treat the number as a runaway-loop cap rather than a quota.
+
+### Attribution
+
+Every authenticated request leaves one JSON line on stderr:
+
+```json
+{"level":"INFO","msg":"rpc","principal":"agent:deploybot","principal_type":"agent",
+ "procedure":"/kelson.v1alpha1.DeployService/Deploy","outcome":"allowed"}
+```
+
+`principal` is `agent:<name>`, `human:<name>`, `human` for a bearer-password caller, or `anonymous`.
+This is the seam the audit trail of [#78](https://github.com/dafrie/kelson/issues/78) builds on — it
+is not the audit trail: there is no queryable store, no retention and no tamper evidence. No request
+payload is logged.
+
+### What this is not
+
+Not authorization for humans: the password is still one shared secret. Not a policy engine — "may
+this agent deploy on a Friday" needs [#75](https://github.com/dafrie/kelson/issues/75). Not visible
+in the UI yet. And an agent's scope does not change which MCP tools are offered, only which calls
+succeed.
 
 ## SecretService needs Secret permissions, and that is a real grant
 
@@ -191,7 +314,11 @@ environment's previews.
 ## Where the code lives
 
 - `cmd/kelson-server` — flags, the mux, the bind check.
-- `internal/api` — the ConnectRPC handlers (`api.go`) and the auth gate (`auth.go`).
-- `internal/serverstate` — the ConfigMap-backed spec and history stores.
+- `cmd/kelson` — `kelson agent create|list|revoke` (`agent.go`), which writes to the cluster.
+- `internal/api` — the ConnectRPC handlers (`api.go`), the credential gate (`auth.go`), the principal
+  (`principal.go`), the RPC-to-scope table (`scope.go`), the authorization interceptor (`authz.go`)
+  and the per-identity budgets (`ratelimit.go`).
+- `internal/serverstate` — the ConfigMap-backed spec and history stores, and the Secret-backed agent
+  identity store (`agent.go`).
 - `internal/secret` — the cluster secret backend behind `SecretService`.
 - `internal/delivery/flux` — the preview read behind `PreviewService` (`previews.go`).

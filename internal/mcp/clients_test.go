@@ -34,20 +34,20 @@ func TestFailNamesTheAddressOnAConnectionFailure(t *testing.T) {
 	}
 }
 
-// TestFailNamesTheCredentialOnA401: the interim auth (#84) makes "you have no
-// password" a failure an agent can now hit, and it is the one failure where
-// retrying the same call forever is the wrong move. The message says what to
-// set, and says the password is not an identity so an agent does not read it as
-// having been granted one.
+// TestFailNamesTheCredentialOnA401: "you have no credential" is a failure an
+// agent can hit, and it is the one failure where retrying the same call forever
+// is the wrong move. The message names both credentials this process can carry
+// (issue #74) so an agent handed a revoked or expired token is not left
+// concluding the password is what it lacks.
 func TestFailNamesTheCredentialOnA401(t *testing.T) {
 	c := &clients{addr: "http://127.0.0.1:8420"}
 	err := c.fail(rpcStatus, connect.NewError(connect.CodeUnauthenticated, errors.New("kelson-server requires a session")))
 
 	for _, want := range []string{
 		"KELSON_PASSWORD",
+		"KELSON_AGENT_TOKEN",
 		"Authorization: Bearer",
-		"not an agent identity",
-		"#74",
+		"revoked or has expired",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the 401 does not mention %q:\n%s", want, err)
@@ -55,6 +55,27 @@ func TestFailNamesTheCredentialOnA401(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "did not answer") {
 		t.Errorf("a rejected request was reported as a connection failure:\n%s", err)
+	}
+}
+
+// TestFailSeparatesScopeFromBudget: an agent that reads "permission denied" as
+// "retry" burns its budget, and one that reads "over budget" as "permanent"
+// gives up on work it could have done a second later. The two refusals the
+// server can now return therefore say opposite things about retrying (#74).
+func TestFailSeparatesScopeFromBudget(t *testing.T) {
+	c := &clients{addr: "http://127.0.0.1:8420"}
+
+	denied := c.fail(rpcStatus, connect.NewError(connect.CodePermissionDenied, errors.New("out of scope")))
+	if !strings.Contains(denied.Error(), "Retrying changes nothing") {
+		t.Errorf("a scope refusal does not say retrying is pointless:\n%s", denied)
+	}
+
+	limited := c.fail(rpcStatus, connect.NewError(connect.CodeResourceExhausted, errors.New("over budget")))
+	if !strings.Contains(limited.Error(), "Back off and retry") {
+		t.Errorf("a budget refusal does not say to back off and retry:\n%s", limited)
+	}
+	if strings.Contains(limited.Error(), "Retrying changes nothing") {
+		t.Errorf("a budget refusal was reported as permanent:\n%s", limited)
 	}
 }
 

@@ -34,21 +34,30 @@
 // LogService.QueryLogs and never FollowLogs, and the streaming RPCs (Deploy,
 // Rollback, Watch) are consumed to a settled answer rather than forwarded.
 //
-// # One shared password, and it is not an identity
+// # Two credentials, and only one of them is an identity
 //
 // A kelson-server started with --password requires every RPC to authenticate,
-// and this server does it the way a non-browser client does: the shared
-// password as `Authorization: Bearer` on every call (Options.Password, from
-// $KELSON_PASSWORD). A server without a password takes anything, and this
-// server sends nothing — the pre-#84 behaviour, unchanged.
+// and this server does it the way a non-browser client does: a secret as
+// `Authorization: Bearer` on every call. Which secret is the whole of issue #74.
 //
-// The password is a shared secret, not a principal: it says the caller may
-// reach the server, never who the caller is. Agent identities — scoped,
-// expiring, agent-owned — are issue #74. Policy-aware tool exposure (ADR-0008
-// §4) needs the policy engine of issue #75 — there is nothing yet that could
-// answer "may this caller deploy to production", so every tool is exposed to
-// every caller, and docs/mcp.md says so rather than implying a boundary that is
-// not enforced.
+// [Options.Token] is an agent identity's credential ($KELSON_AGENT_TOKEN),
+// issued by `kelson agent create`. With one set, every RPC this process makes is
+// attributed to that identity, bounded by its scope and its expiry, and revoking
+// it stops this process and nothing else. That is the flow: issue the token,
+// configure this server with it, and the agent acts under its own principal.
+//
+// [Options.Password] is the fallback ($KELSON_PASSWORD, #84's interim cut). It
+// is a shared secret, not a principal: it says the caller may reach the server,
+// never who the caller is. The token wins when both are set.
+//
+// A server without either takes anything, and this server sends nothing — the
+// pre-#84 behaviour, unchanged.
+//
+// Policy-aware tool exposure (ADR-0008 §4) needs the policy engine of issue #75.
+// The scope on an agent token is enforced by the server on every call, but this
+// process does not read it, so a tool the identity may not use is still offered
+// and fails at call time with `auth/out-of-scope` rather than being hidden.
+// docs/mcp.md says so rather than implying a boundary that is not there.
 package mcp
 
 import (
@@ -78,6 +87,35 @@ type Options struct {
 	// set it rides on every RPC as `Authorization: Bearer`. Empty sends no
 	// header at all, which is what a server without a password expects.
 	Password string
+	// Token is an agent identity's credential (issue #74). It travels in the
+	// same header as the password and takes precedence over it: an agent that
+	// has been given an identity of its own must act as that identity, not as
+	// whoever configured the process. Sending both would be a choice the server
+	// makes rather than this one, and the wrong half could win.
+	Token string
+}
+
+// credential picks which secret rides on the RPCs. The agent token wins
+// whenever there is one — see [Options.Token].
+func (o Options) credential() string {
+	if o.Token != "" {
+		return o.Token
+	}
+	return o.Password
+}
+
+// CredentialKind names the credential for a banner without revealing it. It is
+// exported because cmd/kelson-mcp prints it and must not re-derive the
+// precedence rule and get it wrong.
+func (o Options) CredentialKind() string {
+	switch {
+	case o.Token != "":
+		return "agent identity"
+	case o.Password != "":
+		return "shared password"
+	default:
+		return "no credential"
+	}
 }
 
 // Server is the MCP server and its tool surface.
@@ -103,7 +141,7 @@ func New(opts Options) *Server {
 		version = "0.0.0-dev"
 	}
 
-	auth := bearerOptions(opts.Password)
+	auth := bearerOptions(opts.credential())
 	c := &clients{
 		addr:    addr,
 		spec:    kelsonv1alpha1connect.NewSpecServiceClient(httpClient, addr, auth...),

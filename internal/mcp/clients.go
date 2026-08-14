@@ -65,25 +65,39 @@ func (c *clients) fail(op rpc, err error) error {
 		r.addf("kelson-server at %s did not answer. Start it and point --server (or KELSON_SERVER) at its address. "+
 			"The address must be one this process can reach directly — there is no proxy and no discovery here.", c.addr)
 	case connect.CodeUnauthenticated:
-		r.addf("kelson-server at %s requires its shared password. Set --password (or KELSON_PASSWORD) to the value "+
-			"the server was started with; it is sent as an Authorization: Bearer header. The password is a shared "+
-			"secret, not an agent identity — those are issue #74.", c.addr)
+		r.addf("kelson-server at %s did not accept this process's credential. Either set --token (or "+
+			"KELSON_AGENT_TOKEN) to an agent credential from `kelson agent create`, or set --password (or "+
+			"KELSON_PASSWORD) to the shared password the server was started with; both are sent as an "+
+			"Authorization: Bearer header. An agent token that was revoked or has expired fails here too, and is "+
+			"replaced rather than repaired.", c.addr)
+	case connect.CodePermissionDenied:
+		// The scope is enforced server-side and this process does not read it,
+		// so the only useful thing to say is which identity was refused and
+		// that widening it is an operator's act, not a retry.
+		r.addf("this agent identity is not allowed to do that. The refusal is server-side and final for this "+
+			"credential: an operator widens the identity's scope with a new `kelson agent create`, or the request "+
+			"names a project and environment the identity covers. Retrying changes nothing.")
+	case connect.CodeResourceExhausted:
+		r.addf("this agent identity is over its request budget. Back off and retry — the budget refills "+
+			"continuously — or ask an operator for a credential with a higher --rate.")
 	default:
 	}
 	return errors.New(r.String())
 }
 
-// bearerOptions carries the shared password on every call, or nothing at all.
+// bearerOptions carries the process's credential on every call, or nothing at
+// all. The value is whichever [Options.credential] selected — an agent token
+// when there is one, the shared password otherwise.
 //
 // It is a client option rather than a header set at each call site so that a
 // tool added later cannot forget it, and it covers streaming as well as unary
 // because Watch and the deploy stream are exactly the calls a half-applied
-// credential would break last and most confusingly (#84's interim cut).
-func bearerOptions(password string) []connect.ClientOption {
-	if password == "" {
+// credential would break last and most confusingly (#84's interim cut, #74).
+func bearerOptions(credential string) []connect.ClientOption {
+	if credential == "" {
 		return nil
 	}
-	return []connect.ClientOption{connect.WithInterceptors(bearer(password))}
+	return []connect.ClientOption{connect.WithInterceptors(bearer(credential))}
 }
 
 // bearer is the interceptor that sets Authorization on outbound requests.

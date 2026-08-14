@@ -103,7 +103,54 @@ Claude Code registers the same thing from the command line:
 claude mcp add kelson -- kelson-mcp --server http://127.0.0.1:8420
 ```
 
-## Authentication: the server's shared password, as a bearer token
+## Authentication: an agent identity, or the server's shared password
+
+`kelson-mcp` can present either credential as an `Authorization: Bearer` header. One of them is a
+principal.
+
+### The agent identity, and the flow that gets you one
+
+An agent token ([#74](https://github.com/dafrie/kelson/issues/74),
+[ADR-0024](adr/0024-agent-identities.md)) makes this process a principal of its own: every call is
+attributed to it, bounded by its scope and its expiry, and revoking it stops this process and nothing
+else. Three steps:
+
+**1. Issue the token.** From a machine with a kube context, not from the agent:
+
+```sh
+kelson agent create deploybot --project shop --env development --allow mutate --ttl 24h
+```
+
+The token is printed once. `--quiet` prints it alone, for capture into a variable.
+
+**2. Configure the MCP server with it.** Prefer the environment — a flag value is readable in every
+`ps` on the machine, and this one names a principal as well as being a secret:
+
+```json
+{
+  "mcpServers": {
+    "kelson": {
+      "command": "kelson-mcp",
+      "args": ["--server", "https://kelson.internal"],
+      "env": { "KELSON_AGENT_TOKEN": "kagt.deploybot.…" }
+    }
+  }
+}
+```
+
+**3. The agent acts under its own principal.** Every RPC is checked server-side against the identity's
+scope before any handler runs, and every one leaves an audit line naming `agent:deploybot`. A call
+outside the scope comes back as ConnectRPC `permission_denied` with an `auth/out-of-scope` code and a
+tool error that says retrying will not help; a call over the identity's request budget comes back as
+`resource_exhausted` and says to back off. Those are opposite instructions on purpose.
+
+Rotation is create-then-revoke: issue the successor, update the `env` block, restart the MCP client,
+then `kelson agent revoke deploybot`.
+
+The token wins when both credentials are set. The banner on stderr says which kind is in use —
+`agent identity`, `shared password` or `no credential` — and never the value.
+
+### The shared password
 
 A `kelson-server` started with `--password` requires every `kelson.v1alpha1.*` call to authenticate
 ([the server](server.md), [ADR-0013](adr/0013-server-state-and-api-v0.md) §3 as amended 2026-08-13).
@@ -135,12 +182,10 @@ A rejected call comes back as ConnectRPC `unauthenticated` and the tool error na
 set, so an agent does not read a missing credential as a broken server and retry forever.
 
 **The password is a shared secret, not an identity.** It says the caller may reach the server; it
-never says who the caller is, and nothing authorizes on it. Two consequences worth stating plainly,
-because both are part of issue #73 and neither is implemented:
+never says who the caller is, and nothing authorizes on it. An agent running under the password has
+whatever access the machine running `kelson-mcp` has — which is what the agent token above exists to
+replace. Two consequences worth stating plainly:
 
-- **Agents are not yet principals.** Scoped, expiring, agent-owned credentials are
-  [#74](https://github.com/dafrie/kelson/issues/74). Until then an agent has whatever access the
-  machine running `kelson-mcp` has.
 - **Tool exposure is not policy-aware.** [ADR-0008](adr/0008-mcp-surface.md) §4 says tools a caller's
   credentials cannot use should not be exposed at all. That needs a policy engine to ask, and there
   is none until [#75](https://github.com/dafrie/kelson/issues/75). **Every tool is currently exposed
@@ -149,8 +194,10 @@ because both are part of issue #73 and neither is implemented:
 
 - **`set_secret` is the one tool that receives a credential.** It is exposed to every caller like the
   rest, so a caller that can reach the server can write a Secret into any environment's namespace it
-  can name. What does *not* follow is a read: no RPC in the schema returns a secret value, so this
-  surface cannot be used to get a credential out of a cluster — only to put one in.
+  can name — unless it is carrying an agent token, in which case the server refuses a write outside
+  the identity's scope and refuses it entirely without `mutate`. What does *not* follow either way is
+  a read: no RPC in the schema returns a secret value, so this surface cannot be used to get a
+  credential out of a cluster — only to put one in.
 
 What does exist today is the guardrail that matters most for an agent: every mutating tool defaults
 to a preview (`deploy` to `dry_run="render"`, `rollback`, `promote_application` and `set_secret` to

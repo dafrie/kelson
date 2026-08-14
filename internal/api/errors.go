@@ -113,6 +113,15 @@ func planeErrors(err error) []*kelsonv1alpha1.Error {
 	if errors.As(err, &secretErr) {
 		return []*kelsonv1alpha1.Error{fromSecret(secretErr)}
 	}
+
+	// The authorization plane (issue #74). It is the api plane's own vocabulary
+	// rather than another package's, and it rides the same wire shape so an
+	// agent branching on `auth/out-of-scope` reads it exactly where it reads
+	// `store/not-found`.
+	var authErr authzError
+	if errors.As(err, &authErr) {
+		return []*kelsonv1alpha1.Error{authErr.wire()}
+	}
 	return nil
 }
 

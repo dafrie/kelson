@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/dafrie/kelson/internal/serverstate"
 )
 
 // Interim authentication: one shared password, two transports (issue #84).
@@ -48,12 +50,33 @@ import (
 // for one secret rather than a second credential nobody could rotate
 // independently anyway.
 //
+// # Agent tokens are the third credential, and the only one that is a principal
+//
+// Issue #74 added agent identities beside the two transports above: a bearer
+// header beginning `kagt.` is resolved against the agent store instead of being
+// compared to the password, and the request is attributed to that identity
+// (principal.go) for the authorization interceptor and the audit line to read.
+// The human path is untouched — an agent token is a different prefix, a
+// different lookup and a different principal type, and revoking one cannot
+// affect a password or a session.
+//
+// Two properties of that lookup are load-bearing. It happens on *every* request,
+// so a revocation is immediate and no allow decision is ever cached. And it is
+// performed here, at the edge, so exactly one place in the process turns a
+// credential into a principal.
+//
+// An agent token is honoured even on a server with no password. That is not a
+// security boundary — a caller on such a server can simply omit the header and
+// be anonymous — but it means an agent's scope behaves identically in a local
+// dev server and in production, which is where scope bugs would otherwise hide.
+//
 // # What this is not
 //
-// It is not TLS, not per-user identity, not authorization, and not a defence
-// against anyone who can read the process's environment or command line. It
-// raises the floor from "anything that can reach the port is the operator" to
-// "a caller must hold the shared secret", and #84 still owns the real answer.
+// It is not TLS, not per-user identity for humans, and not a defence against
+// anyone who can read the process's environment or command line. It raises the
+// floor from "anything that can reach the port is the operator" to "a caller
+// must hold a credential, and an agent's credential says which agent", and #84
+// still owns the human half of the real answer.
 
 // SessionCookie is the cookie a browser session travels in.
 const SessionCookie = "kelson_session"
@@ -94,26 +117,52 @@ type Auth struct {
 	key []byte
 	ttl time.Duration
 	now func() time.Time
+	// agents resolves agent bearer tokens (issue #74). Nil means this server
+	// has no agent principals, and a `kagt.` token is then refused with a
+	// message saying so rather than silently treated as a wrong password.
+	agents AgentStore
 }
 
-// NewAuth builds the gate. An empty password disables it, reproducing the
-// pre-#84 behaviour exactly: every route open, no cookies, no login screen.
+// AuthOptions configures the gate.
+type AuthOptions struct {
+	// Password is the shared secret of #84's interim cut. Empty disables the
+	// human gate.
+	Password string
+	// Agents is the agent identity store. Nil disables agent principals.
+	Agents AgentStore
+	// Now is the clock expiry is checked against. Nil selects time.Now.
+	Now func() time.Time
+}
+
+// NewAuth builds the password-only gate. An empty password disables it,
+// reproducing the pre-#84 behaviour exactly: every route open, no cookies, no
+// login screen.
 func NewAuth(password string) (*Auth, error) {
-	if password == "" {
-		return &Auth{now: time.Now}, nil
+	return NewAuthWith(AuthOptions{Password: password})
+}
+
+// NewAuthWith builds the gate over every credential the server accepts.
+func NewAuthWith(opts AuthOptions) (*Auth, error) {
+	now := opts.Now
+	if now == nil {
+		now = time.Now
+	}
+	if opts.Password == "" {
+		return &Auth{now: now, agents: opts.Agents}, nil
 	}
 	salt := make([]byte, 32)
 	if _, err := rand.Read(salt); err != nil {
 		return nil, fmt.Errorf("generating the session signing salt: %w", err)
 	}
 	mac := hmac.New(sha256.New, salt)
-	mac.Write([]byte(password)) //nolint:errcheck // hash.Hash never returns an error
+	mac.Write([]byte(opts.Password)) //nolint:errcheck // hash.Hash never returns an error
 	return &Auth{
 		enabled: true,
-		digest:  sha256.Sum256([]byte(password)),
+		digest:  sha256.Sum256([]byte(opts.Password)),
 		key:     mac.Sum(nil),
 		ttl:     DefaultSessionTTL,
-		now:     time.Now,
+		now:     now,
+		agents:  opts.Agents,
 	}, nil
 }
 
@@ -137,7 +186,7 @@ func (a *Auth) Register(mux *http.ServeMux) {
 // failure: a client that must tell "log in again" from "the server broke"
 // branches on the code, not on prose.
 func (a *Auth) Middleware(next http.Handler) http.Handler {
-	if !a.enabled {
+	if !a.enabled && a.agents == nil {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -145,43 +194,97 @@ func (a *Auth) Middleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if _, ok := a.authenticate(r); ok {
-			next.ServeHTTP(w, r)
+		p, message := a.principal(r)
+		if message != "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"code":    "unauthenticated",
+				"message": message,
+			})
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnauthorized)
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"code": "unauthenticated",
-			"message": "kelson-server requires a session: log in at /auth/login, " +
-				"or send Authorization: Bearer <password> from a non-browser client",
-		})
+		next.ServeHTTP(w, r.WithContext(WithPrincipal(r.Context(), p)))
 	})
 }
 
-// authenticate resolves a request to a display name. The bool is the answer;
-// the string is only ever a label, and a bearer-authenticated caller has none
-// because a shared password names nobody.
-func (a *Auth) authenticate(r *http.Request) (string, bool) {
-	if a.bearer(r) {
-		return "", true
+// noCredential is the refusal a request with nothing usable gets. It names all
+// three credentials rather than only the one the server happens to have,
+// because a caller that sent the wrong kind needs to know the right kind exists.
+const noCredential = "kelson-server requires a credential: log in at /auth/login, " +
+	"send Authorization: Bearer <password> from a non-browser client, " +
+	"or send Authorization: Bearer <agent token> as an agent identity (issue #74)"
+
+// principal resolves a request to its caller. The string is a refusal message
+// and is empty exactly when the Principal is usable.
+//
+// The order is deliberate. A bearer header is inspected first and its *prefix*
+// decides which credential it is, so a mistyped password is never tried as an
+// agent token and a revoked agent token is never reported as a wrong password.
+func (a *Auth) principal(r *http.Request) (Principal, string) {
+	if token, present := bearerToken(r); present {
+		if strings.HasPrefix(token, serverstate.AgentTokenPrefix) {
+			return a.agentPrincipal(r, token)
+		}
+		switch {
+		case a.enabled && a.matches(token):
+			// A shared password names nobody, so the principal has no name.
+			return Principal{Type: PrincipalHuman}, ""
+		case a.enabled:
+			return Principal{}, noCredential
+		default:
+			return Principal{Type: PrincipalAnonymous}, ""
+		}
 	}
-	cookie, err := r.Cookie(SessionCookie)
-	if err != nil {
-		return "", false
+	if a.enabled {
+		cookie, err := r.Cookie(SessionCookie)
+		if err == nil {
+			if username, ok := a.verify(cookie.Value); ok {
+				return Principal{Type: PrincipalHuman, Name: username}, ""
+			}
+		}
+		return Principal{}, noCredential
 	}
-	return a.verify(cookie.Value)
+	return Principal{Type: PrincipalAnonymous}, ""
 }
 
-// bearer reports whether the request carries the shared password as a bearer
-// token.
-func (a *Auth) bearer(r *http.Request) bool {
+// agentPrincipal resolves an agent token against the store, on this request,
+// with no cache anywhere: that is what makes revocation immediate.
+//
+// Expiry and revocation are refused here rather than passed on as a live
+// principal, because both are facts about the credential rather than about what
+// it was asking to do — an expired token is not authenticated, it is stale.
+func (a *Auth) agentPrincipal(r *http.Request, token string) (Principal, string) {
+	if a.agents == nil {
+		return Principal{}, "this kelson-server has no agent identity store, so agent tokens cannot be used against it; " +
+			"it was started without one (issue #74)"
+	}
+	agent, err := a.agents.Authenticate(r.Context(), token)
+	if err != nil {
+		// Every failure is one message on purpose: which of "no such identity",
+		// "malformed" and "wrong secret" happened is an enumeration oracle and
+		// changes nothing a legitimate caller does.
+		return Principal{}, "the agent token does not identify a live agent identity; " +
+			"ask an operator to issue one with `kelson agent create`"
+	}
+	switch {
+	case agent.Revoked:
+		return Principal{}, "this agent identity was revoked; ask an operator for a new one with `kelson agent create`"
+	case agent.Expired(a.now()):
+		return Principal{}, "this agent credential has expired; rotation is `kelson agent create` for the successor, " +
+			"then `kelson agent revoke` for this one"
+	}
+	return Principal{Type: PrincipalAgent, Name: agent.Name, Agent: agent}, ""
+}
+
+// bearerToken returns the Authorization header's bearer value.
+func bearerToken(r *http.Request) (string, bool) {
 	header := r.Header.Get("Authorization")
 	const scheme = "bearer "
 	if len(header) <= len(scheme) || !strings.EqualFold(header[:len(scheme)], scheme) {
-		return false
+		return "", false
 	}
-	return a.matches(strings.TrimSpace(header[len(scheme):]))
+	return strings.TrimSpace(header[len(scheme):]), true
 }
 
 // matches is the password check, in constant time over fixed-length digests.
@@ -314,28 +417,41 @@ func (a *Auth) logout(w http.ResponseWriter, r *http.Request) {
 // session is the tri-state the UI boots on:
 //
 //	204 No Content — authentication is disabled; there is nothing to log in to.
-//	200 {"username"} — this request carries a valid session.
+//	200 {"username", "principal"} — this request carries a valid credential.
 //	401 — a login is required.
 //
 // Three states rather than two because "no password configured" and "not logged
 // in" are different facts and a UI that conflated them would show a login form
 // no password could satisfy. A bearer-authenticated caller answers 200 with an
 // empty username: it is authenticated and it has no display name.
+//
+// `principal` is additive (issue #74): it says human or agent, so a person
+// debugging a token can see which identity the server resolved. The UI reads
+// `username` and is unaffected.
 func (a *Auth) session(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		authError(w, http.StatusMethodNotAllowed, "GET /auth/session")
 		return
 	}
-	if !a.enabled {
+	if !a.enabled && a.agents == nil {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	username, ok := a.authenticate(r)
-	if !ok {
+	p, message := a.principal(r)
+	if message != "" || p.Type == PrincipalAnonymous {
+		if !a.enabled {
+			// No password: there is still nothing to log in to, whatever the
+			// agent store says.
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		authError(w, http.StatusUnauthorized, "no session")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"username": username})
+	writeJSON(w, http.StatusOK, map[string]string{
+		"username":  p.Name,
+		"principal": string(p.Type),
+	})
 }
 
 // overTLS reports whether the connection reaching the client is encrypted, so
