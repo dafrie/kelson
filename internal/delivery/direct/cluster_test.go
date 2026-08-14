@@ -35,6 +35,15 @@ type cluster struct {
 	forced   []bool
 	// conflicts maps a resource key to the fields another field manager owns.
 	conflicts map[string]conflict
+	// events is the interleaved log of applies and release-Job reads. The
+	// release hook's whole contract is about what happens BETWEEN two applies
+	// (issue #104), which an apply-only log cannot show.
+	events []string
+	// jobStates scripts the status successive reads of a release Job return,
+	// standing in for a Job controller the fake client does not have. Reads past
+	// the end of the script repeat the last entry.
+	jobStates []map[string]any
+	jobReads  int
 }
 
 type conflict struct {
@@ -49,7 +58,68 @@ func newCluster(objs ...runtime.Object) *cluster {
 	}
 	c.dyn.PrependReactor("patch", "*", c.reactApply)
 	c.dyn.PrependReactor("delete", "*", c.recordDelete)
+	c.dyn.PrependReactor("get", "jobs", c.reactJobGet)
 	return c
+}
+
+// scriptJobStatus sets what successive reads of a release Job report. Nothing
+// in the fake client advances a Job on its own, so this is how a migration
+// runs, succeeds or fails in a test.
+func (c *cluster) scriptJobStatus(states ...map[string]any) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.jobStates = states
+}
+
+// reactJobGet injects the scripted status into a Job read. A Job that is not in
+// the tracker falls through to the real fake, which reports NotFound — that is
+// how "deleted and not yet re-created" stays visible to the adapter.
+func (c *cluster) reactJobGet(action k8stesting.Action) (bool, runtime.Object, error) {
+	ga, ok := action.(k8stesting.GetActionImpl)
+	if !ok {
+		return false, nil, nil
+	}
+	obj, err := c.dyn.Tracker().Get(ga.GetResource(), ga.GetNamespace(), ga.Name)
+	if err != nil {
+		return false, nil, nil
+	}
+	u, ok := obj.(*unstructured.Unstructured)
+	if !ok {
+		return false, nil, nil
+	}
+	u = u.DeepCopy()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.events = append(c.events, "read "+objKey(u))
+	if len(c.jobStates) > 0 {
+		i := min(c.jobReads, len(c.jobStates)-1)
+		if status := c.jobStates[i]; status != nil {
+			if err := unstructured.SetNestedMap(u.Object, status, "status"); err != nil {
+				return true, nil, err
+			}
+		}
+		c.jobReads++
+	}
+	return true, u, nil
+}
+
+// jobCondition builds one Job status the way the Job controller writes it.
+func jobCondition(condType, status, reason, message string) map[string]any {
+	return map[string]any{
+		"conditions": []any{map[string]any{
+			"type": condType, "status": status, "reason": reason, "message": message,
+		}},
+	}
+}
+
+// jobRunning is the status of a Job whose pod is in flight.
+func jobRunning() map[string]any { return map[string]any{"active": int64(1)} }
+
+func (c *cluster) eventLog() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.events...)
 }
 
 // ownedElsewhere seeds a field owned by another field manager, so the next
@@ -90,6 +160,7 @@ func (c *cluster) reactApply(action k8stesting.Action) (bool, runtime.Object, er
 
 	c.mu.Lock()
 	c.applies = append(c.applies, key)
+	c.events = append(c.events, "apply "+key)
 	c.managers = append(c.managers, pa.PatchOptions.FieldManager)
 	c.forced = append(c.forced, forced)
 	c.mu.Unlock()
@@ -130,6 +201,7 @@ func (c *cluster) recordDelete(action k8stesting.Action) (bool, runtime.Object, 
 	}
 	c.mu.Lock()
 	c.deletes = append(c.deletes, fmt.Sprintf("%s/%s/%s", da.GetResource().Resource, da.GetNamespace(), da.Name))
+	c.events = append(c.events, "delete "+da.GetResource().Resource+"/"+da.Name)
 	c.mu.Unlock()
 	return false, nil, nil
 }
@@ -189,6 +261,11 @@ var testKinds = []struct {
 	{schema.GroupVersionKind{Version: "v1", Kind: "ConfigMap"}, meta.RESTScopeNamespace},
 	{schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"}, meta.RESTScopeNamespace},
 	{schema.GroupVersionKind{Group: "batch", Version: "v1", Kind: "CronJob"}, meta.RESTScopeNamespace},
+	// The release hook (issue #104) and the pod it produces, whose logs a
+	// failed migration quotes back.
+	{schema.GroupVersionKind{Group: "batch", Version: "v1", Kind: "Job"}, meta.RESTScopeNamespace},
+	{schema.GroupVersionKind{Version: "v1", Kind: "Pod"}, meta.RESTScopeNamespace},
+	{schema.GroupVersionKind{Version: "v1", Kind: "ServiceAccount"}, meta.RESTScopeNamespace},
 }
 
 func testScheme() *runtime.Scheme {
