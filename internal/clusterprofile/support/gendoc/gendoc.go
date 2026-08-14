@@ -49,23 +49,60 @@ func Render() []byte {
 		"Each component below has a **minimum supported version**: a cluster reporting a version at or above it is "+
 		"Supported, one below it is Unsupported, and a version a probe could not read is Unknown — reported for the "+
 		"caller to decide, never silently treated as fine.\n\n")
+	fmt.Fprintf(&b, "The **What degrades** column is the part to read first. A version number on its own sends you "+
+		"to the source; knowing that a too-old operator means every `kind: postgres` component refuses to render is a "+
+		"decision you can make. `kelson profile` prints these same statements for the cluster in front of you, and so "+
+		"does every command that resolves a live profile — see "+
+		"[detection](../detection.md#version-skew-and-explicit-degradation).\n\n")
 
 	fmt.Fprintf(&b, "## Supported components\n\n")
-	fmt.Fprintf(&b, "| Component | Minimum supported | Too-old behaviour | Notes |\n")
-	fmt.Fprintf(&b, "|-----------|-------------------|-------------------|-------|\n")
+	fmt.Fprintf(&b, "| Component | Minimum supported | Tested up to | Below the floor | What degrades |\n")
+	fmt.Fprintf(&b, "|-----------|-------------------|--------------|-----------------|---------------|\n")
 	for _, c := range support.Components {
-		fmt.Fprintf(&b, "| `%s` | `%s` | %s | %s |\n", c.Name, c.Minimum, degradeText(c.Degrade), inline(c.Note))
+		fmt.Fprintf(&b, "| `%s` | `%s` | %s | %s | %s |\n",
+			c.Name, c.Minimum, testedText(c.Tested), degradeText(c.Degrade), inline(c.Affects))
 	}
 
-	fmt.Fprintf(&b, "\n## Too-old behaviour\n\n")
+	fmt.Fprintf(&b, "\n## Below the floor\n\n")
 	fmt.Fprintf(&b, "- **`refuse`** — a version below the minimum makes kelson refuse to render and say why, "+
-		"naming the component, the version found and the version required. Enforcement is the renderer's job and is "+
-		"not yet wired; the checks report the finding so a caller can act (issue #57).\n")
+		"naming the component, the version found, the version required and what degrades. The per-capability "+
+		"refusals for data and chart components are enforced in the renderer; the rest is reported so a caller "+
+		"can act before apply time (issue #57).\n")
 	fmt.Fprintf(&b, "- **`render-older`** — a version below the minimum is still usable but kelson must render the "+
 		"older API. No component is on this path yet; the decision is recorded here so a future one is explicit.\n")
 
+	fmt.Fprintf(&b, "\n## Newer than tested\n\n")
+	fmt.Fprintf(&b, "A version **above** the tested column is never a refusal. kelson knows only that it has not "+
+		"exercised that release — not that anything is wrong with it — and refusing on that basis would break "+
+		"working clusters to prevent a hypothetical. It is reported as a `[note]`, so that if something does behave "+
+		"oddly there, the fact that you are outside the tested range is already on screen instead of being a "+
+		"mystery. A blank tested column claims no upper bound at all.\n")
+
 	renderStorage(&b)
+	renderWhy(&b)
 	return b.Bytes()
+}
+
+// renderWhy writes the per-component reasoning. It is a section rather than a
+// sixth table column because a floor is a judgement call a maintainer has to be
+// able to re-derive when bumping it, and that argument does not fit in a cell.
+func renderWhy(b *bytes.Buffer) {
+	fmt.Fprintf(b, "\n## Why these floors\n\n")
+	fmt.Fprintf(b, "Each floor is a decision, not a default. Move one by editing its row in "+
+		"`internal/clusterprofile/support/matrix.go` and regenerating this page.\n\n")
+	for _, c := range support.Components {
+		fmt.Fprintf(b, "- **`%s` %s** — %s\n", c.Name, c.Minimum, inline(c.Note))
+	}
+}
+
+// testedText renders the ceiling cell. An empty ceiling is stated as such: a
+// blank cell would read as an oversight rather than as "no upper bound is
+// claimed for this component".
+func testedText(tested string) string {
+	if tested == "" {
+		return "—"
+	}
+	return "`" + tested + "`"
 }
 
 // renderStorage writes the storage clone-capability section from the maintained

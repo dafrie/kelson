@@ -266,3 +266,62 @@ func TestDiagnoseStatusFailureIsTheAnswer(t *testing.T) {
 		"docs_url: https://kelson.dev/model/errors",
 	)
 }
+
+
+// TestDiagnoseReportsVersionSkew is issue #57 on the agent surface: an adopted
+// operator too old to serve the API kelson writes must be named in the
+// diagnosis, with what specifically degrades, rather than leaving an agent to
+// infer it from a workload that never becomes ready.
+func TestDiagnoseReportsVersionSkew(t *testing.T) {
+	h := start(t, &fakeServer{
+		status: func(*kelsonv1alpha1.StatusRequest) (*kelsonv1alpha1.StatusResponse, error) {
+			return crashLoopStatus(), nil
+		},
+		getProfile: func(*kelsonv1alpha1.GetProfileRequest) (*kelsonv1alpha1.GetProfileResponse, error) {
+			return &kelsonv1alpha1.GetProfileResponse{
+				Yaml: []byte("kubernetes:\n  version: v1.31.2\ncnpg:\n  version: 1.10.0\n"),
+			}, nil
+		},
+	})
+
+	out := h.call(t, "diagnose_application", map[string]any{"project": "hello", "environment": "production"})
+	mustContain(t, out,
+		"VERSION SKEW",
+		"[unsupported]",
+		"cnpg 1.10.0",
+		"1.23.0",
+		"kind: postgres",
+	)
+	h.assertComposed(t, "diagnose_application")
+}
+
+// TestDiagnoseSkewSaysNoneRatherThanNothing: a cluster inside the matrix must
+// say so. A missing section and a clean one would be indistinguishable, and an
+// agent would have no way to tell "checked, fine" from "not checked".
+func TestDiagnoseSkewSaysNoneRatherThanNothing(t *testing.T) {
+	h := start(t, &fakeServer{
+		status: func(*kelsonv1alpha1.StatusRequest) (*kelsonv1alpha1.StatusResponse, error) {
+			return crashLoopStatus(), nil
+		},
+		getProfile: func(*kelsonv1alpha1.GetProfileRequest) (*kelsonv1alpha1.GetProfileResponse, error) {
+			return &kelsonv1alpha1.GetProfileResponse{Yaml: []byte("kubernetes:\n  version: v1.31.2\n")}, nil
+		},
+	})
+
+	out := h.call(t, "diagnose_application", map[string]any{"project": "hello", "environment": "production"})
+	mustContain(t, out, "VERSION SKEW", "none: every component this cluster reports")
+}
+
+// TestDiagnoseSkewDegradesWhenTheServerHasNoCluster: a server started without a
+// cluster to profile answers Unimplemented, which must cost one line and not
+// the diagnosis.
+func TestDiagnoseSkewDegradesWhenTheServerHasNoCluster(t *testing.T) {
+	h := start(t, &fakeServer{
+		status: func(*kelsonv1alpha1.StatusRequest) (*kelsonv1alpha1.StatusResponse, error) {
+			return crashLoopStatus(), nil
+		},
+	})
+
+	out := h.call(t, "diagnose_application", map[string]any{"project": "hello", "environment": "production"})
+	mustContain(t, out, "VERSION SKEW", "unavailable")
+}

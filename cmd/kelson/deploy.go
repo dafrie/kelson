@@ -93,7 +93,7 @@ type deployOptions struct {
 }
 
 func runDeploy(cmd *cobra.Command, opts *deployOptions) error {
-	target, set, err := resolveDeliveryTarget(opts.specInput, opts.history, opts.mode)
+	target, set, err := resolveDeliveryTarget(opts.specInput, opts.history, opts.mode, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}
@@ -401,8 +401,11 @@ func selectAdapter(connect deliveryConnector, t deliveryTarget) (delivery.Adapte
 // rollback: load the spec, render it, and derive the delivery target. Keeping
 // it in one place is what stops the three commands drifting on what "the
 // current render" or "this environment's mode" means.
-func resolveDeliveryTarget(in specInput, history, mode string) (deliveryTarget, delivery.ManifestSet, error) {
-	project, environment, manifests, profile, err := resolveAndRender(in)
+//
+// warn takes the profile's version-skew statements (issue #57); nil silences
+// them.
+func resolveDeliveryTarget(in specInput, history, mode string, warn io.Writer) (deliveryTarget, delivery.ManifestSet, error) {
+	project, environment, manifests, profile, err := resolveAndRender(in, warn)
 	if err != nil {
 		return deliveryTarget{}, delivery.ManifestSet{}, err
 	}

@@ -66,7 +66,7 @@ type statusOptions struct {
 // unusable in the `set -e` scripts that need it most. `kelson deploy` is the
 // command that gates on health.
 func runStatus(cmd *cobra.Command, opts *statusOptions) error {
-	target, set, err := resolveDeliveryTarget(opts.specInput, opts.history, opts.mode)
+	target, set, err := resolveDeliveryTarget(opts.specInput, opts.history, opts.mode, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}

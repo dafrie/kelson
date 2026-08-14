@@ -33,14 +33,16 @@ The *shape* is deliberately not the API's:
 - **Nine tools.** The count is a design decision: every tool added costs tool-selection accuracy for
   the ones already there. `set_secret` earned one because writing a credential is a task; *listing*
   secrets did not, because it is something an agent needs mid-diagnosis rather than as an errand of
-  its own, so it became a section of `diagnose_application`.
+  its own, so it became a section of `diagnose_application`. Capturing a `ClusterProfile` went the same
+  way: not a task, but the [version skew](detection.md#version-skew-and-explicit-degradation) in it
+  explains failures that arrive long after the deploy that caused them, so it is a section too.
 
 ## The tools
 
 | Tool | Mutates | What it does |
 |---|---|---|
 | `list_applications` | no | Every stored project with the live phase, revision and workload health of each environment. Start here when you do not know what exists. |
-| `diagnose_application` | no | The flagship composition: phase, revision, namespace and cause, workload verdicts with remediation, a log window around the failure, the last 5 revisions, a compact spec summary, and the kelson-managed Secrets by name and key — in one call. |
+| `diagnose_application` | no | The flagship composition: phase, revision, namespace and cause, workload verdicts with remediation, a log window around the failure, the last 5 revisions, a compact spec summary, the kelson-managed Secrets by name and key, and the cluster's version skew against what kelson renders against — in one call. |
 | `logs_window` | no | A bounded log window (≤ 200 lines) for one application, optionally the lines before a container terminated, optionally filtered. Never follows. |
 | `deploy` | **yes**, unless `dry_run` (default `render`) | Renders, server-side dry-runs or deploys. With `dry_run="none"` it consumes the deploy stream to the settled outcome and returns that — never a stream. |
 | `rollback` | **yes**, when `execute=true` | Previews what a rollback cannot revert (unrecoverable findings flagged) plus the change counts; applies it on request. |

@@ -199,7 +199,7 @@ func TestStatusProbesTheRenderedWorkloads(t *testing.T) {
 	spec, history := deploySpec(t)
 	adapter := newFakeAdapter("direct")
 	set, err := func() (delivery.ManifestSet, error) {
-		_, s, err := resolveDeliveryTarget(specInput{files: []string{spec}, env: "development"}, history, "")
+		_, s, err := resolveDeliveryTarget(specInput{files: []string{spec}, env: "development"}, history, "", nil)
 		return s, err
 	}()
 	if err != nil {

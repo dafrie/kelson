@@ -110,7 +110,7 @@ func newServerDryRun(kubeconfig string, profile clusterprofile.ClusterProfile) (
 }
 
 func runDiff(cmd *cobra.Command, opts *diffOptions) error {
-	project, environment, cur, profile, err := resolveAndRender(opts.specInput)
+	project, environment, cur, profile, err := resolveAndRender(opts.specInput, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}
@@ -148,7 +148,10 @@ func runRenderedDiff(project *model.Project, environment *model.Environment, opt
 		before := opts.specInput
 		before.files = []string{opts.from}
 		before.env = environment.Metadata.Name
-		_, _, fromManifests, _, err := resolveAndRender(before)
+		// nil silences the skew report: the before side resolves the same
+		// profile the current render already reported on, and printing the
+		// statements twice for one command reads as two different findings.
+		_, _, fromManifests, _, err := resolveAndRender(before, nil)
 		if err != nil {
 			return nil, err
 		}

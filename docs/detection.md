@@ -67,6 +67,50 @@ The probe never fails because a single component could not be read; it fails onl
 itself is unusable (no credentials, unreachable), the same loud failure the delivery layer reports for
 a server-side preview.
 
+## Version skew and explicit degradation
+
+Adopting a component means inheriting its version skew ([ADR-0003](adr/0003-install-model.md)). Knowing
+that cert-manager is *present* is not enough: an install too old to serve the API kelson renders against
+accepts the command, accepts the apply, and fails confusingly long afterwards. So the profile's versions
+are judged against a declared floor, and the judgement is stated in a fixed vocabulary
+([#57](https://github.com/dafrie/kelson/issues/57)).
+
+The floors, the ceilings and what each one costs live in one table,
+`internal/clusterprofile/support/matrix.go`, which is also the source
+[docs/reference/support-matrix.md](reference/support-matrix.md) is generated from — two copies of a
+support matrix is the exact failure the issue named. `internal/clusterprofile/support` turns that table
+plus a `ClusterProfile` into a report; it is a pure package, so preview and the renderer may import it.
+
+| Statement | Meaning |
+|---|---|
+| *(nothing)* | The component is at or above its floor, inside the tested range, or absent. Absent is not a version question. |
+| `[unsupported]` | Checked and too old. Names the component, the version found, the version required, **what specifically degrades**, and the upgrade. |
+| `[unknown]` | The version is absent, unparseable, or hidden behind a detection `Gap`. Neither confirmed supported nor rejected; the statement says what is now unverified. |
+| `[note]` | Newer than the version kelson is tested against. Not a refusal — see below. |
+
+The named degradation is the point. "cnpg 1.20.0 is too old" sends a reader to the source; "…so every
+`kind: postgres` component refuses to render" is a decision they can make. Every matrix row carries that
+sentence and a test fails if one does not.
+
+**Unknown is a third answer, not a soft no.** It follows the same rule as the shape contract above and
+uses the same vocabulary as every other judgement kelson makes about a cluster
+(`clusterprofile.Outcome`, [#144](https://github.com/dafrie/kelson/issues/144)). A caller gating on
+`Report.Degraded()` is told about components that were *checked and found wanting*, never about ones
+that could not be checked — the `Gap` reason travels in the statement so the missing permission is
+named rather than shrugged at.
+
+**The floor refuses; the ceiling only notes.** A cluster newer than the version kelson is exercised
+against stays supported, because "we have not tried it" is not evidence of a problem and refusing on it
+would break working clusters to prevent a hypothetical. The note exists so that a surprise on an
+untested release is attributable instead of mysterious. Today only the `kubernetes` row declares a
+ceiling; it is the version the e2e harness runs (`hack/e2e/lib.sh`), and a test in the detect package
+fails if the two ever disagree.
+
+The statements are **composed at display time, never stored in the profile.** They are a judgement
+*about* the profile, and a judgement written into the input would be carried, stale, into every later
+`kelson render --profile cluster.yaml` that read the file back. Anything holding a `ClusterProfile` —
+the CLI, the server, a client that received the YAML from `GetProfile` — can recompute them.
+
 ## Read-only by construction
 
 `kelson profile` and `kelson render --profile from-cluster` need no cluster-admin. The exact ClusterRole
@@ -84,3 +128,20 @@ silently burying a partial profile is the failure mode this whole subsystem exis
 
 The render and diff commands take `--profile from-cluster` and a `--kubeconfig` flag, wired to the same
 detector.
+
+The skew statements are printed to stderr wherever a profile enters a command — `profile`, and every
+`render`, `diff`, `preview`, `promote` and `deploy` that resolves one, live or from a file — which is
+what puts an unsupported combination in front of a reader at preview time rather than at apply time:
+
+```console
+$ kelson profile > cluster.yaml
+warning: version skew — 2 statement(s) about what this cluster changes (docs/reference/support-matrix.md):
+  - [unsupported] cnpg 1.20.0 is below the minimum supported version 1.23.0 …. Degraded: every `kind: postgres` component …
+  - [unknown] flux version unknown (no version was reported); … Unverified: the GitOps delivery flow …
+```
+
+It is a report, not a global refusal. The refusals that exist are specific and live where the decision
+belongs: `internal/clusterprofile/postgres`, `valkey` and `helm` already refuse the presets and kinds
+their operator cannot serve, and the renderer surfaces that as an error naming the version. Turning a
+too-old cert-manager into a whole-command failure would refuse specs that ask nothing of cert-manager,
+which is a worse answer than the skew.
