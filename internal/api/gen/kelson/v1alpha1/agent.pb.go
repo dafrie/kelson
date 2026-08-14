@@ -1,5 +1,5 @@
 // AgentService: agent identities as first-class principals (issue #74,
-// ADR-0023).
+// ADR-0024).
 //
 // An agent is a principal, not a human with a borrowed token. The shared
 // password of #84's interim cut says a caller may reach the server; it never
@@ -21,7 +21,7 @@
 // # Only a human may mint an identity
 //
 // Every RPC here is administrative and is refused to an agent credential
-// server-side, whatever its scope (ADR-0023). An agent that could mint an agent
+// server-side, whatever its scope (ADR-0024). An agent that could mint an agent
 // could mint one wider than itself, which would make every scope advisory. The
 // same three operations are available to an operator with a kube context as
 // `kelson agent create|list|revoke`, authorized by the cluster's own RBAC.

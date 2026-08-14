@@ -23,7 +23,7 @@
 //
 // # Agents authenticate as themselves
 //
-// Beside the password there are agent identities (issue #74, ADR-0023): named
+// Beside the password there are agent identities (issue #74, ADR-0024): named
 // principals with a scope, an expiry and a request budget, stored as Secrets in
 // the state namespace. An agent sends its own token as `Authorization: Bearer`;
 // the server resolves it from cluster state on every request, so a revocation

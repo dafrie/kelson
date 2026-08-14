@@ -21,7 +21,7 @@ import (
 	"github.com/dafrie/kelson/internal/redact"
 )
 
-// The agent identity store (issue #74, ADR-0023).
+// The agent identity store (issue #74, ADR-0024).
 //
 // # An identity is cluster state, like everything else here
 //
@@ -84,7 +84,7 @@ func agentError(code Code, name, msg, remediation string) Error {
 }
 
 // Operation is a class of RPC an agent credential may perform. The classes are
-// coarse on purpose (ADR-0023): an agent's blast radius is "can it change
+// coarse on purpose (ADR-0024): an agent's blast radius is "can it change
 // anything", and a per-method matrix is a policy language nobody could audit.
 type Operation string
 
@@ -112,7 +112,7 @@ type Scope struct {
 // Restricted reports whether the scope names any project or environment. An
 // unrestricted scope may reach the RPCs whose target cannot be derived from the
 // request; a restricted one may not, because there is nothing to check it
-// against (ADR-0023).
+// against (ADR-0024).
 func (s Scope) Restricted() bool { return len(s.Projects) > 0 || len(s.Environments) > 0 }
 
 // AllowsProject reports whether project is in scope. An empty project name is
@@ -156,7 +156,7 @@ func contains(list []string, value string) bool {
 }
 
 // Limit is one identity's request budget, enforced in the server as a token
-// bucket (ADR-0023 §6).
+// bucket (ADR-0024 §6).
 type Limit struct {
 	RequestsPerMinute int
 	Burst             int
@@ -190,7 +190,7 @@ type AgentSpec struct {
 	Limit Limit
 }
 
-// Issuance defaults and bounds (ADR-0023 §5).
+// Issuance defaults and bounds (ADR-0024 §5).
 const (
 	// DefaultAgentTTL is a working day's worth of credential. Short by design:
 	// rotation is create-then-revoke, and a default measured in months would
@@ -334,7 +334,7 @@ func (s *AgentStore) validate(spec AgentSpec) (Agent, error) {
 		case OpAdmin:
 			return Agent{}, agentError(ErrAgentScope, name,
 				"the admin operation class cannot be granted to an agent identity",
-				"issue and revoke identities as a human, with `kelson agent` or AgentService; an agent that could mint an agent could mint one wider than itself (ADR-0023)")
+				"issue and revoke identities as a human, with `kelson agent` or AgentService; an agent that could mint an agent could mint one wider than itself (ADR-0024)")
 		default:
 			return Agent{}, agentError(ErrAgentScope, name,
 				fmt.Sprintf("unknown operation class %q", op),

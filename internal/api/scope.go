@@ -8,7 +8,7 @@ import (
 	"github.com/dafrie/kelson/internal/serverstate"
 )
 
-// The RPC-to-scope table (issue #74, ADR-0023) — the #141 gate-table discipline
+// The RPC-to-scope table (issue #74, ADR-0024) — the #141 gate-table discipline
 // applied to authorization.
 //
 // Every registered method of the kelson.v1alpha1 schema appears in [rpcScopes]
@@ -46,7 +46,7 @@ import (
 // pair the scope allows is refused. An environment that overrides
 // `spec.namespace` therefore cannot be read by a scoped credential at all
 // (fails closed), and a namespace that collides with the convention of an
-// allowed pair would be allowed (the honest gap; ADR-0023 records it and the
+// allowed pair would be allowed (the honest gap; ADR-0024 records it and the
 // fix is to resolve the namespace through the spec store).
 
 // reach says how far a method's effect extends, which decides what a scope has
@@ -366,7 +366,7 @@ var rpcScopes = map[string]methodScope{
 	// AgentService is administrative in full. serverstate.OpAdmin cannot be
 	// granted to an agent identity at issuance, so these three rows are what
 	// make "an agent may not mint an agent" a server-side fact rather than a
-	// convention (ADR-0023 §5).
+	// convention (ADR-0024 §5).
 	kelsonv1alpha1connect.AgentServiceCreateAgentProcedure: {
 		Operation: serverstate.OpAdmin,
 		Reach:     reachClusterWide,

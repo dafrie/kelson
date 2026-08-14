@@ -12,7 +12,7 @@ import (
 )
 
 // AgentService served: issue, list and revoke agent identities (issue #74,
-// ADR-0023).
+// ADR-0024).
 //
 // # The token appears once, in one field, and is never logged
 //

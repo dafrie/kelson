@@ -6,7 +6,7 @@ import (
 	"github.com/dafrie/kelson/internal/serverstate"
 )
 
-// Who is making this request (issue #74, ADR-0023).
+// Who is making this request (issue #74, ADR-0024).
 //
 // The gate in auth.go answers it once, at the edge, and puts the answer in the
 // request's context. Everything downstream — the authorization interceptor, the

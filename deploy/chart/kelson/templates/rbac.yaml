@@ -29,7 +29,7 @@ rules:
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get", "list", "create", "update", "delete"]
-  # internal/serverstate's agent identity store (issue #74, ADR-0023): one
+  # internal/serverstate's agent identity store (issue #74, ADR-0024): one
   # Secret per agent identity, holding a salted HMAC of the credential and never
   # the credential. Get on every request (revocation must be immediate, so no
   # allow decision is cached), List for `kelson agent list`, Create at issuance,

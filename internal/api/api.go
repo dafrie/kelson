@@ -78,7 +78,7 @@ type SpecStore interface {
 	Delete(ctx context.Context, project string, opts serverstate.DeleteOptions) error
 }
 
-// AgentStore is the agent-identity seam (issue #74, ADR-0023).
+// AgentStore is the agent-identity seam (issue #74, ADR-0024).
 // *serverstate.AgentStore implements it. A nil one is a server with no agent
 // principals: AgentService answers CodeUnimplemented and the gate in auth.go
 // recognises no agent tokens, which is the pre-#74 posture exactly.

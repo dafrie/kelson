@@ -12,7 +12,7 @@ import (
 	"github.com/dafrie/kelson/internal/serverstate"
 )
 
-// Server-side authorization for agent principals (issue #74, ADR-0023 §3).
+// Server-side authorization for agent principals (issue #74, ADR-0024 §3).
 //
 // # Why an interceptor and not a check in each handler
 //
@@ -246,7 +246,7 @@ func (a *authorizer) admit(p Principal, procedure string) (methodScope, error) {
 			Resource: procedure,
 			Message:  "issuing, listing and revoking agent identities is reserved to a human principal",
 			Remediation: "run `kelson agent create|list|revoke` with a kube context, or call AgentService with the server password; " +
-				"an agent that could mint an agent could mint one wider than itself (ADR-0023)",
+				"an agent that could mint an agent could mint one wider than itself (ADR-0024)",
 		})
 		a.record(p, procedure, "human-only", err)
 		return methodScope{}, err

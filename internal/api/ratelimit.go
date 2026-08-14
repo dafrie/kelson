@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// Per-identity rate limiting (issue #74, ADR-0023 §6).
+// Per-identity rate limiting (issue #74, ADR-0024 §6).
 //
 // # In-memory, and honest about it
 //
