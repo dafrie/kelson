@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // validator accumulates structured errors against one resource document.
@@ -1062,6 +1063,9 @@ func workloadOnlyFields(c Component) []string {
 	if len(c.Env) > 0 {
 		out = append(out, "env")
 	}
+	if c.Release != nil {
+		out = append(out, "release")
+	}
 	if len(c.Tools) > 0 {
 		out = append(out, "tools")
 	}
@@ -1118,6 +1122,7 @@ func (v *validator) workloadComponent(
 			v.gate("$.spec.components[].tools", field+".tools")
 		}
 	}
+	v.release(field, c, kind)
 	v.chartOnlyFields(field, c, kind)
 	v.imageRef(field+".image", c.Image)
 	v.replicas(field+".replicas", c.Replicas)
@@ -1128,6 +1133,49 @@ func (v *validator) workloadComponent(
 		v.err(ErrNoImageSource, field,
 			fmt.Sprintf("component %q has no image source", c.Name),
 			"set image on the component or the Project, or configure spec.source + spec.build with a strategy other than none")
+	}
+}
+
+// release validates a component's release-command hook (issue #104): the kinds
+// it applies to, the command it must name, and the timeout's grammar.
+//
+// What is *not* checked here is the delivery mode. A release hook renders in
+// direct mode only, and that refusal lives in the renderer for the reason the
+// helm and previews gates do: the mode is an Environment's, and a Project
+// document is valid on its own terms against every environment it will ever
+// meet (internal/renderer/release.go, ADR-0019).
+func (v *validator) release(field string, c Component, kind ComponentKind) {
+	if c.Release == nil {
+		return
+	}
+	if kind == ComponentCron {
+		v.err(ErrMutuallyExclusive, field+".release",
+			fmt.Sprintf("component %q has kind %q, and a release command runs once per deploy", c.Name, kind),
+			"remove release; a cron component already is a command on a schedule. Put the release hook on the "+
+				"component whose rollout must wait for it — usually the service that talks to the database")
+		return
+	}
+	if len(c.Release.Command) == 0 {
+		v.err(ErrMissingRequired, field+".release.command",
+			fmt.Sprintf("component %q declares a release hook with no command", c.Name),
+			`set release.command to the argv to run, e.g. command: ["./manage.py", "migrate"]`)
+	}
+	for i, arg := range c.Release.Command {
+		if strings.TrimSpace(arg) == "" {
+			v.err(ErrMissingRequired, fmt.Sprintf("%s.release.command[%d]", field, i),
+				"a release command argument is empty",
+				"remove the empty entry; every argv element is passed to the container verbatim")
+		}
+	}
+	if t := c.Release.Timeout; t != "" {
+		// The same duration grammar every other kelson budget is written in.
+		v.duration(field+".release.timeout", t)
+		if d, err := time.ParseDuration(t); err == nil && d <= 0 {
+			v.err(ErrOutOfRange, field+".release.timeout",
+				fmt.Sprintf("timeout %q leaves the command no time to run", t),
+				"give the command a budget it can finish in, or omit the field for the default of "+
+					DefaultReleaseTimeout.String())
+		}
 	}
 }
 

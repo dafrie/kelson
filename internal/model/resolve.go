@@ -3,6 +3,7 @@ package model
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 // ImageUnresolved is the image a ResolvedComponent carries when the spec
@@ -100,6 +101,29 @@ type ResolvedComponent struct {
 	Replicas  Replicas            // after P2 defaults
 	Resources *Resources          // after P2; nil if unset at both scopes
 	Env       map[string]EnvValue // P1 merge: project < component < environment
+
+	// Release is the component's release-command hook with its timeout already
+	// turned into seconds, so the pure renderer never has to parse a duration
+	// (it may not import `time` at all — ADR-0001, issue #20).
+	//
+	// It carries an explicit json tag with omitempty where its siblings carry
+	// none, for the reason ResolvedDataService.Auth does: this struct is hashed
+	// into kelson.dev/spec-hash, so a nil pointer must marshal to nothing or
+	// adding the field would have changed the annotation of every workload that
+	// does not use it.
+	Release *ResolvedRelease `json:"release,omitempty"`
+}
+
+// ResolvedRelease is a release hook after resolution: the command as written,
+// and the timeout as a number of seconds. No precedence rule reaches it — an
+// Environment override carries image, replicas, resources and env, and a
+// release command is none of those — so resolution is defaulting and nothing
+// else.
+type ResolvedRelease struct {
+	Command []string `json:"command"`
+	// TimeoutSeconds is always positive: resolution fills DefaultReleaseTimeout
+	// in, so the renderer never has to know what an unset timeout means.
+	TimeoutSeconds int `json:"timeoutSeconds"`
 }
 
 // ResolvedDataService is one data-kind component after resolution.
@@ -296,6 +320,25 @@ func resolveChart(c Component) ResolvedChart {
 	return rc
 }
 
+// resolveRelease fills the one default a release hook has. The duration string
+// is turned into seconds here, where `time` is available, rather than in the
+// renderer, where it deliberately is not (issue #20). A duration that does not
+// parse cannot reach this function: validation rejects it, and resolution only
+// runs on a document that validated.
+func resolveRelease(r *Release) *ResolvedRelease {
+	if r == nil {
+		return nil
+	}
+	timeout := DefaultReleaseTimeout
+	if d, err := time.ParseDuration(r.Timeout); err == nil && d > 0 {
+		timeout = d
+	}
+	return &ResolvedRelease{
+		Command:        r.Command,
+		TimeoutSeconds: int(timeout.Round(time.Second) / time.Second),
+	}
+}
+
 // resolveComponent applies P1 (env merge), P2 (replicas/resources) and P3
 // (image/command) to one workload component, then the domain default.
 func resolveComponent(p *Project, r *Resolved, c Component, ov ComponentOverride, builtFromSource bool) ResolvedComponent {
@@ -338,6 +381,7 @@ func resolveComponent(p *Project, r *Resolved, c Component, ov ComponentOverride
 	}
 	rc.Resources = c.Resources
 	rc.Domains = c.Domains
+	rc.Release = resolveRelease(c.Release)
 
 	if ov.Replicas != nil {
 		rc.Replicas = *ov.Replicas

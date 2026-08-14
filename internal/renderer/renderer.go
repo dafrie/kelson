@@ -76,6 +76,12 @@ func Render(resolved *model.Resolved, profile clusterprofile.ClusterProfile, res
 	if errs := previewsRequireFlux(resolved); len(errs) > 0 {
 		return nil, errs
 	}
+	// And the mirror image of both for release commands (ADR-0019): only direct
+	// mode can stop between two resources long enough to wait for a migration,
+	// so only direct mode may render one. See internal/renderer/release.go.
+	if errs := releaseRequiresDirect(resolved); len(errs) > 0 {
+		return nil, errs
+	}
 	// And for the secret backend (ADR-0018): only `cluster` has a mechanism
 	// here, and a reference rendered for a backend nothing populates would
 	// apply cleanly and fail at pod start. See internal/renderer/secrets.go.
@@ -112,6 +118,23 @@ func Render(resolved *model.Resolved, profile clusterprofile.ClusterProfile, res
 	// helm-controller's schedule, which no apply order can express.
 	for i := range resolved.Charts {
 		ms, err := chartManifests(resolved, &resolved.Charts[i])
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, ms...)
+	}
+
+	// Release hooks come between the two: after everything a migration talks to,
+	// before everything that must not roll until it has finished (issue #104).
+	// The set expresses that as order and nothing more — the waiting is the
+	// direct adapter's, which is the whole reason the field is direct-only
+	// (ADR-0019, internal/delivery/direct/release.go).
+	for i := range resolved.Components {
+		c := &resolved.Components[i]
+		if c.Release == nil {
+			continue
+		}
+		ms, err := releaseManifests(resolved, c, services)
 		if err != nil {
 			return nil, err
 		}
@@ -195,6 +218,12 @@ type provenance struct {
 	namespace    string
 	specHash     string
 	overlays     []string // overlay paths that touched this resource, in order
+	// extraLabels are alternating key/value pairs appended after the provenance
+	// labels every resource carries. One resource uses it today — the release
+	// Job, which the delivery plane finds by kelson.dev/release-hook rather than
+	// by parsing its name (internal/renderer/release.go) — and it appends rather
+	// than merges so the provenance labels stay in one fixed order.
+	extraLabels []string
 }
 
 func (p provenance) labels() *yaml.Node {
@@ -208,6 +237,9 @@ func (p provenance) labels() *yaml.Node {
 		"kelson.dev/environment", p.environment,
 		"kelson.dev/project", p.project,
 	)
+	for i := 0; i+1 < len(p.extraLabels); i += 2 {
+		kv = append(kv, p.extraLabels[i], p.extraLabels[i+1])
+	}
 	return mapNode(kv...)
 }
 

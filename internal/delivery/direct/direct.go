@@ -15,6 +15,11 @@
 //     renderer (namespaces first, workloads, CRDs before CRs). The adapter
 //     applies them in exactly that order and prunes in the reverse of it.
 //
+// Owning the apply also buys the one thing an ordered set cannot express: a
+// barrier. A component's release command (issue #104) is a Job the adapter
+// applies, WAITS for, and only then continues to the workloads — see
+// release.go, and ADR-0019 for why that makes the field direct-mode-only.
+//
 // The purity rule (ADR-0001) is unaffected: this package talks to a cluster,
 // internal/renderer never does. The adapter only ever consumes an
 // already-rendered ManifestSet and never re-renders or mutates it.
@@ -28,6 +33,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -89,15 +95,37 @@ type Options struct {
 	FieldManager string
 	// Now is injectable so history timestamps are deterministic in tests.
 	Now func() time.Time
+	// Logs fetches a release Job's output when a release command fails, so the
+	// error quotes the command rather than describing it (issue #104).
+	// observation.ClientGoLogSource satisfies it; nil means a failed migration
+	// is reported without its output.
+	Logs LogTailer
+	// Progress, when set, receives one status observation per change while a
+	// release command runs. The shape is the delivery plane's own, so a caller
+	// can forward it straight to the deployment state machine — Apply blocks
+	// for as long as the migration takes, and a deploy that says nothing for
+	// five minutes is indistinguishable from a hung one.
+	Progress func(delivery.Status)
+	// ReleasePoll overrides how often a running release Job is re-read.
+	// Zero means defaultReleasePoll.
+	ReleasePoll time.Duration
 }
 
 // Adapter is the direct-mode delivery.Adapter.
 type Adapter struct {
-	client  dynamic.Interface
-	mapper  Mapper
-	history History
-	manager string
-	now     func() time.Time
+	client      dynamic.Interface
+	mapper      Mapper
+	history     History
+	manager     string
+	now         func() time.Time
+	logs        LogTailer
+	progress    func(delivery.Status)
+	releasePoll time.Duration
+
+	// mu guards lastReleaseCause, which exists only to keep a polling wait from
+	// repeating itself to the progress sink.
+	mu               sync.Mutex
+	lastReleaseCause string
 }
 
 var _ delivery.Adapter = (*Adapter)(nil)
@@ -120,7 +148,16 @@ func New(opts Options) (*Adapter, error) {
 	if now == nil {
 		now = time.Now
 	}
-	return &Adapter{client: opts.Client, mapper: opts.Mapper, history: opts.History, manager: manager, now: now}, nil
+	return &Adapter{
+		client:      opts.Client,
+		mapper:      opts.Mapper,
+		history:     opts.History,
+		manager:     manager,
+		now:         now,
+		logs:        opts.Logs,
+		progress:    opts.Progress,
+		releasePoll: opts.ReleasePoll,
+	}, nil
 }
 
 // RegisterDirect builds a direct adapter from opts and registers it in reg
@@ -243,7 +280,32 @@ func (a *Adapter) applySet(ctx context.Context, set delivery.ManifestSet, rec Re
 		return delivery.Result{}, err
 	}
 
+	// The set is applied in renderer order, and the release hook is the one
+	// point in that order where the adapter stops. Everything before the Job is
+	// live before the migration starts (the namespace, the data services), and
+	// nothing after it is applied until the migration has succeeded — which is
+	// the ordering guarantee of issue #104 and the reason `release:` renders in
+	// this mode only (release.go, ADR-0019). A failure returns here, before any
+	// workload of this revision is applied and before anything is recorded or
+	// pruned, so the previous revision keeps serving.
+	//
+	// A rollback deliberately does not re-run release commands. Rolling the
+	// application back does not roll a migration back — a schema change is not
+	// in the rendered output and kelson has no down-migration to run — so
+	// re-running the old revision's release command would at best repeat work
+	// the database has already done. The rolled-back workloads meet the newer
+	// schema, and docs/model.md says so in as many words.
+	skipRelease := rec.Type == TypeRollback
 	for _, t := range targets {
+		if isReleaseJob(t) {
+			if skipRelease {
+				continue
+			}
+			if err := a.awaitRelease(ctx, t, revision); err != nil {
+				return delivery.Result{}, err
+			}
+			continue
+		}
 		if _, err := a.resource(t).Apply(ctx, t.obj.GetName(), t.obj, metav1.ApplyOptions{
 			FieldManager: a.manager,
 			// Never Force: taking a field from its owner without saying so is
@@ -711,15 +773,22 @@ const (
 
 // health reads back the conditions kelson understands. It is deliberately
 // narrow: Deployments and CronJobs are what the renderer emits as workloads
-// (internal/renderer/workload.go), and a kind with no health signal never
-// blocks Healthy — reporting "unknown" as "unhealthy" would make every deploy
-// look broken.
+// (internal/renderer/workload.go), the release hook adds a Job kelson stamped
+// itself, and a kind with no health signal never blocks Healthy — reporting
+// "unknown" as "unhealthy" would make every deploy look broken.
 func health(obj *unstructured.Unstructured) (healthState, string) {
 	switch obj.GroupVersionKind().GroupKind() {
 	case schema.GroupKind{Group: "apps", Kind: "Deployment"}:
 		return deploymentHealth(obj)
 	case schema.GroupKind{Group: "batch", Kind: "CronJob"}:
 		return cronJobHealth(obj)
+	case schema.GroupKind{Group: "batch", Kind: "Job"}:
+		if obj.GetLabels()[labelReleaseHook] != "true" {
+			// Some other Job kelson renders one day. Unknown health must not
+			// read as unhealthy.
+			return healthOK, ""
+		}
+		return releaseHealth(obj)
 	default:
 		return healthOK, ""
 	}

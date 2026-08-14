@@ -378,6 +378,9 @@ func deliveryConnector(cfg config, history *serverstate.HistoryStore) api.Delive
 			Client:  cluster.Dynamic,
 			Mapper:  cluster.Mapper,
 			History: store,
+			// A failed release command quotes its own output back (issue #104),
+			// which needs the typed client this connection already has.
+			Logs: observation.ClientGoLogSource{Client: cluster.Typed},
 		}); err != nil {
 			return nil, err
 		}

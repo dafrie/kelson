@@ -141,6 +141,11 @@ const sidebars: SidebarsConfig = {
           id: 'adr/0018-secret-references',
           label: '0018 — Secret references',
         },
+        {
+          type: 'doc',
+          id: 'adr/0019-release-command-hook',
+          label: '0019 — Release command hook',
+        },
       ],
     },
   ],

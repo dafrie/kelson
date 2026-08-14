@@ -13,10 +13,11 @@ import (
 // ServiceAccount, Service, workload (Deployment|CronJob), HPA, HTTPRoute,
 // Certificate, ServiceMonitor. Kinds that do not apply are simply absent.
 //
-// The ServiceAccount is the one resource every kind gets (ADR-0014 decision D).
-// An agent renders as a worker with that identity and nothing else: its tool
-// policy is refused at validation until #75, so nothing agent-specific can
-// reach this function.
+// The ServiceAccount is the one resource every kind gets (ADR-0014 decision D)
+// — though a component with a release hook has already had its emitted, ahead
+// of the Job whose pod names it (release.go). An agent renders as a worker with
+// that identity and nothing else: its tool policy is refused at validation
+// until #75, so nothing agent-specific can reach this function.
 func componentManifests(
 	resolved *model.Resolved,
 	c *model.ResolvedComponent,
@@ -39,7 +40,14 @@ func componentManifests(
 		specHash:    hash,
 	}
 
-	out := []Manifest{serviceAccount(prov)}
+	var out []Manifest
+	if c.Release == nil {
+		// A component with a release hook has already had its ServiceAccount
+		// emitted, with the Job that runs under it: the Job is applied before
+		// every workload, and a pod naming a ServiceAccount that does not exist
+		// yet is refused rather than queued (internal/renderer/release.go).
+		out = append(out, serviceAccount(prov))
+	}
 	if c.Kind == model.ComponentService {
 		out = append(out, service(c, prov))
 	}

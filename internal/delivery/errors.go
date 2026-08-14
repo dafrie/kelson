@@ -33,6 +33,15 @@ const (
 	// Unsupported marks an operation the adapter's Capabilities forbid, so
 	// callers can negotiate up front rather than fail at apply time.
 	ErrUnsupported Code = "delivery/unsupported"
+
+	// ReleaseFailed is returned when a component's release command — the
+	// migration hook of issue #104 — did not succeed. It is a distinct code
+	// from ApplyFailed because the situation it describes is distinct and the
+	// action it asks for is too: nothing is wrong with the manifests, the
+	// cluster accepted everything it was given, and the deploy stopped
+	// deliberately BEFORE the workloads rolled. The previous revision is still
+	// serving, and the fix is in the migration, not in the spec.
+	ErrReleaseFailed Code = "delivery/release-failed"
 )
 
 // Error is one structured delivery failure, sharing the shape of the model
@@ -119,6 +128,20 @@ func ApplyFailed(resource, field, msg, remediation string) Error {
 func AsApplyFailed(err error) bool {
 	var de Error
 	return errors.As(err, &de) && de.Code == ErrApplyFailed
+}
+
+// ReleaseFailed is a helper to construct a failed release-command hook
+// (issue #104). The Job is named as the resource; its logs travel in Cause.
+func ReleaseFailed(resource, field, msg, remediation string) Error {
+	return newError(ErrReleaseFailed, resource, field, msg, remediation)
+}
+
+// AsReleaseFailed reports whether err is a delivery/release-failed, so a caller
+// can say "the migration failed, your previous revision is still live" rather
+// than "the deploy failed".
+func AsReleaseFailed(err error) bool {
+	var de Error
+	return errors.As(err, &de) && de.Code == ErrReleaseFailed
 }
 
 // UnsupportedError reports a capability mismatch (issue #32).

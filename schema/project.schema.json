@@ -358,6 +358,29 @@
                 "type": "array",
                 "description": "helm components only; Secrets and ConfigMaps merged into the chart values by helm-controller"
               },
+              "release": {
+                "properties": {
+                  "command": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array",
+                    "minItems": 1,
+                    "description": "argv of the command; it runs with the component's image and environment"
+                  },
+                  "timeout": {
+                    "type": "string",
+                    "description": "Go duration such as 30m; the Job's activeDeadlineSeconds",
+                    "default": "10m"
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "command"
+                ],
+                "description": "command run to completion before this revision's workloads roll — direct delivery mode only"
+              },
               "tools": {
                 "items": {
                   "type": "string"

@@ -52,6 +52,7 @@ This reference is **generated** from the committed JSON Schema [`schema/project.
 | `name` | string pattern `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$` | yes |  |  |
 | `port` | integer min 1, max 65535 | no |  |  |
 | `preset` | string enum `"shared"`, `"small"`, `"ha-small"`, `"ha-medium"`, `"branch"` | no | `"shared"` | data components only |
+| `release` | object | no |  | command run to completion before this revision's workloads roll — direct delivery mode only |
 | `replicas` | object | no |  |  |
 | `resources` | object | no |  |  |
 | `schedule` | string | no |  | five-field cron expression |
@@ -66,6 +67,13 @@ This reference is **generated** from the committed JSON Schema [`schema/project.
 |-------|------|----------|---------|-------------|
 | `key` | string | yes |  | key within that Secret |
 | `secret` | string | yes |  | name of a Secret in the environment's namespace; kelson references it and never creates or reads it |
+
+##### `spec.components[].release`
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `command` | array of string · min 1 item(s) | yes |  | argv of the command; it runs with the component's image and environment |
+| `timeout` | string | no | `"10m"` | Go duration such as 30m; the Job's activeDeadlineSeconds |
 
 ##### `spec.components[].replicas`
 

@@ -117,6 +117,14 @@ func runDeploy(cmd *cobra.Command, opts *deployOptions) error {
 		}
 	}
 
+	// A release command (issue #104) runs inside Apply and can take minutes, so
+	// the adapter reports it through the same phase vocabulary the watch below
+	// prints. Without this the deploy would go silent for the length of a
+	// migration, which is indistinguishable from a hung one.
+	target.progress = func(st delivery.Status) {
+		out.printf("%s %s\n", padPhase(st.Phase), st.Cause)
+	}
+
 	adapter, _, err := selectAdapter(opts.connect, target)
 	if err != nil {
 		return err
@@ -265,6 +273,11 @@ type deliveryTarget struct {
 	// adapter's health readback (issue #157). Nil when no profile was captured
 	// — see fluxOperatorFinding.
 	fluxOperator *bool
+	// progress receives the adapter's observations from inside Apply — today,
+	// the release command's (issue #104). It is a field on the target rather
+	// than a printer the connector reaches for, because the connector is the
+	// seam the command tests replace and must stay free of terminal state.
+	progress func(delivery.Status)
 }
 
 // fluxOperatorFinding reduces a ClusterProfile to the tri-state the flux status
@@ -330,6 +343,11 @@ func connectDelivery(t deliveryTarget) (*deliveryPlane, error) {
 		Client:  cluster.Dynamic,
 		Mapper:  cluster.Mapper,
 		History: store,
+		// A failed release command quotes its own output back (issue #104).
+		// The typed client is the only one that can read pod logs, and it is
+		// already on this connection.
+		Logs:     observation.ClientGoLogSource{Client: cluster.Typed},
+		Progress: t.progress,
 	}); err != nil {
 		return nil, err
 	}

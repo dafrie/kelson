@@ -23,6 +23,7 @@ wrong, open an issue — it is far cheaper to reverse a decision now than after 
 | [0016](0016-delivery-flows-v0.md) | The four M10 delivery flows, and what each one is in v0 | Accepted |
 | [0017](0017-pr-previews.md) | PR previews — `previews:`, the artifact tag, and what stage 1 does not do | Accepted |
 | [0018](0018-secret-references.md) | The secret reference schema — `{secret, key}` in an env value (refines 0009) | Accepted |
+| [0019](0019-release-command-hook.md) | The release command hook — a component field, direct mode only, no new phase | Accepted |
 
 *Process note (2026-08-12):* ADR-0003 and ADR-0005 were revised in place before the immutability rule
 below hardened; their in-place revisions stand as recorded. From ADR-0012 on, changes supersede.
