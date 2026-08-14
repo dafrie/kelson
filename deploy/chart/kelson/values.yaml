@@ -3,8 +3,8 @@
 # Two knobs have no working default and the chart refuses to render without
 # them, because guessing either one would be worse than failing:
 #
-#   image.tag  — no release has been published yet, and the chart never latches
-#                `latest` (see `image` below).
+#   image.tag  — the chart never latches `latest`, and guessing a version for
+#                you would be worse than asking (see `image` below).
 #   auth.*     — in-cluster the server binds 0.0.0.0, and serving that with no
 #                authentication must be a deliberate choice (see `auth` below).
 
@@ -12,15 +12,15 @@
 #
 # `tag` has no default and the chart fails without it. `latest` would make a
 # Deployment's identity unknowable — two pods of the "same" release could be
-# different builds — and defaulting to the chart's appVersion would silently
-# point at an image tag that does not exist yet, since kelson has not cut a
-# release. Pass the tag you mean:
+# different builds — and defaulting to the chart's appVersion would tie every
+# chart change to a release that may not exist for it. Pass the tag you mean:
 #
-#   --set image.tag=v0.1.0
+#   --set image.tag=0.0.1
 #
 # The images goreleaser publishes are ghcr.io/dafrie/kelson-server:<version>
-# for the tagged release, plus a `latest` this chart will not use for you
-# (.goreleaser.yml, docs/release-policy.md).
+# — the version WITHOUT the tag's `v` prefix, so release v0.0.1 is image tag
+# 0.0.1 — plus a `latest` this chart will not use for you (.goreleaser.yml,
+# docs/release-policy.md).
 image:
   repository: ghcr.io/dafrie/kelson-server
   tag: ""

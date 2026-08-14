@@ -20,7 +20,7 @@ kubectl -n kelson-system create secret generic kelson-auth \
 
 helm install kelson ./deploy/chart/kelson \
   --namespace kelson-system \
-  --set image.tag=v0.1.0 \
+  --set image.tag=0.0.1 \
   --set auth.existingSecret.name=kelson-auth
 ```
 
