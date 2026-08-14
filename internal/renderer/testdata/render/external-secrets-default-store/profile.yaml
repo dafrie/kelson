@@ -1,0 +1,16 @@
+# A cluster running external-secrets with exactly one store — a namespaced
+# SecretStore in this environment's own namespace — and the Valkey operator the
+# cache component delegates to.
+#
+# The store's namespace is load-bearing. A SecretStore is readable only from the
+# namespace it lives in, so `checkout-staging` here is what makes it a candidate
+# at all; the same store in `other-team` would leave this environment with no
+# store and the render refused.
+externalSecrets:
+  version: 0.20.0
+  secretStores:
+    - { name: team-vault, namespace: checkout-staging }
+valkey:
+  version: 0.5.0
+  namespace: valkey-operator-system
+  crds: [valkeyclusters, valkeynodes]

@@ -82,9 +82,9 @@ func Render(resolved *model.Resolved, profile clusterprofile.ClusterProfile, res
 	if errs := releaseRequiresDirect(resolved); len(errs) > 0 {
 		return nil, errs
 	}
-	// And for the secret backend (ADR-0018): only `cluster` has a mechanism
-	// here, and a reference rendered for a backend nothing populates would
-	// apply cleanly and fail at pod start. See internal/renderer/secrets.go.
+	// And for the secret backend (ADR-0018): a reference rendered for a backend
+	// nothing populates would apply cleanly and fail at pod start, so `sops`
+	// refuses here. See internal/renderer/secrets.go.
 	if errs := secretBackendSupported(resolved); len(errs) > 0 {
 		return nil, errs
 	}
@@ -96,6 +96,19 @@ func Render(resolved *model.Resolved, profile clusterprofile.ClusterProfile, res
 		return nil, err
 	}
 	out := []Manifest{ns}
+
+	// The `externalSecrets` backend's resources come next, ahead of everything
+	// that reads a Secret — the data services whose operators read an `auth:`
+	// Secret as well as the workloads (ADR-0020). Nothing waits for the sync;
+	// order is the only sequencing a rendered set can express (issue #89), and
+	// a Secret that is not populated yet is a pod that retries, which is the
+	// benign end of this failure. Under every other backend this emits nothing.
+	// See internal/renderer/externalsecrets.go.
+	es, err := externalSecretsManifests(resolved, profile)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, es...)
 
 	// Data services come before the workloads that bind to them: a Deployment
 	// applied ahead of the Cluster whose credentials it references would start

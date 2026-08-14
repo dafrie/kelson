@@ -43,31 +43,25 @@ func secretKeyRefNode(name, key string) *yaml.Node {
 // secretBackendSupported refuses a backend kelson cannot render.
 //
 // The backend selects the mechanism that puts a value where a reference points
-// (ADR-0009): `cluster` means a Kubernetes Secret written out of band, which is
-// exactly what a secretKeyRef addresses, so it needs nothing extra rendered.
-// The other two do — an `ExternalSecret` per reference (issue #80), or SOPS
-// decryption in the delivery path (issue #81) — and neither exists. Rendering
-// the cluster shape for them would produce manifests that apply cleanly and
-// then fail at pod start, against a Secret nothing populates.
+// (ADR-0009). Two of the three have one: `cluster` means a Kubernetes Secret
+// written out of band, which is exactly what a secretKeyRef addresses, so it
+// needs nothing extra rendered; `externalSecrets` renders an ExternalSecret per
+// referenced Secret, and the controller populates it (ADR-0020,
+// internal/renderer/externalsecrets.go). `sops` has none — SOPS decryption in
+// the delivery path is issue #81 — and rendering the cluster shape for it would
+// produce manifests that apply cleanly and then fail at pod start, against a
+// Secret nothing populates.
 //
 // The refusal is the renderer's for the reason ADR-0016's Helm gate is: it is
 // decided from spec data alone, before anything is emitted, so the same
-// document renders the same way against every cluster.
+// document renders the same way against every cluster. Whether the *cluster*
+// can serve the chosen backend is a different question with a different code
+// (ErrExternalSecretsNotInstalled) and a ClusterProfile behind it.
 func secretBackendSupported(resolved *model.Resolved) Errors {
 	env := resolved.Environment
 	switch env.Secrets.Backend {
-	case "", model.SecretsCluster:
+	case "", model.SecretsCluster, model.SecretsExternalSecrets:
 		return nil
-	case model.SecretsExternalSecrets:
-		return Errors{{
-			Code: ErrSecretBackendUnsupported,
-			Message: "environment " + quoted(env.Name) + " selects secret backend " +
-				quoted(string(model.SecretsExternalSecrets)) + ", which kelson does not render yet",
-			Remediation: "use backend: cluster, where a secret reference renders as a secretKeyRef against a " +
-				"Secret in this namespace that you write out of band. Rendering ExternalSecret resources against a " +
-				"ClusterSecretStore is issue #80 (milestone M8 · Secrets); the reference syntax in the spec does not " +
-				"change when it lands (ADR-0018)",
-		}}
 	case model.SecretsSOPS:
 		return Errors{{
 			Code: ErrSecretBackendUnsupported,
@@ -82,6 +76,6 @@ func secretBackendSupported(resolved *model.Resolved) Errors {
 	return Errors{{
 		Code:        ErrSecretBackendUnsupported,
 		Message:     "environment " + quoted(env.Name) + " selects unknown secret backend " + quoted(string(env.Secrets.Backend)),
-		Remediation: "valid backends: cluster, externalSecrets, sops — and only cluster renders today",
+		Remediation: "valid backends: cluster, externalSecrets, sops — and sops does not render yet (issue #81)",
 	}}
 }

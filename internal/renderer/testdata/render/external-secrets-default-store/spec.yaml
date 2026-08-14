@@ -1,0 +1,51 @@
+# Fixture: the externalSecrets backend with nothing configured beyond the
+# backend name (#80, ADR-0020). Two defaults are exercised, and both are
+# defaults kelson will only take when there is exactly one answer:
+#
+#   - the store. The cluster offers one SecretStore in this namespace and no
+#     ClusterSecretStore, so the rendered secretStoreRef is that one. With two
+#     stores and no `store:` the render is refused rather than resolved by
+#     sort order — see TestExternalSecretsStoreResolution.
+#   - the refresh interval. Unset resolves to 1h, external-secrets' own default,
+#     written into the manifest explicitly so the cluster's behaviour is legible
+#     without knowing a controller's defaults.
+#
+# It also covers the reference shape a workload does not read: a `kind: valkey`
+# component's `auth:` is a model.SecretRef (ADR-0015 amendment), the operator
+# reads that Secret exactly the way a pod does, and under this backend nothing
+# else would populate it — so it gets an ExternalSecret too, ahead of the
+# ValkeyCluster that reads it.
+#
+# What is deliberately absent: any ExternalSecret for `cache-auth`'s sibling,
+# the operator-generated credentials a `{from: {service, key}}` binding names.
+# The Valkey operator writes those, and an ExternalSecret aimed at the same
+# Secret would fight it.
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: checkout
+spec:
+  image: ghcr.io/acme/checkout:1.4.2
+
+  components:
+    - name: cache
+      kind: valkey
+      preset: small
+      auth: { secret: cache-auth, key: password }
+
+    - name: worker
+      command: ["bundle", "exec", "sidekiq"]
+      env:
+        CACHE_URL: { from: { service: cache, key: uri } }
+        CACHE_PASSWORD: { from: { service: cache, key: password } }
+        SMTP_PASSWORD: { secret: mail-relay, key: password }
+---
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: staging
+spec:
+  project: checkout
+  namespace: checkout-staging
+  secrets:
+    backend: externalSecrets
