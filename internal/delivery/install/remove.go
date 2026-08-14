@@ -234,7 +234,7 @@ func (r *Remover) classify(ctx context.Context, removal *Removal, res APIResourc
 		return
 	}
 
-	target := RemovalTarget{Ref: ref, GVR: res.GVR, Tier: tierOf(gvk, res.Namespaced), UID: obj.GetUID()}
+	target := RemovalTarget{Ref: ref, GVR: res.GVR, Tier: tierOf(gvk), UID: obj.GetUID()}
 	if target.Tier == TierCRD {
 		target.Collateral = r.customResources(ctx, obj)
 	}
@@ -304,7 +304,7 @@ func (r *Remover) customResources(ctx context.Context, crd *unstructured.Unstruc
 }
 
 // tierOf places a kind in the removal order.
-func tierOf(gvk schema.GroupVersionKind, namespaced bool) Tier {
+func tierOf(gvk schema.GroupVersionKind) Tier {
 	switch {
 	case gvk.Group == "" && gvk.Kind == "Namespace":
 		return TierNamespace
@@ -324,7 +324,6 @@ func tierOf(gvk schema.GroupVersionKind, namespaced bool) Tier {
 		"apiregistration.k8s.io", "storage.k8s.io", "flowcontrol.apiserver.k8s.io":
 		return TierConfig
 	}
-	_ = namespaced
 	return TierCustomResource
 }
 

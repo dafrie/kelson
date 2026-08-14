@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -378,9 +377,7 @@ func (i *Installer) load(ctx context.Context, c Component) (*Item, error) {
 		}
 		objects = append(objects, *obj)
 	}
-	if err := i.readExistence(ctx, objects); err != nil {
-		return nil, err
-	}
+	i.readExistence(ctx, objects)
 	return &Item{Component: c, Objects: objects, Digest: c.SHA256}, nil
 }
 
@@ -536,18 +533,14 @@ func toAnySlice(in []string) []any {
 // anyway. What must never happen is the opposite — treating an unreadable
 // object as absent at APPLY time, which is why ownership is decided there by a
 // read whose failure IS fatal (see stampOwnership).
-func (i *Installer) readExistence(ctx context.Context, objects []Object) error {
+func (i *Installer) readExistence(ctx context.Context, objects []Object) {
 	for idx := range objects {
 		o := &objects[idx]
 		_, err := i.client.Resource(o.GVR).Namespace(o.Ref.Namespace).Get(ctx, o.Ref.Name, metav1.GetOptions{})
-		switch {
-		case err == nil:
+		if err == nil {
 			o.Exists = true
-		case apierrors.IsNotFound(err):
-			o.Exists = false
 		}
 	}
-	return nil
 }
 
 func malformed(c Component, detail string) error {
