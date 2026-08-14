@@ -1,5 +1,19 @@
-// Package secret is the authoring half of ADR-0009's `cluster` secret backend
-// (issue #116): the one thing in kelson that writes a Kubernetes Secret.
+// Package secret is the authoring half of ADR-0009's secret backends: the one
+// thing in kelson that writes a Secret, in either of the two places a value
+// can live.
+//
+// [Store] is the `cluster` backend (issue #116, ADR-0018): a value written
+// through the Kubernetes API into the environment's namespace, read back
+// masked, never persisted by kelson. [SOPSStore] is the `sops` backend (issue
+// #81, [ADR-0022]): the same value encrypted in memory with age recipients and
+// committed to the delivery repository, decrypted in-cluster by Flux. The two
+// have the same three methods so `kelson secret` selects a backend rather than
+// a code path, and everything the rest of this doc says about redaction,
+// masking and what kelson does not keep holds for both. Where they differ is
+// [SOPSStore]'s own comment, and it differs in exactly one way: `set` writes
+// the whole Secret there, because merging would need a key kelson never holds.
+// The `externalSecrets` backend has no authoring path here at all — under it
+// no process on kelson's side ever holds a value (ADR-0020).
 //
 // [ADR-0018] decided the reading half. An environment value that is a mapping
 // is a reference — `{secret: <name>, key: <key>}` — and the renderer turns it
@@ -69,4 +83,5 @@
 // API and the MCP surface all reach through the same seam.
 //
 // [ADR-0018]: https://github.com/dafrie/kelson/blob/main/docs/adr/0018-secret-references.md
+// [ADR-0022]: https://github.com/dafrie/kelson/blob/main/docs/adr/0022-sops-age.md
 package secret

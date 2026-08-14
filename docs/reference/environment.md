@@ -147,6 +147,8 @@ This reference is **generated** from the committed JSON Schema [`schema/environm
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
+| `ageKeySecret` | string | no | `"sops-age"` | sops only; name of the Secret holding the age identity — created by the operator in the Kustomization's namespace |
+| `ageRecipients` | array of string | no |  | sops only; age public keys (age1…) that encrypted secrets are readable by — required for backend sops |
 | `backend` | string enum `"cluster"`, `"externalSecrets"`, `"sops"` | yes |  |  |
 | `refreshInterval` | string | no | `"1h"` | externalSecrets only; how often the value is re-read from the backing store; a positive Go duration such as 30s or 15m or 1h |
 | `store` | string | no |  | externalSecrets only; name of a SecretStore in this namespace or a ClusterSecretStore — optional when the cluster offers exactly one |

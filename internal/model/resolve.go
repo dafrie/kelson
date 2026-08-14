@@ -239,6 +239,13 @@ func resolve(p *Project, e *Environment) *Resolved {
 	if r.Environment.Secrets.Backend == SecretsExternalSecrets && r.Environment.Secrets.RefreshInterval == "" {
 		r.Environment.Secrets.RefreshInterval = DefaultSecretRefreshInterval
 	}
+	// The sops backend's key-Secret name is defaulted in the same place and
+	// for the same reason: the renderer writes it into a Kustomization's
+	// spec.decryption.secretRef and must never have to decide what an empty
+	// one means (ADR-0022).
+	if r.Environment.Secrets.Backend == SecretsSOPS && r.Environment.Secrets.AgeKeySecret == "" {
+		r.Environment.Secrets.AgeKeySecret = DefaultAgeKeySecret
+	}
 	r.Environment.Previews = resolvePreviews(e.Spec.Previews)
 
 	// P6: project overlays first.

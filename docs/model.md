@@ -53,8 +53,9 @@ the same reason (`render/previews-require-flux`,
 the mode where kelson owns the apply can wait for a migration before rolling the workloads
 (`render/release-requires-direct`, [Release commands](#release-commands-migrations-before-the-rollout),
 [ADR-0019](adr/0019-release-command-hook.md)). `Environment.spec.secrets.backend` is a
-third: `sops` is `render/secret-backend-unsupported` rather than a gated field, because the field *is*
-consumed — see [Choosing the backend](#choosing-the-backend). And `backend: externalSecrets` adds a
+third: `backend: sops` is `render/sops-requires-flux` outside Flux mode, because its decryption step is
+kustomize-controller's and direct mode has none — see [Choosing the backend](#choosing-the-backend).
+And `backend: externalSecrets` adds a
 fourth kind of refusal, the one that depends on the *cluster*: `render/external-secrets-not-installed`,
 `render/external-secrets-store-not-found` and `render/external-secrets-store-ambiguous` are decided
 from the ClusterProfile, exactly as the data-service presets are.
@@ -933,8 +934,13 @@ and remains the alternative on a machine that has kubectl and not kelson. Names 
 keys use Kubernetes' own key alphabet (letters, digits, `-`, `_`, `.`) — the same rules the reference
 itself is held to, so a Secret kelson will write is always one a spec can name.
 
-`kelson secret set` **merges**: keys it is not given are preserved, so rotating one credential leaves
-the others alone. `kelson secret list --project <p> --env <e>` reports names, keys and ages and never
+Under the default `cluster` backend `kelson secret set` **merges**: keys it is not given are preserved,
+so rotating one credential leaves the others alone. (Under `sops` it writes the whole file and refuses
+to drop a key silently — see [The `sops` backend](#the-sops-backend) — because carrying the other keys
+forward would need a decryption key kelson never holds.) Pass `-f <spec>` and kelson reads
+`secrets.backend` to decide where the value goes; without it, it assumes `cluster`.
+
+`kelson secret list --project <p> --env <e>` reports names, keys and ages and never
 a value — kelson does not store secret values, the cluster does (ADR-0009), and there is no flag that
 would print one. `kelson secret delete` removes a Secret kelson wrote and refuses one it did not: every
 Secret kelson writes carries `kelson.dev/managed-secret: "true"`, listing is a label query over it, and
@@ -977,11 +983,12 @@ and the spec text does not change when it changes:
 |---|---|---|
 | `cluster` | the reference addresses a Kubernetes Secret written out of band. The built-in default | renders |
 | `externalSecrets` | an `ExternalSecret` per referenced Secret, resolved by external-secrets from Vault or a cloud secret manager | renders ([ADR-0020](adr/0020-external-secrets.md)) |
-| `sops` | values encrypted in Git with age keys, decrypted in-cluster | `render/secret-backend-unsupported`, [#81](https://github.com/dafrie/kelson/issues/81) |
+| `sops` | values encrypted with age in the delivery repository, decrypted in-cluster by Flux. Flux mode only | renders ([ADR-0022](adr/0022-sops-age.md)) |
 
-The `sops` refusal is a **render** error rather than a validation one, for the reason the Helm gate is:
-it is decided from spec data alone, before anything is emitted, so the same document renders the same
-way against every cluster.
+An unknown backend is `render/secret-backend-unsupported`, and `sops` outside Flux mode is
+`render/sops-requires-flux`. Both are **render** errors rather than validation ones, for the reason the
+Helm gate is: they are decided from spec data alone, before anything is emitted, so the same document
+renders the same way against every cluster.
 
 ### The `externalSecrets` backend
 
@@ -1022,6 +1029,39 @@ reports `secret-sync-failed` with the controller's own reason and message, in th
 the workloads and above them — a Secret that never synced is why the pods below it cannot start.
 Nothing reads the Secret itself: kelson holds no value under this backend at any point.
 
+### The `sops` backend
+
+The spec text does not change here either. `{secret: checkout-db, key: url}` renders the same
+`secretKeyRef`, and a test asserts the sops render differs from the cluster render by nothing. What the
+backend changes is *where the value lives*: encrypted with [age](https://age-encryption.org) in the
+delivery repository, decrypted on the way into the cluster by Flux's kustomize-controller.
+
+```yaml
+secrets:
+  backend: sops
+  ageRecipients:                     # required: the PUBLIC age keys, `age1…`
+    - age13w78znajf5kee8msacel80jz6qeuc9tyxhuqkwnqcsaymlrj7clsy4fgdw
+  ageKeySecret: sops-age             # optional; the Secret holding the age identity, default sops-age
+```
+
+This is the backend that closes ADR-0009's documented gap: **a cluster rebuilt from Git alone comes back
+with its secrets**, because they are in the artifact. What has to survive outside Git is one age
+identity.
+
+| | |
+|---|---|
+| **Flux mode only** | `render/sops-requires-flux` otherwise. Direct mode has no decryptor, so the encrypted file would stay encrypted and every reference would fail at pod start |
+| **Where the file goes** | `<delivery.git.path>/secrets/<name>.enc.yaml`, written by `kelson secret set` and never by a render. It is inside the delivery path so the Kustomization that applies the workloads also decrypts, applies and prunes it |
+| **What is encrypted** | the values under `data`/`stringData` and nothing else. The Secret's name, namespace and key names stay readable, which is what makes an encrypted secret reviewable in a pull request |
+| **What kelson holds** | the public recipients, and nothing else. There is no age private key anywhere in kelson and no flag that takes one |
+| **`set` writes the whole Secret** | carrying the other keys forward would need the identity kelson does not have, so a write that would drop keys is refused with those keys named (`secret/sops-partial-set`) |
+
+Two steps are the operator's, because kelson cannot do them: creating the Secret that holds the age
+identity, and putting `spec.decryption` on the Kustomization that reconciles the path. `kelson secret
+set` prints both. [Secrets](secrets.md) is the full guide — setup, rotation and recovery — and
+[ADR-0022](adr/0022-sops-age.md) records why the format is implemented rather than imported and why
+rotation reports rather than re-encrypts.
+
 ## Environment schema
 
 ```yaml
@@ -1048,9 +1088,11 @@ spec:
     require: [dry-run]               # only dry-run is defined today
     deployers: [team-platform]       # who may deploy; default: the Project's team
   secrets:
-    backend: cluster                 # cluster | externalSecrets | sops — sops does not render yet (#81)
+    backend: cluster                 # cluster | externalSecrets | sops
     store: vault-backend             # externalSecrets only; optional when the cluster offers one store
     refreshInterval: 1h              # externalSecrets only; a positive Go duration, default 1h
+    ageRecipients: [age1…]           # sops only; required — the PUBLIC age keys secrets are encrypted to
+    ageKeySecret: sops-age           # sops only; the Secret holding the age identity, default sops-age
   previews:                          # Flux mode only — see "Previews" below
     provider: github                 # github | gitlab
     repo: https://github.com/acme/checkout           # the SOURCE repo, not delivery.git.repo

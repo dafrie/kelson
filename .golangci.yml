@@ -52,6 +52,7 @@ linters:
             - "!**/internal/clusterprofile/detect/**"
             - "!**/internal/serverstate/**"
             - "!**/internal/secret/**"
+            - "!**/internal/sops/**"
             - "!**/internal/api/**"
             - "!**/internal/mcp/**"
             - "!**/cmd/kelson-server/**"
@@ -91,6 +92,22 @@ linters:
             - sigs.k8s.io/yaml
             - github.com/go-git/go-git/v5
             - github.com/go-git/go-billy/v5
+        # The SOPS writer (issue #81, ADR-0021). It gets exactly one library
+        # beyond the standard one — filippo.io/age, the reference age
+        # implementation — because the alternative was importing
+        # github.com/getsops/sops/v3, which drags in the AWS, Azure, GCP and
+        # Vault SDKs (98 modules) for a package that encrypts a two-key Secret.
+        # It gets no cluster client and no git client on purpose: encryption is
+        # a pure byte transformation and everything that decides *where* the
+        # result is written lives in internal/secret.
+        sops:
+          files:
+            - "**/internal/sops/**"
+          allow:
+            - $gostd
+            - github.com/dafrie/kelson
+            - gopkg.in/yaml.v3
+            - filippo.io/age
         # The api plane (ADR-0013 §2): the ConnectRPC handlers and the server
         # binary. It gets the transport and the generated code, and nothing
         # else — the cluster clients stay behind the store interfaces in

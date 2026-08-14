@@ -46,6 +46,42 @@ const (
 	// ErrReadFailed is the same for a read: a list or a read-back that the API
 	// server would not answer.
 	ErrReadFailed Code = "secret/read-failed"
+
+	// The `sops` backend's own refusals (issue #81, ADR-0022). They are in this
+	// package's vocabulary rather than the git plane's because what a user is
+	// doing is setting a secret; that it reaches a repository rather than an
+	// API server is the backend's business, not theirs.
+
+	// ErrSOPSNoTarget is backend sops on an environment with no delivery
+	// repository to write into. It is unreachable from a validated spec —
+	// sops requires flux, which requires a git target — and exists so the
+	// store cannot be constructed into a state where Set has nowhere to go.
+	ErrSOPSNoTarget Code = "secret/sops-no-target"
+	// ErrSOPSNoRecipients is backend sops with no age recipients. Same shape:
+	// the model makes the field required, and this is the seam refusing to be
+	// built without it rather than encrypting to nobody.
+	ErrSOPSNoRecipients Code = "secret/sops-no-recipients"
+	// ErrSOPSPartialSet is a `set` that would drop keys the encrypted Secret
+	// already holds. Under this backend a set writes the whole file — kelson
+	// would need the age identity to carry the other keys forward, and never
+	// holds one — so a partial write is refused with the missing keys named
+	// rather than done.
+	ErrSOPSPartialSet Code = "secret/sops-partial-set"
+	// ErrSOPSNotEncrypted is a file where an encrypted Secret belongs that is
+	// not a SOPS document. Almost always a plaintext Secret committed by hand,
+	// which is the failure this backend exists to prevent; kelson reports it
+	// rather than overwriting it, because the remediation includes treating
+	// its contents as compromised.
+	ErrSOPSNotEncrypted Code = "secret/sops-not-encrypted"
+	// ErrSOPSEncryptFailed is the encryption itself refusing — in practice a
+	// recipient the spec's spelling check let through that age's parser did
+	// not.
+	ErrSOPSEncryptFailed Code = "secret/sops-encrypt-failed"
+	// ErrSOPSWriteFailed is the delivery repository refusing a read, a commit
+	// or a push. It is the git plane's failure relayed with its cause, and the
+	// most common one is the compare-and-swap conflict that means the branch
+	// moved while the command was running.
+	ErrSOPSWriteFailed Code = "secret/sops-write-failed"
 )
 
 // DocsBaseURL mirrors model.DocsBaseURL so a `secret/*` code documents itself

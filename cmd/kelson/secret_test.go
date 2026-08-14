@@ -73,13 +73,17 @@ func (f *fakeSecretStore) connector() secretConnector {
 }
 
 func rootWithSecrets(connect secretConnector) *cobra.Command {
+	return rootWithSecretBackends(connect, nil)
+}
+
+func rootWithSecretBackends(connect secretConnector, connectSops sopsSecretConnector) *cobra.Command {
 	root := newRootCmd()
 	for _, c := range root.Commands() {
 		if c.Name() == "secret" {
 			root.RemoveCommand(c)
 		}
 	}
-	root.AddCommand(newSecretCmdFactory(connect))
+	root.AddCommand(newSecretCmdFactory(connect, connectSops))
 	return root
 }
 
@@ -428,20 +432,28 @@ func TestSecretDeleteDryRunRemovesNothing(t *testing.T) {
 
 // TestSecretCommandsRequireTheirTarget: a secret belongs to an environment, and
 // a command that guessed one would write into the wrong namespace.
+//
+// --env stays a required flag. --project became optional when -f arrived
+// (ADR-0022): the spec names the project, and reading the spec is also how
+// kelson learns which backend holds the value. Without either, the refusal has
+// to name both ways out.
 func TestSecretCommandsRequireTheirTarget(t *testing.T) {
-	for _, args := range [][]string{
-		{"secret", "set", "db", "--env", "production", "url=x"},
-		{"secret", "set", "db", "--project", "checkout", "url=x"},
-		{"secret", "list", "--env", "production"},
-		{"secret", "delete", "db", "--project", "checkout", "--yes"},
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"secret", "set", "db", "--project", "checkout", "url=x"}, "required flag"},
+		{[]string{"secret", "delete", "db", "--project", "checkout", "--yes"}, "required flag"},
+		{[]string{"secret", "set", "db", "--env", "production", "url=x"}, "pass --project, or pass -f"},
+		{[]string{"secret", "list", "--env", "production"}, "pass --project, or pass -f"},
 	} {
 		store := &fakeSecretStore{}
-		_, code, msg := runSecret(t, store, args...)
+		_, code, msg := runSecret(t, store, tc.args...)
 		if code != exitErr {
-			t.Errorf("%v: exit = %d, want %d", args, code, exitErr)
+			t.Errorf("%v: exit = %d, want %d", tc.args, code, exitErr)
 		}
-		if !strings.Contains(msg, "required flag") {
-			t.Errorf("%v: message = %q, want a missing-flag error", args, msg)
+		if !strings.Contains(msg, tc.want) {
+			t.Errorf("%v: message = %q, want %q", tc.args, msg, tc.want)
 		}
 	}
 }

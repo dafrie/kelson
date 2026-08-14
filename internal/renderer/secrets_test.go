@@ -79,18 +79,15 @@ func TestRenderedOutputCarriesNoSecretValue(t *testing.T) {
 	}
 }
 
-// TestSecretBackendGate: `sops` is a structured refusal naming the issue that
-// implements it, rather than a cluster-shaped render against a Secret nothing
-// would populate. It is the last of the three left in this shape — ADR-0020
-// gave `externalSecrets` a mechanism, and its refusals are now about the
-// cluster and the store rather than about the backend's existence
-// (TestExternalSecretsRequiresTheOperator).
+// TestSecretBackendGate: all three backends have a mechanism since ADR-0022,
+// so the only thing left to refuse by name is a backend that is not one of
+// them. The refusal lists what is.
 func TestSecretBackendGate(t *testing.T) {
 	r := secretRefFixture()
-	r.Environment.Secrets = model.SecretBackend{Backend: model.SecretsSOPS}
+	r.Environment.Secrets = model.SecretBackend{Backend: "vault"}
 	_, err := Render(r, gatewayProfile(), nil)
 	if err == nil {
-		t.Fatalf("backend sops must not render")
+		t.Fatalf("an unknown backend must not render")
 	}
 	errs, ok := err.(Errors)
 	if !ok || len(errs) != 1 {
@@ -100,11 +97,129 @@ func TestSecretBackendGate(t *testing.T) {
 	if e.Code != ErrSecretBackendUnsupported {
 		t.Errorf("code = %q, want %q", e.Code, ErrSecretBackendUnsupported)
 	}
-	if !strings.Contains(e.Remediation, "#81") {
-		t.Errorf("remediation must name where the work is tracked (#81), got %q", e.Remediation)
+	for _, backend := range []string{"cluster", "externalSecrets", "sops"} {
+		if !strings.Contains(e.Remediation, backend) {
+			t.Errorf("remediation must list %q, got %q", backend, e.Remediation)
+		}
 	}
-	if !strings.Contains(e.Remediation, "backend: cluster") {
-		t.Errorf("remediation must name the backend that works today, got %q", e.Remediation)
+}
+
+// sopsFixture is the reference-carrying fixture switched to the sops backend
+// in the delivery mode that backend requires.
+func sopsFixture() *model.Resolved {
+	r := secretRefFixture()
+	r.Environment.Mode = model.DeliveryFlux
+	r.Environment.Delivery = model.Delivery{
+		Mode: model.DeliveryFlux,
+		Git:  &model.GitTarget{Repo: "https://example.test/deploy.git", Branch: "main", Path: "clusters/prod"},
+	}
+	r.Environment.Secrets = model.SecretBackend{
+		Backend:       model.SecretsSOPS,
+		AgeRecipients: []string{"age13w78znajf5kee8msacel80jz6qeuc9tyxhuqkwnqcsaymlrj7clsy4fgdw"},
+		AgeKeySecret:  model.DefaultAgeKeySecret,
+	}
+	return r
+}
+
+// TestSOPSRendersTheClusterShape: the workload half of a sops render is
+// byte-identical to the cluster backend's. ADR-0018 promised that switching
+// backends is one field on one Environment, ADR-0020's test asserted it for
+// externalSecrets, and this is the third and last backend it has to hold for.
+func TestSOPSRendersTheClusterShape(t *testing.T) {
+	sops := sopsFixture()
+	cluster := sopsFixture()
+	cluster.Environment.Secrets = model.SecretBackend{Backend: model.SecretsCluster}
+
+	a, err := Render(sops, gatewayProfile(), nil)
+	if err != nil {
+		t.Fatalf("sops render: %v", err)
+	}
+	b, err := Render(cluster, gatewayProfile(), nil)
+	if err != nil {
+		t.Fatalf("cluster render: %v", err)
+	}
+	if encodeOrFail(t, a) != encodeOrFail(t, b) {
+		t.Errorf("the sops render must differ from the cluster render by nothing:\n%s", encodeOrFail(t, a))
+	}
+	// And the guarantee that matters most: the backend that puts a Secret in
+	// Git still does not put one in the rendered set. The encrypted file is
+	// written by `kelson secret set`, outside the renderer, which has no
+	// plaintext and no way to acquire one.
+	for _, m := range a {
+		if m.Kind == "Secret" {
+			t.Fatalf("the sops backend must not make the renderer emit a Secret (%s)", m.Name)
+		}
+	}
+}
+
+// TestSOPSRequiresFlux: direct mode has no decryptor, so an encrypted file
+// there would stay encrypted and every reference to it would fail at pod
+// start. Same gate as charts and previews, decided from spec data alone.
+func TestSOPSRequiresFlux(t *testing.T) {
+	r := sopsFixture()
+	r.Environment.Mode = model.DeliveryDirect
+	_, err := Render(r, gatewayProfile(), nil)
+	if err == nil {
+		t.Fatalf("backend sops must not render in direct mode")
+	}
+	errs, ok := err.(Errors)
+	if !ok || len(errs) != 1 || errs[0].Code != ErrSOPSRequiresFlux {
+		t.Fatalf("expected one %s, got %T: %v", ErrSOPSRequiresFlux, err, err)
+	}
+	if !strings.Contains(errs[0].Remediation, "delivery.mode: flux") {
+		t.Errorf("remediation must name the fix, got %q", errs[0].Remediation)
+	}
+}
+
+// TestSOPSPreviewKustomizationDecrypts: a preview's artifact carries the same
+// encrypted Secrets, so the Kustomization flux-operator instantiates per pull
+// request needs the same decryption block. This is the only Kustomization
+// kelson writes, and it is written through the function that also tells the
+// operator what their own Kustomization needs.
+func TestSOPSPreviewKustomizationDecrypts(t *testing.T) {
+	r := sopsFixture()
+	r.Environment.Previews = &model.ResolvedPreviews{
+		Provider:  model.PreviewGitHub,
+		Repo:      "https://github.com/acme/checkout",
+		SecretRef: "forge",
+		Interval:  "10m",
+		Filter:    model.ResolvedPreviewFilter{Limit: 10},
+		Artifacts: model.PreviewArtifacts{Repository: "oci://ghcr.io/acme/previews"},
+	}
+	if _, err := Render(r, gatewayProfile(), nil); err != nil {
+		t.Fatalf("Render failed: %v", err)
+	}
+	// Asserted against the template itself rather than the encoded ResourceSet:
+	// the template is a literal block scalar, so the encoder re-indents it and
+	// a substring match on the output would be a test of yaml.v3's indentation.
+	template := previewResourcesTemplate(r, r.Environment.Previews)
+	want := SOPSDecryptionBlock(model.DefaultAgeKeySecret, "  ")
+	if !strings.Contains(template, want) {
+		t.Errorf("the preview Kustomization must carry:\n%s\ngot:\n%s", want, template)
+	}
+
+	// And under the cluster backend it carries nothing of the sort: a
+	// decryption block referencing a Secret nobody created would make every
+	// preview fail to build.
+	r.Environment.Secrets = model.SecretBackend{Backend: model.SecretsCluster}
+	ms, err := Render(r, gatewayProfile(), nil)
+	if err != nil {
+		t.Fatalf("Render failed: %v", err)
+	}
+	if strings.Contains(encodeOrFail(t, ms), "decryption:") {
+		t.Errorf("only the sops backend may emit a decryption block")
+	}
+}
+
+// TestSOPSDecryptionBlockDefaults: an empty key-Secret name is the default
+// rather than an empty secretRef, which would be a Kustomization that fails to
+// build against a Secret called "".
+func TestSOPSDecryptionBlockDefaults(t *testing.T) {
+	if got := SOPSDecryptionBlock("", "  "); !strings.Contains(got, "name: "+model.DefaultAgeKeySecret) {
+		t.Errorf("an empty name must default, got:\n%s", got)
+	}
+	if got := SOPSDecryptionBlock("prod-age", ""); got != "decryption:\n  provider: sops\n  secretRef:\n    name: prod-age\n" {
+		t.Errorf("unexpected block:\n%s", got)
 	}
 }
 
