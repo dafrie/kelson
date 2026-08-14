@@ -30,6 +30,7 @@ In a cluster it is a Helm install, and every flag below is a values knob — see
 | `--registry` | `KELSON_REGISTRY` | unset | Destination registry for builds, e.g. `ghcr.io/acme`. See [build](build.md). |
 | `--push-secret` | — | unset | Name of an existing `kubernetes.io/dockerconfigjson` Secret authenticating the push. |
 | `--build-namespace` | — | the environment's namespace | Where build Jobs run. |
+| `--insecure-registries` | `KELSON_INSECURE_REGISTRIES` | unset | Comma-separated registry hosts served over plain HTTP, e.g. `localhost:5000`. Exactly these; never a request's. See [build](build.md#plain-http-registries). |
 
 `/healthz` reports liveness plus the build (`version`, `commit`) and never requires authentication —
 a probe holds no credential, and a server that failed its liveness check because nobody logged in

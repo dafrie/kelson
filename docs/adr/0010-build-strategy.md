@@ -81,3 +81,25 @@ integration ([#51](https://github.com/dafrie/kelson/issues/51)), and the detecti
 ([#50](https://github.com/dafrie/kelson/issues/50)). Dockerfile builds
 ([#48](https://github.com/dafrie/kelson/issues/48)) proceed in parallel regardless of this ADR, as #47
 anticipated.
+
+## Status of the implementation
+
+The decision is unchanged; this records how much of it exists, because the
+answer has been "less than the ADR reads" for two milestones.
+
+Both strategies build. A Dockerfile goes through BuildKit
+([#48](https://github.com/dafrie/kelson/issues/48)) and a repository without one
+goes through the Cloud Native Buildpacks lifecycle
+([#49](https://github.com/dafrie/kelson/issues/49)), from `kelson build` and from
+`BuildService.Build` alike; the strategy is resolved once by a function both
+callers share and it selects the driver. `rebase` — the capability that decided
+this ADR — exists on the buildpacks driver and has no command or RPC that calls
+it yet, so the fleet-patching story is a driver capability rather than a
+product one. What is still deferred is named in
+[docs/build.md](../build.md): in-cluster detection
+([#50](https://github.com/dafrie/kelson/issues/50)), so `auto` needs a local
+checkout, and caching ([#52](https://github.com/dafrie/kelson/issues/52)), so
+every build is cold — which is the "slowest of the three" consequence above,
+currently at its worst.
+
+Railpack is still not adopted and still not rejected.

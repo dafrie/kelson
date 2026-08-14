@@ -1,7 +1,8 @@
-// BuildService: the build plane over the API (issues #48, #54, ADR-0010).
+// BuildService: the build plane over the API (issues #48, #49, #54, ADR-0010).
 //
 // `kelson build` already turns a Project's source into a digest-pinned image
-// with an in-cluster BuildKit Job (docs/build.md). This service is that same
+// with an in-cluster Job — BuildKit for a Dockerfile, the Cloud Native
+// Buildpacks lifecycle without one (docs/build.md). This service is that same
 // pipeline reached over the schema, so a UI or an agent can build without a
 // kubeconfig and without the CLI — which is what the browser create-from-git
 // path (#63) needs, since a browser has neither.

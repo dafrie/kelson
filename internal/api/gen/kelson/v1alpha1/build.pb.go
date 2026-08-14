@@ -1,7 +1,8 @@
-// BuildService: the build plane over the API (issues #48, #54, ADR-0010).
+// BuildService: the build plane over the API (issues #48, #49, #54, ADR-0010).
 //
 // `kelson build` already turns a Project's source into a digest-pinned image
-// with an in-cluster BuildKit Job (docs/build.md). This service is that same
+// with an in-cluster Job — BuildKit for a Dockerfile, the Cloud Native
+// Buildpacks lifecycle without one (docs/build.md). This service is that same
 // pipeline reached over the schema, so a UI or an agent can build without a
 // kubeconfig and without the CLI — which is what the browser create-from-git
 // path (#63) needs, since a browser has neither.
@@ -134,9 +135,9 @@ func (x *BuildRequest) GetRef() string {
 // Failures are ConnectRPC errors carrying kelson.v1alpha1.Error details, not
 // events — a build that fails produced no image, so there is no result message
 // that could honestly describe it. The build plane's codes (build/no-source,
-// build/nothing-to-build, build/strategy-not-implemented,
-// build/detection-needs-source) pass through verbatim, like every other plane's
-// (ADR-0013 §2).
+// build/nothing-to-build, build/detection-needs-source, and
+// build/strategy-not-implemented, which no strategy returns today) pass through
+// verbatim, like every other plane's (ADR-0013 §2).
 type BuildResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Event:
@@ -239,7 +240,7 @@ func (*BuildResponse_Finished_) isBuildResponse_Event() {}
 // a commit, so everything it carries is settled fact rather than intent.
 type BuildResponse_Started struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
-	Strategy        string                 `protobuf:"bytes,1,opt,name=strategy,proto3" json:"strategy,omitempty"`                                      // "dockerfile"; the resolved ADR-0010 strategy
+	Strategy        string                 `protobuf:"bytes,1,opt,name=strategy,proto3" json:"strategy,omitempty"`                                      // "dockerfile" or "buildpacks": the resolved ADR-0010 strategy
 	ImageRepository string                 `protobuf:"bytes,2,opt,name=image_repository,json=imageRepository,proto3" json:"image_repository,omitempty"` // <registry>/<project>, no tag, no digest
 	Tag             string                 `protobuf:"bytes,3,opt,name=tag,proto3" json:"tag,omitempty"`                                                // the human-readable tag pushed alongside the digest
 	Revision        string                 `protobuf:"bytes,4,opt,name=revision,proto3" json:"revision,omitempty"`                                      // the 40-hex commit the build clones
@@ -305,7 +306,7 @@ func (x *BuildResponse_Started) GetRevision() string {
 	return ""
 }
 
-// Log is raw build output — the bytes BuildKit and the clone container wrote,
+// Log is raw build output — the bytes the builder and the clone container wrote,
 // not lines. The stream chunks them for transport and preserves nothing else:
 // a chunk boundary is not a line boundary, so a client that wants lines
 // splits the concatenation itself.
