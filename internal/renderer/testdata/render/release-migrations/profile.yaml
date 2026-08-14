@@ -1,0 +1,7 @@
+# CloudNativePG present and readable; the `small` preset needs only the Cluster
+# API and managed roles, so the Database CRD is deliberately absent from the
+# served set. A cluster that cannot host `shared` still hosts a dedicated one.
+cnpg:
+  version: 1.30.0
+  namespace: cnpg-system
+  crds: [clusters]
