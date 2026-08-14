@@ -1,0 +1,33 @@
+# The chart that installs kelson-server into a cluster (issue #58).
+#
+# It ships no CRDs, on purpose. ADR-0003 says kelson adopts a cluster rather
+# than colonising it: everything the chart creates is an ordinary namespaced
+# object plus one read-only ClusterRole, so `helm uninstall` leaves the cluster
+# exactly as it found it and the workloads kelson deployed keep running
+# (issue #59). See README.md for what the chart deliberately does not do.
+apiVersion: v2
+name: kelson
+description: kelson-server — the API behind the kelson CLI, UI and MCP surface
+type: application
+
+# The chart's own version. It moves when the chart changes, independently of
+# the application version below.
+version: 0.1.0
+
+# The kelson build this chart is written against. It tracks the default in
+# internal/version (deploy/chart/appversion_test.go fails if the two drift), so
+# a release that bumps the binary's version bumps this too. It is deliberately
+# NOT used as a default image tag: see values.yaml `image`.
+appVersion: "0.0.0-dev"
+
+# server-side apply of the detect ClusterRole's nonResourceURLs and the
+# `pods/log` subresource are both long-standing API; nothing here needs a
+# recent server. The floor is where `seccompProfile` became GA.
+kubeVersion: ">=1.19.0-0"
+
+home: https://github.com/dafrie/kelson
+sources:
+  - https://github.com/dafrie/kelson
+keywords:
+  - paas
+  - kelson

@@ -23,6 +23,7 @@ kelson doesn't wrap Kubernetes in new concepts. It generates Kubernetes.
 ## Docs
 
 - [Vision](vision.md) — why this project exists
+- [Install](install.md) — the Helm chart, the auth posture, and what it deliberately does not do
 - [Architecture](architecture.md) — four planes, the renderer, delivery
 - [Roadmap](roadmap.md) — four phases, seventeen milestones
 - [Competitive analysis](competitive-analysis.md) — the field, and where kelson lands

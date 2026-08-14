@@ -1,0 +1,147 @@
+{{- include "kelson.authGate" . -}}
+{{- if .Values.rbac.create }}
+{{- $stateNs := include "kelson.stateNamespace" . }}
+{{- $envNamespaces := concat (list $stateNs) .Values.rbac.targetNamespaces | uniq }}
+{{- $buildNs := .Values.server.buildNamespace }}
+# Namespaced RBAC. Every rule below exists because a named package makes that
+# call; nothing here is a wildcard and nothing is "probably needed".
+#
+# What is deliberately NOT granted: the write access the direct delivery
+# adapter needs to apply a rendered spec (Deployments, Services, and whatever
+# else a project's manifests contain). That grant is as wide as the renderer's
+# output, it belongs to the namespaces you deploy into rather than to the
+# installer, and least-privilege for it is #84's work along with the rest of
+# the threat model. Bind it yourself, per namespace, and see README.md.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "kelson.fullname" . }}-state
+  namespace: {{ $stateNs }}
+  labels:
+    {{- include "kelson.labels" . | nindent 4 }}
+rules:
+  # internal/serverstate: the spec store (Get/Create/Update/Delete, List by
+  # label) and the history store (Create, List, Get, Delete when trimming past
+  # --keep). No `watch`: neither store watches, both read on demand, and a verb
+  # nothing calls is a verb that should not be granted. No `patch`: the spec
+  # store does read-modify-Update against a resourceVersion, which is what
+  # makes concurrent writes conflict instead of silently interleaving.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "create", "update", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "kelson.fullname" . }}-state
+  namespace: {{ $stateNs }}
+  labels:
+    {{- include "kelson.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "kelson.fullname" . }}-state
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kelson.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- range $ns := $envNamespaces }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "kelson.fullname" $ }}-env
+  namespace: {{ $ns }}
+  labels:
+    {{- include "kelson.labels" $ | nindent 4 }}
+rules:
+  # internal/secret, ADR-0009's cluster backend: server-side apply (patch, plus
+  # create for a Secret that does not exist yet), Get for the read-back, List
+  # for the label query, Delete for `kelson secret delete`. It is a real
+  # privilege and docs/server.md says so — it is bounded by the
+  # kelson.dev/managed-secret label the package refuses to write or delete
+  # without, and by this Role naming the namespaces it applies to, not by
+  # authorization. No RPC returns a secret value.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+  # internal/observation: the deployment read behind a status verdict, the pod
+  # list behind it, and the log streams the API serves. internal/delivery/kube's
+  # build executor lists the build pod and streams the same subresource.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list"]
+  # internal/delivery/kube's build executor: Submit creates the Job, Wait polls
+  # it by name, and cleanup deletes it with background propagation. It polls
+  # rather than watches (jobPollInterval), so `watch` is not granted.
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "create", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "kelson.fullname" $ }}-env
+  namespace: {{ $ns }}
+  labels:
+    {{- include "kelson.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "kelson.fullname" $ }}-env
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kelson.serviceAccountName" $ }}
+    namespace: {{ $.Release.Namespace }}
+{{- end }}
+{{- if and $buildNs (not (has $buildNs $envNamespaces)) }}
+---
+# --build-namespace names a namespace outside the ones served, so it gets the
+# build grants and nothing else: no Secret writes, because a build never
+# authors one — it only reads the dockerconfigjson --push-secret points at.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "kelson.fullname" . }}-build
+  namespace: {{ $buildNs }}
+  labels:
+    {{- include "kelson.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  # internal/delivery/kube's registry resolver reads the push Secret to resolve
+  # the destination's credentials. Read only, and by name at that.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "kelson.fullname" . }}-build
+  namespace: {{ $buildNs }}
+  labels:
+    {{- include "kelson.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "kelson.fullname" . }}-build
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kelson.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+{{- end }}

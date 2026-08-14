@@ -1,0 +1,198 @@
+# Default values for the kelson chart (issue #58).
+#
+# Two knobs have no working default and the chart refuses to render without
+# them, because guessing either one would be worse than failing:
+#
+#   image.tag  — no release has been published yet, and the chart never latches
+#                `latest` (see `image` below).
+#   auth.*     — in-cluster the server binds 0.0.0.0, and serving that with no
+#                authentication must be a deliberate choice (see `auth` below).
+
+# -- Image coordinates for kelson-server.
+#
+# `tag` has no default and the chart fails without it. `latest` would make a
+# Deployment's identity unknowable — two pods of the "same" release could be
+# different builds — and defaulting to the chart's appVersion would silently
+# point at an image tag that does not exist yet, since kelson has not cut a
+# release. Pass the tag you mean:
+#
+#   --set image.tag=v0.1.0
+#
+# The images goreleaser publishes are ghcr.io/dafrie/kelson-server:<version>
+# for the tagged release, plus a `latest` this chart will not use for you
+# (.goreleaser.yml, docs/release-policy.md).
+image:
+  repository: ghcr.io/dafrie/kelson-server
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# -- Image pull secrets, as a list of {name: …}. The published images are
+# public; this is for a mirrored or private copy.
+imagePullSecrets: []
+
+# -- Authentication. Required unless you turn it off out loud.
+#
+# In a cluster the server has to bind 0.0.0.0 — a Service cannot reach a
+# process listening on loopback — and `kelson-server --listen 0.0.0.0:8420`
+# with no password refuses to start (docs/server.md, ADR-0013 §3). The chart
+# mirrors that refusal at render time rather than letting you discover it in a
+# CrashLoopBackOff: set one of `existingSecret`, `password`, or `insecure`.
+#
+# There is still no TLS in kelson-server. A password crossing the network in
+# clear is a password anyone on the path has, so put a TLS-terminating proxy in
+# front of the Service, or reach it with `kubectl port-forward` (README.md).
+auth:
+  # -- Preferred: an existing Secret holding the shared password. The chart
+  # references it and never sees the value, so the password is not in your
+  # values file, your release history or `helm get values` output.
+  #
+  #   kubectl -n kelson-system create secret generic kelson-auth \
+  #     --from-literal=password="$(openssl rand -base64 24)"
+  #   helm install … --set auth.existingSecret.name=kelson-auth
+  existingSecret:
+    name: ""
+    key: password
+
+  # -- The lesser option: the password as a literal. The chart creates a Secret
+  # from it, which means the value is also in the Helm release record and in
+  # whatever file or shell history the `--set` came from. Use existingSecret
+  # unless you have a reason not to.
+  password: ""
+
+  # -- Serve with no authentication at all, deliberately. This renders
+  # `--insecure-bind`, and anything that can reach the Service can deploy to
+  # your cluster. Only reasonable when the Service is unreachable by anything
+  # you do not trust — and it is never reasonable together with a password, so
+  # setting both is an error.
+  insecure: false
+
+# -- Server flags. Each field is one flag of kelson-server (docs/server.md);
+# `--listen` is not among them because in-cluster it is always 0.0.0.0:port.
+server:
+  # -- Port the server listens on, and the container port.
+  port: 8420
+
+  # -- Namespace holding the spec and history ConfigMaps (`--namespace`).
+  # Empty means the release namespace, which is also where the namespaced Role
+  # granting those ConfigMaps is created.
+  namespace: ""
+
+  # -- Deployment revisions retained per environment (`--keep`).
+  keep: 20
+
+  # -- Destination registry for builds, e.g. ghcr.io/acme (`--registry`).
+  # Empty leaves builds to name their own destination per request.
+  registry: ""
+
+  # -- Name of an existing kubernetes.io/dockerconfigjson Secret in the build
+  # namespace that authenticates the push (`--push-secret`). The chart does not
+  # create it: registry credentials are yours, not the installer's.
+  pushSecret: ""
+
+  # -- Namespace build Jobs run in (`--build-namespace`). Empty means the
+  # environment's own namespace, as in the CLI.
+  buildNamespace: ""
+
+  # -- Delivery credential for Git-backed environments, read from
+  # $KELSON_GIT_TOKEN. Reference an existing Secret; there is no literal knob
+  # for the same reason `auth.password` is the lesser option.
+  gitTokenSecret:
+    name: ""
+    key: token
+
+  # -- Extra command-line arguments appended verbatim, for a flag this chart
+  # does not surface yet.
+  extraArgs: []
+
+  # -- Extra environment variables, as ordinary core/v1 EnvVar entries.
+  extraEnv: []
+
+# -- Replica count. The server holds no state — specs and history are
+# ConfigMaps — so a second replica forks nothing and needs no leader election
+# (ADR-0013 §1). More than one is a real HA configuration, not a hope.
+replicaCount: 1
+
+# -- Namespace object. Helm needs the release namespace to exist before it
+# writes its own release record, so this is not a substitute for
+# `helm install --create-namespace`; it exists for the case where the namespace
+# should be part of the release and swept by `helm uninstall`. See README.md.
+namespace:
+  create: false
+  # Defaults to the release namespace.
+  name: ""
+
+serviceAccount:
+  create: true
+  # Defaults to the fullname of the release.
+  name: ""
+  annotations: {}
+
+rbac:
+  # -- Create the namespaced Roles and RoleBindings the server needs.
+  create: true
+
+  # -- Create the read-only detect ClusterRole and its binding. It is the
+  # cluster-scoped half of the install and it grants get/list only
+  # (deploy/rbac/detect-clusterrole.yaml, issue #56). Without it `kelson
+  # profile` and server-side dry-run previews report capability gaps instead of
+  # facts — they degrade, they do not break.
+  createDetectClusterRole: true
+
+  # -- Namespaces the server may serve besides the release namespace. Each one
+  # gets the same environment Role: managed Secrets, build Jobs, and the reads
+  # behind status and logs. Nothing here grants access to a namespace you did
+  # not list, which is how docs/server.md says to bound today's single shared
+  # password.
+  targetNamespaces: []
+
+service:
+  type: ClusterIP
+  port: 8420
+  annotations: {}
+
+# -- Resource requests and limits. The defaults are a starting point for a Go
+# process whose work is Kubernetes API calls, not computation.
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 256Mi
+
+# -- Liveness and readiness probes. Both hit /healthz, which never requires
+# authentication — a probe holds no credential (docs/server.md).
+livenessProbe:
+  initialDelaySeconds: 5
+  periodSeconds: 20
+  timeoutSeconds: 3
+  failureThreshold: 3
+readinessProbe:
+  initialDelaySeconds: 2
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+
+# -- Extra labels added to every object the chart creates, on top of the
+# standard Helm labels and kelson.dev/install.
+commonLabels: {}

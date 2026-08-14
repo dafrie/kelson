@@ -1,0 +1,81 @@
+{{- include "kelson.authGate" . -}}
+{{- if .Values.rbac.createDetectClusterRole }}
+# The cluster-scoped half of the install, and the only cluster-scoped grant the
+# chart makes. It is read-only by construction: every verb below is a get or a
+# list, there is no "*" verb, and no write verb appears anywhere (issue #56).
+#
+# The `rules:` block below is a verbatim copy of
+# deploy/rbac/detect-clusterrole.yaml, which is the manifest the CLI's own
+# documentation points at. deploy/chart/detect_rbac_test.go parses both files
+# and fails if the rule sets differ, so the copy cannot rot: a probe that grows
+# a read updates the manifest, and the chart follows in the same commit.
+#
+# Without this ClusterRole kelson still works — `kelson profile` and the
+# server-side dry-run preview report what they could not read as gaps in
+# ClusterProfile.incomplete rather than guessing it absent (ADR-0003).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "kelson.fullname" . }}-detect
+  labels:
+    {{- include "kelson.labels" . | nindent 4 }}
+rules:
+  # Discovery: /version for the server version and platform, /apis for the
+  # registered groups that mark cert-manager, gateway API, external-secrets,
+  # cnpg, flux, flux-operator, argocd, metrics-server and the policy engines as
+  # present, and the monitoring group's resources to tell ServiceMonitor from
+  # PodMonitor. flux-operator needs no rule of its own: its presence is the
+  # group registration, and kelson never lists its CRs from here.
+  - nonResourceURLs: ["/version", "/api", "/api/*", "/apis", "/apis/*"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
+  # Deployments, for the CloudNativePG operator's version (issue #90). kelson
+  # renders databases declaratively and each declarative capability arrived in
+  # a different CNPG release, so "present" is not a usable answer — the version
+  # is read from the operator Deployment's image tag. The probe narrows the
+  # read with a label selector (app.kubernetes.io/name=cloudnative-pg); a
+  # ClusterRole cannot express that, which is why this grant is wider than the
+  # single object detection wants. Without it the version is a gap, never a
+  # guess.
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingressclasses"]
+    verbs: ["get", "list"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list"]
+  - apiGroups: ["snapshot.storage.k8s.io"]
+    resources: ["volumesnapshotclasses"]
+    verbs: ["get", "list"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["gatewayclasses"]
+    verbs: ["get", "list"]
+  - apiGroups: ["cert-manager.io"]
+    resources: ["clusterissuers"]
+    verbs: ["get", "list"]
+  - apiGroups: ["external-secrets.io"]
+    resources: ["clustersecretstores", "secretstores"]
+    verbs: ["get", "list"]
+  # The two reads the L2 server-side dry-run preview issues beyond the applies
+  # themselves (issue #45). Both are optional: without them the preview loses a
+  # capability, never correctness.
+  #
+  #  - validatingwebhookconfigurations: which validating webhooks a dry-run
+  #    request does not reach. A webhook whose sideEffects is neither None nor
+  #    NoneOnDryRun is not called for a dry-run, and with failurePolicy Ignore
+  #    the API server skips it silently — so a preview that cannot read these
+  #    cannot tell the user which checks did not run.
+  #  - policyreports/clusterpolicyreports: Kyverno's audit-mode findings, which
+  #    never appear in a rejection because an audit policy does not veto the
+  #    request.
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["validatingwebhookconfigurations"]
+    verbs: ["get", "list"]
+  - apiGroups: ["kyverno.io"]
+    resources: ["policyreports", "clusterpolicyreports"]
+    verbs: ["get", "list"]
+{{- end }}

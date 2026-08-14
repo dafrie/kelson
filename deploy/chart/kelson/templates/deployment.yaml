@@ -1,0 +1,128 @@
+{{- include "kelson.authGate" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "kelson.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kelson.labels" . | nindent 4 }}
+spec:
+  # More than one replica is a genuine HA configuration: the process holds no
+  # state a restart or a second replica would lose or fork, because specs and
+  # history are ConfigMaps (ADR-0013 §1). No leader election, no volume.
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "kelson.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "kelson.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "kelson.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: kelson-server
+          image: {{ include "kelson.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            # 0.0.0.0 is not a choice here — a Service cannot reach a process
+            # listening on loopback. What makes it acceptable is the auth gate
+            # in _helpers.tpl: either a password is configured, or
+            # --insecure-bind below says the exposure was deliberate.
+            - --listen=0.0.0.0:{{ .Values.server.port }}
+            - --namespace={{ include "kelson.stateNamespace" . }}
+            - --keep={{ .Values.server.keep }}
+            {{- if .Values.auth.insecure }}
+            - --insecure-bind
+            {{- end }}
+            {{- with .Values.server.registry }}
+            - --registry={{ . }}
+            {{- end }}
+            {{- with .Values.server.pushSecret }}
+            - --push-secret={{ . }}
+            {{- end }}
+            {{- with .Values.server.buildNamespace }}
+            - --build-namespace={{ . }}
+            {{- end }}
+            {{- with .Values.server.extraArgs }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          env:
+            {{- $secretName := include "kelson.passwordSecretName" . }}
+            {{- if $secretName }}
+            # The password never appears in the pod spec: the flag is left
+            # unset and the environment variable carries it, which is also what
+            # docs/server.md recommends for a human running the binary — a flag
+            # value is visible in every `ps`.
+            - name: KELSON_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: {{ include "kelson.passwordSecretKey" . }}
+            {{- end }}
+            {{- if and .Values.server.gitTokenSecret .Values.server.gitTokenSecret.name }}
+            - name: KELSON_GIT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.server.gitTokenSecret.name }}
+                  key: {{ default "token" .Values.server.gitTokenSecret.key }}
+            {{- end }}
+            {{- with .Values.server.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.server.port }}
+              protocol: TCP
+          # /healthz never requires authentication: a probe holds no credential,
+          # and a server restarted forever because nobody logged in would be a
+          # liveness check that causes the outage it reports.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

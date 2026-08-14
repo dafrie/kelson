@@ -2,8 +2,9 @@
 
 kelson is pre-alpha. The renderer, the spec model, the delivery adapters (direct and Flux), the
 `kelson` CLI, `kelson-server` — which serves the v1alpha1 schema over ConnectRPC — and `kelson-mcp`,
-the agent surface over that API ([docs/mcp.md](docs/mcp.md)), exist and are tested. The UI and the
-install path do not exist yet. The server's authentication is an interim single shared password
+the agent surface over that API ([docs/mcp.md](docs/mcp.md)), exist and are tested. The server
+installs with the Helm chart in `deploy/chart/kelson` ([docs/install.md](docs/install.md)); the UI
+does not exist yet. The server's authentication is an interim single shared password
 ([ADR-0013](docs/adr/0013-server-state-and-api-v0.md) §3, amended 2026-08-13,
 [docs/server.md](docs/server.md)): without one it binds loopback only, with one it may bind wider
 behind a TLS-terminating proxy. The real design is

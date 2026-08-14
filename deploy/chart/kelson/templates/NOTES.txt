@@ -1,0 +1,25 @@
+kelson-server {{ .Chart.AppVersion }} is installed as {{ include "kelson.fullname" . }} in namespace {{ .Release.Namespace }}.
+
+Reach it:
+
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "kelson.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}
+  curl http://127.0.0.1:{{ .Values.service.port }}/healthz
+
+{{ if .Values.auth.insecure -}}
+WARNING: this release serves with no authentication (auth.insecure=true, --insecure-bind).
+Anything that can reach the Service can deploy to your cluster. Set auth.existingSecret.name
+to a Secret holding a shared password when that stops being what you meant.
+{{- else -}}
+Every kelson.v1alpha1 route requires the shared password in
+{{ include "kelson.passwordSecretName" . }}/{{ include "kelson.passwordSecretKey" . }}. There is no TLS in
+kelson-server itself: port-forward, or put a TLS-terminating proxy in front of the Service,
+or the password crosses the network in clear (docs/server.md, issue #84).
+{{- end }}
+
+Everything this release created carries kelson.dev/install={{ .Release.Name }}, so
+
+  kubectl get all,secret,configmap,role,rolebinding,serviceaccount -A -l kelson.dev/install={{ .Release.Name }}
+  kubectl get clusterrole,clusterrolebinding -l kelson.dev/install={{ .Release.Name }}
+
+is the complete list of what would go away, and `helm uninstall {{ .Release.Name }}` removes
+exactly that. Workloads kelson deployed are not part of it and keep running (ADR-0003).
