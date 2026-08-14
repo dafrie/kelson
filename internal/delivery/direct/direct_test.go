@@ -712,3 +712,69 @@ func TestHealthReadback(t *testing.T) {
 		t.Fatalf("Service = %v, want healthy", got)
 	}
 }
+
+// TestApplyRecordsNamespaceAuthorship is the fact `kelson uninstall` runs on
+// (issue #59). The renderer stamps kelson.dev/namespace-ownership=declared and
+// deliberately claims nothing about authorship; whether kelson CREATED the
+// namespace is observable only here, in the instant before the apply.
+//
+// Three readings, and the uncertain ones resolve towards leaving the namespace
+// alone: one that existed first is "adopted", and one kelson created stays
+// "created" across every later deploy — a redeploy must not demote the namespace
+// the first deploy made.
+func TestApplyRecordsNamespaceAuthorship(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("created when the apply brings it into existence", func(t *testing.T) {
+		c := newCluster()
+		a := newAdapter(t, c)
+		if _, err := a.Apply(ctx, fullSet(t)); err != nil {
+			t.Fatalf("apply: %v", err)
+		}
+		if got := namespaceOwnership(t, c); got != delivery.NamespaceOwnershipCreated {
+			t.Fatalf("ownership = %q, want %q — uninstall refuses to remove a namespace it cannot prove kelson made",
+				got, delivery.NamespaceOwnershipCreated)
+		}
+	})
+
+	t.Run("stays created across a redeploy", func(t *testing.T) {
+		c := newCluster()
+		a := newAdapter(t, c)
+		if _, err := a.Apply(ctx, fullSet(t)); err != nil {
+			t.Fatalf("first apply: %v", err)
+		}
+		if _, err := a.Apply(ctx, fullSet(t)); err != nil {
+			t.Fatalf("second apply: %v", err)
+		}
+		if got := namespaceOwnership(t, c); got != delivery.NamespaceOwnershipCreated {
+			t.Fatalf("ownership = %q after a redeploy, want %q", got, delivery.NamespaceOwnershipCreated)
+		}
+	})
+
+	t.Run("adopted when the namespace was already there", func(t *testing.T) {
+		c := newCluster()
+		a := newAdapter(t, c)
+		c.create(t, "namespaces", &unstructured.Unstructured{Object: map[string]any{
+			"apiVersion": "v1",
+			"kind":       "Namespace",
+			"metadata":   map[string]any{"name": testNS},
+		}})
+
+		if _, err := a.Apply(ctx, fullSet(t)); err != nil {
+			t.Fatalf("apply: %v", err)
+		}
+		if got := namespaceOwnership(t, c); got != delivery.NamespaceOwnershipAdopted {
+			t.Fatalf("ownership = %q, want %q — deleting an adopted namespace would take its other tenants with it",
+				got, delivery.NamespaceOwnershipAdopted)
+		}
+	})
+}
+
+func namespaceOwnership(t *testing.T, c *cluster) string {
+	t.Helper()
+	ns := c.get(t, "namespaces", "", testNS)
+	if ns == nil {
+		t.Fatalf("namespace %s was not applied", testNS)
+	}
+	return ns.GetAnnotations()[delivery.AnnNamespaceOwnership]
+}

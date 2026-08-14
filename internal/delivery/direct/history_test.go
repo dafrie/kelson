@@ -181,6 +181,100 @@ func TestStoreScopedPerEnvironment(t *testing.T) {
 	}
 }
 
+// TestStoreForget is `kelson uninstall`'s half of the store (issue #59): an
+// environment whose resources are gone must not leave a journal describing them
+// behind, because the next deploy of the same name would inherit its revision
+// numbers and its prune baseline from a deployment that no longer exists.
+func TestStoreForget(t *testing.T) {
+	s, dir := testStore(t, 5)
+	for _, rev := range []string{"rev-00000001", "rev-00000002"} {
+		if _, err := s.Append(testProject, testEnv, Record{Revision: rev}, []byte("x")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.Append(testProject, "development", Record{Revision: "rev-00000001"}, []byte("x")); err != nil {
+		t.Fatal(err)
+	}
+
+	dropped, err := s.Forget(testProject, testEnv)
+	if err != nil {
+		t.Fatalf("forget: %v", err)
+	}
+	if dropped != 2 {
+		t.Fatalf("forget reported %d revisions, want 2 — the count is what the uninstall prints", dropped)
+	}
+	if _, err := os.Stat(filepath.Join(dir, testProject, testEnv)); !os.IsNotExist(err) {
+		t.Fatalf("the environment's history directory survived: %v", err)
+	}
+
+	// The project's other environments are untouched: uninstalling one
+	// environment is not uninstalling the project.
+	entries, err := s.Entries(testProject, "development")
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("development history = %+v (%v), want its own single entry", entries, err)
+	}
+
+	// Forgetting what was never recorded is the outcome the caller asked for.
+	again, err := s.Forget(testProject, testEnv)
+	if err != nil || again != 0 {
+		t.Fatalf("forget of an already-forgotten environment = (%d, %v), want (0, nil)", again, err)
+	}
+}
+
+func TestStoreForgetProject(t *testing.T) {
+	s, dir := testStore(t, 5)
+	for _, env := range []string{testEnv, "development", "staging"} {
+		if _, err := s.Append(testProject, env, Record{Revision: "rev-00000001"}, []byte("x")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.Append("other", testEnv, Record{Revision: "rev-00000001"}, []byte("x")); err != nil {
+		t.Fatal(err)
+	}
+
+	envs, err := s.Environments(testProject)
+	if err != nil {
+		t.Fatalf("environments: %v", err)
+	}
+	if strings.Join(envs, ",") != "development,production,staging" {
+		t.Fatalf("environments = %v, want every recorded environment, sorted", envs)
+	}
+
+	dropped, err := s.ForgetProject(testProject)
+	if err != nil {
+		t.Fatalf("forget project: %v", err)
+	}
+	if dropped != 3 {
+		t.Fatalf("forget project reported %d revisions, want 3", dropped)
+	}
+	if _, err := os.Stat(filepath.Join(dir, testProject)); !os.IsNotExist(err) {
+		t.Fatalf("the project's history directory survived: %v", err)
+	}
+	entries, err := s.Entries("other", testEnv)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("another project's history = %+v (%v), want untouched", entries, err)
+	}
+}
+
+func TestStoreForgetRejectsUnsafeSegments(t *testing.T) {
+	s, _ := testStore(t, 5)
+	for _, tc := range []struct{ project, env string }{
+		{"../escape", testEnv},
+		{testProject, ".."},
+		{"", testEnv},
+	} {
+		if _, err := s.Forget(tc.project, tc.env); err == nil {
+			t.Errorf("forget(%q, %q) must be refused: it would delete outside the data dir", tc.project, tc.env)
+		}
+	}
+	if _, err := s.ForgetProject("../escape"); err == nil {
+		t.Error("forgetProject must refuse a path-escaping project name")
+	}
+	if _, err := s.Environments(".."); err == nil {
+		t.Error("environments must refuse a path-escaping project name")
+	}
+}
+
 func TestStoreRejectsUnsafeSegments(t *testing.T) {
 	s, dir := testStore(t, 5)
 	for _, tc := range []struct{ project, env, revision string }{

@@ -235,6 +235,15 @@ func (c *cluster) get(t *testing.T, resource, namespace, name string) *unstructu
 	return u
 }
 
+// create seeds a live object that kelson did not put there — a namespace that
+// predates the first deploy, say.
+func (c *cluster) create(t *testing.T, resource string, obj *unstructured.Unstructured) {
+	t.Helper()
+	if err := c.dyn.Tracker().Create(gvrFor(t, resource), obj, obj.GetNamespace()); err != nil {
+		t.Fatalf("create %s: %v", resource, err)
+	}
+}
+
 // update replaces a live object, standing in for whatever else writes to the
 // cluster between two kelson deploys.
 func (c *cluster) update(t *testing.T, resource string, obj *unstructured.Unstructured) {
