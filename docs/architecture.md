@@ -294,15 +294,22 @@ Required properties of every mutating operation:
 own audit trail — never a human's token. Per-environment policy governs what it may do unsupervised:
 
 ```yaml
-policy:
-  development: { agents: allow }                    # deploy freely
-  staging:     { agents: allow, require: dry-run }
-  production:  { agents: propose-only }             # must open a PR
+# on each Environment's spec.policy
+development: { agents: allow }                    # deploy freely
+staging:     { agents: allow, require: [dry-run] }
+production:  { agents: propose-only }             # no live mutation without a human
 ```
 
 The insight that makes this coherent: **an agent proposing a change and a human opening a pull request
 travel the identical path.** Render, dry-run, policy check, review, merge. The GitOps mechanism *is* the
 agent safety mechanism — one thing to build, one thing to reason about.
+
+Built as of [ADR-0025](adr/0025-agent-policy.md): the block is read from the *stored* spec and enforced
+in the API server, so a modified client changes nothing, and blast-radius limits (`maxReplicas`,
+`protect`, `forbid`) sit beside `agents:`. What is not built yet is the last step of the sentence
+above — `propose-only` today refuses the mutation and points at the proposal (`dry_run=RENDER`, or
+`Diff`) rather than opening the pull request itself. The git writer has pull-request mode; the server
+has no forge credentials to use it with.
 
 **Observation, not polling.** A watch/SSE event stream lets agents react to outcomes. Plus structured
 `explain` endpoints — "why is this application degraded?" returns causal, machine-readable data

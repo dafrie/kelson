@@ -172,6 +172,11 @@ const sidebars: SidebarsConfig = {
           id: 'adr/0024-agent-identities',
           label: '0024 — Agent identities',
         },
+        {
+          type: 'doc',
+          id: 'adr/0025-agent-policy',
+          label: '0025 — Agent policy',
+        },
       ],
     },
   ],

@@ -257,10 +257,100 @@ payload is logged.
 
 ### What this is not
 
-Not authorization for humans: the password is still one shared secret. Not a policy engine — "may
-this agent deploy on a Friday" needs [#75](https://github.com/dafrie/kelson/issues/75). Not visible
-in the UI yet. And an agent's scope does not change which MCP tools are offered, only which calls
-succeed.
+Not authorization for humans: the password is still one shared secret. Not visible in the UI yet.
+And an agent's scope does not change which MCP tools are offered, only which calls succeed.
+
+## Agent policy: what agents may do in *this* environment
+
+A scope says what one credential may reach. Policy says what **any** agent may do to one
+environment, and it lives in the environment's own spec
+([ADR-0025](adr/0025-agent-policy.md), [#75](https://github.com/dafrie/kelson/issues/75)):
+
+```yaml
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata: {name: production}
+spec:
+  project: shop
+  policy:
+    agents: propose-only        # allow | propose-only
+    require: [dry-run]          # kelson must dry-run the change and it must pass
+    maxReplicas: 5              # the largest an agent may scale a workload here
+    protect: [db]               # components an agent may not remove or scale to zero
+    forbid: [secret-set]        # operations refused to agents here
+```
+
+The same block exists as `spec.defaults.policy` on the Project. The Environment's wins **whole** —
+the two do not merge (rule P4).
+
+**Nothing is restricted until you write it.** An environment with no `policy:` block narrows nothing,
+because the credential is already the grant: an agent cannot change anything unless someone ran
+`kelson agent create --allow mutate`. Write the block on the environments that need guarding, which
+is usually production.
+
+**It is enforced on the server, from the stored spec.** kelson reads the policy out of the spec store
+for the environment a request acts on — never out of the request. An agent that sends its own
+documents saying `agents: allow` for an environment kelson holds as `propose-only` is refused, so a
+modified client buys nothing. Humans are never subject to any of this; a caller authenticated with
+the password is not an agent.
+
+### The operations `forbid:` knows
+
+`deploy`, `rollback`, `promote`, `build`, `secret-set`, `secret-delete`, `spec-write`, `spec-delete`
+— one name per mutating RPC.
+
+`spec-write` and `spec-delete` are guarded for a reason worth spelling out: an environment's desired
+state includes the line saying it is `propose-only`. Without that, an agent could rewrite the policy
+and then deploy. Since a `PutSpec` replaces the project's whole document set (and omitting an
+environment deletes it), every stored environment of the project has a say — so an agent cannot store
+a spec for a project that has *any* propose-only environment.
+
+### What `propose-only` does today
+
+It refuses every live mutation of the environment and tells the agent how to propose instead: re-send
+the deploy with `dry_run=RENDER` for the manifests, or call `Diff`. A human then applies the change.
+
+It does **not** open a pull request yet. The git writer implements pull-request mode
+(`internal/delivery/git`), but the server commits directly and has no forge credentials, so claiming
+"proposal opened" would be a lie. ADR-0025 §7 records the gap and the seam that closes it.
+
+`build` is deliberately not refused by `propose-only`: a build produces an artifact in a registry and
+changes no environment. Use `forbid: [build]` to stop it.
+
+### Refusals name the rule, and the escalation
+
+```json
+{"code": "agent-policy/max-replicas",
+ "resource": "environment/shop/production",
+ "field": "$.spec.policy.maxReplicas",
+ "message": "component \"web\" would run 9 replicas in shop/production, and policy caps an agent at 5",
+ "remediation": "lower replicas for \"web\" to 5 or fewer, or ask a human to deploy the larger count. escalate: …"}
+```
+
+| Code | Rule |
+|---|---|
+| `agent-policy/propose-only` | `agents: propose-only` |
+| `agent-policy/forbidden-operation` | `forbid:` |
+| `agent-policy/max-replicas` | `maxReplicas:` |
+| `agent-policy/protected-resource` | `protect:` |
+| `agent-policy/dry-run-required` | `require: [dry-run]` |
+| `agent-policy/unaddressed` | a mutation naming no project and environment |
+| `agent-policy/unreadable` | the stored policy could not be read — fails closed |
+
+All of them are ConnectRPC `permission_denied`: retrying never helps, a human or a spec change does.
+The prefix is `agent-policy/` rather than `policy/` because `policy/*` already means an admission
+webhook or a Kyverno policy rejected the manifest — a different problem with a different fix.
+
+**Escalation is the error.** There is no approval queue: the refusal names what a human must do —
+run the operation themselves, or relax the rule on the stored Environment. An agent that hits one
+should surface it to a person rather than retry.
+
+### Two things to know before you rely on it
+
+- A **rollback** is not checked against `maxReplicas` or `protect`: it replays recorded manifests, so
+  there is no resolved spec to read. `forbid: [rollback]` and `propose-only` do cover it.
+- On a server started **without a password**, every caller is anonymous and kelson cannot tell a
+  person from an agent — so it applies the agent rules to everyone. Set a password.
 
 ## SecretService needs Secret permissions, and that is a real grant
 
