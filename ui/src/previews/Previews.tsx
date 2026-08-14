@@ -15,7 +15,7 @@ import {
   previewStatus,
   settingsLine,
   shortSha,
-} from "./previews";
+} from "./phase";
 import "./previews.css";
 
 /**

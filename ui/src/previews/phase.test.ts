@@ -13,7 +13,7 @@ import {
   previewStatus,
   settingsLine,
   shortSha,
-} from "./previews";
+} from "./phase";
 
 const settings = (fields: Record<string, unknown> = {}) =>
   create(PreviewSettingsSchema, {
