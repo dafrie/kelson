@@ -26,7 +26,7 @@ func fakePod(name string, containers ...string) *corev1.Pod {
 		cs = append(cs, corev1.Container{Name: c})
 	}
 	return &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS, Labels: map[string]string{appLabel: testApp}},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS, Labels: map[string]string{componentLabel: testApp}},
 		Spec:       corev1.PodSpec{Containers: cs},
 	}
 }

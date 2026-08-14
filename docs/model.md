@@ -325,9 +325,12 @@ that costs nothing to apply uniformly.
 Data components render none: CloudNativePG creates and owns the identity its clusters run under, which is
 what delegating topology to an operator means ([ADR-0005](adr/0005-delegate-to-operators.md)).
 
-The rendered identity labels are unchanged by the rename: pods still carry `kelson.dev/application` and
-Deployments still select on it. A selector is immutable in Kubernetes, so renaming that label would orphan
-every running workload — the spec's vocabulary changed, the cluster's did not.
+The rendered identity labels carry the same vocabulary as the spec: pods carry `kelson.dev/component`
+and Deployments select on it. ADR-0014 originally held that label at `kelson.dev/application` because a
+Deployment's selector is immutable and renaming it would orphan every running workload;
+[ADR-0027](adr/0027-finish-the-component-rename.md) finished the rename while nothing was deployed
+that could be orphaned. The consequence is real and has no migration path: a workload deployed before
+that change cannot be updated in place afterwards, and must be deleted and redeployed.
 
 ## Data components and bindings
 

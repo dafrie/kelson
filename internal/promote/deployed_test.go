@@ -18,7 +18,7 @@ metadata:
   namespace: checkout-production
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: web
+    kelson.dev/component: web
     kelson.dev/environment: production
     kelson.dev/project: checkout
 spec:
@@ -26,7 +26,7 @@ spec:
   template:
     metadata:
       labels:
-        kelson.dev/application: web
+        kelson.dev/component: web
     spec:
       serviceAccountName: web
       containers:
@@ -42,7 +42,7 @@ metadata:
   name: digest
   namespace: checkout-production
   labels:
-    kelson.dev/application: digest
+    kelson.dev/component: digest
 spec:
   schedule: 30 6 * * 1-5
   jobTemplate:
@@ -50,7 +50,7 @@ spec:
       template:
         metadata:
           labels:
-            kelson.dev/application: digest
+            kelson.dev/component: digest
         spec:
           serviceAccountName: digest
           restartPolicy: Never
@@ -79,7 +79,7 @@ metadata:
   name: web
   namespace: checkout-production
   labels:
-    kelson.dev/application: web
+    kelson.dev/component: web
 spec:
   ports:
     - port: 8080
@@ -157,7 +157,7 @@ kind: Deployment
 metadata:
   name: web
   labels:
-    kelson.dev/application: web
+    kelson.dev/component: web
 spec:
   template:
     spec:
@@ -183,7 +183,7 @@ kind: Deployment
 metadata:
   name: web
   labels:
-    kelson.dev/application: web
+    kelson.dev/component: web
 spec:
   template:
     spec:

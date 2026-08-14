@@ -145,7 +145,7 @@ func chartManifests(resolved *model.Resolved, chart *model.ResolvedChart) ([]Man
 	prov := provenance{
 		project:      resolved.Project,
 		environment:  resolved.Environment.Name,
-		application:  chart.Name,
+		component:    chart.Name,
 		resourceName: name,
 		namespace:    resolved.Environment.Namespace,
 		specHash:     hash,

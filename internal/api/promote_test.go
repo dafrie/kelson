@@ -93,7 +93,7 @@ metadata:
   name: web
   namespace: checkout-staging
   labels:
-    kelson.dev/application: web
+    kelson.dev/component: web
 spec:
   template:
     spec:
@@ -107,7 +107,7 @@ metadata:
   name: digest
   namespace: checkout-staging
   labels:
-    kelson.dev/application: digest
+    kelson.dev/component: digest
 spec:
   jobTemplate:
     spec:

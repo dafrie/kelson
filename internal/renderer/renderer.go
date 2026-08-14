@@ -232,8 +232,8 @@ func unresolvedImages(resolved *model.Resolved) Errors {
 type provenance struct {
 	project      string
 	environment  string
-	application  string // empty for overlay-contributed manifests
-	resourceName string // resource metadata.name; defaults to application
+	component    string // empty for overlay-contributed manifests
+	resourceName string // resource metadata.name; defaults to the component name
 	namespace    string
 	specHash     string
 	overlays     []string // overlay paths that touched this resource, in order
@@ -249,8 +249,8 @@ func (p provenance) labels() *yaml.Node {
 	kv := []any{
 		"app.kubernetes.io/managed-by", "kelson",
 	}
-	if p.application != "" {
-		kv = append(kv, "kelson.dev/application", p.application)
+	if p.component != "" {
+		kv = append(kv, "kelson.dev/component", p.component)
 	}
 	kv = append(kv,
 		"kelson.dev/environment", p.environment,
@@ -286,7 +286,7 @@ func (p provenance) name() string {
 	if p.resourceName != "" {
 		return p.resourceName
 	}
-	return p.application
+	return p.component
 }
 
 // baseManifest assembles the canonical document shape:
@@ -313,7 +313,7 @@ func baseManifest(apiVersion, kind string, prov provenance, spec *yaml.Node) Man
 func selectorLabels(prov provenance) *yaml.Node {
 	return mapNode(
 		"kelson.dev/project", prov.project,
-		"kelson.dev/application", prov.application,
+		"kelson.dev/component", prov.component,
 	)
 }
 
@@ -324,16 +324,17 @@ func selectorLabels(prov provenance) *yaml.Node {
 // component produces an unchanged artifact across sibling edits
 // (docs/model.md, "What is versioned").
 //
-// The payload's JSON key stays "application" through ADR-0014's rename. The
-// hash is a change detector, not a document: renaming the key would churn the
-// annotation on every workload in every cluster to say nothing new, and the
-// thing that genuinely changed about rendering — the per-component
-// ServiceAccount — is what Version is for.
-func specHash(resolved *model.Resolved, app *model.ResolvedComponent) (string, error) {
+// The payload's JSON key held "application" through ADR-0014 because renaming
+// it would have churned the annotation on every workload in every cluster to
+// say nothing new. ADR-0027 retires that argument: the same change renames the
+// selector label, and a workload whose selector changed cannot be updated in
+// place anyway — it is deleted and redeployed. There is no annotation left to
+// spare, so the key says what the model says.
+func specHash(resolved *model.Resolved, component *model.ResolvedComponent) (string, error) {
 	payload := struct {
 		Project     string                  `json:"project"`
 		Environment hashEnv                 `json:"environment"`
-		Application model.ResolvedComponent `json:"application"`
+		Component   model.ResolvedComponent `json:"component"`
 	}{
 		Project: resolved.Project,
 		Environment: hashEnv{
@@ -341,7 +342,7 @@ func specHash(resolved *model.Resolved, app *model.ResolvedComponent) (string, e
 			Namespace: resolved.Environment.Namespace,
 			Routing:   resolved.Environment.Routing,
 		},
-		Application: *app,
+		Component: *component,
 	}
 	return hashJSON(payload)
 }

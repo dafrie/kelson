@@ -24,7 +24,7 @@ var provenanceKeys = []string{
 	"kelson.dev/spec-hash",
 	"kelson.dev/overlays",
 	"kelson.dev/project",
-	"kelson.dev/application",
+	"kelson.dev/component",
 	"kelson.dev/environment",
 	"app.kubernetes.io/managed-by",
 }

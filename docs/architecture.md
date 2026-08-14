@@ -171,7 +171,7 @@ Every rendered resource is stamped:
 metadata:
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: checkout
+    kelson.dev/component: checkout
     kelson.dev/environment: production
   annotations:
     kelson.dev/spec-hash:        sha256:…   # normalized spec

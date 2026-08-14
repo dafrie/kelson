@@ -521,7 +521,7 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      kelson.dev/application: web
+      kelson.dev/component: web
   policyTypes: [Ingress]
 `
 	patch := `

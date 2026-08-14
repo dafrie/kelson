@@ -647,8 +647,8 @@ func dedicatedCluster(resolved *model.Resolved, svc *model.ResolvedDataService, 
 }
 
 // serviceProvenance stamps a service resource like every other manifest, with
-// one difference: no kelson.dev/application label. A data service is not owned
-// by one application — being bindable by several is the point.
+// one difference: no kelson.dev/component label. A data service is not owned
+// by one component — being bindable by several is the point.
 func serviceProvenance(resolved *model.Resolved, name, hash string) provenance {
 	return provenance{
 		project:      resolved.Project,
@@ -661,7 +661,7 @@ func serviceProvenance(resolved *model.Resolved, name, hash string) provenance {
 
 // serviceHash is the service's kelson.dev/spec-hash. It covers only what the
 // service's own manifest is built from, so an unrelated spec edit — a new
-// application, a changed image — leaves a database's annotation untouched.
+// component, a changed image — leaves a database's annotation untouched.
 func serviceHash(resolved *model.Resolved, svc *model.ResolvedDataService, name string) (string, error) {
 	return hashJSON(struct {
 		Project     string                    `json:"project"`

@@ -76,7 +76,7 @@ func TestRenderNamespace(t *testing.T) {
 		}
 	}
 	// The Namespace spans every application, so claiming one would be wrong.
-	if got, ok := doc.Metadata.Labels["kelson.dev/application"]; ok {
+	if got, ok := doc.Metadata.Labels["kelson.dev/component"]; ok {
 		t.Fatalf("Namespace must not claim an application, got %q", got)
 	}
 	if !strings.Contains(string(body), "kelson.dev/spec-hash: sha256:") {

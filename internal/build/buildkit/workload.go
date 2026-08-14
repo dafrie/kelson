@@ -55,7 +55,7 @@ const (
 const (
 	labelProject     = "kelson.dev/project"
 	labelEnvironment = "kelson.dev/environment"
-	labelApplication = "kelson.dev/application"
+	labelComponent = "kelson.dev/component"
 )
 
 // withDefaults fills unset parts of the config: the buildkit image and a zero
@@ -89,7 +89,7 @@ func (c Config) Workload(req build.Request) ([]byte, error) {
 	// Result.Reference (build.AnnotationImage).
 	annotations := map[string]string{build.AnnotationImage: req.Image}
 	if req.Application != "" {
-		labels[labelApplication] = req.Application
+		labels[labelComponent] = req.Application
 	}
 	if req.Tag != "" {
 		annotations[build.AnnotationTag] = req.Tag

@@ -64,7 +64,7 @@ const reportPath = "/tmp/report.toml"
 const (
 	labelProject     = "kelson.dev/project"
 	labelEnvironment = "kelson.dev/environment"
-	labelApplication = "kelson.dev/application"
+	labelComponent = "kelson.dev/component"
 	labelStrategy    = "kelson.dev/build-strategy"
 )
 
@@ -136,7 +136,7 @@ func (c Config) Workload(req build.Request) ([]byte, error) {
 	// Result.Reference (build.AnnotationImage).
 	annotations := map[string]string{build.AnnotationImage: req.Image}
 	if req.Application != "" {
-		labels[labelApplication] = req.Application
+		labels[labelComponent] = req.Application
 	}
 	if req.Tag != "" {
 		annotations[build.AnnotationTag] = req.Tag

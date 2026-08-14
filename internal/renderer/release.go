@@ -156,7 +156,7 @@ func releaseManifests(
 	prov := provenance{
 		project:     resolved.Project,
 		environment: resolved.Environment.Name,
-		application: c.Name,
+		component:   c.Name,
 		namespace:   resolved.Environment.Namespace,
 		specHash:    hash,
 	}

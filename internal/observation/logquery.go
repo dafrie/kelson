@@ -41,9 +41,9 @@ const DefaultAroundLines = 200
 // a constant multiple of it.
 const filterScanFactor = 8
 
-// appLabel is the provenance label kelson stamps on a workload's pods. It is
-// how a query addresses an application rather than a pod.
-const appLabel = "kelson.dev/application"
+// componentLabel is the provenance label kelson stamps on a workload's pods. It is
+// how a query addresses a component rather than a pod.
+const componentLabel = "kelson.dev/component"
 
 // OverflowPolicy is the explicit, non-silent behaviour when Follow's backlog is
 // full. Dropping lines is never silent: the caller reads a gap from
@@ -228,7 +228,7 @@ func NewLogQuery(cfg LogQueryConfig) (*LogQuery, error) {
 // turned into a concrete set, and it never ranges over a map.
 func (q *LogQuery) refs(ctx context.Context, qry Query) ([]ContainerRef, error) {
 	list, err := q.client.CoreV1().Pods(qry.Namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: appLabel + "=" + qry.Application,
+		LabelSelector: componentLabel + "=" + qry.Application,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("observation: listing pods for %s/%s: %w", qry.Namespace, qry.Application, err)
@@ -238,7 +238,7 @@ func (q *LogQuery) refs(ctx context.Context, qry Query) ([]ContainerRef, error) 
 
 	var refs []ContainerRef
 	for i := range pods {
-		if pods[i].Labels[appLabel] != qry.Application {
+		if pods[i].Labels[componentLabel] != qry.Application {
 			continue
 		}
 		for _, c := range pods[i].Spec.Containers {
