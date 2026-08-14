@@ -96,12 +96,22 @@ const (
 	// (#98) what is missing is a field the author can add, so the remediation
 	// names it and the `kelson secret set` that precedes it.
 	ErrBindingUnavailableKey = "render/binding-unavailable-key"
-	// ErrSecretBackendUnsupported: the environment selects a secret backend the
-	// renderer has no mechanism for — `sops` (issue #81). `cluster` renders by
-	// emitting nothing extra (a secretKeyRef already addresses a Secret in the
-	// namespace) and `externalSecrets` renders an ExternalSecret per referenced
-	// Secret (ADR-0020). See internal/renderer/secrets.go.
+	// ErrSecretBackendUnsupported: the environment selects a secret backend
+	// that is not one of the three. All three render since issue #81:
+	// `cluster` emits nothing extra (a secretKeyRef already addresses a Secret
+	// in the namespace), `externalSecrets` emits an ExternalSecret per
+	// referenced Secret (ADR-0020), and `sops` emits the decryption block on
+	// every Kustomization kelson writes (ADR-0021). See
+	// internal/renderer/secrets.go.
 	ErrSecretBackendUnsupported = "render/secret-backend-unsupported"
+	// ErrSOPSRequiresFlux: the environment selects backend sops and its
+	// delivery mode is not flux. The sops backend's decryption step belongs to
+	// kustomize-controller; direct mode has no decryptor, so the encrypted
+	// Secret in the repository would never become a Secret in the cluster and
+	// every reference to it would fail at pod start. It is the same
+	// delivery-mode gate ADR-0016 decision 4 took for charts and ADR-0017 took
+	// for previews, decided from spec data alone (ADR-0021).
+	ErrSOPSRequiresFlux = "render/sops-requires-flux"
 	// ErrExternalSecretsNotInstalled: the environment selects backend
 	// externalSecrets and the ClusterProfile reports no external-secrets
 	// operator. The backend delegates entirely to that controller, so an
