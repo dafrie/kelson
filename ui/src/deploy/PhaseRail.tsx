@@ -153,11 +153,11 @@ function ActionLink({
   project: string;
   environment: string;
 }) {
-  const app = `/projects/${encodeURIComponent(project)}`;
+  const base = `/projects/${encodeURIComponent(project)}`;
   const to =
     diagnosis.action.kind === "logs"
-      ? `${app}/${encodeURIComponent(environment)}/logs`
-      : `${app}/edit`;
+      ? `${base}/${encodeURIComponent(environment)}/logs`
+      : `${base}/edit`;
   return (
     <Link className="k-button k-rail__action" to={to}>
       {diagnosis.action.label}

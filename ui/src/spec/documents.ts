@@ -188,7 +188,7 @@ export const DEFAULT_BUILD_STRATEGY: BuildStrategy = "dockerfile";
  * document, and "the user has not typed a port yet" and "the user typed 0" are
  * different states that a number would collapse.
  */
-export interface NewAppForm {
+export interface NewProjectForm {
   project: string;
   /** Which of `image` and `git`/`ref` the document is written from. */
   sourceMode: SourceMode;
@@ -207,7 +207,7 @@ export interface NewAppForm {
   schedule: string;
 }
 
-export const EMPTY_FORM: NewAppForm = {
+export const EMPTY_FORM: NewProjectForm = {
   project: "",
   sourceMode: "image",
   image: "",
@@ -247,7 +247,7 @@ export type WorkloadKind = "service" | "worker" | "cron";
  * schedule-wins branch is a mirror of the Go rule, never a silent choice made
  * on the user's behalf.
  */
-export function workloadKind(form: NewAppForm): WorkloadKind {
+export function workloadKind(form: NewProjectForm): WorkloadKind {
   if (form.schedule.trim() !== "") return "cron";
   if (form.port.trim() !== "") return "service";
   return "worker";
@@ -299,7 +299,7 @@ interface Normal {
   kind: WorkloadKind;
 }
 
-function normalize(form: NewAppForm): Normal {
+function normalize(form: NewProjectForm): Normal {
   return {
     project: form.project.trim(),
     sourceMode: form.sourceMode,
@@ -322,7 +322,7 @@ function normalize(form: NewAppForm): Normal {
   };
 }
 
-export function buildDocuments(form: NewAppForm): SpecText {
+export function buildDocuments(form: NewProjectForm): SpecText {
   const f = normalize(form);
   return {
     projectName: f.project,
@@ -510,7 +510,7 @@ export function dnsLabelProblem(value: string, what: string): string | undefined
  * builder would otherwise have to pick a winner, and picking silently is the
  * failure this project refuses (#141).
  */
-export function formProblems(form: NewAppForm): FieldProblem[] {
+export function formProblems(form: NewProjectForm): FieldProblem[] {
   const out: FieldProblem[] = [];
 
   const name = dnsLabelProblem(form.project.trim(), "a project name");

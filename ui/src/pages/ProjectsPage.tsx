@@ -162,7 +162,7 @@ export function ProjectsPage() {
       {pairs.length > 0 ? (
         <div className="k-grid">
           {pairs.map((pair) => (
-            <AppCard
+            <ProjectCard
               key={`${pair.project}/${pair.environment}`}
               project={pair.project}
               environment={pair.environment}
@@ -202,7 +202,7 @@ function Counts({ kinds }: { kinds: Record<string, StatusKind> }) {
   );
 }
 
-function AppCard({
+function ProjectCard({
   project,
   environment,
   onStatus,

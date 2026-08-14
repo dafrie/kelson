@@ -67,13 +67,13 @@ const transport = createRouterTransport((router) => {
   });
 });
 
-function renderApps() {
+function renderProjects() {
   return renderAt(transport, "/projects", "/projects", <ProjectsPage />);
 }
 
 describe("ProjectsPage", () => {
   it("renders one card per project and environment", async () => {
-    renderApps();
+    renderProjects();
 
     expect(await screen.findByText("production")).toBeTruthy();
     expect(screen.getByText("staging")).toBeTruthy();
@@ -91,7 +91,7 @@ describe("ProjectsPage", () => {
   });
 
   it("maps phases onto pills and shows revision, counts and cause", async () => {
-    renderApps();
+    renderProjects();
 
     const healthy = await screen.findByText("healthy", { selector: ".k-pill" });
     expect(healthy.dataset.status).toBe("synced");
@@ -105,7 +105,7 @@ describe("ProjectsPage", () => {
   });
 
   it("degrades a failing status to an honest pill with the server's reason", async () => {
-    const { container } = renderApps();
+    const { container } = renderProjects();
 
     const pill = await screen.findByText("status unavailable");
     expect(pill.dataset.status).toBe("unknown");

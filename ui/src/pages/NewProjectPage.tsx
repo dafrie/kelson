@@ -35,13 +35,14 @@ import {
   type BuildStrategy,
   type EnvVar,
   type FieldKey,
-  type NewAppForm,
+  type NewProjectForm,
   type SourceMode,
   type SpecText,
 } from "../spec/documents";
 
 /**
- * Creating a component: three fields, then a preview, then a store.
+ * Creating a project and its first component: three fields, then a preview,
+ * then a store.
  *
  * # Two sources, one form
  *
@@ -114,7 +115,7 @@ interface Created {
 
 export function NewProjectPage() {
   const clients = useClients();
-  const [form, setForm] = useState<NewAppForm>(EMPTY_FORM);
+  const [form, setForm] = useState<NewProjectForm>(EMPTY_FORM);
   const [touched, setTouched] = useState<Partial<Record<FieldKey, true>>>({});
   const [attempted, setAttempted] = useState(false);
   const [more, setMore] = useState(false);
@@ -133,7 +134,7 @@ export function NewProjectPage() {
    * error against a line they have already fixed.
    */
   const update = useCallback(
-    <K extends keyof NewAppForm>(key: K, value: NewAppForm[K], field?: FieldKey) => {
+    <K extends keyof NewProjectForm>(key: K, value: NewProjectForm[K], field?: FieldKey) => {
       setForm((prev) => ({ ...prev, [key]: value }));
       if (field !== undefined) setTouched((prev) => ({ ...prev, [field]: true }));
       setWire([]);

@@ -78,7 +78,7 @@ export function LogsPage() {
   const fallbackNamespace = `${project}-${env}`;
   const [namespace, setNamespace] = useState(fallbackNamespace);
   const [resolved, setResolved] = useState(false);
-  const [application, setApplication] = useState("");
+  const [component, setComponent] = useState("");
   const [mode, setMode] = useState<"query" | "follow">("query");
 
   // The server's answer replaces the guess once, and only once: after that the
@@ -95,8 +95,8 @@ export function LogsPage() {
   // input either way: a parse that found nothing must not lock the screen.
   useEffect(() => {
     const first = components[0];
-    if (application === "" && first !== undefined) setApplication(first);
-  }, [components, application]);
+    if (component === "" && first !== undefined) setComponent(first);
+  }, [components, component]);
 
   return (
     <>
@@ -129,8 +129,8 @@ export function LogsPage() {
           <span className="k-eyebrow">Component</span>
           <input
             className="k-input k-mono"
-            value={application}
-            onChange={(e) => setApplication(e.target.value)}
+            value={component}
+            onChange={(e) => setComponent(e.target.value)}
             list="k-components"
             placeholder="web"
           />
@@ -171,9 +171,9 @@ export function LogsPage() {
       </nav>
 
       {mode === "query" ? (
-        <QueryLogs namespace={namespace} application={application} />
+        <QueryLogs namespace={namespace} component={component} />
       ) : (
-        <FollowLogs namespace={namespace} application={application} />
+        <FollowLogs namespace={namespace} component={component} />
       )}
     </>
   );
@@ -232,10 +232,10 @@ export function componentNames(yaml: string): string[] {
 
 function QueryLogs({
   namespace,
-  application,
+  component,
 }: {
   namespace: string;
-  application: string;
+  component: string;
 }) {
   const clients = useClients();
   const run = useRun();
@@ -251,7 +251,7 @@ function QueryLogs({
       const minutes = Number(sinceMinutes);
       const res = await clients.log.queryLogs(
         {
-          selector: { namespace, application },
+          selector: { namespace, application: component },
           tail: Number(tail) || 0,
           sinceUnixMs:
             sinceMinutes !== "" && Number.isFinite(minutes) && minutes > 0
@@ -263,7 +263,7 @@ function QueryLogs({
       );
       setLines(res.lines);
     });
-  }, [run, clients, namespace, application, tail, sinceMinutes, match, isRegex]);
+  }, [run, clients, namespace, component, tail, sinceMinutes, match, isRegex]);
 
   return (
     <>
@@ -389,10 +389,10 @@ const BACKFILL_TAIL = 1_000;
  */
 function FollowLogs({
   namespace,
-  application,
+  component,
 }: {
   namespace: string;
-  application: string;
+  component: string;
 }) {
   const clients = useClients();
 
@@ -431,8 +431,8 @@ function FollowLogs({
   // The stream reads these at connect time, not at render time: a reconnect
   // must not pick up a namespace someone is halfway through typing, and a
   // parent re-render must not tear the stream down.
-  const target = useRef({ namespace, application });
-  target.current = { namespace, application };
+  const target = useRef({ namespace, application: component });
+  target.current = { namespace, application: component };
 
   const flush = useCallback(() => {
     frame.current = undefined;
@@ -644,8 +644,8 @@ function FollowLogs({
   }, [visible]);
 
   const download = useCallback(() => {
-    const { namespace: ns, application: app } = target.current;
-    saveText(logFileName(ns, app, new Date()), toText(retained.current.lines));
+    const { namespace: ns, application: name } = target.current;
+    saveText(logFileName(ns, name, new Date()), toText(retained.current.lines));
   }, []);
 
   return (

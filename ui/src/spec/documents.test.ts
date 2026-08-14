@@ -16,10 +16,10 @@ import {
   splitFindings,
   workloadKind,
   yamlScalar,
-  type NewAppForm,
+  type NewProjectForm,
 } from "./documents";
 
-function form(overrides: Partial<NewAppForm>): NewAppForm {
+function form(overrides: Partial<NewProjectForm>): NewProjectForm {
   return { ...EMPTY_FORM, ...overrides };
 }
 
@@ -124,7 +124,7 @@ spec:
     // One field at a time, against the three-field baseline: each optional
     // input adds exactly its own line and leaves the rest of the document
     // alone. A builder that emitted empty keys would fail every row here.
-    const cases: { name: string; form: NewAppForm; added: string[] }[] = [
+    const cases: { name: string; form: NewProjectForm; added: string[] }[] = [
       {
         name: "health",
         form: form({ ...THREE_FIELDS, health: "/healthz" }),
@@ -347,7 +347,7 @@ spec:
 `);
   });
 
-  it("mirrors model.Application.Workload when both are set — and refuses to send it", () => {
+  it("mirrors model.Component.DerivedKind when both are set — and refuses to send it", () => {
     const both = form({
       project: "mailroom",
       image: "acme/mailroom:2",
@@ -357,7 +357,7 @@ spec:
       domains: ["mailroom.acme.run"],
     });
 
-    // Workload() puts schedule first, so this is what the model would derive.
+    // DerivedKind() puts schedule first, so this is what the model would derive.
     expect(workloadKind(both)).toBe("cron");
     // …and the port, health and domains it would silently ignore are exactly
     // why the form refuses the pair before a document is ever built.
