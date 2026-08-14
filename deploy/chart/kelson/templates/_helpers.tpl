@@ -77,6 +77,34 @@ values.yaml gives: a mutable tag makes a Deployment's identity unknowable.
 {{- end }}
 
 {{/*
+kelson-controller's names and image (ADR-0027 decision 2). It is a second
+workload in the same release rather than a chart of its own: it is the same
+project, the same version and the same namespace, and splitting it would make
+"install kelson" two commands whose versions can disagree.
+
+The image tag falls back to the server's, because the two binaries are cut from
+one tag by one goreleaser run — pinning them separately would be a way to run a
+controller and a server from different builds without noticing.
+*/}}
+{{- define "kelson.controller.fullname" -}}
+{{- printf "%s-controller" (include "kelson.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{- define "kelson.controller.serviceAccountName" -}}
+{{- if .Values.controller.serviceAccount.create }}
+{{- default (include "kelson.controller.fullname" .) .Values.controller.serviceAccount.name }}
+{{- else }}
+{{- default "default" .Values.controller.serviceAccount.name }}
+{{- end }}
+{{- end }}
+
+{{- define "kelson.controller.image" -}}
+{{- $tag := default .Values.image.tag .Values.controller.image.tag -}}
+{{- $tag = required "controller.image.tag (or image.tag) is required: the chart does not default to `latest`, because a mutable tag makes a Deployment's identity unknowable. Pass the release you mean, e.g. --set image.tag=v0.1.0" $tag -}}
+{{- printf "%s:%s" .Values.controller.image.repository $tag -}}
+{{- end }}
+
+{{/*
 The auth gate.
 
 In-cluster the server binds 0.0.0.0, which the binary itself refuses without a

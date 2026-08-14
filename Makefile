@@ -17,7 +17,20 @@ LDFLAGS := -s -w \
   -X github.com/dafrie/kelson/internal/version.Version=$(VERSION) \
   -X github.com/dafrie/kelson/internal/version.Commit=$(COMMIT)
 
-.PHONY: all build binaries server ui ui-clean proto test test-e2e lint fmt clean install release release-snapshot e2e-up e2e e2e-down kind-up kind-down
+# Build tools that are installed on demand rather than vendored. Both are
+# pinned: an unpinned generator is a generator whose output changes when
+# somebody else cuts a release, which is the one thing a committed generated
+# artifact must never do.
+CONTROLLER_GEN         ?= $(GOBIN_DIR)/controller-gen
+CONTROLLER_GEN_VERSION ?= v0.19.0
+SETUP_ENVTEST          ?= $(GOBIN_DIR)/setup-envtest
+# The API-server version the envtest suite runs against. It does not have to
+# match the k8s.io libraries in go.mod: what is being tested is that a real API
+# server accepts the generated CRDs, and a floor is more useful than a mirror.
+ENVTEST_K8S_VERSION    ?= 1.36.2
+GOBIN_DIR              ?= $(shell $(GO) env GOPATH)/bin
+
+.PHONY: all build binaries server ui ui-clean proto generate deepcopy test test-e2e envtest lint fmt clean install release release-snapshot e2e-up e2e e2e-down kind-up kind-down
 
 all: lint test build
 
@@ -33,9 +46,10 @@ build:
 
 # Builds the cmd/* binaries with version ldflags injected into bin/.
 binaries:
-	$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN)/kelson       ./cmd/kelson
-	$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN)/kelson-server ./cmd/kelson-server
-	$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN)/kelson-mcp    ./cmd/kelson-mcp
+	$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN)/kelson            ./cmd/kelson
+	$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN)/kelson-server     ./cmd/kelson-server
+	$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN)/kelson-mcp        ./cmd/kelson-mcp
+	$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN)/kelson-controller ./cmd/kelson-controller
 
 # kelson-server with the real web UI inside it — what a release ships and what
 # you want when clicking around locally. Needs Node.
@@ -65,6 +79,30 @@ ui-clean:
 # any of them.
 proto:
 	buf generate
+
+# Regenerates everything produced from the Go types: schema/*.json and
+# deploy/crds/*.yaml (internal/schemagen), docs/reference/ (internal/specrefdoc),
+# the ClusterProfile support matrix, and api/kelson/v1alpha1's deep copies. Every
+# output is committed and drift-tested, so a change to internal/model that is not
+# followed by this target leaves a red test rather than a silent disagreement.
+#
+# Like `proto`, it is deliberately not part of `all`: the checkout must build
+# without controller-gen installed.
+generate: deepcopy
+	$(GO) generate ./internal/model ./internal/specrefdoc ./internal/clusterprofile/support/gendoc
+	# Helm requires plain, untemplated YAML under a chart's crds/, and a chart is
+	# packaged from its own directory — so the chart carries a copy rather than a
+	# reference (deploy/chart/crds_test.go compares them).
+	cp deploy/crds/kelson.dev_*.yaml deploy/chart/kelson/crds/
+
+# api/kelson/v1alpha1/zz_generated.deepcopy.go — the one build tool ADR-0027
+# decision 3 adopts. It is NOT pointed at internal/model: the spec structs get
+# their deep copies by hand there (internal/model/deepcopy.go explains why), and
+# controller-gen calls into them instead of recursing.
+deepcopy:
+	@command -v $(CONTROLLER_GEN) >/dev/null 2>&1 || \
+		GOBIN=$(GOBIN_DIR) $(GO) install sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION)
+	$(CONTROLLER_GEN) object paths=./api/...
 
 test:
 	$(GO) test -race ./...
@@ -124,3 +162,17 @@ kind-down:
 test-e2e: e2e-up
 	KELSON_E2E=1 KUBECONFIG=$(CURDIR)/hack/bin/e2e.kubeconfig \
 		$(GO) test -tags e2e -v -timeout 15m ./test/e2e/...
+
+# The controller's envtest suite (internal/controller, behind the `envtest`
+# build tag): the generated CRDs against a real API server, which is the only
+# place the structural schema, the pruning and the CEL rules are actually
+# exercised. It needs no cluster — envtest runs an apiserver and an etcd from
+# downloaded binaries — but it does need those binaries, which is why it is a
+# target of its own and why `go test ./...` never runs it. Same two gates as
+# test-e2e: a build tag and an environment variable (see internal/controller's
+# envtest_test.go).
+envtest:
+	@command -v $(SETUP_ENVTEST) >/dev/null 2>&1 || \
+		GOBIN=$(GOBIN_DIR) $(GO) install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
+	KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(CURDIR)/hack/bin -p path)" \
+		KELSON_ENVTEST=1 $(GO) test -tags envtest -v -timeout 10m ./internal/controller/...

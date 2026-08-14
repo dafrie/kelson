@@ -1,0 +1,17 @@
+# Minimal image for kelson-controller (ADR-0027 decision 2).
+#
+# Built by goreleaser (CGO_ENABLED=0 → fully static). The binary for the target
+# goos/goarch is copied into the build context as `kelson-controller`.
+# See .goreleaser.yml and docs/release-policy.md.
+#
+# It is a separate file from Dockerfile rather than a build argument because the
+# two images differ in more than a name: this one exposes the probe port instead
+# of the API port, and it has a different entrypoint. FROM scratch holds for the
+# same reason it does for the server — in-cluster credentials come from the
+# projected service-account token and the cluster CA the kubelet mounts, so no
+# system CA bundle is needed.
+
+FROM scratch
+COPY kelson-controller /kelson-controller
+EXPOSE 8081
+ENTRYPOINT ["/kelson-controller"]
