@@ -1,0 +1,158 @@
+// InstallService: the platform-component install surface of ADR-0021, served
+// (issue #60). It is `kelson install` at the API plane: the same pins table,
+// the same detection-first eligibility, the same preview-confirm-apply shape —
+// the confirmation step is the client's (the UI shows the plan and asks), and
+// Install re-plans server-side so nothing stale is ever applied.
+//
+// ListComponents is the onboarding question — "what does this cluster have,
+// and what is kelson offering to add?" — answered from the pins table crossed
+// with live detection. Presence is the tri-state of issue #144 and travels as
+// data: "yes", "no" and "unknown" are three answers, and a client must never
+// collapse the third into the second.
+syntax = "proto3";
+
+package kelson.v1alpha1;
+
+import "kelson/v1alpha1/profile.proto";
+
+option go_package = "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1;kelsonv1alpha1";
+
+message ListComponentsRequest {}
+
+// ComponentStatus is one pins-table row crossed with detection's answer.
+message ComponentStatus {
+  // Name is the component's CLI token and label value, e.g. "envoy-gateway".
+  string name = 1;
+  // Title is what the component calls itself, for humans.
+  string title = 2;
+  // Version is the upstream release kelson pins. Empty for a row kelson does
+  // not install.
+  string version = 3;
+  // Namespace the component runs in.
+  string namespace = 4;
+  // Provides is what installing this unlocks, in terms of what kelson renders.
+  string provides = 5;
+  // Installable says whether `Install` can act on this row at all. False means
+  // the row is deferred and follow_up says why.
+  bool installable = 6;
+  // FollowUp is the deferral reason for a non-installable row; empty otherwise.
+  string follow_up = 7;
+  // Presence is detection's tri-state answer: "yes", "no" or "unknown"
+  // (internal/clusterprofile.Outcome is the vocabulary of record).
+  string presence = 8;
+  // PresenceDetail is the reason behind the answer: the version detection
+  // found, or the gap that hid the component.
+  string presence_detail = 9;
+  // ManifestURL and Sha256 are the pin, echoed so what an install would fetch
+  // is checkable with curl and sha256sum before anyone clicks anything.
+  string manifest_url = 10;
+  string sha256 = 11;
+}
+
+message ListComponentsResponse {
+  repeated ComponentStatus components = 1;
+  // Gaps detection reported while capturing the profile the answers above are
+  // computed from. A client that hides these turns "could not look" into
+  // "absent", which is exactly the collapse the tri-state forbids.
+  repeated ProfileGap profile_gaps = 2;
+}
+
+message PlanInstallRequest {
+  // Components to plan, by pins-table name. Mutually exclusive with
+  // all_missing, exactly as the CLI's arguments are.
+  repeated string components = 1;
+  // AllMissing plans every supported component detection reports absent.
+  bool all_missing = 2;
+}
+
+// InstallObject is one thing an install would apply, in preview form.
+message InstallObject {
+  string api_version = 1;
+  string kind = 2;
+  string name = 3;
+  string namespace = 4;
+  // Exists is what a read at plan time saw: true means the object is already
+  // there and kelson will apply over it and never delete it.
+  bool exists = 5;
+  // Authored marks an object kelson composed rather than one from the pinned
+  // manifest (the FluxInstance).
+  bool authored = 6;
+}
+
+// InstallItem is one component's planned install.
+message InstallItem {
+  string component = 1;
+  string title = 2;
+  string version = 3;
+  string namespace = 4;
+  string manifest_url = 5;
+  // Digest is the verified sha256 of the fetched manifest — echoed so what was
+  // checked is visible rather than merely claimed.
+  string digest = 6;
+  string provides = 7;
+  repeated InstallObject objects = 8;
+}
+
+// InstallRefusal is a component that was asked about and will not be
+// installed, with detection's answer and the fix.
+message InstallRefusal {
+  string component = 1;
+  // Outcome is detection's answer behind the refusal: "yes" (already there),
+  // "no" (absent, and refused for another stated reason) or "unknown" (the
+  // probe could not look).
+  string outcome = 2;
+  string reason = 3;
+  string remediation = 4;
+}
+
+message PlanInstallResponse {
+  repeated InstallItem items = 1;
+  repeated InstallRefusal refusals = 2;
+}
+
+message InstallRequest {
+  // Components to install, by pins-table name. Mutually exclusive with
+  // all_missing. The server re-plans before applying — eligibility is
+  // detection's answer at apply time, not at the moment a preview was
+  // rendered — and every manifest is fetched and digest-verified before any
+  // component is applied.
+  repeated string components = 1;
+  bool all_missing = 2;
+}
+
+// InstallResult is one object's outcome: "created", "adopted" or "failed".
+message InstallResult {
+  string ref = 1;
+  string outcome = 2;
+  string detail = 3;
+}
+
+message ComponentReport {
+  string component = 1;
+  bool installed = 2;
+  int32 created = 3;
+  int32 adopted = 4;
+  int32 failed = 5;
+  repeated InstallResult results = 6;
+}
+
+message InstallResponse {
+  repeated ComponentReport components = 1;
+  // Refusals from the apply-time plan, so a client that skipped PlanInstall
+  // still sees why something it named was not installed.
+  repeated InstallRefusal refusals = 2;
+}
+
+service InstallService {
+  // ListComponents reports every component kelson knows how to install (or
+  // deliberately does not), with detection's presence verdict for each.
+  rpc ListComponents(ListComponentsRequest) returns (ListComponentsResponse);
+  // PlanInstall computes what an install would do, without applying anything:
+  // every object, the namespace it lands in, the pinned version and the
+  // verified digest.
+  rpc PlanInstall(PlanInstallRequest) returns (PlanInstallResponse);
+  // Install re-plans and applies. Cluster-scoped RBAC, CRDs and webhook
+  // configurations are written; the scope table marks this administrative, so
+  // agent credentials are refused outright (ADR-0024 §3).
+  rpc Install(InstallRequest) returns (InstallResponse);
+}

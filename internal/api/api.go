@@ -305,6 +305,13 @@ type Options struct {
 	Secrets  SecretStore
 	Agents   AgentStore
 
+	// Install builds the platform-component installer (issue #60, ADR-0021);
+	// the seam behind InstallService. Nil answers unimplemented.
+	Install InstallConnector
+	// Nodes reads the node inventory behind NodeService. Nil answers
+	// unimplemented.
+	Nodes NodeReader
+
 	// Audit is the durable audit trail (issue #78, ADR-0026).
 	// *serverstate.AuditStore implements it. A nil one is a server that keeps
 	// no trail: AuditService answers CodeUnimplemented and every capture point
@@ -335,7 +342,7 @@ type Options struct {
 	WatchInterval time.Duration
 }
 
-// Server implements all twelve kelson.v1alpha1 services.
+// Server implements all fourteen kelson.v1alpha1 services.
 type Server struct {
 	specs    SpecStore
 	profile  ProfileCapture
@@ -345,6 +352,8 @@ type Server struct {
 	build    BuildConnector
 	secrets  SecretStore
 	agents   AgentStore
+	install  InstallConnector
+	nodes    NodeReader
 
 	// authz is the scope, rate-limit and audit interceptor. It is built here
 	// and mounted by Register so no caller can serve these handlers without it
@@ -381,6 +390,8 @@ var (
 	_ kelsonv1alpha1connect.ExplainServiceHandler = (*Server)(nil)
 	_ kelsonv1alpha1connect.AgentServiceHandler   = (*Server)(nil)
 	_ kelsonv1alpha1connect.AuditServiceHandler   = (*Server)(nil)
+	_ kelsonv1alpha1connect.InstallServiceHandler = (*Server)(nil)
+	_ kelsonv1alpha1connect.NodeServiceHandler    = (*Server)(nil)
 )
 
 // New returns a Server over the given seams.
@@ -394,6 +405,8 @@ func New(opts Options) *Server {
 		build:         opts.Build,
 		secrets:       opts.Secrets,
 		agents:        opts.Agents,
+		install:       opts.Install,
+		nodes:         opts.Nodes,
 		authz:         newAuthorizer(opts.Now, opts.Logger, opts.Audit),
 		buildDefaults: opts.BuildDefaults,
 		deployTimeout: opts.DeployTimeout,
@@ -433,6 +446,8 @@ func (s *Server) Register(mux *http.ServeMux, opts ...connect.HandlerOption) {
 		func() (string, http.Handler) { return kelsonv1alpha1connect.NewExplainServiceHandler(s, opts...) },
 		func() (string, http.Handler) { return kelsonv1alpha1connect.NewAgentServiceHandler(s, opts...) },
 		func() (string, http.Handler) { return kelsonv1alpha1connect.NewAuditServiceHandler(s, opts...) },
+		func() (string, http.Handler) { return kelsonv1alpha1connect.NewInstallServiceHandler(s, opts...) },
+		func() (string, http.Handler) { return kelsonv1alpha1connect.NewNodeServiceHandler(s, opts...) },
 	}
 	for _, build := range handlers {
 		mux.Handle(build())

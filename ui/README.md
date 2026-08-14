@@ -79,7 +79,8 @@ a deploy or a log tail is a link that keeps working.
 | `/projects/:project/:env/logs` | Bounded Query, and a live tail that pauses, filters, reconnects and saves. `?component=<name>` opens on one component — the link the project page's component list carries | `QueryLogs`, `FollowLogs` |
 | `/projects/:project/:env/promote` | The environment in the path is the **target**: pick a source, read the plan and the diff it produces, then write the pins. It never deploys | `GetSpec`, `Promote` at `RENDER` then `NONE` |
 | `/projects/:project/:env/rollback` | Revision picker, irreversibility preview, then the apply. `?to=<revision>` preselects and previews a target, never applies it | `History`, `Rollback` at `RENDER` then `NONE` |
-| `/cluster` | Server build and the detected ClusterProfile | `/healthz`, `GetProfile` |
+| `/cluster` | Server build, the node inventory (count, readiness, CPU/memory usage where metrics.k8s.io answers), the platform-component checklist with its install flow, and the detected ClusterProfile | `/healthz`, `GetProfile`, `GetNodes`, `ListComponents`, `PlanInstall`, `Install` |
+| `/setup` | The onboarding screen: the same component checklist framed for a first run — what is present, what is missing, an install flow per missing row, and where to go next | `ListComponents`, `PlanInstall`, `Install` |
 
 The history screen ([#67](https://github.com/dafrie/kelson/issues/67)) is bounded
 by what `DeployService.History` actually returns, which is five strings per

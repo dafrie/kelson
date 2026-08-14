@@ -12,6 +12,7 @@ import { EditSpecPage } from "./pages/EditSpecPage";
 import { HistoryPage } from "./pages/HistoryPage";
 import { LogsPage } from "./pages/LogsPage";
 import { NewProjectPage } from "./pages/NewProjectPage";
+import { OnboardingPage } from "./pages/OnboardingPage";
 import { PromotePage } from "./pages/PromotePage";
 import { RollbackPage } from "./pages/RollbackPage";
 import { EmptyState } from "./components/States";
@@ -70,6 +71,7 @@ export const routes = createRoutesFromElements(
         <Route path="projects/:project/:env/promote" element={<PromotePage />} />
         <Route path="projects/:project/:env/rollback" element={<RollbackPage />} />
         <Route path="cluster" element={<ClusterPage />} />
+        <Route path="setup" element={<OnboardingPage />} />
         <Route
           path="*"
           element={
