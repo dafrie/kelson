@@ -555,3 +555,51 @@ func TestFluxOperatorFinding(t *testing.T) {
 }
 
 func boolPtr(b bool) *bool { return &b }
+
+// TestInteractiveRefusesDevNull pins the gate the E2E suite caught open: a
+// child process whose parent wired up no stdin inherits /dev/null, which is a
+// character device — a file-mode sniff calls it a terminal, and the
+// confirmation gates then wait on a reader that answers only EOF. The probe
+// must say "not a terminal" for exactly this input.
+func TestInteractiveRefusesDevNull(t *testing.T) {
+	devnull, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatalf("opening %s: %v", os.DevNull, err)
+	}
+	defer devnull.Close() //nolint:errcheck // read-only file, nothing to lose
+
+	cmd := &cobra.Command{}
+	cmd.SetIn(devnull)
+	if interactive(cmd) {
+		t.Fatalf("interactive() = true for %s; an unattended run would be prompted with nobody to answer", os.DevNull)
+	}
+}
+
+// TestConfirmDistinguishesEOFFromDecline: a stdin that closes before the
+// question is answered is the unattended case, and must surface as an error a
+// caller turns into a non-zero exit. A bare Enter is a human declining the
+// default — a quiet no, not an error.
+func TestConfirmDistinguishesEOFFromDecline(t *testing.T) {
+	ask := func(stdin string) (bool, error) {
+		var buf bytes.Buffer
+		cmd := &cobra.Command{}
+		cmd.SetOut(&buf)
+		cmd.SetIn(strings.NewReader(stdin))
+		return confirm(cmd, "proceed?")
+	}
+
+	if _, err := ask(""); err == nil {
+		t.Errorf("confirm on a closed stdin returned no error; EOF is not an answer")
+	}
+	ok, err := ask("\n")
+	if err != nil {
+		t.Errorf("confirm on a bare Enter errored: %v; that is a human declining the default", err)
+	}
+	if ok {
+		t.Errorf("confirm on a bare Enter said yes")
+	}
+	ok, err = ask("y\n")
+	if err != nil || !ok {
+		t.Errorf("confirm on an explicit yes = (%v, %v), want (true, nil)", ok, err)
+	}
+}

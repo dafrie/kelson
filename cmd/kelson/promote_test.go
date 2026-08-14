@@ -188,8 +188,8 @@ func TestPromoteWithoutConfirmationWritesNothing(t *testing.T) {
 	if code != exitErr {
 		t.Fatalf("exit = %d, want 1\n%s", code, stdout)
 	}
-	if !strings.Contains(msg, "cancelled") {
-		t.Errorf("message = %q, want a cancellation", msg)
+	if !strings.Contains(msg, "stdin closed") {
+		t.Errorf("message = %q, want the stdin-closed refusal naming --yes", msg)
 	}
 	after, err := os.ReadFile(production)
 	if err != nil {

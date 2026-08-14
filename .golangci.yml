@@ -63,6 +63,12 @@ linters:
             - github.com/invopop/jsonschema
             - github.com/spf13/cobra
             - gopkg.in/yaml.v3
+            # Terminal detection only (an ioctl behind a portable API). The
+            # CLI's confirmation gates must distinguish a human's terminal
+            # from /dev/null, and /dev/null is a character device — a
+            # file-mode sniff cannot tell them apart (cmd/kelson/deploy.go,
+            # interactive).
+            - golang.org/x/term
         # The cluster-facing planes. internal/observation watches live
         # resources by definition and internal/clusterprofile/detect probes one
         # (docs/architecture.md), so both need the same client libraries as
