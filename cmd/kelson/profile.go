@@ -59,6 +59,11 @@ func runProfile(cmd *cobra.Command, opts *profileOptions) error {
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "  - %s: %s\n", g.Field, g.Reason)
 		}
 	}
+	// The skew statements are composed from the versions in the YAML below
+	// rather than stored in it: they are a judgement about the profile, and a
+	// judgement written into the input would be carried, stale, into every later
+	// `render --profile cluster.yaml` that reads the file back.
+	writeSkew(cmd.ErrOrStderr(), prof)
 	data, err := yaml.Marshal(prof)
 	if err != nil {
 		return fmt.Errorf("encoding profile: %w", err)

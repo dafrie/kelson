@@ -16,11 +16,16 @@ import (
 // address they point at — which the connection error text needs, because "the
 // server did not answer" is useless without saying which server.
 //
-// Only the services the surface actually uses are here. RenderService and
-// ProfileService have no tool: rendering a spec to YAML and capturing a cluster
-// profile are not tasks an agent does — they are inputs to tasks the tools
-// already compose — and every tool that exists costs selection accuracy for the
-// ones that matter (ADR-0008).
+// Only the services the surface actually uses are here. RenderService has no
+// tool: rendering a spec to YAML is not a task an agent does — it is an input to
+// tasks the tools already compose — and every tool that exists costs selection
+// accuracy for the ones that matter (ADR-0008).
+//
+// ProfileService has no tool of its own for the same reason, and is still here:
+// capturing a cluster profile is not a task, but the version skew in it is
+// something an agent needs *while* diagnosing one, which is precisely when
+// ADR-0008 says to extend an existing tool rather than add a read tool beside
+// it. diagnose_application composes it (issue #57).
 type clients struct {
 	addr    string
 	spec    kelsonv1alpha1connect.SpecServiceClient
@@ -28,6 +33,7 @@ type clients struct {
 	logs    kelsonv1alpha1connect.LogServiceClient
 	events  kelsonv1alpha1connect.EventServiceClient
 	secrets kelsonv1alpha1connect.SecretServiceClient
+	profile kelsonv1alpha1connect.ProfileServiceClient
 }
 
 // fail renders a failed RPC as a tool error.

@@ -51,6 +51,8 @@ type fakeServer struct {
 
 	setSecret   func(*kelsonv1alpha1.SetSecretRequest) (*kelsonv1alpha1.SetSecretResponse, error)
 	listSecrets func(*kelsonv1alpha1.ListSecretsRequest) (*kelsonv1alpha1.ListSecretsResponse, error)
+
+	getProfile func(*kelsonv1alpha1.GetProfileRequest) (*kelsonv1alpha1.GetProfileResponse, error)
 }
 
 var (
@@ -59,6 +61,7 @@ var (
 	_ kelsonv1alpha1connect.LogServiceHandler    = (*fakeServer)(nil)
 	_ kelsonv1alpha1connect.EventServiceHandler  = (*fakeServer)(nil)
 	_ kelsonv1alpha1connect.SecretServiceHandler = (*fakeServer)(nil)
+	_ kelsonv1alpha1connect.ProfileServiceHandler = (*fakeServer)(nil)
 )
 
 func notWired(what string) error {
@@ -166,6 +169,14 @@ func (f *fakeServer) ListSecrets(_ context.Context, req *connect.Request[kelsonv
 	return respond(msg, err)
 }
 
+func (f *fakeServer) GetProfile(_ context.Context, req *connect.Request[kelsonv1alpha1.GetProfileRequest]) (*connect.Response[kelsonv1alpha1.GetProfileResponse], error) {
+	if f.getProfile == nil {
+		return nil, notWired("GetProfile")
+	}
+	msg, err := f.getProfile(req.Msg)
+	return respond(msg, err)
+}
+
 func (f *fakeServer) DeleteSecret(context.Context, *connect.Request[kelsonv1alpha1.DeleteSecretRequest]) (*connect.Response[kelsonv1alpha1.DeleteSecretResponse], error) {
 	// Deliberately never wired: no tool composes DeleteSecret. Deleting a
 	// credential an agent cannot see and cannot restore is not a task that
@@ -208,6 +219,7 @@ func startWith(t *testing.T, fake *fakeServer, password string) *harness {
 	mux.Handle(kelsonv1alpha1connect.NewLogServiceHandler(fake))
 	mux.Handle(kelsonv1alpha1connect.NewEventServiceHandler(fake))
 	mux.Handle(kelsonv1alpha1connect.NewSecretServiceHandler(fake))
+	mux.Handle(kelsonv1alpha1connect.NewProfileServiceHandler(fake))
 	srv := httptest.NewServer(record(fake, mux))
 	t.Cleanup(srv.Close)
 

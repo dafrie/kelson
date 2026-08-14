@@ -67,7 +67,7 @@ type rollbackOptions struct {
 }
 
 func runRollback(cmd *cobra.Command, opts *rollbackOptions) error {
-	target, set, err := resolveDeliveryTarget(opts.specInput, opts.history, opts.mode)
+	target, set, err := resolveDeliveryTarget(opts.specInput, opts.history, opts.mode, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}

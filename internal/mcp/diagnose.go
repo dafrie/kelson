@@ -9,14 +9,18 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
+	"github.com/dafrie/kelson/internal/clusterprofile"
+	"github.com/dafrie/kelson/internal/clusterprofile/support"
 	"github.com/dafrie/kelson/internal/model"
 )
 
 const diagnoseApplicationDescription = `Answer "what is wrong with this environment, and why" in one call.
 
-Composes, for one (project, environment): the delivery phase, revision, namespace and cause; every workload's health verdict with the server's own remediation; a bounded window of the failing workload's logs (the lines before it terminated, when it is failing); the last 5 deployment revisions; a compact summary of what the spec declares (components, images, kinds); and the Secrets kelson manages in the namespace, by name and key.
+Composes, for one (project, environment): the delivery phase, revision, namespace and cause; every workload's health verdict with the server's own remediation; a bounded window of the failing workload's logs (the lines before it terminated, when it is failing); the last 5 deployment revisions; a compact summary of what the spec declares (components, images, kinds); the Secrets kelson manages in the namespace, by name and key; and the cluster's version skew against what kelson renders against.
 
 The Secrets are there for one specific failure: a workload stuck in CreateContainerConfigError is usually a spec referencing { secret: <name>, key: <key> } that does not exist. Compare the SECRETS section against the references in the spec; set_secret writes a missing one.
+
+The VERSION SKEW section is there for another: an adopted operator too old to serve the API kelson writes accepts the manifest and then never reconciles it, and the symptom arrives long after the deploy with nothing in the workload's logs to point at the version. An [unsupported] line names the component, both versions and what specifically degrades; [unknown] means the version could not be read, not that it is fine; [note] means newer than kelson has tested, which is never a fault.
 
 READ-ONLY. Changes nothing. Never reports a secret value — kelson does not store them and no API returns one.
 
@@ -35,7 +39,7 @@ func diagnoseApplicationTool(c *clients) tool {
 	def := readOnlyTool("diagnose_application", "Diagnose an application", diagnoseApplicationDescription)
 	return tool{
 		def:  def,
-		rpcs: []rpc{rpcStatus, rpcQueryLogs, rpcHistory, rpcGetSpec, rpcListSecrets},
+		rpcs: []rpc{rpcStatus, rpcQueryLogs, rpcHistory, rpcGetSpec, rpcListSecrets, rpcGetProfile},
 		add: func(srv *mcpsdk.Server) {
 			mcpsdk.AddTool(srv, def, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in diagnoseApplicationInput) (*mcpsdk.CallToolResult, any, error) {
 				return c.diagnoseApplication(ctx, in)
@@ -82,6 +86,7 @@ func (c *clients) diagnoseApplication(ctx context.Context, in diagnoseApplicatio
 	c.reportHistory(ctx, &r, in)
 	c.reportSpec(ctx, &r, in)
 	c.reportSecrets(ctx, &r, in)
+	c.reportSkew(ctx, &r)
 	return text(&r)
 }
 
@@ -280,6 +285,50 @@ func (c *clients) reportSecrets(ctx context.Context, r *report, in diagnoseAppli
 		r.addf("  %s %s", pad(s.GetName(), 20), strings.Join(s.GetKeys(), ", "))
 	}
 	r.truncated(dropped, "secrets")
+}
+
+// reportSkew names the version skew between the cluster and what kelson renders
+// against (issue #57).
+//
+// It belongs in a diagnosis for the same reason the Secrets do: it explains a
+// specific failure that is otherwise a mystery. An operator too old to serve the
+// API kelson writes accepts the manifest and then does nothing useful with it,
+// and the symptom — a `kind: postgres` component that never becomes ready, a
+// HelmRelease nothing reconciles — arrives long after the deploy that caused it,
+// with nothing in the workload's own logs to point at the version.
+//
+// The statements are composed here from the profile YAML rather than read off a
+// wire field, because they are a judgement *about* the profile: storing them
+// would carry a stale answer into every consumer that read the document back.
+// internal/clusterprofile/support is pure, so composing them costs a parse.
+//
+// Additive like every other section: a server started without a cluster to
+// profile answers Unimplemented, and that degrades to one line instead of taking
+// the diagnosis with it.
+func (c *clients) reportSkew(ctx context.Context, r *report) {
+	r.section("VERSION SKEW (cluster vs. what kelson renders against)")
+	if c.profile == nil {
+		r.addf("  unavailable — this build has no profile client")
+		return
+	}
+	res, err := c.profile.GetProfile(ctx, connect.NewRequest(&kelsonv1alpha1.GetProfileRequest{}))
+	if err != nil {
+		r.addf("  unavailable — %s", connectMessage(err))
+		return
+	}
+	profile, err := clusterprofile.Unmarshal(res.Msg.GetYaml())
+	if err != nil {
+		r.addf("  unavailable — the server's profile document does not decode: %s", err)
+		return
+	}
+	statements := support.Check(profile).Statements()
+	if len(statements) == 0 {
+		r.addf("  none: every component this cluster reports is at or above the version kelson requires")
+		return
+	}
+	for _, s := range statements {
+		r.addf("  %s", s)
+	}
 }
 
 // environmentImagePins reads the diagnosed Environment's per-component image

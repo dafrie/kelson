@@ -33,6 +33,8 @@ var (
 	rpcQueryLogs = rpc{kelsonv1alpha1connect.LogServiceName, "QueryLogs"}
 	rpcWatch     = rpc{kelsonv1alpha1connect.EventServiceName, "Watch"}
 
+	rpcGetProfile = rpc{kelsonv1alpha1connect.ProfileServiceName, "GetProfile"}
+
 	rpcSetSecret   = rpc{kelsonv1alpha1connect.SecretServiceName, "SetSecret"}
 	rpcListSecrets = rpc{kelsonv1alpha1connect.SecretServiceName, "ListSecrets"}
 )

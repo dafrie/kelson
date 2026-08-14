@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -153,7 +154,7 @@ func previewFlags(cmd *cobra.Command, opts *previewOptions) {
 }
 
 func runPreviewRender(cmd *cobra.Command, opts *previewOptions) error {
-	set, err := renderPreview(opts)
+	set, err := renderPreview(opts, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}
@@ -187,7 +188,7 @@ func runPreviewPublish(cmd *cobra.Command, opts *previewOptions) error {
 	if opts.push == nil {
 		return fmt.Errorf("the artifact publisher is unavailable in this build")
 	}
-	set, err := renderPreview(opts)
+	set, err := renderPreview(opts, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}
@@ -231,8 +232,12 @@ func runPreviewPublish(cmd *cobra.Command, opts *previewOptions) error {
 // and render for the change request. Both rungs call it, which is what makes
 // `preview render` a rehearsal of `preview publish` rather than a second
 // implementation of it.
-func renderPreview(opts *previewOptions) (*preview.Set, error) {
-	profile, err := resolveProfile(opts.profile, opts.kubeconfig)
+//
+// warn takes the profile's version-skew statements, which is the whole point of
+// reporting them here: a preview is where a too-old component should surface,
+// not the apply that follows it (issue #57).
+func renderPreview(opts *previewOptions, warn io.Writer) (*preview.Set, error) {
+	profile, err := resolveProfile(opts.profile, opts.kubeconfig, warn)
 	if err != nil {
 		return nil, err
 	}

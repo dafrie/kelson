@@ -240,7 +240,7 @@ func printPromotionPlan(out *printer, changes []promote.Change) {
 // the same machinery, so a promotion cannot show a different kind of preview
 // from the command that previews everything else.
 func printPromotionDiff(cmd *cobra.Command, opts *promoteOptions, spec *promoteSpec, edited []byte, file string) error {
-	profile, err := resolveProfile(opts.profile, opts.kubeconfig)
+	profile, err := resolveProfile(opts.profile, opts.kubeconfig, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}

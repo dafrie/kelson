@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -50,7 +51,7 @@ type renderOptions struct {
 }
 
 func runRender(cmd *cobra.Command, opts *renderOptions) error {
-	_, _, manifests, _, err := resolveAndRender(opts.specInput)
+	_, _, manifests, _, err := resolveAndRender(opts.specInput, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}
@@ -97,8 +98,12 @@ const imageFlagUsage = "image reference for applications the spec builds from so
 // cannot drift on what "the current render" means. It returns the resolved
 // ClusterProfile too, so `kelson diff --dry-run=server` can hand it to the L2
 // engine (issue #45) instead of resolving it a second time.
-func resolveAndRender(in specInput) (*model.Project, *model.Environment, []renderer.Manifest, clusterprofile.ClusterProfile, error) {
-	profileValue, err := resolveProfile(in.profile, in.kubeconfig)
+//
+// warn receives the profile's version-skew statements; pass nil (or io.Discard)
+// for a render whose profile is already being reported on elsewhere, so the
+// same cluster is not warned about twice in one command.
+func resolveAndRender(in specInput, warn io.Writer) (*model.Project, *model.Environment, []renderer.Manifest, clusterprofile.ClusterProfile, error) {
+	profileValue, err := resolveProfile(in.profile, in.kubeconfig, warn)
 	if err != nil {
 		return nil, nil, nil, clusterprofile.ClusterProfile{}, err
 	}
@@ -134,12 +139,27 @@ func resolveAndRender(in specInput) (*model.Project, *model.Environment, []rende
 // no prometheus) — valid and deterministic, but since #140 a spec whose
 // services declare domains fails against it, because there is no routing
 // substrate to attach them to and no Ingress fallback to hide behind.
-func resolveProfile(flag, kubeconfig string) (clusterprofile.ClusterProfile, error) {
+//
+// This is the one door every command's cluster shape comes through, which makes
+// it the place to report version skew (issue #57): a component too old to serve
+// the API kelson renders against is named here, at preview time, instead of
+// failing confusingly at apply time. The statements go to warn — nil silences
+// them, which is what a second, internal render wants. A captured profile is
+// checked exactly like a live one: a stale `cluster.yaml` recording a
+// since-upgraded operator is the same skew from the renderer's point of view.
+func resolveProfile(flag, kubeconfig string, warn io.Writer) (clusterprofile.ClusterProfile, error) {
 	switch flag {
 	case "":
+		// The zero profile detects nothing, so it has no versions to be skewed
+		// against; skipping the report keeps offline renders quiet.
 		return clusterprofile.ClusterProfile{}, nil
 	case "from-cluster":
-		return detect.FromCluster(kubeconfig)
+		p, err := detect.FromCluster(kubeconfig)
+		if err != nil {
+			return clusterprofile.ClusterProfile{}, err
+		}
+		writeSkew(warn, p)
+		return p, nil
 	default:
 		data, err := os.ReadFile(filepath.Clean(flag))
 		if err != nil {
@@ -149,6 +169,7 @@ func resolveProfile(flag, kubeconfig string) (clusterprofile.ClusterProfile, err
 		if err := yaml.Unmarshal(data, &p); err != nil {
 			return clusterprofile.ClusterProfile{}, fmt.Errorf("parsing cluster profile %s: %w", flag, err)
 		}
+		writeSkew(warn, p)
 		return p, nil
 	}
 }
