@@ -37,6 +37,10 @@ type fakeServer struct {
 	// creds is the Authorization header of every request, in call order, so a
 	// test can assert the shared password rode along (#84's interim cut).
 	creds []string
+	// reasons is the Kelson-Reason header of every request, in call order, so a
+	// test can assert an agent's stated reason reached the server rather than
+	// being accepted by the tool and dropped (#78).
+	reasons []string
 
 	listSpecs func(*kelsonv1alpha1.ListSpecsRequest) (*kelsonv1alpha1.ListSpecsResponse, error)
 	getSpec   func(*kelsonv1alpha1.GetSpecRequest) (*kelsonv1alpha1.GetSpecResponse, error)
@@ -264,6 +268,7 @@ func record(fake *fakeServer, next http.Handler) http.Handler {
 		fake.mu.Lock()
 		fake.calls = append(fake.calls, strings.TrimPrefix(strings.ReplaceAll(r.URL.Path, "/", "."), "."))
 		fake.creds = append(fake.creds, r.Header.Get("Authorization"))
+		fake.reasons = append(fake.reasons, r.Header.Get(ReasonHeader))
 		fake.mu.Unlock()
 		next.ServeHTTP(w, r)
 	})
@@ -279,6 +284,12 @@ func (f *fakeServer) credentials() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.creds...)
+}
+
+func (f *fakeServer) statedReasons() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.reasons...)
 }
 
 // call invokes one tool and returns its text, failing the test if the tool

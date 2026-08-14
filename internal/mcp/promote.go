@@ -34,6 +34,7 @@ type promoteInput struct {
 	Execute         bool     `json:"execute,omitempty" jsonschema:"false (default) previews only; true writes the pins to the stored spec"`
 	Version         string   `json:"version,omitempty" jsonschema:"the spec version read before promoting; a mismatch fails with store/version-conflict instead of overwriting"`
 	IdempotencyKey  string   `json:"idempotency_key,omitempty" jsonschema:"reuse the key from a previous attempt so a retry is the same write, not a second one"`
+	Reason          string   `json:"reason,omitempty" jsonschema:"why you are promoting, in one sentence; recorded in the audit trail beside the action"`
 }
 
 func promoteTool(c *clients) tool {
@@ -65,7 +66,7 @@ func (c *clients) promoteApplication(ctx context.Context, in promoteInput) (*mcp
 		key = newIdempotencyKey()
 	}
 
-	res, err := c.deploy.Promote(ctx, connect.NewRequest(&kelsonv1alpha1.PromoteRequest{
+	res, err := c.deploy.Promote(ctx, reasoned(connect.NewRequest(&kelsonv1alpha1.PromoteRequest{
 		Project:         in.Project,
 		FromEnvironment: in.FromEnvironment,
 		ToEnvironment:   in.ToEnvironment,
@@ -73,7 +74,7 @@ func (c *clients) promoteApplication(ctx context.Context, in promoteInput) (*mcp
 		DryRun:          dryRun,
 		Version:         in.Version,
 		IdempotencyKey:  key,
-	}))
+	}), in.Reason))
 	if err != nil {
 		return nil, nil, c.fail(rpcPromote, err)
 	}

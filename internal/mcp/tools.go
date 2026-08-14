@@ -120,6 +120,12 @@ func mutatingTool(name, title, description string, destructive bool) *mcpsdk.Too
 			// Every mutating tool carries an idempotency key, minted here when
 			// the caller does not supply one, so a retry is the same operation
 			// rather than a second one (issue #71).
+			//
+			// Every mutating tool also takes an optional `reason`, which rides
+			// to the server as a header and lands in the action's audit record
+			// (issue #78, ADR-0026 §4). It is how an agent states *why* it did
+			// something, which is the half of "what did it actually do?" that
+			// no amount of server-side observation can reconstruct.
 			IdempotentHint: true,
 		},
 	}
