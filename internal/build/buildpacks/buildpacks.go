@@ -56,6 +56,7 @@ import (
 
 	"github.com/dafrie/kelson/internal/build"
 	"github.com/dafrie/kelson/internal/build/registry"
+	"github.com/dafrie/kelson/internal/redact"
 )
 
 // StrategyName is the builder strategy id for buildpacks (ADR-0010). It is
@@ -100,8 +101,24 @@ type Config struct {
 	// RunImage is the base image app layers are stacked onto and that rebase
 	// replaces. Empty selects DefaultRunImage.
 	RunImage string
+	// GitImage clones the source into the workspace. Defaults to
+	// DefaultGitImage. It runs as an unprivileged init container, exactly as
+	// it does for buildkit: an in-cluster build starts with an empty
+	// workspace, and the lifecycle has no clone of its own.
+	GitImage string
 	// ServiceAccount the Job runs as, when the caller wants a non-default SA.
 	ServiceAccount string
+	// PushSecret is the name of a kubernetes.io/dockerconfigjson Secret in
+	// Namespace holding the credential for the destination registry. It is a
+	// reference, never a value (ADR-0009): kelson does not create it, does not
+	// read it, and never puts a credential in a manifest it renders — the
+	// kubelet projects it into the build pod and the lifecycle's keychain
+	// picks it up from $DOCKER_CONFIG.
+	//
+	// Empty means an unauthenticated push, which is correct for a local
+	// registry (kind, a cluster-internal registry) and fails at push time for
+	// anything that requires auth.
+	PushSecret string
 	// Resources applied to the build container. May be zero.
 	Resources ResourceRequirements
 	// Timeout bounds the whole build; "" means no deadline. Non-empty values
@@ -178,6 +195,12 @@ func (d *Driver) Workload(req build.Request) ([]byte, error) {
 // streams its logs to w until completion. Safe to call concurrently for
 // different Requests: each Request renders its own Job with no shared mutable
 // state.
+//
+// The log stream passes through the known-value scrubber (issue #117) for the
+// reason buildkit's does: a credential kelson has resolved must not reach a
+// build log even if the builder echoes it, and "the lifecycle would not do
+// that" is not a property. Everything kelson holds only as a reference (the
+// push Secret) is not scrubbed here because it was never in this process.
 func (d *Driver) Build(ctx context.Context, req build.Request, w io.Writer) (build.Result, error) {
 	manifest, err := d.cfg.Workload(req)
 	if err != nil {
@@ -187,7 +210,14 @@ func (d *Driver) Build(ctx context.Context, req build.Request, w io.Writer) (bui
 	if err != nil {
 		return build.Result{}, err
 	}
-	return d.cluster.Wait(ctx, name, w)
+	logs := redact.Registered().Writer(w)
+	res, werr := d.cluster.Wait(ctx, name, logs)
+	if flusher, ok := logs.(*redact.ScrubWriter); ok {
+		if ferr := flusher.Flush(); ferr != nil && werr == nil {
+			werr = ferr
+		}
+	}
+	return res, werr
 }
 
 // Rebase patches the run image of a previously built application onto

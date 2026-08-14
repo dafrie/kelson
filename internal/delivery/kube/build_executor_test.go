@@ -17,6 +17,7 @@ import (
 
 	"github.com/dafrie/kelson/internal/build"
 	"github.com/dafrie/kelson/internal/build/buildkit"
+	"github.com/dafrie/kelson/internal/build/buildpacks"
 	"github.com/dafrie/kelson/internal/delivery/kube"
 )
 
@@ -58,14 +59,21 @@ func buildPod() *corev1.Pod {
 	}
 }
 
-// jobManifest renders a build Job manifest matching the test constants, with a
-// buildctl command that carries the output image/name (workload.go renders the
-// real shape).
+// jobManifest renders a build Job manifest matching the test constants: the
+// destination is annotated, which is where the executor reads it (both
+// drivers' workload.go render the same annotations).
 func jobManifest(t *testing.T) []byte {
 	t.Helper()
 	job := &batchv1.Job{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "batch/v1", Kind: "Job"},
-		ObjectMeta: metav1.ObjectMeta{Name: testJobName, Namespace: testNS},
+		TypeMeta: metav1.TypeMeta{APIVersion: "batch/v1", Kind: "Job"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      testJobName,
+			Namespace: testNS,
+			Annotations: map[string]string{
+				build.AnnotationImage: testRepo,
+				build.AnnotationTag:   testTag,
+			},
+		},
 		Spec: batchv1.JobSpec{
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
@@ -312,5 +320,70 @@ func TestBuildExecutorSubmitsARenderedPushSecretJob(t *testing.T) {
 	}
 	if dockerConfig == "" {
 		t.Errorf("DOCKER_CONFIG must survive to the submitted Job, got env %+v", ctr.Env)
+	}
+}
+
+// TestBuildExecutorRunsARenderedBuildpacksJob closes the same loop for the
+// second strategy (#49): one executor serves both, so what it must not depend
+// on is anything buildkit-shaped. The buildpacks Job names its container
+// "buildpack" and reports the push as `kelson: pushed <repo>@<digest>` — the
+// executor has to submit it, find the destination in the annotations rather
+// than in a buildctl `name=`, and pin the same reference it does for BuildKit.
+func TestBuildExecutorRunsARenderedBuildpacksJob(t *testing.T) {
+	req := build.Request{
+		Project:     "shop",
+		Application: "checkout",
+		Environment: "production",
+		Revision:    "abc12345",
+		Image:       testRepo,
+		Tag:         testTag,
+	}
+	manifest, err := buildpacks.Config{Namespace: testNS}.Workload(req)
+	if err != nil {
+		t.Fatalf("Workload: %v", err)
+	}
+
+	logs := "Paketo Buildpack for Node.js 1.2.3\nSaving " + testRepo + "...\n" +
+		"kelson: pushed " + testRepo + "@" + overflowDgst + "\n"
+	cli := newFakeBuildCluster(t, logs)
+
+	ex := kube.NewBuildExecutor(cli)
+	ctx := context.Background()
+	name, err := ex.Submit(ctx, manifest)
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+
+	job, err := cli.BatchV1().Jobs(testNS).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get submitted job: %v", err)
+	}
+	if got := job.Spec.Template.Spec.Containers[0].Name; got != "buildpack" {
+		t.Fatalf("build container = %q; the executor streams whatever the Job names, so this is the name it must follow", got)
+	}
+	if _, err := cli.CoreV1().Pods(testNS).Create(ctx, &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: name + "-pod1", Namespace: testNS, Labels: map[string]string{"job-name": name}},
+	}, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("create build pod: %v", err)
+	}
+
+	job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}
+	if _, err := cli.BatchV1().Jobs(testNS).UpdateStatus(ctx, job, metav1.UpdateOptions{}); err != nil {
+		t.Fatalf("update status: %v", err)
+	}
+
+	var w bytes.Buffer
+	res, err := ex.Wait(ctx, name, &w)
+	if err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	if res.Reference != testRepo+"@"+overflowDgst {
+		t.Errorf("Reference = %q, want %q", res.Reference, testRepo+"@"+overflowDgst)
+	}
+	if res.Tag != testTag {
+		t.Errorf("Tag = %q, want %q", res.Tag, testTag)
+	}
+	if !strings.Contains(w.String(), "Paketo Buildpack") {
+		t.Errorf("the lifecycle's output must reach the caller: %q", w.String())
 	}
 }

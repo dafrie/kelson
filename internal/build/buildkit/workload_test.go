@@ -408,3 +408,23 @@ func TestWorkloadPushSecretIsNotVisibleToTheCloneStep(t *testing.T) {
 		t.Fatal("the clone init container must not receive DOCKER_CONFIG")
 	}
 }
+
+// TestWorkloadAnnotatesTheDestination: the executor turns a build into a
+// digest-pinned reference from these annotations, not by re-reading the
+// buildctl command line — the two drivers spell their destination differently
+// and one executor serves both (build.AnnotationImage).
+func TestWorkloadAnnotatesTheDestination(t *testing.T) {
+	w := workloadFor(t, baseRequest(), Config{Namespace: testNS})
+	if got := w.Metadata.Annotations[build.AnnotationImage]; got != testImage {
+		t.Errorf("%s = %q, want %q", build.AnnotationImage, got, testImage)
+	}
+	if got := w.Metadata.Annotations[build.AnnotationTag]; got != "deadbeefabcd1234" {
+		t.Errorf("%s = %q", build.AnnotationTag, got)
+	}
+
+	req := baseRequest()
+	req.Tag = ""
+	if _, ok := workloadFor(t, req, Config{Namespace: testNS}).Metadata.Annotations[build.AnnotationTag]; ok {
+		t.Error("an untagged build must not annotate a tag")
+	}
+}
