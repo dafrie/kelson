@@ -105,6 +105,18 @@ var Components = []Component{
 		GapField: "flux",
 		Note:     "flux v2's GitRepository/Kustomization API is what kelson commits against in GitOps mode.",
 	},
+	{
+		Name:     "helm-controller",
+		Minimum:  "1.0.0",
+		Degrade:  DegradeRefuse,
+		GapField: "helmController",
+		Note: "the HelmRelease API kelson writes for `kind: helm` components is helm.toolkit.fluxcd.io/v2, " +
+			"which helm-controller serves as stable from 1.0.0 (Flux 2.3). A controller below that floor serves " +
+			"v2beta1/v2beta2 instead, and the difference is not cosmetic — v2 moved the chart reference and the " +
+			"drift-detection settings — so kelson refuses rather than emitting a manifest the controller would " +
+			"reject. It is a separate row from `flux` because a FluxInstance may install a components subset and " +
+			"leave helm-controller out entirely (ADR-0016, issue #60).",
+	},
 	// flux-operator is deliberately not a row. Detection records it (issue
 	// #157) so the delivery plane can prefer its FluxReport, but every row here
 	// declares a version floor whose too-old behaviour is refuse or

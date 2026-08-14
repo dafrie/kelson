@@ -1,0 +1,42 @@
+# Fixture: a helm component from an OCI registry (ADR-0016 decision 4).
+#
+# The same component from the other source kind, and the differences are the
+# point. An OCIRepository *is* one chart, so the chart name joins the registry
+# URL and the version pin becomes the artifact's tag; the HelmRelease then needs
+# no chart selector at all and points at the source with `chartRef`. A
+# HelmRepository is an index that many charts live in, so both the name and the
+# version stay on the release (helm-repository's fixture).
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: checkout
+spec:
+  image: ghcr.io/acme/checkout:1.4.2
+
+  components:
+    - name: podinfo
+      kind: helm
+      chart: podinfo
+      chartVersion: 6.7.1
+      source:
+        oci: oci://ghcr.io/stefanprodan/charts
+      values:
+        replicaCount: 1
+        ui:
+          message: hello from kelson
+
+    - name: worker
+      command: ["bundle", "exec", "sidekiq"]
+---
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: staging
+spec:
+  project: checkout
+  namespace: checkout-staging
+  delivery:
+    mode: flux
+    git:
+      repo: git@github.com:acme/deploy.git
+      path: checkout/staging

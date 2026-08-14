@@ -105,6 +105,21 @@ the chart, version and values that changed, and says so in those words. The upgr
 advisory server-side `helm template` — server-side because it needs to fetch the chart, advisory
 because it is a second opinion about what the cluster will do, and outside the renderer either way.
 
+**Landed.** `kind: helm` renders a `HelmRepository` or an `OCIRepository` plus a
+`helm.toolkit.fluxcd.io/v2` `HelmRelease`, and those two resources are the whole of kelson's inventory
+for the component. Three things the implementation had to decide that this decision did not. The
+version pin is **required** — an unpinned chart resolves at apply time, so the same document would
+install different manifests on different days and the values-only diff would report *no change at all*,
+which turns this decision's worst negative into a silent one. The two source forms are separate fields
+(`source.repository` / `source.oci`) rather than one URL kelson sniffs, because they render different
+Flux kinds and carry the pin in different places — the release's `version` for a repository, the
+artifact's `ref.tag` for OCI. And the mode gate lives in the **pure renderer**, reading the resolved
+environment's delivery mode, rather than in the delivery plane or in validation: the mode is spec data,
+so the gate stays deterministic and a Project document remains valid on its own terms against every
+environment it will ever meet. Secret material goes in `valuesFrom`, and nothing enforces that beyond
+documenting it — kelson does not content-sniff a value to guess whether it is a credential. See
+[docs/model.md](../model.md) "Helm components".
+
 ### 5. PR previews are artifact-per-PR: kelson renders, `ResourceSet` fans out
 
 For each pull request, kelson renders **concrete manifests** for that preview and publishes them as an

@@ -1,0 +1,11 @@
+# The same Flux cluster as helm-repository's, with the operator's version left
+# unread — an install whose controller image is digest-pinned. It changes
+# nothing about the render (the mode gate is spec data) and is here so the
+# fixture set carries the "installed, version unknown" state alongside the known
+# one, which the capability judgement reports as Unknown rather than as too old.
+flux:
+  version: 2.6.4
+  namespace: flux-system
+helmController:
+  namespace: flux-system
+  crds: [helmreleases]

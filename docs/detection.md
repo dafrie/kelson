@@ -25,19 +25,30 @@ names the missing permission so a human can grant it and re-run.
 
 Presence is established once, with a single read of `/apis`: an API group being registered means the
 component that owns it is installed. That one call tells us about Gateway API, cert-manager,
-external-secrets, CloudNativePG, the Valkey operator, Flux, flux-operator, ArgoCD, metrics-server, the
-policy engines and Prometheus without issuing a list per group.
+external-secrets, CloudNativePG, the Valkey operator, Flux, helm-controller, flux-operator, ArgoCD,
+metrics-server, the policy engines and Prometheus without issuing a list per group.
 
-The two data operators are the only findings that carry a version *and* a served-resource list, and
-for the same reason: kelson writes a CR against each of them, so "present" alone cannot answer whether
-a component is renderable. Both versions are read from the operator Deployment's image tag (falling
-back to the chart's `app.kubernetes.io/version` label when the image is digest-pinned), and both
-served sets come from discovery — `clusters`/`databases` in `postgresql.cnpg.io`,
-`valkeyclusters`/`valkeynodes` in `valkey.io`. Neither read may demote its operator to absent when it
-fails: absent is the one answer that would tell a caller to install a *second* operator into a cluster
-that can only have one ([ADR-0005](adr/0005-delegate-to-operators.md)). They fail into a gap instead
-(`cnpg.version`, `valkey.crds`, …), and `internal/clusterprofile/postgres` and
-`internal/clusterprofile/valkey` turn the facts into per-capability verdicts.
+Three findings carry a version *and* a served-resource list, and for the same reason: kelson writes a CR
+against each of them, so "present" alone cannot answer whether a component is renderable. The two data
+operators are two of them; **helm-controller** is the third, because a `kind: helm` component renders a
+`HelmRelease` ([ADR-0016](adr/0016-delivery-flows-v0.md)). Every version is read from the controller
+Deployment's image tag (falling back to the chart's `app.kubernetes.io/version` label when the image is
+digest-pinned), and every served set comes from discovery — `clusters`/`databases` in
+`postgresql.cnpg.io`, `valkeyclusters`/`valkeynodes` in `valkey.io`, `helmreleases` in
+`helm.toolkit.fluxcd.io`. None of those reads may demote its controller to absent when it fails: absent
+is the one answer that would tell a caller to install a *second* operator into a cluster that can only
+have one ([ADR-0005](adr/0005-delegate-to-operators.md)). They fail into a gap instead (`cnpg.version`,
+`valkey.crds`, `helmController.crds`, …), and `internal/clusterprofile/postgres`,
+`internal/clusterprofile/valkey` and `internal/clusterprofile/helm` turn the facts into per-capability
+verdicts.
+
+**helm-controller is a separate finding from Flux**, and that is not bookkeeping: flux-operator's
+`FluxInstance` installs a *components subset*, and "source-controller and helm-controller only" is a
+supported shape ([#60](https://github.com/dafrie/kelson/issues/60)). So a cluster can be running Flux
+and have nothing that reconciles a `HelmRelease`, which is exactly the half-install a capability check
+exists to catch. The controller is located by `app.kubernetes.io/component=helm-controller` rather than
+by `app.kubernetes.io/name`, because Flux's own manifests set `name` to `flux` for the whole suite and
+`component` to the individual controller.
 
 Flux and flux-operator are two findings, not one: most Flux installs have no operator, and the
 delivery plane prefers the operator's `FluxReport` for "is Flux itself healthy" where it exists

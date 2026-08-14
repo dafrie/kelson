@@ -98,6 +98,18 @@ type ClusterProfile struct {
 
 	Flux *Component `yaml:"flux,omitempty" json:"flux,omitempty"`
 
+	// HelmController is Flux's helm-controller: the prerequisite for every
+	// `kind: helm` component (ADR-0005, ADR-0016). It is a separate finding from
+	// Flux because a Flux installation need not include it — flux-operator's
+	// FluxInstance takes a components subset, and "source-controller and
+	// helm-controller only" is a supported shape — so a cluster can be running
+	// Flux and still have nothing to reconcile a HelmRelease.
+	//
+	// It records the same facts as the data operators for the same reason: the
+	// version, and the resources the API server actually serves. The verdict is
+	// internal/clusterprofile/helm's.
+	HelmController *HelmController `yaml:"helmController,omitempty" json:"helmController,omitempty"`
+
 	// FluxOperator is flux-operator, which is a separate finding from Flux:
 	// it manages the Flux installation and publishes a FluxReport the delivery
 	// plane prefers over aggregating controller Deployments itself (issue
@@ -229,6 +241,50 @@ type ValkeyOperator struct {
 // the detection Gap first, which is what the valkey judgement does.
 func (v ValkeyOperator) ServesCRD(plural string) bool {
 	for _, name := range v.CRDs {
+		if name == plural {
+			return true
+		}
+	}
+	return false
+}
+
+// HelmController is the detected Flux helm-controller (ADR-0016).
+//
+// Shaped like [CloudNativePG] and [ValkeyOperator], because the question is the
+// same one: kelson renders a HelmRelease and delegates the chart to a
+// controller, so what matters is whether that controller is there, new enough
+// for the API version kelson writes, and backed by a CRD the API server serves.
+// A cluster whose HelmRelease CRD was never applied accepts nothing kelson
+// renders for a chart component; a cluster with the CRD and no controller
+// accepts it and never installs anything.
+//
+// It carries no chart-source facts. Whether source-controller is present is the
+// [ClusterProfile.Flux] finding, and internal/clusterprofile/helm reads both,
+// because a HelmRelease with no source to fetch from is the other half of the
+// same silent failure.
+type HelmController struct {
+	// Version is the helm-controller version, e.g. 1.3.0, read from its
+	// Deployment. Empty means "installed, version unknown" — a real state that
+	// must not be read as too old.
+	Version string `yaml:"version,omitempty" json:"version,omitempty"`
+	// Namespace is where the controller runs (flux-system by default).
+	Namespace string `yaml:"namespace,omitempty" json:"namespace,omitempty"`
+	// CRDs are the resources the API server serves in helm.toolkit.fluxcd.io,
+	// as plural resource names: helmreleases.
+	//
+	// Empty means the served set could not be read; a Gap on
+	// "helmController.crds" records why. Use [HelmController.ServesCRD] rather
+	// than testing the slice, so "not served" and "not read" stay
+	// distinguishable at the call site.
+	CRDs []string `yaml:"crds,omitempty" json:"crds,omitempty"`
+}
+
+// ServesCRD reports whether the API server serves this plural resource in the
+// helm.toolkit.fluxcd.io group, e.g. "helmreleases". False when the set was
+// never read — callers that need to tell that from a real absence must check
+// len(CRDs) or the detection Gap first, which is what the helm judgement does.
+func (h HelmController) ServesCRD(plural string) bool {
+	for _, name := range h.CRDs {
 		if name == plural {
 			return true
 		}

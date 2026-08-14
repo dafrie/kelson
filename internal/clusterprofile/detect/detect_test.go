@@ -592,6 +592,82 @@ func TestProbeValkeyAbsentIsAbsent(t *testing.T) {
 	}
 }
 
+// --- helm-controller: the prerequisite for a chart component (ADR-0016) ------
+
+// helmControllerDeploy builds the controller Deployment as Flux labels it.
+// The selector is app.kubernetes.io/component rather than .../name, because the
+// Flux manifests set `name` to `flux` for the whole suite and `component` to
+// the individual controller — the label that tells helm-controller apart from
+// source-controller is the one detection has to match.
+func helmControllerDeploy(namespace, image string, extraLabels map[string]string) *unstructured.Unstructured {
+	labels := map[string]any{
+		"app.kubernetes.io/component": "helm-controller",
+		"app.kubernetes.io/part-of":   "flux",
+	}
+	for k, v := range extraLabels {
+		labels[k] = v
+	}
+	d := unstruct(schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"}, "helm-controller", map[string]any{
+		"metadata": map[string]any{"namespace": namespace, "labels": labels},
+		"spec": map[string]any{"template": map[string]any{"spec": map[string]any{
+			"containers": []any{
+				map[string]any{"name": "manager", "image": image},
+			},
+		}}},
+	})
+	d.SetNamespace(namespace)
+	return d
+}
+
+// TestProbeHelmController: the controller is a finding of its own, with the
+// same three facts every adopted operator records.
+func TestProbeHelmController(t *testing.T) {
+	f := newFakeProber(t, []*metav1.APIResourceList{
+		resourceList("helm.toolkit.fluxcd.io/v2", "helmreleases", "helmreleases/status"),
+	})
+	f.seed(t, deploymentGVR, helmControllerDeploy("flux-system", "ghcr.io/fluxcd/helm-controller:v1.3.0", nil))
+
+	prof, err := f.probe(context.Background())
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	if prof.HelmController == nil {
+		t.Fatal("the helm.toolkit.fluxcd.io group is registered, so helm-controller is present")
+	}
+	if prof.HelmController.Version != "v1.3.0" || prof.HelmController.Namespace != "flux-system" {
+		t.Fatalf("helmController = %+v, want v1.3.0 in flux-system", prof.HelmController)
+	}
+	if !reflect.DeepEqual(prof.HelmController.CRDs, []string{"helmreleases"}) {
+		t.Fatalf("crds = %v, want helmreleases and no subresource", prof.HelmController.CRDs)
+	}
+	if len(prof.Incomplete) != 0 {
+		t.Fatalf("a fully readable install is a finding, not a gap: %+v", prof.Incomplete)
+	}
+}
+
+// TestProbeHelmControllerIsNotFlux: source-controller and helm-controller are
+// separate findings, because a FluxInstance may install one without the other
+// (issue #60). A cluster with Flux's source group and no helm group must not
+// report a controller it does not run.
+func TestProbeHelmControllerIsNotFlux(t *testing.T) {
+	f := newFakeProber(t, []*metav1.APIResourceList{
+		resourceList("source.toolkit.fluxcd.io/v1", "gitrepositories", "helmrepositories", "ocirepositories"),
+	})
+	prof, err := f.probe(context.Background())
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	if prof.Flux == nil {
+		t.Fatal("the source.toolkit.fluxcd.io group is registered, so Flux is present")
+	}
+	if prof.HelmController != nil {
+		t.Fatalf("helmController = %+v, want absent — nothing serves helm.toolkit.fluxcd.io", prof.HelmController)
+	}
+	if hasGap(prof.Incomplete, "helmController") {
+		t.Fatalf("a successful look at a cluster without helm-controller is not a gap: %+v", prof.Incomplete)
+	}
+}
+
 func TestImageTag(t *testing.T) {
 	cases := map[string]string{
 		"ghcr.io/cloudnative-pg/cloudnative-pg:1.26.0":       "1.26.0",
@@ -624,7 +700,7 @@ func TestProbeForbiddenAPIsGapsEverything(t *testing.T) {
 	if prof.CertManager != nil || prof.GatewayAPI != nil || prof.Prometheus != nil {
 		t.Fatalf("no component may claim presence when /apis is forbidden: %+v", prof)
 	}
-	for _, want := range []string{"gatewayAPI", "certManager", "externalSecrets", "cnpg", "valkey", "flux", "fluxOperator", "argocd", "metricsServer", "prometheus", "policyEngines"} {
+	for _, want := range []string{"gatewayAPI", "certManager", "externalSecrets", "cnpg", "valkey", "flux", "helmController", "fluxOperator", "argocd", "metricsServer", "prometheus", "policyEngines"} {
 		if !hasGap(prof.Incomplete, want) {
 			t.Fatalf("expected a gap on %q, got %+v", want, prof.Incomplete)
 		}

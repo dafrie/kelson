@@ -46,6 +46,17 @@ const (
 	// ErrServiceName: <project>-<environment>-<service> is too long for the
 	// object names the component's operator derives from it.
 	ErrServiceName = "render/service-name-too-long"
+	// ErrHelmRequiresFlux: the resolved spec has a `kind: helm` component and
+	// the environment's delivery mode is not flux. A helm component renders a
+	// HelmRelease for helm-controller to reconcile, and direct mode has no
+	// helm-controller to delegate to — applying one there produces an object
+	// nothing acts on. ADR-0016 decision 4 accepts this as the first
+	// delivery-mode-gated spec surface, deliberately and for chart delegation
+	// only.
+	ErrHelmRequiresFlux = "render/helm-requires-flux"
+	// ErrChartName: <project>-<environment>-<component> is too long for the
+	// Helm release name derived from it.
+	ErrChartName = "render/chart-name-too-long"
 	// ErrBindingUnknownService: an env binding names a service the resolved
 	// spec does not declare. Model validation catches this for authored specs;
 	// the renderer is also fed a Resolved directly by the API plane.

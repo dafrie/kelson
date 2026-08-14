@@ -1,0 +1,52 @@
+# Fixture: a helm component from a classic Helm repository (ADR-0016 decision 4).
+#
+# What this pins is the pair kelson owns and the boundary around it: a
+# HelmRepository and a HelmRelease, and nothing the chart itself produces. The
+# ingress controller's Deployment, Service and CRDs are helm-controller's to
+# create and Helm's to own; they appear in no kelson manifest set, which is why
+# this golden file is two resources long for something that installs dozens.
+#
+# The environment is in Flux mode, and it has to be: a helm component in direct
+# mode is a structured refusal (render/helm-requires-flux), which no golden file
+# can hold — that case is TestHelmRequiresFluxMode in helm_test.go.
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: checkout
+spec:
+  image: ghcr.io/acme/checkout:1.4.2
+
+  components:
+    - name: ingress
+      kind: helm
+      chart: ingress-nginx
+      chartVersion: 4.11.3
+      source:
+        repository: https://kubernetes.github.io/ingress-nginx
+      values:
+        controller:
+          replicaCount: 2
+          service:
+            externalTrafficPolicy: Local
+        # Quoted on purpose: a chart that expects a string here and gets an
+        # integer fails in its own templates, so the fixture asserts that a
+        # value round-trips as what it was written as.
+        tcp:
+          "9000": "checkout-staging/web:8080"
+
+    - name: web
+      port: 8080
+---
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: staging
+spec:
+  project: checkout
+  namespace: checkout-staging
+  delivery:
+    mode: flux
+    git:
+      repo: git@github.com:acme/deploy.git
+      branch: main
+      path: checkout/staging

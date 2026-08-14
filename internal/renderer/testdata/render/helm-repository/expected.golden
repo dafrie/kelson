@@ -1,0 +1,132 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: checkout-staging
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/environment: staging
+    kelson.dev/project: checkout
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:390d1e9fdf0a284bf9a6450928bd721e42fd79c0d49742a8a0246aa4effe0313
+    kelson.dev/namespace-ownership: declared
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: checkout-staging-ingress
+  namespace: checkout-staging
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: ingress
+    kelson.dev/environment: staging
+    kelson.dev/project: checkout
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:96a3d70b370f78283672b127e7f023fab870bb2742419edaa57d9dbb18b1a596
+spec:
+  interval: 1h
+  url: https://kubernetes.github.io/ingress-nginx
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: checkout-staging-ingress
+  namespace: checkout-staging
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: ingress
+    kelson.dev/environment: staging
+    kelson.dev/project: checkout
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:96a3d70b370f78283672b127e7f023fab870bb2742419edaa57d9dbb18b1a596
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: ingress-nginx
+      version: 4.11.3
+      sourceRef:
+        kind: HelmRepository
+        name: checkout-staging-ingress
+  targetNamespace: checkout-staging
+  values:
+    controller:
+      replicaCount: 2
+      service:
+        externalTrafficPolicy: Local
+    tcp:
+      "9000": checkout-staging/web:8080
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: web
+  namespace: checkout-staging
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: web
+    kelson.dev/environment: staging
+    kelson.dev/project: checkout
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:0dcc738a48c8b460abca77e46d56a9fa89180028b4b0c74dfd6437531353245e
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: checkout-staging
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: web
+    kelson.dev/environment: staging
+    kelson.dev/project: checkout
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:0dcc738a48c8b460abca77e46d56a9fa89180028b4b0c74dfd6437531353245e
+spec:
+  selector:
+    kelson.dev/project: checkout
+    kelson.dev/application: web
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: checkout-staging
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/application: web
+    kelson.dev/environment: staging
+    kelson.dev/project: checkout
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:0dcc738a48c8b460abca77e46d56a9fa89180028b4b0c74dfd6437531353245e
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      kelson.dev/project: checkout
+      kelson.dev/application: web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/managed-by: kelson
+        kelson.dev/application: web
+        kelson.dev/environment: staging
+        kelson.dev/project: checkout
+    spec:
+      serviceAccountName: web
+      containers:
+        - name: web
+          image: ghcr.io/acme/checkout:1.4.2
+          ports:
+            - name: http
+              containerPort: 8080
