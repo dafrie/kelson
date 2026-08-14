@@ -71,8 +71,8 @@ a deploy or a log tail is a link that keeps working.
 | --- | --- | --- |
 | `/apps` | One card per (project, environment): phase pill, revision, cause, live/degraded counts | `ListSpecs`, then one `DeployService.Status` per card |
 | `/apps/new` | Create a component: three fields, a rendered preview, then the store | `PutSpec` at `RENDER`, then with an idempotency key |
-| `/apps/:project` | Environment tabs with status, workload verdicts, data services, the environment's Secrets and the stored documents; buttons into the four flows | `GetSpec`, `Status`, `GetProfile`, `ListSecrets`, `Render` (deferred presets only), `SetSecret`/`DeleteSecret` on use |
-| `/apps/:project/edit` | Edit the stored spec: a form tab and a raw YAML tab, a diff before saving, an optimistic-concurrency save | `GetSpec`, `PutSpec` at `RENDER` then for real, `Diff` |
+| `/apps/:project` | Environment tabs with status, workload verdicts, data services, the environment's PR previews and Secrets, and the stored documents; buttons into the four flows | `GetSpec`, `Status`, `GetProfile`, `ListPreviews`, `ListSecrets`, `Render` (deferred presets only), `SetSecret`/`DeleteSecret` on use |
+| `/apps/:project/edit` | Edit the stored spec: a form tab and a raw YAML tab, a diff before saving, an optimistic-concurrency save. The form reaches `spec.previews` and the `delivery:` stanza it needs (ADR-0017) | `GetSpec`, `PutSpec` at `RENDER` then for real, `Diff` |
 | `/apps/:project/:env/deploy` | Preview (render dry-run) then a confirm that streams the deployment live | `Deploy` at `RENDER`, then at `NONE`; optional `Diff` at `SERVER` |
 | `/apps/:project/:env/diff` | Two tabs: the live cluster's own dry-run verdict, or today's render against a recorded revision. `?from=<revision>` opens the second one preselected | `Diff` at `SERVER`, or with `from_revision`; `History` for the picker |
 | `/apps/:project/:env/history` | The recorded revisions, newest first: what each was, when, the spec hash, the author the mode recorded, and a phase pill on the live one. Links out to diff and rollback | `History`, `Status` |

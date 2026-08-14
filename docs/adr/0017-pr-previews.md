@@ -4,6 +4,8 @@
 - **Date:** 2026-08-14
 - **Amended:** 2026-08-14 — [Stage 2, the publisher](#stage-2--the-publisher-amended-2026-08-14)
   (decisions 8–11)
+- **Amended:** 2026-08-14 — [Stage 3, the API and the UI](#stage-3--the-api-and-the-ui-amended-2026-08-14)
+  (decisions 12–15), which reopens decision 7
 
 ## Context
 
@@ -232,7 +234,8 @@ The work splits three ways, and this ADR commits only the first:
    credential machinery and `internal/delivery/eject`'s layout vocabulary for what goes in the
    artifact. **Landed 2026-08-14 — see decisions 8–11, which settle "the server or a CI job" as a CI
    job.**
-3. **Stage 3.** Surfacing previews in the UI and the API.
+3. **Stage 3.** Surfacing previews in the UI and the API. **Landed 2026-08-14 — see decisions
+   12–15.**
 
 **Until stage 2 lands, a rendered `ResourceSet` waits for artifacts nobody publishes.** flux-operator
 will find the labelled pull requests, create an `OCIRepository` per pull request, and report that the
@@ -241,6 +244,12 @@ of an environment whose CI does not run `kelson preview publish`, which is the s
 documented cause.
 
 ### 7. Preview children are not enumerated by kelson's Status and History RPCs
+
+> **Reopened by decision 12.** `PreviewService.ListPreviews` now enumerates them. What stands
+> unchanged is everything this decision says about `StatusService` and the delivery history: they
+> still do not walk preview namespaces and still do not aggregate preview health. The answer below —
+> that a preview is what the labels and the naming scheme describe — is the answer decision 12 built
+> on rather than replaced.
 
 A preview is a child environment that kelson did not record: no `Environment` document describes it,
 no delivery history entry exists for it, and the thing that created it is flux-operator reacting to a
@@ -350,6 +359,85 @@ one environment would otherwise fight over one hostname, and a preview would be 
 production's traffic. So a preview never serves the hostname the spec asks for, and that is deliberate
 rather than a limitation to fix later.
 
+## Stage 3 — the API and the UI (amended 2026-08-14)
+
+Decision 7 said kelson does not enumerate preview children, and said why: a preview is an environment
+kelson did not record, so answering "which pull requests are deployed" is a decision about what a
+preview *is* to kelson's model rather than an extension of anything above. This section takes that
+decision, and takes the smaller of the two available.
+
+### 12. A preview stays a thing the cluster describes
+
+`PreviewService.ListPreviews(spec, environment)` returns one environment's previews. It does **not**
+make a preview a first-class Environment: no document is written for it, no history entry is recorded,
+`StatusService` still does not walk preview namespaces, and nothing in the schema can create or delete
+one. The service is read-only and has no field a write could arrive in, for the same reason decision 8
+put the publisher in CI — previews are created by a CI job and destroyed by flux-operator, so a write
+RPC would either duplicate the publisher without the checkout and the image reference CI already has,
+or delete an object the operator recreates on its next poll.
+
+The alternative was to promote a preview to an Environment kelson knows about, with its own history
+and its own status. That is a larger model change than this feature justifies: it would give kelson a
+second way for an environment to come into existence, one whose lifecycle kelson does not own, and
+every RPC that takes an environment name would then have to answer what it means for a preview.
+
+### 13. The pair is the source, not the namespaces
+
+The read enumerates the per-change-request `OCIRepository` and `Kustomization` in the *environment's*
+namespace, and derives the preview's namespace from their names. It does not list preview namespaces.
+
+The reason is the failure this ADR itself calls the visible one. An environment whose CI does not run
+`kelson preview publish` has, per change request, an `OCIRepository` reporting a missing artifact, a
+`Kustomization` waiting on it, and **no namespace at all** — so a namespace-based enumeration answers
+"no previews" for precisely the case a reader most needs to see. The pair exists for every preview
+flux-operator knows about; the namespace exists only for the ones that landed.
+
+The `ResourceSetInputProvider`'s exported inputs are deliberately not read. They answer "which change
+requests are labelled", which is a different question, and answering it would mean kelson spelling an
+upstream status field to report something no kelson manifest created.
+
+**A preview's phase is decided server-side**, in `internal/delivery/flux`, out of the two Ready
+conditions: `ready`, `applying`, `awaiting-artifact`, `failed`, `unknown`. That is the delivery state
+machine's rule applied again ([#37](https://github.com/dafrie/kelson/issues/37)) — one place decides
+what a state means and every client renders the same word. `awaiting-artifact` is its own phase rather
+than a kind of failure because its usual cause is a CI step nobody added, and "failed" would send a
+reader to the manifests instead of to the workflow.
+
+**Hostnames are observed, not derived.** They are read from the HTTPRoutes in the preview's own
+namespace rather than computed from the parent's render through `naming.Host`. Deriving them would
+report what kelson *would* publish; reading them reports what the preview serves, which is the only
+version of that answer worth showing next to a phase. The cost is a cluster-scoped read the deploy
+chart cannot grant — a preview's namespace does not exist when the chart is installed — so that one
+read degrades to silence, and the UI says the absence is not a claim.
+
+### 14. The gate is shown, never worked around
+
+An environment that declares `previews:` outside Flux mode gets its settings, no cluster read, and the
+renderer's own `render/previews-require-flux` in the response's `errors`. The refusal is obtained from
+the renderer by name rather than by rendering the environment and filtering: a render fails for a dozen
+unrelated reasons — an unresolved image, a missing overlay — and answering "why are there no previews"
+with the first of those would be worse than the gate's own sentence. This is the reason
+`renderer.PreviewsRequireFlux` is exported and its siblings are not.
+
+The UI shows that error in the panel every other structured refusal reaches a reader through, with its
+code and its remediation intact, and it keeps showing the configuration underneath: a reader whose mode
+is wrong still needs to see what they configured.
+
+### 15. The previews block is authored in the form, under the same byte guard as everything else
+
+The edit form gains the `previews:` block and the `delivery:` stanza it depends on, held to the rule
+`ui/src/spec/edit.ts` already enforces: the form may edit a document only when reading and rewriting it
+reproduces the stored bytes exactly. So a block written in the styling this ADR and docs/model.md show
+— label lists as flow sequences — round-trips and stays editable; the same block written as a block
+sequence is read, displayed, and left read-only because the rebuild would restyle it; a spacing the
+reader cannot reproduce is refused outright rather than guessed at.
+
+Two things the form states rather than enforces. It does not disable the control outside Flux mode: the
+server's refusal explains itself and a greyed-out checkbox cannot. And it does not pretend the block is
+sufficient — the field notes name `kelson preview publish` as the other half, because an environment
+configured in the UI and nowhere else gets change requests whose artifacts never arrive, which is
+exactly the half-state decision 8 left behind.
+
 ## Rationale
 
 - **The Environment is the only document that can carry this.** Component-level is wrong (a preview is
@@ -419,9 +507,18 @@ have a named reason not to be.
   request is open and labelled. A pull request open for three months holds a database for three
   months. flux-operator has no TTL either, so this is not a gap kelson can close by configuration —
   it is a scheduled reaper somebody has to write, and it is future work with nobody's name on it yet.
-- **A preview's status and history are invisible to kelson.** Everything in decision 7 is a thing a
+- **A preview's status and history are invisible to kelson.** ~~Everything in decision 7 is a thing a
   user will reasonably expect and not get: no preview list, no per-preview health, no "which PRs are
-  deployed" answer from the API. `kubectl` answers it and kelson does not.
+  deployed" answer from the API. `kubectl` answers it and kelson does not.~~ *Half closed by stage 3
+  (decisions 12–13): `ListPreviews` answers which change requests are running, at which commit, in
+  which namespace, on which hostnames, and why one is not. What is still true is the rest of decision
+  7 — there is no delivery history for a preview and nothing to roll one back to, because kelson never
+  recorded a revision for it. A preview's past remains the registry's and the forge's.*
+- **A preview's hostnames need a cluster-scoped read the chart does not grant.** Decision 13 reads them
+  from the preview namespace's HTTPRoutes, and that namespace does not exist when the deploy chart is
+  installed, so no namespaced Role can cover it. An install with the chart's RBAC sees its previews and
+  not their hostnames. The read fails soft for exactly that reason, which means "no hostnames" is a
+  state with two causes the API does not distinguish.
 - **Previews inherit the Helm gate's cost.** An Environment with `previews:` is valid until somebody
   changes `delivery.mode`, at which point the same document stops rendering. That is now the second
   delivery-mode-gated surface, and the Helm precedent's warning stands: this is a decision taken
@@ -450,6 +547,11 @@ have a named reason not to be.
 - **TTL or a preview budget becomes real.** A reaper is a clock, which the renderer may not have
   ([ADR-0001](0001-hybrid-state-model.md)) — so it is a controller or a server-side job, and where it lives is the decision, not
   whether previews should expire.
-- **The API needs to enumerate previews.** That is decision 7 reopening, and it starts by deciding
-  whether a preview is a first-class Environment in kelson's model or stays a thing the labels
-  describe.
+- ~~**The API needs to enumerate previews.**~~ *Done, 2026-08-14: decisions 12–15. It stayed a thing
+  the labels and the naming scheme describe. Revisit when somebody needs a preview's **history** —
+  which commits it has run, and a way back to one — because that is the half decision 12 did not take,
+  and taking it means kelson recording revisions for environments it did not create.*
+- **A preview needs a hostname the chart's RBAC can reach.** Decision 13's negative. The fix is either
+  a cluster-scoped HTTPRoute read the installer opts into, or deriving hostnames from the parent's
+  render — and the second is a different answer, not a cheaper one, because it reports what kelson
+  would publish rather than what the preview serves.

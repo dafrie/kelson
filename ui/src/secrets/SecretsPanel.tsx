@@ -5,6 +5,7 @@ import { useRun } from "../api/stream";
 import { Copyable } from "../components/Copyable";
 import { ErrorPanel } from "../components/ErrorPanel";
 import { StatusPill } from "../components/StatusPill";
+import { formatAge } from "../components/phase";
 import type {
   SecretSummary,
   SetSecretResponse,
@@ -382,16 +383,3 @@ function Written({ response }: { response: SetSecretResponse }) {
   );
 }
 
-/**
- * An age the way `kelson secret list` prints one (cmd/kelson/secret.go:
- * humanAge), from the seconds the server counted — so the browser renders the
- * same age the CLI does without needing a clock that agrees with the cluster's.
- */
-export function formatAge(seconds: bigint): string {
-  const s = Number(seconds);
-  if (!Number.isFinite(s) || s <= 0) return "-";
-  if (s < 60) return `${Math.floor(s)}s`;
-  if (s < 3600) return `${Math.floor(s / 60)}m`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h`;
-  return `${Math.floor(s / 86400)}d`;
-}

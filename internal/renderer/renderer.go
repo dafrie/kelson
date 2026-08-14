@@ -73,7 +73,7 @@ func Render(resolved *model.Resolved, profile clusterprofile.ClusterProfile, res
 	}
 	// The same gate for previews (ADR-0017), which cites the Helm precedent
 	// deliberately: a ResourceSet outside Flux mode has nothing to reconcile it.
-	if errs := previewsRequireFlux(resolved); len(errs) > 0 {
+	if errs := PreviewsRequireFlux(resolved); len(errs) > 0 {
 		return nil, errs
 	}
 	// And the mirror image of both for release commands (ADR-0019): only direct

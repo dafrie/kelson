@@ -48,6 +48,7 @@ import (
 	"github.com/dafrie/kelson/internal/build"
 	"github.com/dafrie/kelson/internal/clusterprofile"
 	"github.com/dafrie/kelson/internal/delivery"
+	"github.com/dafrie/kelson/internal/delivery/flux"
 	"github.com/dafrie/kelson/internal/delivery/rollback"
 	"github.com/dafrie/kelson/internal/diff"
 	"github.com/dafrie/kelson/internal/model"
@@ -121,6 +122,14 @@ type Plane struct {
 	// Recorded supplies the manifests a rollback preview compares. Nil for a
 	// mode that keeps no rendered history kelson can read.
 	Recorded rollback.Source
+	// Previews reads an environment's PR previews back out of the cluster
+	// (ADR-0017 stage 3). It rides the delivery plane rather than an Options
+	// seam of its own because a preview is delivery state: the objects it reads
+	// are the ones flux-operator instantiated from the ResourceSet kelson
+	// delivered, and they are in the same cluster this plane just connected to.
+	// Nil means this build cannot read previews, which ListPreviews reports as
+	// unimplemented rather than as an empty list.
+	Previews flux.PreviewReader
 }
 
 // DeliveryConnector builds the delivery plane for one request. It takes the
@@ -277,7 +286,7 @@ type Options struct {
 	WatchInterval time.Duration
 }
 
-// Server implements all eight kelson.v1alpha1 services.
+// Server implements all nine kelson.v1alpha1 services.
 type Server struct {
 	specs    SpecStore
 	profile  ProfileCapture
@@ -307,6 +316,7 @@ var (
 	_ kelsonv1alpha1connect.EventServiceHandler   = (*Server)(nil)
 	_ kelsonv1alpha1connect.BuildServiceHandler   = (*Server)(nil)
 	_ kelsonv1alpha1connect.SecretServiceHandler  = (*Server)(nil)
+	_ kelsonv1alpha1connect.PreviewServiceHandler = (*Server)(nil)
 )
 
 // New returns a Server over the given seams.
@@ -346,6 +356,7 @@ func (s *Server) Register(mux *http.ServeMux, opts ...connect.HandlerOption) {
 		func() (string, http.Handler) { return kelsonv1alpha1connect.NewEventServiceHandler(s, opts...) },
 		func() (string, http.Handler) { return kelsonv1alpha1connect.NewBuildServiceHandler(s, opts...) },
 		func() (string, http.Handler) { return kelsonv1alpha1connect.NewSecretServiceHandler(s, opts...) },
+		func() (string, http.Handler) { return kelsonv1alpha1connect.NewPreviewServiceHandler(s, opts...) },
 	}
 	for _, build := range handlers {
 		mux.Handle(build())

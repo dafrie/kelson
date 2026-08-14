@@ -112,10 +112,79 @@ export interface ProjectEdit {
   components: ComponentEdit[];
 }
 
+/**
+ * The delivery stanza, as fields.
+ *
+ * `mode` empty means the document carries no `delivery:` block at all, which is
+ * the model's default (direct). It is a field rather than a checkbox because
+ * the block's whole content is the mode plus, for the modes that need one, a
+ * git target — there is nothing else to switch on.
+ */
+export interface DeliveryEdit {
+  mode: string;
+  gitRepo: string;
+  gitBranch: string;
+  gitPath: string;
+}
+
+/**
+ * The previews stanza (ADR-0017), as fields.
+ *
+ * `enabled` is the block's presence: previews are declared or they are not, and
+ * there is no `enabled:` key in the schema to confuse it with. The two label
+ * lists are held as the comma-separated text a reader types, not as arrays,
+ * because the canonical styling is a flow sequence — `[deploy/preview]` — and
+ * the text a reader edits and the bytes the builder writes then differ only by
+ * the brackets. `limit` is text for the same reason `port` is: it round-trips
+ * as written rather than through a number the form would have to re-render.
+ */
+export interface PreviewsEdit {
+  enabled: boolean;
+  provider: string;
+  repo: string;
+  secretRef: string;
+  interval: string;
+  filterLabels: string;
+  includeBranch: string;
+  excludeBranch: string;
+  limit: string;
+  skipLabels: string;
+  artifactsRepository: string;
+  artifactsSecretRef: string;
+}
+
 export interface EnvironmentEdit {
   name: string;
   project: string;
   namespace: string;
+  delivery: DeliveryEdit;
+  previews: PreviewsEdit;
+}
+
+export function emptyDelivery(): DeliveryEdit {
+  return { mode: "", gitRepo: "", gitBranch: "", gitPath: "" };
+}
+
+/**
+ * A previews block with nothing filled in but the two defaults kelson itself
+ * applies, so a reader who turns previews on sees the interval and the ceiling
+ * the cluster would enforce rather than having to know them (ADR-0017).
+ */
+export function emptyPreviews(): PreviewsEdit {
+  return {
+    enabled: false,
+    provider: "github",
+    repo: "",
+    secretRef: "",
+    interval: "",
+    filterLabels: "",
+    includeBranch: "",
+    excludeBranch: "",
+    limit: "",
+    skipLabels: "",
+    artifactsRepository: "",
+    artifactsSecretRef: "",
+  };
 }
 
 export interface SpecEdit {
@@ -215,7 +284,91 @@ export function buildEnvironmentDocument(e: EnvironmentEdit): string {
     `  project: ${yamlScalar(e.project)}`,
   ];
   if (set(e.namespace)) lines.push(`  namespace: ${yamlScalar(e.namespace)}`);
+  // Key order is the model's own (internal/model/environment.go): delivery
+  // before previews, because that is the order a reader of the Go type and of
+  // docs/model.md meets them in, and because the block that decides whether
+  // previews may exist at all belongs above the block that declares them.
+  lines.push(...deliveryLines(e.delivery));
+  lines.push(...previewsLines(e.previews));
   return lines.join("\n") + "\n";
+}
+
+function deliveryLines(d: DeliveryEdit): string[] {
+  if (!set(d.mode)) return [];
+  const lines = ["  delivery:", `    mode: ${yamlScalar(d.mode)}`];
+  // A git target is written when there is one to write. Flux and argocd need
+  // one (semantic/git-target-missing) and the server says so about the missing
+  // field; writing an empty stanza here would put the refusal on `repo` instead
+  // of on the block, which is a worse place for it.
+  if (set(d.gitRepo) || set(d.gitBranch) || set(d.gitPath)) {
+    lines.push("    git:", `      repo: ${yamlScalar(d.gitRepo)}`);
+    if (set(d.gitBranch)) lines.push(`      branch: ${yamlScalar(d.gitBranch)}`);
+    if (set(d.gitPath)) lines.push(`      path: ${yamlScalar(d.gitPath)}`);
+  }
+  return lines;
+}
+
+function previewsLines(p: PreviewsEdit): string[] {
+  if (!p.enabled) return [];
+  // provider, repo, secretRef and artifacts.repository are the schema's
+  // required fields, so they are always written — an incomplete block reaches
+  // the server and comes back with the server's own finding on the field it is
+  // about, which is the whole point of checking before saving.
+  const lines = [
+    "  previews:",
+    `    provider: ${yamlScalar(p.provider)}`,
+    `    repo: ${yamlScalar(p.repo)}`,
+    `    secretRef: ${yamlScalar(p.secretRef)}`,
+  ];
+  if (set(p.interval)) lines.push(`    interval: ${yamlScalar(p.interval)}`);
+
+  const labels = labelList(p.filterLabels);
+  const filter: string[] = [];
+  if (labels.length > 0) filter.push(`      labels: ${flowSequence(labels)}`);
+  if (set(p.includeBranch)) {
+    filter.push(`      includeBranch: ${yamlScalar(p.includeBranch)}`);
+  }
+  if (set(p.excludeBranch)) {
+    filter.push(`      excludeBranch: ${yamlScalar(p.excludeBranch)}`);
+  }
+  if (set(p.limit)) filter.push(`      limit: ${p.limit.trim()}`);
+  if (filter.length > 0) lines.push("    filter:", ...filter);
+
+  const skip = labelList(p.skipLabels);
+  if (skip.length > 0) {
+    lines.push("    skip:", `      labels: ${flowSequence(skip)}`);
+  }
+
+  lines.push("    artifacts:", `      repository: ${yamlScalar(p.artifactsRepository)}`);
+  if (set(p.artifactsSecretRef)) {
+    lines.push(`      secretRef: ${yamlScalar(p.artifactsSecretRef)}`);
+  }
+  return lines;
+}
+
+/** The comma-separated text a reader types, as the list the document holds. */
+export function labelList(text: string): string[] {
+  return text
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s !== "");
+}
+
+/** The list as the text a reader edits. The inverse of [labelList]. */
+export function labelText(values: readonly string[]): string {
+  return values.join(", ");
+}
+
+/**
+ * A one-line flow sequence, the styling ADR-0017 and docs/model.md show:
+ * `[deploy/preview-pause, "!ci/passed"]`. Block sequences would be equally
+ * valid YAML and are what the component builder writes for `domains:`; the
+ * difference is that a label list is short and reads as one value, and matching
+ * the documented styling is what lets a block pasted from the docs stay
+ * editable in the form.
+ */
+function flowSequence(values: readonly string[]): string {
+  return `[${values.map(yamlScalar).join(", ")}]`;
 }
 
 export function writeSpec(edit: SpecEdit): SpecTextSet {
@@ -381,7 +534,110 @@ export function parseEnvironmentDocument(text: string): EnvironmentEdit | undefi
   if (typeof name !== "string" || typeof project !== "string") return undefined;
   if (typeof namespace !== "string") return undefined;
 
-  return { name, project, namespace };
+  const delivery = readDelivery(spec.get("delivery"));
+  if (delivery === undefined) return undefined;
+  const previews = readPreviews(spec.get("previews"));
+  if (previews === undefined) return undefined;
+
+  return { name, project, namespace, delivery, previews };
+}
+
+function readDelivery(node: YNode | undefined): DeliveryEdit | undefined {
+  const out = emptyDelivery();
+  if (node === undefined) return out;
+  if (!isMap(node)) return undefined;
+
+  const mode = node.get("mode") ?? "";
+  if (typeof mode !== "string") return undefined;
+  out.mode = mode;
+
+  const git = node.get("git");
+  if (git !== undefined) {
+    if (!isMap(git)) return undefined;
+    const fields = readStrings(git, ["repo", "branch", "path"]);
+    if (fields === undefined) return undefined;
+    out.gitRepo = fields.repo ?? "";
+    out.gitBranch = fields.branch ?? "";
+    out.gitPath = fields.path ?? "";
+  }
+  return out;
+}
+
+/**
+ * The previews block, in the vocabulary the form edits (ADR-0017).
+ *
+ * Reading it is wider than writing it, as everywhere else in this module: a
+ * block sequence of labels, a `limit` written as `10`, and keys in another
+ * order all parse into the same edit state, and the byte guard is what decides
+ * whether the form may write it back. Nothing is lost either way — the document
+ * that cannot be rebuilt goes to the YAML tab whole.
+ */
+function readPreviews(node: YNode | undefined): PreviewsEdit | undefined {
+  const out = emptyPreviews();
+  if (node === undefined) return out;
+  if (!isMap(node)) return undefined;
+  out.enabled = true;
+
+  const top = readStrings(node, ["provider", "repo", "secretRef", "interval"]);
+  if (top === undefined) return undefined;
+  out.provider = top.provider ?? "";
+  out.repo = top.repo ?? "";
+  out.secretRef = top.secretRef ?? "";
+  out.interval = top.interval ?? "";
+
+  const filter = node.get("filter");
+  if (filter !== undefined) {
+    if (!isMap(filter)) return undefined;
+    const labels = readStringList(filter.get("labels"));
+    if (labels === undefined) return undefined;
+    out.filterLabels = labelText(labels);
+    const fields = readStrings(filter, ["includeBranch", "excludeBranch", "limit"]);
+    if (fields === undefined) return undefined;
+    out.includeBranch = fields.includeBranch ?? "";
+    out.excludeBranch = fields.excludeBranch ?? "";
+    out.limit = fields.limit ?? "";
+  }
+
+  const skip = node.get("skip");
+  if (skip !== undefined) {
+    if (!isMap(skip)) return undefined;
+    const labels = readStringList(skip.get("labels"));
+    if (labels === undefined) return undefined;
+    out.skipLabels = labelText(labels);
+  }
+
+  const artifacts = node.get("artifacts");
+  if (artifacts !== undefined) {
+    if (!isMap(artifacts)) return undefined;
+    const fields = readStrings(artifacts, ["repository", "secretRef"]);
+    if (fields === undefined) return undefined;
+    out.artifactsRepository = fields.repository ?? "";
+    out.artifactsSecretRef = fields.secretRef ?? "";
+  }
+  return out;
+}
+
+/** The named keys as strings, or undefined if any of them is not one. */
+function readStrings(
+  node: Map<string, YNode>,
+  keys: readonly string[],
+): Record<string, string> | undefined {
+  const out: Record<string, string> = {};
+  for (const key of keys) {
+    const value = node.get(key);
+    if (value === undefined) continue;
+    if (typeof value !== "string") return undefined;
+    out[key] = value;
+  }
+  return out;
+}
+
+/** A sequence of plain scalars, in either styling. Absent is empty. */
+function readStringList(node: YNode | undefined): string[] | undefined {
+  if (node === undefined) return [];
+  if (!Array.isArray(node)) return undefined;
+  if (!node.every((v): v is string => typeof v === "string")) return undefined;
+  return node;
 }
 
 export function readSpec(text: SpecTextSet): SpecEdit | undefined {
@@ -551,7 +807,34 @@ const FLOW_ENTRY = /^([A-Za-z0-9_][A-Za-z0-9_.-]*): ([^,{}"]*)$/;
  */
 const FLOW_NESTED = /^\{ ([A-Za-z0-9_][A-Za-z0-9_.-]*): (\{ [^{}]* \}) \}$/;
 
+/**
+ * A one-line flow sequence of scalars: `[]`, `[a]`, `[a, b]`.
+ *
+ * It is here because it is the styling ADR-0017 and docs/model.md write label
+ * lists in, so a previews block pasted from the documentation reaches the form
+ * rather than the YAML tab. The grammar stays one level deep and scalar-only:
+ * an element containing a comma or a bracket is refused, which is what keeps
+ * `[a,b]` — a spacing this reader cannot reproduce — off the form entirely
+ * instead of silently reading one label as two or as "a,b".
+ */
+const FLOW_SEQ = /^\[(.*)\]$/;
+
+function decodeSequence(inner: string): YNode[] | undefined {
+  if (inner.trim() === "") return [];
+  const out: YNode[] = [];
+  for (const part of inner.split(", ")) {
+    if (/[,[\]{}]/.test(part)) return undefined;
+    const value = decodeScalar(part);
+    if (value === undefined) return undefined;
+    out.push(value);
+  }
+  return out;
+}
+
 function decodeValue(text: string): YNode | undefined {
+  const seq = FLOW_SEQ.exec(text);
+  if (seq?.[1] !== undefined) return decodeSequence(seq[1]);
+
   const nested = FLOW_NESTED.exec(text);
   if (nested?.[1] !== undefined && nested[2] !== undefined) {
     const inner = decodeValue(nested[2]);
@@ -608,9 +891,24 @@ export function editFieldForError(error: WireError): EditFieldKey | undefined {
   const target = errorTarget(error);
   if (target === undefined) return undefined;
   if (target.doc === "environment") {
-    return target.on === "namespace"
-      ? `environment.${target.environment}.namespace`
-      : undefined;
+    switch (target.on) {
+      case "namespace":
+        return `environment.${target.environment}.namespace`;
+      case "delivery": {
+        const field = deliveryField(target.field);
+        return field === undefined
+          ? undefined
+          : `environment.${target.environment}.delivery.${field}`;
+      }
+      case "previews": {
+        const field = previewsField(target.field);
+        return field === undefined
+          ? undefined
+          : `environment.${target.environment}.previews.${field}`;
+      }
+      default:
+        return undefined;
+    }
   }
   switch (target.on) {
     case "name":
@@ -630,6 +928,57 @@ export function editFieldForError(error: WireError): EditFieldKey | undefined {
           : undefined;
       }
       return `component.${target.index}.${target.field}`;
+  }
+}
+
+/**
+ * A `$.spec.delivery...` path onto the input that holds it. A whole-stanza
+ * finding — `semantic/git-target-missing` points at `$.spec.delivery.git`, the
+ * block rather than a key — lands on the repository, which is the field that
+ * makes it go away.
+ */
+function deliveryField(field: string): string | undefined {
+  if (field === "" || field === "mode") return "mode";
+  if (field === "git" || field === "git.repo") return "gitRepo";
+  if (field === "git.branch") return "gitBranch";
+  if (field === "git.path") return "gitPath";
+  return undefined;
+}
+
+/**
+ * A `$.spec.previews...` path onto the input that holds it.
+ *
+ * The indexed forms matter: validation reports a bad label as
+ * `$.spec.previews.filter.labels[1]`, and the form has one input for the whole
+ * list, so the index is dropped rather than turned into a field nothing owns.
+ */
+function previewsField(field: string): string | undefined {
+  const base = field.replace(/\[\d+\]$/, "");
+  switch (base) {
+    case "provider":
+      return "provider";
+    case "repo":
+      return "repo";
+    case "secretRef":
+      return "secretRef";
+    case "interval":
+      return "interval";
+    case "filter.labels":
+      return "filterLabels";
+    case "filter.includeBranch":
+      return "includeBranch";
+    case "filter.excludeBranch":
+      return "excludeBranch";
+    case "filter.limit":
+      return "limit";
+    case "skip.labels":
+      return "skipLabels";
+    case "artifacts.repository":
+      return "artifactsRepository";
+    case "artifacts.secretRef":
+      return "artifactsSecretRef";
+    default:
+      return undefined;
   }
 }
 

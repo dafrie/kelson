@@ -100,10 +100,18 @@ func previewProviderType(p model.PreviewProvider) string {
 	}
 }
 
-// previewsRequireFlux is the delivery-mode gate, called from Render alongside
+// PreviewsRequireFlux is the delivery-mode gate, called from Render alongside
 // helmRequiresFlux and before anything is emitted, so an environment that
 // cannot render produces an error rather than a partial manifest set.
-func previewsRequireFlux(resolved *model.Resolved) Errors {
+//
+// It is the one gate in this file that is exported, because a caller that only
+// wants to *ask* about previews has to be able to reach the same refusal
+// without rendering: the API's ListPreviews states this gate rather than
+// hiding it, and an environment whose mode forbids previews must give a reader
+// the identical code, message and remediation `kelson render` gives them
+// (ADR-0017 decision 5). Re-deriving that sentence at the call site would be a
+// second gate that could drift from this one.
+func PreviewsRequireFlux(resolved *model.Resolved) Errors {
 	if resolved.Environment.Previews == nil || resolved.Environment.Mode == model.DeliveryFlux {
 		return nil
 	}

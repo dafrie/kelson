@@ -410,6 +410,13 @@ func deliveryConnector(cfg config, history *serverstate.HistoryStore) api.Delive
 			Registry: reg,
 			Health:   probe,
 			Recorded: &rollback.DirectSource{Store: store, Project: t.Project, Environment: t.Environment},
+			// The preview reader is wired unconditionally, unlike the flux
+			// adapter above: reading which pull requests are running needs no
+			// deployment repository and no write credential, only the cluster
+			// this connection already opened. An environment whose mode cannot
+			// run previews never reaches here — the gate answers first
+			// (internal/api/preview.go).
+			Previews: flux.DynamicStatusReader{Client: cluster.Dynamic, FluxOperator: t.FluxOperator},
 		}, nil
 	}
 }

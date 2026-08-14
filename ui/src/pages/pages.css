@@ -783,6 +783,32 @@
   margin-left: 8px;
 }
 
+/* The previews block (ADR-0017), set apart from the environment's own fields:
+   what it configures is a fleet of child environments rather than this one, and
+   the inset says so before the label does. */
+.k-edit__previews {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--kelson-panel-dim);
+  border: 1px solid var(--kelson-hairline);
+  border-radius: 5px;
+}
+
+.k-field__check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  color: var(--kelson-text);
+  cursor: pointer;
+}
+
+.k-field__check input {
+  accent-color: var(--kelson-accent);
+}
+
 .k-edit__actions {
   margin-top: 24px;
 }

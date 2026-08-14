@@ -214,6 +214,14 @@ async function openedOnForm() {
   return screen.findAllByRole("button", { name: "Add variable" });
 }
 
+/** The bytes the last write carried for the one Environment document. */
+function writtenEnvironment(recorder: Recorder, index = -1): string {
+  const write = recorder.writes.at(index);
+  return DECODER.decode(
+    write?.documents?.environments["development"] ?? new Uint8Array(),
+  );
+}
+
 describe("EditSpecPage", () => {
   it("opens the form for a document the UI wrote", async () => {
     renderEditor();
@@ -228,6 +236,126 @@ describe("EditSpecPage", () => {
     expect(screen.getAllByText("web").length).toBeGreaterThan(0);
     expect(screen.getAllByText("worker").length).toBeGreaterThan(0);
     expect(screen.getAllByLabelText("Replicas (min)")).toHaveLength(2);
+  });
+
+  it("authors spec.previews from the form, in the styling ADR-0017 documents", async () => {
+    const { recorder } = renderEditor();
+    await openedOnForm();
+
+    // Previews render in flux mode only, so the mode and its deployment
+    // repository are part of the same act of turning them on.
+    fireEvent.change(screen.getByLabelText("Delivery mode"), {
+      target: { value: "flux" },
+    });
+    fireEvent.change(screen.getByLabelText("Deployment repository"), {
+      target: { value: "git@github.com:acme/deploy.git" },
+    });
+
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: /Spawn a preview environment per open pull request/,
+      }),
+    );
+    fireEvent.change(screen.getByLabelText("Source repository"), {
+      target: { value: "https://github.com/acme/hello" },
+    });
+    fireEvent.change(screen.getByLabelText("Forge credential"), {
+      target: { value: "github-auth" },
+    });
+    fireEvent.change(screen.getByLabelText("Labels"), {
+      target: { value: "deploy/preview, deploy/db" },
+    });
+    fireEvent.change(screen.getByLabelText("Artifact repository"), {
+      target: { value: "oci://ghcr.io/acme/hello-previews" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Check and preview the diff" }));
+    await waitFor(() => expect(recorder.writes).toHaveLength(1));
+
+    const doc = writtenEnvironment(recorder);
+    expect(doc).toContain("  delivery:\n    mode: flux\n");
+    expect(doc).toContain("      repo: git@github.com:acme/deploy.git\n");
+    expect(doc).toContain("  previews:\n    provider: github\n");
+    expect(doc).toContain("    repo: https://github.com/acme/hello\n");
+    // A Secret name, never a token: there is no field here a value could go in.
+    expect(doc).toContain("    secretRef: github-auth\n");
+    // The documented flow styling, so a block written here and a block copied
+    // from docs/model.md are the same bytes.
+    expect(doc).toContain("      labels: [deploy/preview, deploy/db]\n");
+    expect(doc).toContain("      repository: oci://ghcr.io/acme/hello-previews\n");
+    // The defaults are kelson's, not the form's: an unset interval and limit
+    // are absent rather than written out as 10m and 10.
+    expect(doc).not.toContain("    interval:");
+    expect(doc).not.toContain("      limit:");
+  });
+
+  it("removes the whole previews block when it is turned off", async () => {
+    renderEditor();
+    await openedOnForm();
+
+    const toggle = screen.getByRole("checkbox", {
+      name: /Spawn a preview environment per open pull request/,
+    });
+    fireEvent.click(toggle);
+    expect(screen.getByLabelText("Artifact repository")).toBeTruthy();
+
+    fireEvent.click(toggle);
+    // The schema has no `enabled:` key and the form does not invent one: an
+    // environment either declares previews or does not.
+    expect(screen.queryByLabelText("Artifact repository")).toBeNull();
+    // And the document is the stored one again, byte for byte — which the
+    // editor states by having nothing to check.
+    expect(screen.getByText("nothing has changed yet")).toBeTruthy();
+  });
+
+  it("says previews need flux mode instead of disabling the control", async () => {
+    renderEditor();
+    await openedOnForm();
+
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: /Spawn a preview environment per open pull request/,
+      }),
+    );
+    // The mode is still unset, and the note says what will happen rather than
+    // a disabled checkbox that cannot explain itself.
+    expect(
+      screen.getByText(/previews render in flux delivery mode only/),
+    ).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText("Delivery mode"), {
+      target: { value: "flux" },
+    });
+    // And once the mode is right, the note becomes the other half nobody
+    // remembers: the CI step that publishes the artifacts.
+    expect(screen.getAllByText(/kelson preview publish/).length).toBeGreaterThan(0);
+  });
+
+  it("maps a previews finding onto the input that holds it", async () => {
+    renderEditor({
+      findings: [
+        create(ErrorSchema, {
+          code: "schema/invalid-format",
+          resource: "Environment/development",
+          field: "$.spec.previews.artifacts.repository",
+          message: '"oci://ghcr.io/acme/p:latest" carries a tag or a digest',
+          remediation: "drop the tag: each preview is pulled at its head commit SHA",
+        }),
+      ],
+    });
+    await openedOnForm();
+
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: /Spawn a preview environment per open pull request/,
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Check and preview the diff" }));
+
+    expect(await screen.findByText("schema/invalid-format")).toBeTruthy();
+    expect(
+      screen.getByLabelText("Artifact repository").getAttribute("aria-invalid"),
+    ).toBe("true");
   });
 
   it("shows a stored secret reference as a reference, and writes it back unchanged", async () => {
