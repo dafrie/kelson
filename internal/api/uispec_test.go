@@ -51,10 +51,11 @@ spec:
 // The strategy is written as `dockerfile` and is not a choice the form offers.
 // That is not taste: BuildService refuses `auto` because detecting a strategy
 // reads a source tree and a server has none (build.ReasonDetectionNeedsSource),
-// and `buildpacks` is deferred (#49) — so `dockerfile` is the only value the
-// browser can write that the server can actually run.
-// TestUISourceSpecStoresAndBuilds asserts exactly that, which is what stops the
-// form quietly offering an option the build plane would reject.
+// so a form with one hard-coded value cannot write the one value the server
+// cannot run. `buildpacks` now builds too (#49) and offering it is a UI change,
+// not a build-plane one — until then the browser writes the strategy it knows
+// works. TestUISourceSpecStoresAndBuilds asserts exactly that, which is what
+// stops the form quietly offering an option the build plane would reject.
 const uiSourceProjectDoc = `apiVersion: kelson.dev/v1alpha1
 kind: Project
 metadata:
