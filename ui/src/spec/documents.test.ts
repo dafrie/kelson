@@ -5,6 +5,7 @@ import { ErrorSchema } from "../gen/kelson/v1alpha1/common_pb";
 import {
   bindingEnv,
   buildDocuments,
+  DEFAULT_BUILD_STRATEGY,
   EMPTY_FORM,
   fieldForError,
   formProblems,
@@ -58,7 +59,9 @@ spec:
  * pair above: only Go can assert that the model accepts these bytes, and only
  * this file can assert that the builder produces them.
  *
- * `strategy: dockerfile` is written rather than chosen — see BUILD_STRATEGY.
+ * `strategy: dockerfile` is what an untouched form chooses
+ * (DEFAULT_BUILD_STRATEGY), which is why these are still the bytes the Go
+ * fixture holds.
  */
 const SOURCE_PROJECT = `apiVersion: kelson.dev/v1alpha1
 kind: Project
@@ -221,6 +224,41 @@ describe("building from a git repository", () => {
     expect(built.project).not.toContain("  image:");
   });
 
+  it("writes the strategy that was chosen, and defaults to dockerfile", () => {
+    // An untouched form builds what it has always built: the git path is not
+    // silently rebuilt a different way for anyone who does not touch the choice.
+    expect(DEFAULT_BUILD_STRATEGY).toBe("dockerfile");
+    expect(EMPTY_FORM.buildStrategy).toBe("dockerfile");
+    expect(buildDocuments(FROM_GIT).project).toContain(
+      "  build:\n    strategy: dockerfile\n",
+    );
+
+    const buildpacks = buildDocuments(form({ ...FROM_GIT, buildStrategy: "buildpacks" }));
+
+    expect(buildpacks.project).toBe(
+      SOURCE_PROJECT.replace("strategy: dockerfile", "strategy: buildpacks"),
+    );
+    // Never `auto`, whichever way the radio is set: detecting a strategy means
+    // reading the source tree, and the server has no checkout to read (#50).
+    expect(buildpacks.project).not.toContain("auto");
+    expect(buildDocuments(FROM_GIT).project).not.toContain("auto");
+  });
+
+  it("writes no build stanza at all for an image, whatever the strategy says", () => {
+    // The choice survives a toggle back to the image path in the form's state,
+    // exactly as the git fields do, and must not reach the document either.
+    const built = buildDocuments(
+      form({
+        ...FROM_GIT,
+        sourceMode: "image",
+        image: "ghcr.io/acme/hello:1.4.2",
+        buildStrategy: "buildpacks",
+      }),
+    );
+
+    expect(built.project).toBe(MINIMAL_PROJECT);
+  });
+
   it("leaves the ref out when it is blank, which means the default branch", () => {
     const built = buildDocuments(form({ ...FROM_GIT, ref: "  " }));
 
@@ -257,7 +295,8 @@ describe("building from a git repository", () => {
 
     expect(fieldForError(wire("$.spec.source.git"))).toBe("git");
     expect(fieldForError(wire("$.spec.source.ref"))).toBe("ref");
-    // The strategy is written, not asked for, so it has no input to point at.
+    // The strategy choice offers two values the server accepts, so a finding
+    // about the build stanza is never a finding a radio can answer.
     expect(fieldForError(wire("$.spec.build.strategy"))).toBeUndefined();
   });
 });

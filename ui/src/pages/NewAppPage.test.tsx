@@ -89,6 +89,12 @@ spec:
       port: 8080
 `;
 
+/** The same document, built the other way. */
+const BUILDPACKS_PROJECT = SOURCE_PROJECT.replace(
+  "strategy: dockerfile",
+  "strategy: buildpacks",
+);
+
 /** Fills the git path's three fields and switches the form into it. */
 function fromGit() {
   fireEvent.click(screen.getByLabelText("From Git repository"));
@@ -474,6 +480,58 @@ describe("NewAppPage · from a Git repository", () => {
     // image, and offering it would offer a render that fails.
     expect(screen.queryByRole("link", { name: "Deploy now" })).toBeNull();
     expect(screen.getByRole("button", { name: "Build hello" })).toBeTruthy();
+  });
+
+  it("offers both build strategies, explains each, and defaults to the Dockerfile one", async () => {
+    const requests: PutSpecRequest[] = [];
+    const transport = createRouterTransport((router) => {
+      sourceSpecService(router, requests);
+    });
+    renderNew(transport);
+
+    // The choice belongs to the git path: an image is not built at all.
+    expect(screen.queryByLabelText("Dockerfile")).toBeNull();
+
+    fromGit();
+    const dockerfile = screen.getByLabelText("Dockerfile") as HTMLInputElement;
+    const buildpacks = screen.getByLabelText("Buildpacks") as HTMLInputElement;
+    expect(dockerfile.checked).toBe(true);
+    expect(buildpacks.checked).toBe(false);
+
+    // Both sentences are readable before either radio is touched — what decides
+    // this choice is what each strategy needs from the repository.
+    expect(
+      screen.getByText(/the repository has a Dockerfile at its root/),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/Cloud Native Buildpacks lifecycle detects the language/),
+    ).toBeTruthy();
+
+    submit();
+    expect(await screen.findByText("What will be stored")).toBeTruthy();
+    expect(decoder.decode(requests[0]?.documents?.project)).toBe(SOURCE_PROJECT);
+  });
+
+  it("writes the buildpacks strategy when that is the one picked", async () => {
+    const requests: PutSpecRequest[] = [];
+    const transport = createRouterTransport((router) => {
+      sourceSpecService(router, requests);
+    });
+    renderNew(transport);
+
+    fromGit();
+    fireEvent.click(screen.getByLabelText("Buildpacks"));
+    submit();
+
+    expect(await screen.findByText("What will be stored")).toBeTruthy();
+    // Explicit, never `auto`: the server has no checkout to detect from (#50),
+    // so a document that left the strategy out would store a build that refuses.
+    expect(decoder.decode(requests[0]?.documents?.project)).toBe(BUILDPACKS_PROJECT);
+
+    // …and the choice is the document's, so changing it drops the preview the
+    // way every other edit does.
+    fireEvent.click(screen.getByLabelText("Dockerfile"));
+    expect(screen.queryByText("What will be stored")).toBeNull();
   });
 
   it("streams the build and hands the pinned reference to the deploy", async () => {

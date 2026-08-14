@@ -653,6 +653,36 @@
   max-width: 78ch;
 }
 
+/* The build-strategy choice, which only exists once the source is a repository.
+   Same panel and same radios as the source toggle, but each option carries its
+   own sentence instead of one sentence for whichever is selected: the reader is
+   deciding on what each strategy needs from their repository, so both halves
+   have to be readable at once. */
+.k-new__strategy {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  border: 1px solid var(--kelson-border);
+  margin-bottom: 18px;
+}
+
+.k-new__strategy legend {
+  padding: 0;
+}
+
+.k-new__strategy-option {
+  display: flex;
+  flex: 1 1 260px;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 46ch;
+}
+
+.k-new__strategy-note {
+  flex-basis: 100%;
+  max-width: 78ch;
+}
+
 /* A finding that is true and expected rather than wrong (image/unresolved on a
    project that has not been built yet). Deliberately not the failure colour:
    it is information, and colouring it red would teach the reader to distrust

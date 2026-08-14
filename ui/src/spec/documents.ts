@@ -154,20 +154,33 @@ export function envValueProblem(value: EnvValue): string | undefined {
 export type SourceMode = "image" | "git";
 
 /**
- * The only build strategy this form writes, and the reason it is the only one.
+ * How kelson turns the repository into an image (ADR-0010), and which of the
+ * strategies the browser is allowed to ask for.
  *
- * ADR-0010's default is `auto`: look at the source tree and decide. A server
- * has no source tree to look at — the tree exists inside the build pod, after
- * the clone — so BuildService refuses `auto` outright with
- * `build/detection-needs-source` (proto/kelson/v1alpha1/build.proto). Offering
- * it here would be offering a choice whose only outcome is a refusal, and
- * offering `buildpacks` would be offering one that is deferred (#49). That
- * leaves exactly one strategy the browser can write and the server can run, so
- * the form writes it rather than asking a question with one answer. When
- * in-cluster detection lands (#50), `auto` becomes a real option and this
- * constant becomes a control.
+ * ADR-0010 has four: `auto`, `dockerfile`, `buildpacks`, `none`. Two of them
+ * are not questions this form can put to a user. `none` says "build nothing,
+ * use `image:`", which is the other source mode spelled a second way. `auto`
+ * says "look at the source tree and decide", and a server has no source tree
+ * to look at — the tree exists inside the build pod, after the clone — so
+ * BuildService refuses it with `build/detection-needs-source` until in-cluster
+ * detection lands (#50, proto/kelson/v1alpha1/build.proto). Offering `auto`
+ * would be offering a choice whose only outcome is a refusal.
+ *
+ * So the form asks the question `auto` would have answered — is there a
+ * Dockerfile? — and writes the answer explicitly, which is what makes both
+ * strategies reachable from a browser.
  */
-export const BUILD_STRATEGY = "dockerfile";
+export type BuildStrategy = "dockerfile" | "buildpacks";
+
+/**
+ * What the form writes for someone who does not touch the choice.
+ *
+ * ADR-0010 makes buildpacks the eventual zero-config *default*, and this is
+ * deliberately not that: `dockerfile` is what this form has written since it
+ * had a git path, and changing what an untouched form produces would rebuild
+ * everyone's next project a different way without saying so.
+ */
+export const DEFAULT_BUILD_STRATEGY: BuildStrategy = "dockerfile";
 
 /**
  * Everything the create form can say. Every field is the raw text of an input,
@@ -182,6 +195,8 @@ export interface NewAppForm {
   image: string;
   git: string;
   ref: string;
+  /** Only written in `git` mode: `spec.build.strategy` (ADR-0010). */
+  buildStrategy: BuildStrategy;
   port: string;
   environment: string;
   namespace: string;
@@ -198,6 +213,7 @@ export const EMPTY_FORM: NewAppForm = {
   image: "",
   git: "",
   ref: "",
+  buildStrategy: DEFAULT_BUILD_STRATEGY,
   port: "",
   environment: "development",
   namespace: "",
@@ -271,6 +287,7 @@ interface Normal {
   image: string;
   git: string;
   ref: string;
+  buildStrategy: BuildStrategy;
   port: string;
   environment: string;
   namespace: string;
@@ -289,6 +306,7 @@ function normalize(form: NewAppForm): Normal {
     image: form.image.trim(),
     git: form.git.trim(),
     ref: form.ref.trim(),
+    buildStrategy: form.buildStrategy,
     port: form.port.trim(),
     // Blank means "the default", not "no environment": the field ships filled
     // in and its placeholder repeats the default, so clearing it is an edit
@@ -341,7 +359,10 @@ function projectDocument(f: Normal): string {
     // key out says. Writing `ref: main` for someone whose default branch is
     // `master` would be a guess with a failure mode.
     if (f.ref !== "") lines.push(`    ref: ${yamlScalar(f.ref)}`);
-    lines.push("  build:", `    strategy: ${BUILD_STRATEGY}`);
+    // The strategy is written even when it is the one ADR-0010 would have
+    // picked anyway: a document that leaves it out means `auto`, and `auto` is
+    // the one answer the server cannot act on for a remote repository (#50).
+    lines.push("  build:", `    strategy: ${f.buildStrategy}`);
   } else {
     lines.push(`  image: ${yamlScalar(f.image)}`);
   }
@@ -623,9 +644,11 @@ export function errorTarget(error: WireError): ErrorTarget | undefined {
   if (path === "$.spec.image") return { doc: "project", on: "image" };
   if (path === "$.spec.source.git") return { doc: "project", on: "git" };
   if (path === "$.spec.source.ref") return { doc: "project", on: "ref" };
-  // The build stanza has no input of its own — the form writes one strategy and
-  // does not ask (BUILD_STRATEGY) — so anything about it is named rather than
-  // pointed at, and lands in the general panel with its code intact.
+  // The only input the build stanza has is the strategy choice, and both of
+  // its answers are values the server accepts — so a finding here is about
+  // something no radio can fix (a dockerfile path, a strategy this release does
+  // not implement). It is named rather than pointed at, and lands in the
+  // general panel with its code intact.
   if (path.startsWith("$.spec.build")) return { doc: "project", on: "build" };
 
   const env = /^\$\.spec\.env\.([^.]+)/.exec(path);
