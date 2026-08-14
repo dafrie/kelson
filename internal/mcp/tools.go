@@ -32,6 +32,9 @@ var (
 	rpcPromote   = rpc{kelsonv1alpha1connect.DeployServiceName, "Promote"}
 	rpcQueryLogs = rpc{kelsonv1alpha1connect.LogServiceName, "QueryLogs"}
 	rpcWatch     = rpc{kelsonv1alpha1connect.EventServiceName, "Watch"}
+
+	rpcSetSecret   = rpc{kelsonv1alpha1connect.SecretServiceName, "SetSecret"}
+	rpcListSecrets = rpc{kelsonv1alpha1connect.SecretServiceName, "ListSecrets"}
 )
 
 // tool is one entry of the surface: the MCP definition a client sees, the RPCs
@@ -44,11 +47,22 @@ type tool struct {
 
 // surface is the whole agent-facing surface, in registration order.
 //
-// Eight tools, and the number is a design decision rather than a stopping
-// point: every tool added costs selection accuracy for the ones already here
+// Nine tools, and the number is a design decision rather than a stopping point:
+// every tool added costs selection accuracy for the ones already here
 // (ADR-0008). Read-only tools come first, mutating ones after, and each says
 // which it is in its own description as well as in its annotations — a model
 // reads the prose.
+//
+// # Why #116 added one tool and not two
+//
+// Writing a secret is a task an agent has — "this app needs a Stripe key" — so
+// set_secret is a tool. *Listing* secrets is not a task: it is something an
+// agent needs to know while doing another one, which is precisely when
+// ADR-0008's task-shape rule says to extend an existing tool rather than add a
+// read tool beside it. It went into diagnose_application, because the question
+// it answers is a diagnosis: a workload in CreateContainerConfigError is the
+// failure a missing Secret or a missing key produces, and ADR-0018 records that
+// kelson has nothing else that correlates a reference with the Secret it names.
 func surface(c *clients) []tool {
 	return []tool{
 		listApplicationsTool(c),
@@ -58,6 +72,7 @@ func surface(c *clients) []tool {
 		rollbackTool(c),
 		promoteTool(c),
 		putSpecTool(c),
+		setSecretTool(c),
 		waitForOutcomeTool(c),
 	}
 }

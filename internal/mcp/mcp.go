@@ -13,11 +13,19 @@
 //
 // The *shape* is deliberately not the API's. A one-to-one mapping would make
 // sixty endpoints sixty tools, and model tool-selection accuracy degrades well
-// before that, so the surface is seven task-shaped tools — what an agent is
-// trying to do, not what a resource is called. Each declares the RPCs it
+// before that, so the surface is a handful of task-shaped tools — what an agent
+// is trying to do, not what a resource is called. Each declares the RPCs it
 // composes (tools.go), and that table is asserted against the generated service
 // descriptors: the Protobuf schema as a consistency check rather than as the
 // design (ADR-0008).
+//
+// # One tool receives a credential, and none returns one
+//
+// set_secret carries values to the server (issue #116, ADR-0009). Nothing comes
+// back: SecretService's responses have no field a value could arrive in, so a
+// tool answer here reports names, keys and ages and cannot report a value even
+// by accident. The value an agent passes in is a value the agent already had —
+// this surface is not a way to read one out of a cluster.
 //
 // # Everything a tool returns is bounded
 //
@@ -97,11 +105,12 @@ func New(opts Options) *Server {
 
 	auth := bearerOptions(opts.Password)
 	c := &clients{
-		addr:   addr,
-		spec:   kelsonv1alpha1connect.NewSpecServiceClient(httpClient, addr, auth...),
-		deploy: kelsonv1alpha1connect.NewDeployServiceClient(httpClient, addr, auth...),
-		logs:   kelsonv1alpha1connect.NewLogServiceClient(httpClient, addr, auth...),
-		events: kelsonv1alpha1connect.NewEventServiceClient(httpClient, addr, auth...),
+		addr:    addr,
+		spec:    kelsonv1alpha1connect.NewSpecServiceClient(httpClient, addr, auth...),
+		deploy:  kelsonv1alpha1connect.NewDeployServiceClient(httpClient, addr, auth...),
+		logs:    kelsonv1alpha1connect.NewLogServiceClient(httpClient, addr, auth...),
+		events:  kelsonv1alpha1connect.NewEventServiceClient(httpClient, addr, auth...),
+		secrets: kelsonv1alpha1connect.NewSecretServiceClient(httpClient, addr, auth...),
 	}
 
 	srv := mcpsdk.NewServer(&mcpsdk.Implementation{
