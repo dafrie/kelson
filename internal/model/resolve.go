@@ -205,14 +205,11 @@ func resolve(p *Project, e *Environment) *Resolved {
 
 	// P4: Environment value whole, else Project default, else built-in.
 	r.Environment.Mode = DeliveryDirect
-	r.Environment.Policy = Policy{Agents: AgentsProposeOnly}
+	r.Environment.Policy = EffectivePolicy(p, e)
 	r.Environment.Secrets = SecretBackend{Backend: SecretsCluster}
 	if d := p.Spec.Defaults; d != nil {
 		if d.DeliveryMode != "" {
 			r.Environment.Mode = d.DeliveryMode
-		}
-		if d.Policy != nil {
-			r.Environment.Policy = *d.Policy
 		}
 		if d.Secrets != nil {
 			r.Environment.Secrets = *d.Secrets
@@ -225,9 +222,6 @@ func resolve(p *Project, e *Environment) *Resolved {
 		}
 	}
 	r.Environment.Delivery.Mode = r.Environment.Mode
-	if pol := e.Spec.Policy; pol != nil {
-		r.Environment.Policy = *pol
-	}
 	if sb := e.Spec.Secrets; sb != nil {
 		r.Environment.Secrets = *sb
 	}
@@ -271,6 +265,36 @@ func resolve(p *Project, e *Environment) *Resolved {
 	}
 
 	return r
+}
+
+// EffectivePolicy is the P4 chain for `policy:` alone: the Environment's block
+// whole, else the Project's default block whole, else the built-in.
+//
+// It is exported and separate from [resolve] because kelson-server enforces
+// agent policy against the *stored* spec on requests that never reach a full
+// resolution — a spec store write, a secret write, a rollback — and enforcing a
+// second copy of the precedence rule would be enforcing a different policy
+// (ADR-0025 §2). Either argument may be nil, which is how a caller holding only
+// one of the two documents asks.
+//
+// The built-in is `allow`, and an unset field inside a declared block means the
+// same thing. Every restriction here is opt-in: the credential an operator
+// issued is the grant (ADR-0024 §3), and this narrows it where an environment
+// says so. A default that narrowed silently would refuse work an operator had
+// already deliberately authorised, in an environment whose spec says nothing
+// about agents at all.
+func EffectivePolicy(p *Project, e *Environment) Policy {
+	var pol Policy
+	if p != nil && p.Spec.Defaults != nil && p.Spec.Defaults.Policy != nil {
+		pol = *p.Spec.Defaults.Policy
+	}
+	if e != nil && e.Spec.Policy != nil {
+		pol = *e.Spec.Policy
+	}
+	if pol.Agents == "" {
+		pol.Agents = AgentsAllow
+	}
+	return pol
 }
 
 // resolveDataService applies P5: the Environment's preset override, else the

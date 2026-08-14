@@ -23,6 +23,12 @@ import (
 // the `from:` bindings left this table when the renderer began emitting
 // CloudNativePG resources for them (issue #89), and nothing else had to move.
 //
+// ADR-0025 is the second proof and the clearest one: `policy:` was gated whole
+// until kelson-server began enforcing it against agent principals (issue #75).
+// The row did not disappear — it narrowed to `policy.deployers`, the one field
+// that is about humans and that nothing can resolve yet — and the resolver, the
+// precedence rule and the validation it already had were reused unchanged.
+//
 // A row may also *narrow* rather than disappear, and then disappear later.
 // `secrets:` was gated whole until ADR-0018, which narrowed it to `store` alone
 // once `backend` began deciding the rendered shape; ADR-0020 then removed that
@@ -79,10 +85,16 @@ var notImplementedFields = []notImplemented{
 		TrackedBy: "milestone M7 · Agent surface & MCP, issue #75",
 	},
 	{
-		Kind:      KindProject,
-		Path:      "$.spec.defaults.policy",
-		What:      "deployment policy",
-		TrackedBy: "milestone M7 · Agent surface & MCP",
+		Kind: KindProject,
+		Path: "$.spec.defaults.policy.deployers",
+		What: "human deployer lists",
+		// ADR-0025 narrowed this row rather than deleting it. Everything else
+		// under `policy:` is agent policy and kelson-server enforces it as of
+		// issue #75; `deployers` is about *humans*, and kelson has no notion of
+		// a human subject beyond "holds the password" (ADR-0013 §3, ADR-0024
+		// §8). A list of names nothing can resolve is exactly the silence this
+		// table exists to prevent.
+		TrackedBy: "milestone M11 · Teams, RBAC & multi-tenancy",
 	},
 	{
 		Kind:      KindEnvironment,
@@ -92,9 +104,9 @@ var notImplementedFields = []notImplemented{
 	},
 	{
 		Kind:      KindEnvironment,
-		Path:      "$.spec.policy",
-		What:      "deployment policy",
-		TrackedBy: "milestone M7 · Agent surface & MCP",
+		Path:      "$.spec.policy.deployers",
+		What:      "human deployer lists",
+		TrackedBy: "milestone M11 · Teams, RBAC & multi-tenancy",
 	},
 }
 
