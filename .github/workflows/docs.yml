@@ -31,6 +31,12 @@ jobs:
         working-directory: website
     steps:
       - uses: actions/checkout@v4
+      # `enablement: true` turns Pages on (source: GitHub Actions) if it
+      # isn't already, so the first deploy needs no manual setup in the UI.
+      - uses: actions/configure-pages@v5
+        if: github.event_name != 'pull_request'
+        with:
+          enablement: true
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -45,10 +51,9 @@ jobs:
           path: website/build
 
   deploy:
-    # Only deploy on manual dispatch. Auto-deploy was disabled because GitHub
-    # Pages is not available on this plan; enable Pages + run manually when
-    # ready. The `build` job still validates the site on every push/PR.
-    if: github.event_name == 'workflow_dispatch'
+    # Deploy on push to main and on manual dispatch. PR builds only validate
+    # the site (the `build` job) and never publish.
+    if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     environment:
