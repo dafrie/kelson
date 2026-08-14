@@ -1,6 +1,6 @@
 # Installing kelson
 
-The CLI needs nothing installed in your cluster. `kelson render`, `kelson diff`, `kelson eject`
+The CLI needs nothing installed in your cluster. `kelson render`, `kelson diff`
 and `kelson profile` talk to the API server with your kube context, so the cluster's RBAC is the
 access control and there is nothing to deploy ([the server](server.md), "Who may reach it").
 

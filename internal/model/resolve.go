@@ -42,7 +42,7 @@ type ResolvedEnvironment struct {
 	Cluster   string
 	Namespace string
 	Routing   ResolvedRouting
-	Delivery  Delivery      // git always present for flux/argocd
+	Delivery  Delivery      // git always present for flux
 	Mode      DeliveryMode  // after the P4 default chain
 	Policy    Policy        // after the P4 default chain
 	Secrets   SecretBackend // after the P4 default chain

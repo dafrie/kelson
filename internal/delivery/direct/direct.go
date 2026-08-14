@@ -1004,8 +1004,8 @@ func renderedBytes(manifests []delivery.Manifest) ([]byte, error) {
 
 // SplitDocuments is the inverse of renderedBytes: it splits a stored rendered
 // stream back into manifests, preserving document bytes and order. It is
-// exported because replaying history (rollback today, `kelson eject --to-git`
-// later) is the reason the store keeps the rendered output at all.
+// exported because replaying history — rollback — is the reason the store
+// keeps the rendered output at all.
 func SplitDocuments(stream []byte) ([]delivery.Manifest, error) {
 	reader := utilyaml.NewYAMLReader(bufio.NewReader(bytes.NewReader(stream)))
 	var out []delivery.Manifest

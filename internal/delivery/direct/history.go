@@ -8,10 +8,9 @@ package direct
 // rollback" (docs/architecture.md, Delivery adapters):
 //
 //  1. An embedded bare git repository under the data dir. Every deploy is a
-//     commit of the rendered tree. It gives `kelson eject --to-git` an almost
-//     free implementation (push the repo), and diffs come from git itself.
-//     The cost is a hard dependency on a git implementation (go-git or the
-//     git binary), a second on-disk format whose failure modes — index locks,
+//     commit of the rendered tree, and diffs come from git itself. The cost
+//     is a hard dependency on a git implementation (go-git or the git
+//     binary), a second on-disk format whose failure modes — index locks,
 //     corrupt packfiles, ref races — are far richer than the History() and
 //     Rollback() semantics that actually need them, and tests that either
 //     shell out or carry a git library just to assert "the last three entries
@@ -20,15 +19,13 @@ package direct
 //  2. An append-only JSONL journal plus one rendered blob per revision. One
 //     line per deploy, one file per revision's rendered output, retention by
 //     count. Reading history is a bounded file read; rollback is "read blob N
-//     and re-apply it"; eject stays possible because the rendered output is
-//     kept verbatim, in apply order, with the same provenance the Git modes
-//     commit — replaying it into commits is a loop over the journal.
+//     and re-apply it" — the rendered output is kept verbatim, in apply
+//     order, with the same provenance the Git modes commit.
 //
 // This package implements (2). The deciding argument is that the journal is
 // deterministic and testable against a temp dir with no external binary, and
-// that the eject path only needs the rendered bytes plus their order, which
-// the journal already keeps. Nothing in the on-disk layout forecloses (1): a
-// future ejector reads the journal and writes commits.
+// that rollback only needs the rendered bytes plus their order, which the
+// journal already keeps.
 //
 // Durability model: the rendered blob is written before the journal line that
 // references it, so a crash can leave an orphan blob (harmless, pruned by

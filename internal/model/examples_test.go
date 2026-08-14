@@ -114,7 +114,7 @@ func TestThreeEnvironmentsDeliveryModes(t *testing.T) {
 	wantModes := map[string]DeliveryMode{
 		"development": DeliveryDirect,
 		"staging":     DeliveryFlux,
-		"production":  DeliveryArgoCD,
+		"production":  DeliveryFlux,
 	}
 	for name, mode := range wantModes {
 		env, ok := envs[name]

@@ -93,16 +93,15 @@ type DeliveryMode string
 const (
 	DeliveryDirect DeliveryMode = "direct"
 	DeliveryFlux   DeliveryMode = "flux"
-	DeliveryArgoCD DeliveryMode = "argocd"
 )
 
 // Delivery selects the adapter for this Environment (ADR-0001). All adapters
 // consume identical rendered output; they differ only in who calls apply.
 type Delivery struct {
-	Mode DeliveryMode `yaml:"mode" json:"mode" jsonschema:"required,enum=direct,enum=flux,enum=argocd"`
+	Mode DeliveryMode `yaml:"mode" json:"mode" jsonschema:"required,enum=direct,enum=flux"`
 
 	// Git configures where rendered manifests are committed. Required for
-	// flux and argocd (semantic/git-target-missing); meaningless for direct.
+	// flux (semantic/git-target-missing); meaningless for direct.
 	Git *GitTarget `yaml:"git,omitempty" json:"git,omitempty"`
 }
 

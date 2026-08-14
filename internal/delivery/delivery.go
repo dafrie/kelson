@@ -124,7 +124,7 @@ type Entry struct {
 // reports status against the live system. Purity rule: an Adapter must never
 // mutate the ManifestSet or re-render — rendering is the renderer's job.
 type Adapter interface {
-	// Name returns the adapter id, e.g. "direct", "flux", "argocd".
+	// Name returns the adapter id, e.g. "direct", "flux".
 	Name() string
 
 	// Capabilities declares what this adapter can and cannot do.
@@ -182,9 +182,9 @@ func (r *Registry) Get(name string) (Adapter, error) {
 }
 
 // Select resolves a delivery mode to an adapter. Direct mode selects the
-// "direct" adapter; Git modes select the shared git adapter (flux/argocd) —
-// the mode string is matched against adapter names exactly as resolved "direct",
-// "flux", "argocd" (model.DeliveryMode).
+// "direct" adapter; Git modes select the shared git adapter (flux) — the mode
+// string is matched against adapter names exactly as resolved "direct", "flux"
+// (model.DeliveryMode).
 func (r *Registry) Select(mode string) (Adapter, error) {
 	return r.Get(mode)
 }

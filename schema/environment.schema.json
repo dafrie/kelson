@@ -59,8 +59,7 @@
               "type": "string",
               "enum": [
                 "direct",
-                "flux",
-                "argocd"
+                "flux"
               ]
             },
             "git": {

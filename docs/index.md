@@ -2,7 +2,7 @@
 
 A self-hosted PaaS that runs on your Kubernetes cluster and writes standard manifests instead of hiding them.
 
-**Pre-alpha, and not usable yet.** `kelson render`, `kelson diff` (including server-side dry-run), `kelson eject` and `kelson profile` work today. The delivery adapters (direct and Flux), build drivers and observation layer are implemented and tested but not yet wired to a `deploy` command, and there is no server or UI. The [roadmap](roadmap.md) and the [issue tracker](https://github.com/dafrie/kelson/issues) are the current state of the project.
+**Pre-alpha, and not usable yet.** `kelson render`, `kelson diff` (including server-side dry-run) and `kelson profile` work today. The delivery adapters (direct and Flux), build drivers and observation layer are implemented and tested but not yet wired to a `deploy` command, and there is no server or UI. The [roadmap](roadmap.md) and the [issue tracker](https://github.com/dafrie/kelson/issues) are the current state of the project.
 
 ## Why Kubernetes
 

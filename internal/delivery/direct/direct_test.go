@@ -666,7 +666,7 @@ func TestNewRequiresDependencies(t *testing.T) {
 
 // TestSplitDocumentsRoundTrip: the rendered stream recorded in history splits
 // back into the same manifests, byte-identically and in order — the property
-// rollback and `kelson eject --to-git` both rely on.
+// rollback relies on.
 func TestSplitDocumentsRoundTrip(t *testing.T) {
 	original := fullSet(t).Manifests
 	stream, err := renderedBytes(original)

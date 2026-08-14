@@ -34,7 +34,7 @@ func repositoryChart() model.ResolvedChart {
 // no helm-controller to delegate to, so a HelmRelease applied there is a
 // manifest that does nothing — and kelson refuses rather than emitting it.
 func TestHelmRequiresFluxMode(t *testing.T) {
-	for _, mode := range []model.DeliveryMode{model.DeliveryDirect, model.DeliveryArgoCD, ""} {
+	for _, mode := range []model.DeliveryMode{model.DeliveryDirect, ""} {
 		r := chartFixture(repositoryChart())
 		r.Environment.Mode = mode
 		_, err := Render(r, gatewayProfile(), nil)

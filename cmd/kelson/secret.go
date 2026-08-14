@@ -357,12 +357,12 @@ func runSecretSet(cmd *cobra.Command, opts *secretSetOptions, args []string) err
 // kelson cannot do for them.
 //
 // kelson writes the encrypted file; the Kustomization that reconciles the path
-// belongs to the cluster's bootstrap and is not kelson's to write (ADR-0012,
-// internal/delivery/eject/bootstrap.go). Without the decryption block the file
-// is applied verbatim — a Secret whose values are the literal string
-// "ENC[AES256_GCM,…]" — and every workload reading it starts with a credential
-// that is not one. That failure is far from its cause, so the cause is printed
-// at the moment the first encrypted file is written.
+// belongs to the cluster's bootstrap and is not kelson's to write. Without the
+// decryption block the file is applied verbatim — a Secret whose values are
+// the literal string "ENC[AES256_GCM,…]" — and every workload reading it
+// starts with a credential that is not one. That failure is far from its
+// cause, so the cause is printed at the moment the first encrypted file is
+// written.
 //
 // The block comes from renderer.SOPSDecryptionBlock, the same function that
 // writes it onto the preview Kustomization, so this text cannot drift from

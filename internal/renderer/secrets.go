@@ -124,11 +124,10 @@ func sopsRequiresFlux(resolved *model.Resolved) Errors {
 // needs to *state* the requirement must get the identical text the renderer
 // emits. kelson writes exactly one Kustomization itself — the per-preview one
 // in the ResourceSet template — and the environment's own Kustomization is the
-// operator's, in the cluster's bootstrap path (ADR-0012, internal/delivery/
-// eject/bootstrap.go). `kelson secret set` prints this block so the operator's
-// half of the setup is a copy rather than a paraphrase, and a paraphrase that
-// drifted from this function is exactly how "it committed but never decrypted"
-// happens.
+// operator's, in the cluster's bootstrap path. `kelson secret set` prints this
+// block so the operator's half of the setup is a copy rather than a
+// paraphrase, and a paraphrase that drifted from this function is exactly how
+// "it committed but never decrypted" happens.
 func SOPSDecryptionBlock(ageKeySecret, indent string) string {
 	if ageKeySecret == "" {
 		ageKeySecret = model.DefaultAgeKeySecret

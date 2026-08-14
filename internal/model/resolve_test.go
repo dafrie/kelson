@@ -225,7 +225,7 @@ metadata: {name: production}
 spec:
   project: shop
   delivery:
-    mode: argocd
+    mode: direct
     git: {repo: git@github.com:acme/deploy.git, path: shop/prod}
   policy:
     agents: propose-only        # taken whole; the project default does not merge in (P4)
@@ -233,8 +233,8 @@ spec:
     backend: sops
 `)
 	r := resolve(p, prod)
-	if r.Environment.Mode != DeliveryArgoCD {
-		t.Errorf("mode = %q, want argocd (environment beats project default)", r.Environment.Mode)
+	if r.Environment.Mode != DeliveryDirect {
+		t.Errorf("mode = %q, want direct (environment beats project default)", r.Environment.Mode)
 	}
 	if r.Environment.Delivery.Git == nil || r.Environment.Delivery.Git.Path != "shop/prod" {
 		t.Errorf("git target = %+v", r.Environment.Delivery.Git)

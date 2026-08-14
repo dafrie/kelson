@@ -517,7 +517,6 @@ you want, and it is another reason the migration must be idempotent.
 |---|---|
 | `direct` | **Full.** kelson owns the apply, so it applies up to the Job, waits for it, and only then applies the workloads. |
 | `flux` | **Refused** at render time — `render/release-requires-direct`. kelson writes files that somebody else's `Kustomization` applies in one pass; no commit can say "stop here until this Job is Complete", so the migration would run *beside* the rollout instead of before it, and a failed one would not stop it. |
-| `argocd` | Refused, same error. The adapter is removed ([ADR-0012](adr/0012-flux-only-gitops.md)) and the reasoning above would apply to it unchanged. |
 
 The refusal is deliberate, and it is the same rule the Flux-only gates obey from the other side: a spec
 field must render something real in every mode or refuse per mode honestly. The gap it leaves is real

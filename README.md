@@ -4,7 +4,7 @@ A self-hosted PaaS that runs on your Kubernetes cluster and writes standard mani
 
 **Pre-alpha, and not usable yet.** What works end to end today: `kelson render`, `kelson diff`
 (including server-side dry-run), `kelson deploy`, `kelson status`, `kelson rollback`,
-`kelson promote`, `kelson eject` and `kelson profile`, plus `kelson-server`, which serves the same capabilities over
+`kelson promote` and `kelson profile`, plus `kelson-server`, which serves the same capabilities over
 ConnectRPC — loopback-only and unauthenticated in v0
 ([ADR-0013](docs/adr/0013-server-state-and-api-v0.md)) — and `kelson-mcp`, the agent surface over that
 API ([docs/mcp.md](docs/mcp.md)). There is no UI and no install path yet.
@@ -40,7 +40,7 @@ So kelson doesn't wrap Kubernetes in new concepts. It generates Kubernetes.
 
 The renderer is a pure function, so the same input always produces the same bytes. That's what makes the delivery modes one code path rather than two, and what makes previews worth trusting. Delivery is a pluggable adapter seam; Flux is the supported GitOps mode, and an Argo CD adapter may return later ([ADR-0012](docs/adr/0012-flux-only-gitops.md)).
 
-Direct mode is Git mode with an implicit repository. It still versions rendered output, so you keep diffs, history and rollback, and `kelson eject --to-git` replays that history into a real repo when you want it.
+Direct mode is Git mode with an implicit repository. It still versions rendered output, so you keep diffs, history and rollback — and since every deployment is already standard manifests, `kelson render` reproduces the exact YAML whenever you want it outside kelson.
 
 ## What's different
 
