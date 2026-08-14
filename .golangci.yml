@@ -51,6 +51,7 @@ linters:
             - "!**/internal/observation/**"
             - "!**/internal/clusterprofile/detect/**"
             - "!**/internal/serverstate/**"
+            - "!**/internal/secret/**"
             - "!**/internal/api/**"
             - "!**/internal/mcp/**"
             - "!**/cmd/kelson-server/**"
@@ -76,6 +77,11 @@ linters:
             # history stores are ConfigMap clients, so they belong to the
             # cluster-facing plane rather than the api plane below.
             - "**/internal/serverstate/**"
+            # ADR-0009's cluster secret backend (issue #116). It writes a
+            # Secret through the Kubernetes API and reads it back masked, so it
+            # is a cluster client by definition — the same reason serverstate
+            # is here rather than under internal/api.
+            - "**/internal/secret/**"
           allow:
             - $gostd
             - github.com/dafrie/kelson

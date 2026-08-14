@@ -60,6 +60,43 @@ func SecretShapedName(name string) bool {
 	return secretNameRE.MatchString(name)
 }
 
+// ValidSecretName reports whether s can name a Kubernetes Secret: a DNS-1123
+// label, which is what [validator.secretRef] holds `secret:` to.
+//
+// It is exported because the authoring path (internal/secret, issue #116) must
+// refuse exactly the names a reference would refuse. A Secret kelson would let
+// you create but not reference is a Secret nobody can use, and finding that out
+// at render time rather than at `kelson secret set` time is the wrong order.
+func ValidSecretName(s string) bool {
+	return s != "" && len(s) <= 63 && dnsLabelRE.MatchString(s)
+}
+
+// ValidSecretKey reports whether s can be a key of a Secret's data map —
+// Kubernetes' own alphabet (letters, digits, '-', '_', '.').
+//
+// Exported for the same reason as [ValidSecretName]: the writer and the
+// reference must agree on the alphabet, and a second copy of the pattern would
+// eventually drift from this one.
+func ValidSecretKey(s string) bool {
+	return secretKeyRE.MatchString(s)
+}
+
+// SecretKeyAlphabet describes [ValidSecretKey] in the form a remediation can
+// use, so the writer and the reference explain the same rule in the same words.
+const SecretKeyAlphabet = "letters, digits, '-', '_' and '.', which is the key alphabet Kubernetes enforces on Secret data"
+
+// DefaultNamespace is the namespace an environment targets when its spec names
+// none: `<project>-<environment>` (docs/model.md).
+//
+// The resolver applies it (resolve.go) and the secret-authoring path derives
+// the same answer from a (project, environment) pair it was given without a
+// spec (issue #116) — `kelson secret set --project p --env e` has no document
+// to resolve. One function so the two cannot drift into writing Secrets into a
+// namespace the render never targets.
+func DefaultNamespace(project, environment string) string {
+	return project + "-" + environment
+}
+
 func (v *validator) name(field, s, what string) {
 	if s == "" {
 		v.err(ErrMissingRequired, field, what+" name is required",
@@ -189,10 +226,10 @@ func (v *validator) secretRef(field string, r *SecretRef) {
 		v.err(ErrMissingRequired, field+".key",
 			"a secret reference needs the key to read within that Secret",
 			"set key: <key within the Secret>, e.g. {secret: "+refExample(r.Name)+", key: url}")
-	case !secretKeyRE.MatchString(r.Key):
+	case !ValidSecretKey(r.Key):
 		v.err(ErrInvalidFormat, field+".key",
 			fmt.Sprintf("%q is not a key a Kubernetes Secret can hold", r.Key),
-			"use letters, digits, '-', '_' and '.', which is the key alphabet Kubernetes enforces on Secret data")
+			"use "+SecretKeyAlphabet)
 	}
 }
 
