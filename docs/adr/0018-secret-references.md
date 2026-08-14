@@ -215,9 +215,16 @@ name; and this reference schema for the workload side, so a component reads the 
 `{secret: <name>, key: password}`. **Nothing here implements it** — it needs a spec surface for the
 user, which is #98's work and a decision this ADR does not take.
 
-*(2026-08-14: the first of the three now exists — author the user Secret with `kelson secret set`.
-The valkey renderer is unchanged and wiring the operator's ACL user to that Secret's name remains
-#98's remaining work.)*
+*(2026-08-14: all three now exist. `kelson secret set` (#116) writes the Secret; the
+[ADR-0015 amendment](0015-valkey-operator.md#amendment-2026-08-14--auth-a-cache-with-a-password) adds
+`auth: {secret, key}` to a `kind: valkey` component, which renders the operator's ACL user against
+that Secret and turns the `password` binding into a `secretKeyRef` against the same one. It took the
+spec-surface decision this ADR declined to take, and it took it in this ADR's own shape: `auth:` is a
+`model.SecretRef`, so the reference schema decided here now describes both a value a workload reads
+and a credential an operator is configured with, through one type and one validator. Nothing in §1–§5
+changed, which was the stated test. The one thing the amendment refused on this ADR's behalf is a
+`redis://:password@host` URI — a value in a manifest, which §4's guarantee does not permit and would
+have had to be withdrawn to allow.)*
 
 ### Successor note (2026-08-14): #116 landed, and the remediation changed
 
