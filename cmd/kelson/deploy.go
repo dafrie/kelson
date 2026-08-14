@@ -1,77 +1,82 @@
 package main
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	"github.com/dafrie/kelson/internal/clusterprofile"
 	"github.com/dafrie/kelson/internal/delivery"
-	"github.com/dafrie/kelson/internal/delivery/direct"
-	"github.com/dafrie/kelson/internal/delivery/flux"
-	"github.com/dafrie/kelson/internal/delivery/git"
 	"github.com/dafrie/kelson/internal/delivery/kube"
-	"github.com/dafrie/kelson/internal/delivery/rollback"
-	"github.com/dafrie/kelson/internal/delivery/statemachine"
 	"github.com/dafrie/kelson/internal/model"
 	"github.com/dafrie/kelson/internal/observation"
 	"github.com/dafrie/kelson/internal/renderer"
 )
 
-// newDeployCmd builds `kelson deploy` (issue #135): the command that finally
-// joins the four planes end to end — render the spec, select the environment's
-// delivery adapter, apply, and report the deployment state machine's phases as
-// they happen.
+// newDeployCmd builds `kelson deploy`, which is gated (issue #224).
 //
-// # Why the plane is built behind a seam
+// # What was here, and why it is not
 //
-// The command plane's lint allow-list forbids the Kubernetes client libraries
-// (.golangci.yml, the `main` depguard rule), so nothing here may construct a
-// dynamic client. deliveryConnector is the same seam `kelson diff` uses for its
-// L2 engine: production passes connectDelivery, which assembles the registry
-// behind the delivery plane, and tests pass a connector backed by fake adapters
-// so command wiring is testable with no cluster.
-func newDeployCmd() *cobra.Command { return newDeployCmdFactory(connectDelivery) }
-
-func newDeployCmdFactory(connect deliveryConnector) *cobra.Command {
-	opts := &deployOptions{connect: connect}
+// This command used to render the spec, select the environment's delivery
+// adapter and drive the deployment state machine until it settled. Both
+// adapters are gone: [ADR-0028](docs/adr/0028-delivery-spine.md) deleted the
+// direct applier and the git writer and replaced them with one path —
+// kelson-controller renders, publishes an immutable OCI artifact, and Flux
+// reconciles it — which makes deploying an `Environment` you apply rather than
+// a command you run.
+//
+// # It refuses by name rather than disappearing
+//
+// The command stays, and stays wired, because the alternative teaches the wrong
+// thing: `unknown command "deploy"` says kelson never had the verb, and a
+// script that runs it would fail with a usage error indistinguishable from a
+// typo. A structured [delivery.Error] carrying `delivery/not-implemented` and
+// the tracking issue says exactly what happened and when it changes — the same
+// discipline internal/model's gate table applies to a field it cannot render
+// (notimplemented.go).
+func newDeployCmd() *cobra.Command {
+	opts := &deployOptions{}
 	cmd := &cobra.Command{
 		Use:   "deploy -f spec.yaml --env <name>",
-		Short: "Render a spec and make it live through the environment's delivery adapter",
-		Long: "Deploy renders the spec, hands the rendered manifests to the adapter selected by the\n" +
-			"environment's delivery mode, and follows the deployment until it settles.\n\n" +
-			"Rendering is the same pure function `kelson render` runs — the adapter never influences it\n" +
-			"(ADR-0001). Phases print as they happen, and the command exits 0 only when the deployment\n" +
-			"reaches a healthy terminal phase within --timeout.",
-		Example: "  kelson deploy -f project.yaml -f production.yaml --env production --profile from-cluster\n" +
-			"  kelson deploy -f spec.yaml --env development --timeout 10m --yes",
+		Short: "Make a rendered spec live (rebuilding on the controller — see issue #224)",
+		Long: "Deploy is being rebuilt on the delivery spine (ADR-0028, issue #224) and refuses in the\n" +
+			"meantime.\n\n" +
+			"The path it is being rebuilt on: kelson-controller validates and renders an Environment,\n" +
+			"publishes the rendered set as an immutable OCI artifact, and applies the Flux OCIRepository\n" +
+			"and Kustomization that reconcile it. Deploying becomes applying an Environment resource\n" +
+			"rather than running this command against a spec file.\n\n" +
+			"What still works today, unchanged and offline: `kelson render`, `kelson diff`, `kelson build`,\n" +
+			"`kelson profile`, `kelson explain` and `kelson status` (the workload half — see their help).",
+		Example: "  kelson render -f project.yaml -f production.yaml --env production   # the manifests, offline\n" +
+			"  kelson diff -f project.yaml -f production.yaml --env production     # what would change",
 		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runDeploy(cmd, opts)
-		},
+		RunE: func(*cobra.Command, []string) error { return deployUnavailable() },
 	}
 	f := cmd.Flags()
 	f.StringArrayVarP(&opts.files, "file", "f", nil, "spec YAML file holding Project and/or Environment documents (repeatable)")
 	f.StringVar(&opts.env, "env", "", "name of the Environment to deploy (optional when the input holds exactly one)")
 	f.StringVar(&opts.profile, "profile", "", "ClusterProfile YAML file, or from-cluster to capture a live profile (requires cluster access)")
 	f.StringVar(&opts.kubeconfig, "kubeconfig", "", "path to a kubeconfig (default: $KUBECONFIG, in-cluster credentials, then ~/.kube/config)")
-	f.StringVar(&opts.mode, "mode", "", "delivery adapter to use, overriding the environment's delivery mode (direct or flux)")
 	f.StringVar(&opts.image, "image", "", imageFlagUsage)
 	f.DurationVar(&opts.timeout, "timeout", defaultDeployTimeout, "budget for the deployment to reach a healthy phase")
 	f.BoolVar(&opts.yes, "yes", false, "do not ask for confirmation before applying (already the default when stdin is not a terminal)")
-	f.StringVar(&opts.history, "history", "", "kelson data directory holding the direct-mode rendered history (default: $KELSON_DATA_DIR, else $XDG_DATA_HOME/kelson)")
 	cobra.CheckErr(cmd.MarkFlagRequired("file"))
 	return cmd
+}
+
+// deployUnavailable is the refusal every deleted apply path shares.
+func deployUnavailable() error {
+	return delivery.NotImplemented("deploy",
+		"kelson cannot apply a rendered set: the direct applier and the git writer were deleted with "+
+			"the old delivery machinery, and the controller that replaces them does not publish yet",
+		"#224")
 }
 
 // defaultDeployTimeout is the budget a deployment gets to reach a healthy
@@ -79,300 +84,55 @@ func newDeployCmdFactory(connect deliveryConnector) *cobra.Command {
 // second number for the same question.
 const defaultDeployTimeout = 5 * time.Minute
 
-// deployPollInterval is how often the adapter is asked for its status while a
-// deployment is in flight. The state machine is event-driven and owns the only
-// timeout; adapters that expose no watch are sampled through statemachine.Poll,
-// which is what this interval feeds.
-const deployPollInterval = 2 * time.Second
-
 type deployOptions struct {
 	specInput
-	mode    string
-	history string
 	timeout time.Duration
 	yes     bool
-	connect deliveryConnector
 }
 
-func runDeploy(cmd *cobra.Command, opts *deployOptions) error {
-	target, set, err := resolveDeliveryTarget(opts.specInput, opts.history, opts.mode, cmd.ErrOrStderr())
-	if err != nil {
-		return err
-	}
-	if opts.timeout <= 0 {
-		return fmt.Errorf("--timeout must be positive, got %s", opts.timeout)
-	}
+// --- the observation plane seam ---------------------------------------------
 
-	out := &printer{w: cmd.OutOrStdout()}
-	out.printf("%s %s/%s: %d resources, mode %s\n", padPhase(delivery.PhaseProposed), set.Project, set.Environment, len(set.Manifests), target.mode)
-	if err := out.err; err != nil {
-		return err
-	}
-
-	if !opts.yes && interactive(cmd) {
-		ok, err := confirm(cmd, fmt.Sprintf("Apply %d resources to %s/%s?", len(set.Manifests), set.Project, set.Environment))
-		if err != nil {
-			return err
-		}
-		if !ok {
-			return fmt.Errorf("deploy cancelled")
-		}
-	}
-
-	// A release command (issue #104) runs inside Apply and can take minutes, so
-	// the adapter reports it through the same phase vocabulary the watch below
-	// prints. Without this the deploy would go silent for the length of a
-	// migration, which is indistinguishable from a hung one.
-	target.progress = func(st delivery.Status) {
-		out.printf("%s %s\n", padPhase(st.Phase), st.Cause)
-	}
-
-	adapter, _, err := selectAdapter(opts.connect, target)
-	if err != nil {
-		return err
-	}
-
-	ctx, cancel := context.WithTimeout(cmd.Context(), opts.timeout)
-	defer cancel()
-
-	res, err := adapter.Apply(ctx, set)
-	if err != nil {
-		return err
-	}
-	if !res.Applied {
-		return fmt.Errorf("%s: the adapter did not complete the apply for %s/%s", adapter.Name(), set.Project, set.Environment)
-	}
-	set.Revision = res.Revision
-	out.printf("%s revision %s committed by %s\n", padPhase(delivery.PhaseCommitted), res.Revision, adapter.Name())
-
-	state, err := watchDeployment(ctx, adapter, set, opts.timeout, out)
-	if err != nil {
-		return err
-	}
-	if err := out.err; err != nil {
-		return err
-	}
-	if state.Phase == delivery.PhaseHealthy {
-		return nil
-	}
-	return notHealthy(state, set, opts.timeout)
-}
-
-// watchDeployment drives the deployment state machine off the adapter's status
-// and prints every phase change as it happens. The engine is the single owner
-// of the transitions (issue #37): the CLI only renders them, so `kelson deploy`
-// and a future UI cannot disagree about what a phase means.
-func watchDeployment(ctx context.Context, adapter delivery.Adapter, set delivery.ManifestSet, timeout time.Duration, out *printer) (statemachine.State, error) {
-	last := delivery.PhaseCommitted
-	lastStuck := false
-	engine, err := statemachine.New(statemachine.Config{
-		Target:    statemachine.TargetFromSet(set),
-		Source:    adapterSource(adapter, set, deployPollInterval),
-		Timeout:   timeout,
-		Component: adapter.Name(),
-		OnState: func(s statemachine.State) {
-			if s.Phase == last && s.Stuck == lastStuck {
-				return
-			}
-			last, lastStuck = s.Phase, s.Stuck
-			out.printf("%s %s\n", padPhase(s.Phase), phaseDetail(s))
-		},
-	})
-	if err != nil {
-		return statemachine.State{}, err
-	}
-
-	state, err := engine.Run(ctx)
-	switch {
-	case err == nil:
-		return state, nil
-	case ctx.Err() != nil:
-		// The budget expired. That is an answer ("not healthy in time"), not a
-		// machinery failure — the same answer the engine's own progress timer
-		// gives, and the two expire together when nothing progresses, so which
-		// fires first is scheduler jitter. Ask the engine for the stuck verdict
-		// either way: it names the phase-specific cause the caller reports.
-		return engine.MarkStuck(), nil
-	default:
-		return state, err
-	}
-}
-
-// adapterSource feeds the state machine from an adapter's Status.
+// observationTarget is what an observing command resolved from its spec files:
+// which application model, in which namespace, against which cluster.
 //
-// It opens with a synthetic Committed observation because kelson watched the
-// commit itself: Apply has already returned. That matters mechanically as well
-// as semantically — Proposed may only be followed by Committed or Rejected, so
-// an adapter that still reports Proposed (direct mode before the applied
-// objects read back, a Git mode before the reconciler picks the commit up) is
-// forwarded as Committed with its cause intact. Anything else would be a
-// backwards transition the engine rejects as an adapter bug.
-func adapterSource(adapter delivery.Adapter, set delivery.ManifestSet, interval time.Duration) statemachine.Source {
-	poll := statemachine.Poll(statemachine.ObserverFunc(func(ctx context.Context) (delivery.Status, error) {
-		st, err := adapter.Status(ctx, set)
-		if err != nil {
-			return delivery.Status{}, err
-		}
-		if st.Phase == delivery.PhaseProposed {
-			st.Phase = delivery.PhaseCommitted
-		}
-		if st.Revision == "" {
-			st.Revision = set.Revision
-		}
-		return st, nil
-	}), interval)
-
-	return statemachine.SourceFunc(func(ctx context.Context, out chan<- delivery.Status) error {
-		committed := delivery.Status{Phase: delivery.PhaseCommitted, Revision: set.Revision}
-		if err := statemachine.Send(ctx, out, committed); err != nil {
-			return err
-		}
-		return poll.Watch(ctx, out)
-	})
-}
-
-// notHealthy turns a settled-but-not-healthy deployment into the command's
-// error. The state machine's own structured error is preferred: it distinguishes
-// rejected from degraded from never-picked-up, which is the whole point of
-// keeping those three answers apart.
-func notHealthy(state statemachine.State, set delivery.ManifestSet, timeout time.Duration) error {
-	if err := state.Err(); err != nil {
-		return err
-	}
-	return fmt.Errorf("%s/%s did not reach a healthy phase within %s: %s",
-		set.Project, set.Environment, timeout, state.String())
-}
-
-func phaseDetail(s statemachine.State) string {
-	detail := string(s.Answer())
-	if s.Stuck {
-		detail = "stuck"
-	}
-	if !s.Cause.IsZero() {
-		detail += ": " + s.Cause.String()
-	}
-	return detail
-}
-
-// padPhase keeps the phase column aligned so a deploy log reads as a sequence.
-func padPhase(p delivery.Phase) string { return fmt.Sprintf("%-11s", p) }
-
-// --- the delivery plane seam ------------------------------------------------
-
-// deliveryTarget is what a delivery command resolved from its spec files: which
-// application model, in which mode, against which cluster and history.
-type deliveryTarget struct {
+// It used to carry a delivery mode, a git target and a local history directory
+// as well, because it also chose an adapter. There is no adapter to choose
+// (ADR-0028 decision 9), so what remains is addressing: the rendered set says
+// which objects to look at, and this says where.
+type observationTarget struct {
 	kubeconfig  string
-	history     string
 	project     string
 	environment string
 	// namespace is the environment's resolved namespace, used when a rendered
 	// manifest carries none of its own.
 	namespace string
-	mode      string
-	git       *model.GitTarget
-	// fluxOperator carries the profile's flux-operator finding to the flux
-	// adapter's health readback (issue #157). Nil when no profile was captured
-	// — see fluxOperatorFinding.
-	fluxOperator *bool
-	// progress receives the adapter's observations from inside Apply — today,
-	// the release command's (issue #104). It is a field on the target rather
-	// than a printer the connector reaches for, because the connector is the
-	// seam the command tests replace and must stay free of terminal state.
-	progress func(delivery.Status)
 }
 
-// fluxOperatorFinding reduces a ClusterProfile to the tri-state the flux status
-// reader gates its FluxReport read on (issue #157). Detection is what tells the
-// planes what a cluster has (ADR-0003), so the adapter should not have to
-// establish flux-operator's availability by attempting the read.
-//
-// Nil means nobody looked, and the reader keeps probing: a zero profile (no
-// --profile) reports every component absent because none was asked about, and a
-// probe that could not read /apis records the gap rather than absence — neither
-// is a finding this may act on.
-func fluxOperatorFinding(flag string, p clusterprofile.ClusterProfile) *bool {
-	if flag == "" {
-		return nil
-	}
-	for _, g := range p.Incomplete {
-		if g.Field == "fluxOperator" {
-			return nil
-		}
-	}
-	present := p.FluxOperator != nil
-	return &present
-}
-
-// deliveryPlane is the assembled delivery plane for one command run.
-type deliveryPlane struct {
-	// registry holds the adapters registered for this run. Selection is by
-	// delivery mode (delivery.Registry.Select).
-	registry *delivery.Registry
-	// health is the observation-plane verdict source, used by `kelson status`.
-	// Nil when the plane could not build one.
+// observationPlane is what the observing commands get for one run.
+type observationPlane struct {
+	// health is the observation-plane verdict source. Nil when the plane could
+	// not build one, which the commands report rather than treat as "healthy".
 	health observation.Evaluator
-	// recorded supplies the manifests a rollback preview compares. Nil for a
-	// mode that keeps no rendered history kelson can read.
-	recorded rollback.Source
 }
 
-// deliveryConnector builds the delivery plane for a target. It is the seam the
-// command tests replace (the real one needs a cluster; none of the wiring
-// under test does).
-type deliveryConnector func(deliveryTarget) (*deliveryPlane, error)
+// observationConnector builds the plane for a target. It is the seam the
+// command tests replace (the real one needs a cluster; none of the wiring under
+// test does).
+type observationConnector func(observationTarget) (*observationPlane, error)
 
-// connectDelivery is the production connector: one cluster connection, the
-// direct adapter over a rendered-history store, the flux adapter when the
-// environment names a deployment repository, and an observation probe for
-// status verdicts.
+// connectObservation is the production connector: one cluster connection and a
+// workload probe over it.
 //
-// This function is the first real caller of delivery.NewRegistry /
-// RegisterDirect / RegisterFlux outside tests, which is what issue #135 exists
-// to fix.
-func connectDelivery(t deliveryTarget) (*deliveryPlane, error) {
+// It used to assemble a delivery registry as well — the direct adapter over a
+// JSONL journal, the flux adapter over a git writer — and that is exactly what
+// ADR-0028 deleted. What survives is the half that reads the cluster and says
+// what it sees, which needs no adapter and no history and is the half the
+// commands below are actually built on.
+func connectObservation(t observationTarget) (*observationPlane, error) {
 	cluster, err := kube.Connect(t.kubeconfig)
 	if err != nil {
 		return nil, err
 	}
-	store, err := direct.OpenStore(direct.StoreOptions{Dir: t.history})
-	if err != nil {
-		return nil, err
-	}
-
-	reg := delivery.NewRegistry()
-	if _, err := direct.RegisterDirect(reg, direct.Options{
-		Client:  cluster.Dynamic,
-		Mapper:  cluster.Mapper,
-		History: store,
-		// A failed release command quotes its own output back (issue #104).
-		// The typed client is the only one that can read pod logs, and it is
-		// already on this connection.
-		Logs:     observation.ClientGoLogSource{Client: cluster.Typed},
-		Progress: t.progress,
-	}); err != nil {
-		return nil, err
-	}
-	if t.git != nil && t.git.Repo != "" {
-		if _, err := flux.RegisterFlux(reg, flux.Options{
-			Writer: git.Config{
-				Target:   git.Target{Repo: t.git.Repo, Branch: t.git.Branch, Path: t.git.Path},
-				Mode:     git.ModeCommit,
-				Identity: git.IdentityFromEnv(nil),
-				Auth:     gitAuth(),
-			},
-			// Both halves ride the one cluster connection this function
-			// already made, rather than a kubectl/flux binary on PATH (#137).
-			// The Receiver webhook is the preferred trigger but has no flag to
-			// configure it yet, so the annotation patch — what `flux reconcile`
-			// does under the hood — is what the CLI wires today.
-			Reconciler: flux.AnnotationReconciler{Client: cluster.Dynamic},
-			Status:     flux.DynamicStatusReader{Client: cluster.Dynamic, FluxOperator: t.fluxOperator},
-		}); err != nil {
-			return nil, err
-		}
-	}
-
 	probe, err := observation.NewProbe(observation.ProbeConfig{
 		Client: cluster.Dynamic,
 		Logs:   observation.ClientGoLogSource{Client: cluster.Typed},
@@ -380,87 +140,49 @@ func connectDelivery(t deliveryTarget) (*deliveryPlane, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	return &deliveryPlane{
-		registry: reg,
-		health:   probe,
-		recorded: &rollback.DirectSource{Store: store, Project: t.project, Environment: t.environment},
-	}, nil
+	return &observationPlane{health: probe}, nil
 }
 
-// gitAuth reads the delivery credential from the environment. A missing token
-// is anonymous, which is correct for local-path and public remotes and fails
-// loudly at push time for anything else.
-func gitAuth() git.Auth {
-	if token := strings.TrimSpace(os.Getenv("KELSON_GIT_TOKEN")); token != "" {
-		return git.Token{Token: token}
-	}
-	return git.Anonymous{}
-}
-
-// selectAdapter builds the plane and resolves the delivery mode to an adapter.
-// Mode selection stays a property of the Environment spec (delivery.Selector),
-// with --mode as the deliberate override.
-func selectAdapter(connect deliveryConnector, t deliveryTarget) (delivery.Adapter, *deliveryPlane, error) {
+// connectPlane builds the plane for a target, refusing honestly when a build
+// was assembled without one.
+func connectPlane(connect observationConnector, t observationTarget) (*observationPlane, error) {
 	if connect == nil {
-		return nil, nil, fmt.Errorf("the delivery plane is unavailable in this build")
+		return nil, fmt.Errorf("the observation plane is unavailable in this build")
 	}
-	plane, err := connect(t)
-	if err != nil {
-		return nil, nil, err
-	}
-	adapter, err := plane.registry.Select(t.mode)
-	if err != nil {
-		return nil, nil, fmt.Errorf("delivery mode %q is not available: %w "+
-			"(direct always is; flux needs spec.delivery.git on the Environment)", t.mode, err)
-	}
-	return adapter, plane, nil
+	return connect(t)
 }
 
-// resolveDeliveryTarget is the shared front half of deploy, status and
-// rollback: load the spec, render it, and derive the delivery target. Keeping
-// it in one place is what stops the three commands drifting on what "the
-// current render" or "this environment's mode" means.
+// resolveObservationTarget is the shared front half of `status` and `explain`:
+// load the spec, render it, and derive what to observe. Keeping it in one place
+// is what stops the two commands drifting on what "the current render" means.
 //
 // warn takes the profile's version-skew statements (issue #57); nil silences
 // them.
-func resolveDeliveryTarget(in specInput, history, mode string, warn io.Writer) (deliveryTarget, delivery.ManifestSet, error) {
-	project, environment, manifests, profile, err := resolveAndRender(in, warn)
+func resolveObservationTarget(in specInput, warn io.Writer) (observationTarget, delivery.ManifestSet, error) {
+	project, environment, manifests, _, err := resolveAndRender(in, warn)
 	if err != nil {
-		return deliveryTarget{}, delivery.ManifestSet{}, err
+		return observationTarget{}, delivery.ManifestSet{}, err
 	}
-	// Resolve again for the delivery stanza: resolveAndRender keeps its
-	// signature focused on the render, and model.Resolve is a pure function of
-	// inputs that already validated, so this cannot fail or disagree.
+	// Resolve again for the namespace: resolveAndRender keeps its signature
+	// focused on the render, and model.Resolve is a pure function of inputs
+	// that already validated, so this cannot fail or disagree.
 	resolved, errs := model.Resolve(project, environment)
 	if len(errs) > 0 {
-		return deliveryTarget{}, delivery.ManifestSet{}, errs
+		return observationTarget{}, delivery.ManifestSet{}, errs
 	}
 
 	set, err := manifestsToSet(project, environment, manifests)
 	if err != nil {
-		return deliveryTarget{}, delivery.ManifestSet{}, err
+		return observationTarget{}, delivery.ManifestSet{}, err
 	}
 	set.SpecHash = setSpecHash(manifests)
 
-	dir, err := historyDir(history)
-	if err != nil {
-		return deliveryTarget{}, delivery.ManifestSet{}, err
-	}
-	t := deliveryTarget{
-		kubeconfig:   in.kubeconfig,
-		history:      dir,
-		project:      project.Metadata.Name,
-		environment:  environment.Metadata.Name,
-		namespace:    resolved.Environment.Namespace,
-		mode:         mode,
-		git:          resolved.Environment.Delivery.Git,
-		fluxOperator: fluxOperatorFinding(in.profile, profile),
-	}
-	if t.mode == "" {
-		t.mode = string(resolved.Environment.Mode)
-	}
-	return t, set, nil
+	return observationTarget{
+		kubeconfig:  in.kubeconfig,
+		project:     project.Metadata.Name,
+		environment: environment.Metadata.Name,
+		namespace:   resolved.Environment.Namespace,
+	}, set, nil
 }
 
 // setSpecHash is the set-level provenance hash carried on ManifestSet.SpecHash:
@@ -483,27 +205,6 @@ func setSpecHash(manifests []renderer.Manifest) string {
 		h.Write(body)
 	}
 	return "sha256:" + hex.EncodeToString(h.Sum(nil))
-}
-
-// historyDir resolves the direct-mode rendered-history location. An explicit
-// flag wins, then $KELSON_DATA_DIR, then the XDG data directory. It is a
-// per-user location rather than a per-repository one because the history
-// records what is live in a cluster, not what is in a checkout.
-func historyDir(flag string) (string, error) {
-	if flag != "" {
-		return flag, nil
-	}
-	if dir := strings.TrimSpace(os.Getenv("KELSON_DATA_DIR")); dir != "" {
-		return dir, nil
-	}
-	if base := strings.TrimSpace(os.Getenv("XDG_DATA_HOME")); base != "" {
-		return filepath.Join(base, "kelson"), nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("locating the kelson data directory: %w (pass --history)", err)
-	}
-	return filepath.Join(home, ".local", "share", "kelson"), nil
 }
 
 // --- terminal helpers -------------------------------------------------------

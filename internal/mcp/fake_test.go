@@ -62,11 +62,11 @@ type fakeServer struct {
 }
 
 var (
-	_ kelsonv1alpha1connect.SpecServiceHandler   = (*fakeServer)(nil)
-	_ kelsonv1alpha1connect.DeployServiceHandler = (*fakeServer)(nil)
-	_ kelsonv1alpha1connect.LogServiceHandler    = (*fakeServer)(nil)
-	_ kelsonv1alpha1connect.EventServiceHandler  = (*fakeServer)(nil)
-	_ kelsonv1alpha1connect.SecretServiceHandler = (*fakeServer)(nil)
+	_ kelsonv1alpha1connect.SpecServiceHandler    = (*fakeServer)(nil)
+	_ kelsonv1alpha1connect.DeployServiceHandler  = (*fakeServer)(nil)
+	_ kelsonv1alpha1connect.LogServiceHandler     = (*fakeServer)(nil)
+	_ kelsonv1alpha1connect.EventServiceHandler   = (*fakeServer)(nil)
+	_ kelsonv1alpha1connect.SecretServiceHandler  = (*fakeServer)(nil)
 	_ kelsonv1alpha1connect.ProfileServiceHandler = (*fakeServer)(nil)
 	_ kelsonv1alpha1connect.ExplainServiceHandler = (*fakeServer)(nil)
 )

@@ -73,17 +73,13 @@ func (f *fakeSecretStore) connector() secretConnector {
 }
 
 func rootWithSecrets(connect secretConnector) *cobra.Command {
-	return rootWithSecretBackends(connect, nil)
-}
-
-func rootWithSecretBackends(connect secretConnector, connectSops sopsSecretConnector) *cobra.Command {
 	root := newRootCmd()
 	for _, c := range root.Commands() {
 		if c.Name() == "secret" {
 			root.RemoveCommand(c)
 		}
 	}
-	root.AddCommand(newSecretCmdFactory(connect, connectSops))
+	root.AddCommand(newSecretCmdFactory(connect))
 	return root
 }
 

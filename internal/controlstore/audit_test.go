@@ -1,4 +1,4 @@
-package serverstate
+package controlstore
 
 import (
 	"fmt"

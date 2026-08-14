@@ -8,7 +8,7 @@ import (
 	"connectrpc.com/connect"
 
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
-	"github.com/dafrie/kelson/internal/serverstate"
+	"github.com/dafrie/kelson/internal/controlstore"
 )
 
 // TestSpecPutGetRoundTrip: the store keeps the user's document, byte-faithful
@@ -78,8 +78,8 @@ func TestSpecPutVersionConflict(t *testing.T) {
 	if connect.CodeOf(err) != connect.CodeFailedPrecondition {
 		t.Fatalf("blind overwrite: code = %v, want FailedPrecondition (err %v)", connect.CodeOf(err), err)
 	}
-	if got := detailCode(t, err); got != string(serverstate.ErrVersionConflict) {
-		t.Errorf("detail code = %q, want %q", got, serverstate.ErrVersionConflict)
+	if got := detailCode(t, err); got != string(controlstore.ErrVersionConflict) {
+		t.Errorf("detail code = %q, want %q", got, controlstore.ErrVersionConflict)
 	}
 
 	_, err = c.spec.PutSpec(ctx, connect.NewRequest(&kelsonv1alpha1.PutSpecRequest{Documents: docs, Version: "stale"}))

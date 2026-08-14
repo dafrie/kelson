@@ -28,7 +28,9 @@ import (
 // (issue #89). Order alone does not *wait*: applying a Job before a Deployment
 // says nothing about the Job having finished. The waiting is the delivery
 // plane's, which is why this field renders in direct mode only — see the gate
-// below, and internal/delivery/direct/release.go for the wait itself.
+// below. The plane that waited for the Job is deleted (ADR-0028) and
+// `components[].release` is a tracked refusal in internal/model until the
+// two-Kustomization dependsOn split replaces it.
 //
 // The component's ServiceAccount travels with the Job rather than staying with
 // the rest of its resources. It has to: the pod names it, and a Job applied

@@ -34,14 +34,34 @@ import (
 // back with one line changed and everything else — comments, blank lines,
 // key order — untouched. A promotion that reformatted the file it promoted
 // would make every promotion a review of the whole document.
-func newPromoteCmd() *cobra.Command { return newPromoteCmdFactory(connectDelivery) }
+//
+// # Why it is gated (issue #224)
+//
+// [ADR-0016](docs/adr/0016-delivery-flows-v0.md) decision 2 defines promotion
+// as "three existing operations: read staging's deployed digest, write
+// production's pin, deploy", and [ADR-0028](docs/adr/0028-delivery-spine.md)
+// decision 6 keeps that definition intact. The first of the three is what
+// broke: the deployed digest came from the local rendered-history journal, and
+// that journal is deleted. The rest of this file — the plan, the byte-faithful
+// splice, the promotion diff — is untouched and is what the rebuild plugs a new
+// digest source into.
+//
+// Reading the *spec* of the source environment instead would be the wrong fix
+// and is deliberately not done: a promotion moves what ran, not what was
+// intended, and a promotion that silently promoted an intention would be worse
+// than one that refuses.
+func newPromoteCmd() *cobra.Command { return newPromoteCmdFactory() }
 
-func newPromoteCmdFactory(connect deliveryConnector) *cobra.Command {
-	opts := &promoteOptions{connect: connect}
+func newPromoteCmdFactory() *cobra.Command {
+	opts := &promoteOptions{}
 	cmd := &cobra.Command{
 		Use:   "promote -f spec.yaml --from <environment> --to <environment>",
 		Short: "Pin one environment to the images another environment is running",
-		Long: "Promote reads the images the source environment's latest deployed revision runs and\n" +
+		Long: "Promote is gated while the delivery spine is rebuilt (ADR-0028, issue #224): the images it\n" +
+			"promotes come from the source environment's deployed revision, and the recorded history that\n" +
+			"answered that was deleted with the old delivery machinery. Everything else about the command —\n" +
+			"the plan, the byte-faithful edit, the diff — is unchanged and waiting on that one input.\n\n" +
+			"Promote reads the images the source environment's latest deployed revision runs and\n" +
 			"writes them as the target environment's per-component image pins — the whole of what\n" +
 			"promotion is in kelson (ADR-0016). Nothing is rebuilt and nothing is deployed: the\n" +
 			"target Environment document gains one image line per promoted component, and the\n" +
@@ -64,8 +84,6 @@ func newPromoteCmdFactory(connect deliveryConnector) *cobra.Command {
 	f.StringArrayVar(&opts.components, "component", nil, "restrict the promotion to this component (repeatable; default: every workload component)")
 	f.StringVar(&opts.profile, "profile", "", "ClusterProfile YAML file, or from-cluster to capture a live profile (requires cluster access)")
 	f.StringVar(&opts.kubeconfig, "kubeconfig", "", "path to a kubeconfig (default: $KUBECONFIG, in-cluster credentials, then ~/.kube/config)")
-	f.StringVar(&opts.mode, "mode", "", "delivery adapter to read the source environment's history through (direct or flux)")
-	f.StringVar(&opts.history, "history", "", "kelson data directory holding the direct-mode rendered history (default: $KELSON_DATA_DIR, else $XDG_DATA_HOME/kelson)")
 	f.BoolVar(&opts.dryRun, "dry-run", false, "print what would be pinned and the diff it produces, and write nothing")
 	f.BoolVar(&opts.yes, "yes", false, "write the pins without asking for confirmation; the plan and the diff are printed either way")
 	f.BoolVar(&opts.noColor, "no-color", false, "disable ANSI colour even on a terminal (also honoured via NO_COLOR)")
@@ -82,12 +100,9 @@ type promoteOptions struct {
 	components []string
 	profile    string
 	kubeconfig string
-	mode       string
-	history    string
 	dryRun     bool
 	yes        bool
 	noColor    bool
-	connect    deliveryConnector
 }
 
 func runPromote(cmd *cobra.Command, opts *promoteOptions) error {
@@ -107,7 +122,7 @@ func runPromote(cmd *cobra.Command, opts *promoteOptions) error {
 		return err
 	}
 
-	revision, deployed, err := promotedImages(cmd, opts, spec.project, source)
+	revision, deployed, err := promotedImages(spec.project, source)
 	if err != nil {
 		return err
 	}
@@ -157,60 +172,20 @@ func runPromote(cmd *cobra.Command, opts *promoteOptions) error {
 	return out.err
 }
 
-// promotedImages reads what the source environment's latest revision runs, out
-// of the local rendered-history journal.
+// promotedImages reads what the source environment's latest revision runs.
 //
-// The seam is the same rollback.Source the rollback preview reads, for the same
-// reason: those bytes are what was applied. A delivery mode whose history
-// kelson cannot read says so rather than falling back to a re-render of the
-// source's spec, which would promote an intention instead of a fact.
-func promotedImages(cmd *cobra.Command, opts *promoteOptions, project *model.Project, source *model.Environment) (string, map[string]string, error) {
-	resolved, errs := model.Resolve(project, source)
-	if len(errs) > 0 {
-		return "", nil, errs
-	}
-	dir, err := historyDir(opts.history)
-	if err != nil {
-		return "", nil, err
-	}
-	t := deliveryTarget{
-		kubeconfig:  opts.kubeconfig,
-		history:     dir,
-		project:     project.Metadata.Name,
-		environment: source.Metadata.Name,
-		namespace:   resolved.Environment.Namespace,
-		mode:        opts.mode,
-		git:         resolved.Environment.Delivery.Git,
-	}
-	if t.mode == "" {
-		t.mode = string(resolved.Environment.Mode)
-	}
-	adapter, plane, err := selectAdapter(opts.connect, t)
-	if err != nil {
-		return "", nil, err
-	}
-
-	ctx := cmd.Context()
-	entries, err := adapter.History(ctx, delivery.ManifestSet{Project: t.project, Environment: t.environment})
-	if err != nil {
-		return "", nil, err
-	}
-	if len(entries) == 0 {
-		return "", nil, promote.NothingDeployed(t.project, t.environment)
-	}
-	if plane.recorded == nil {
-		return "", nil, fmt.Errorf("delivery mode %q keeps no rendered history kelson can read, so what %s/%s runs cannot be read back; promote from a direct-mode environment, or write the pin by hand",
-			adapter.Name(), t.project, t.environment)
-	}
-	manifests, err := plane.recorded.Revision(ctx, entries[0].Revision)
-	if err != nil {
-		return "", nil, err
-	}
-	images, err := promote.Deployed(manifests)
-	if err != nil {
-		return "", nil, err
-	}
-	return entries[0].Revision, images, nil
+// It is the one step of the promotion that has no source any more. The seam it
+// read through was the rendered-history journal, whose bytes were what was
+// actually applied; the spine's replacement is the source Environment's
+// `status.history[]` mirror and, beyond that window, the registry's tag list
+// (ADR-0028 decision 4). Neither exists yet, so the promotion refuses here —
+// before the plan, before the splice and before anything is written.
+func promotedImages(project *model.Project, source *model.Environment) (string, map[string]string, error) {
+	return "", nil, delivery.NotImplemented("promote",
+		fmt.Sprintf("kelson cannot read what %s/%s is running: promotion moves the images of the source "+
+			"environment's deployed revision, and the recorded history that answered that was deleted "+
+			"with the old delivery machinery", project.Metadata.Name, source.Metadata.Name),
+		"#224")
 }
 
 // printPromotionPlan lists every component the promotion considered, including

@@ -9,8 +9,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dafrie/kelson/internal/controlstore"
 	"github.com/dafrie/kelson/internal/delivery/kube"
-	"github.com/dafrie/kelson/internal/serverstate"
 )
 
 // `kelson audit` reads the audit trail: what each principal actually did
@@ -48,7 +48,7 @@ import (
 // the same reason agentStore is: the production implementation needs a live
 // cluster and the command wiring under test does not.
 type auditStore interface {
-	Query(ctx context.Context, q serverstate.AuditQuery) (serverstate.AuditPage, error)
+	Query(ctx context.Context, q controlstore.AuditQuery) (controlstore.AuditPage, error)
 }
 
 // auditConnector builds the store for one command run. It is the seam the tests
@@ -62,7 +62,7 @@ func connectAudit(kubeconfig, namespace string) (auditStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	return serverstate.NewAuditStore(serverstate.AuditOptions{
+	return controlstore.NewAuditStore(controlstore.AuditOptions{
 		Client:    cluster.Typed,
 		Namespace: namespace,
 	})
@@ -132,8 +132,8 @@ func newAuditCmdWith(connect auditConnector) *cobra.Command {
 		"only records with this outcome: allowed, refused or failed")
 	f.DurationVar(&opts.since, "since", 0,
 		"only records from the last duration, e.g. 24h; omit to reach as far back as the store retains")
-	f.IntVar(&opts.limit, "limit", serverstate.DefaultAuditPageSize,
-		fmt.Sprintf("how many records to print (maximum %d; --export pages past it)", serverstate.MaxAuditPageSize))
+	f.IntVar(&opts.limit, "limit", controlstore.DefaultAuditPageSize,
+		fmt.Sprintf("how many records to print (maximum %d; --export pages past it)", controlstore.MaxAuditPageSize))
 	f.StringVar(&opts.export, "export", "",
 		"write every matching record instead of a page, as `jsonl` — one JSON object per line, for a pipeline")
 	return cmd
@@ -161,8 +161,8 @@ func runAudit(cmd *cobra.Command, opts *auditOptions) error {
 
 // query builds the store query from the flags. `now` is passed in so --since is
 // deterministic under test.
-func (o *auditOptions) query(now time.Time) (serverstate.AuditQuery, error) {
-	q := serverstate.AuditQuery{
+func (o *auditOptions) query(now time.Time) (controlstore.AuditQuery, error) {
+	q := controlstore.AuditQuery{
 		Project:     o.project,
 		Environment: o.environment,
 		Principal:   o.principal,
@@ -171,16 +171,16 @@ func (o *auditOptions) query(now time.Time) (serverstate.AuditQuery, error) {
 	}
 	if o.agent != "" {
 		if o.principal != "" && o.principal != o.agent {
-			return serverstate.AuditQuery{}, fmt.Errorf(
+			return controlstore.AuditQuery{}, fmt.Errorf(
 				"--agent %q and --principal %q name different principals; use one of them", o.agent, o.principal)
 		}
 		q.Principal = o.agent
 		q.PrincipalType = string(auditPrincipalAgent)
 	}
 	if o.outcome != "" {
-		outcome := serverstate.AuditOutcome(strings.ToLower(strings.TrimSpace(o.outcome)))
-		if !serverstate.ValidAuditOutcome(outcome) {
-			return serverstate.AuditQuery{}, fmt.Errorf(
+		outcome := controlstore.AuditOutcome(strings.ToLower(strings.TrimSpace(o.outcome)))
+		if !controlstore.ValidAuditOutcome(outcome) {
+			return controlstore.AuditQuery{}, fmt.Errorf(
 				"unknown outcome %q: --outcome takes allowed, refused or failed. "+
 					"A refused request never happened; a failed one was allowed and then broke", o.outcome)
 		}
@@ -199,7 +199,7 @@ func (o *auditOptions) query(now time.Time) (serverstate.AuditQuery, error) {
 const auditPrincipalAgent = "agent"
 
 // printAudit prints one page, newest first, then the window.
-func printAudit(cmd *cobra.Command, store auditStore, q serverstate.AuditQuery) error {
+func printAudit(cmd *cobra.Command, store auditStore, q controlstore.AuditQuery) error {
 	page, err := store.Query(cmd.Context(), q)
 	if err != nil {
 		return err
@@ -222,7 +222,7 @@ func printAudit(cmd *cobra.Command, store auditStore, q serverstate.AuditQuery) 
 // writeAuditRecord prints one record as two lines: what happened, and the
 // detail beneath it. The headline leads with the outcome because that is what a
 // person scanning for trouble is looking for.
-func writeAuditRecord(out *printer, rec serverstate.AuditRecord) {
+func writeAuditRecord(out *printer, rec controlstore.AuditRecord) {
 	out.printf("%s  %-8s %-14s %s\n",
 		rec.Time.Format(time.RFC3339),
 		rec.Outcome,
@@ -267,16 +267,16 @@ func writeAuditRecord(out *printer, rec serverstate.AuditRecord) {
 // auditChangeSummary renders the bounded diff stats, saying which kind of count
 // they are. "3 resources" and "1 added, 2 modified" are different claims and the
 // record keeps them apart, so the printer must too.
-func auditChangeSummary(change *serverstate.AuditChange) string {
+func auditChangeSummary(change *controlstore.AuditChange) string {
 	parts := make([]string, 0, 2)
 	switch change.Source {
-	case serverstate.ChangeFromDiff:
+	case controlstore.ChangeFromDiff:
 		parts = append(parts, fmt.Sprintf("%d added, %d modified, %d removed",
 			change.Added, change.Modified, change.Removed))
 		if change.MaxRisk != "" {
 			parts = append(parts, "risk="+change.MaxRisk)
 		}
-	case serverstate.ChangeFromRendered:
+	case controlstore.ChangeFromRendered:
 		if change.Resources > 0 {
 			parts = append(parts, fmt.Sprintf("%d resources applied", change.Resources))
 		}
@@ -290,7 +290,7 @@ func auditChangeSummary(change *serverstate.AuditChange) string {
 // writeAuditWindow states the horizon, every time. A reader who cannot see
 // where the store's memory ends is a reader who will over-trust the answer
 // above it.
-func writeAuditWindow(out *printer, w serverstate.AuditWindow) {
+func writeAuditWindow(out *printer, w controlstore.AuditWindow) {
 	out.printf("\nwindow: the store retains %d days, back to %s",
 		w.RetainDays, w.RetainedFrom.Format("2006-01-02"))
 	if !w.OldestRecorded.IsZero() {
@@ -307,10 +307,10 @@ func writeAuditWindow(out *printer, w serverstate.AuditWindow) {
 // exportAudit follows the page token to exhaustion, writing each record as it
 // arrives. The window goes to stderr: stdout is the data, and a note in the
 // middle of a JSONL stream would corrupt it for the pipeline it was written for.
-func exportAudit(cmd *cobra.Command, store auditStore, q serverstate.AuditQuery) error {
-	q.Limit = serverstate.MaxAuditPageSize
+func exportAudit(cmd *cobra.Command, store auditStore, q controlstore.AuditQuery) error {
+	q.Limit = controlstore.MaxAuditPageSize
 	encoder := json.NewEncoder(cmd.OutOrStdout())
-	var window serverstate.AuditWindow
+	var window controlstore.AuditWindow
 	total := 0
 
 	for {

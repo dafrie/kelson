@@ -6,12 +6,11 @@
 # Namespaced RBAC. Every rule below exists because a named package makes that
 # call; nothing here is a wildcard and nothing is "probably needed".
 #
-# What is deliberately NOT granted: the write access the direct delivery
-# adapter needs to apply a rendered spec (Deployments, Services, and whatever
-# else a project's manifests contain). That grant is as wide as the renderer's
-# output, it belongs to the namespaces you deploy into rather than to the
-# installer, and least-privilege for it is #84's work along with the rest of
-# the threat model. Bind it yourself, per namespace, and see README.md.
+# What is deliberately NOT granted: write access to a project's rendered
+# resources (Deployments, Services, and whatever else its manifests contain).
+# The server does not apply them — ADR-0028 made delivery a controller loop, and
+# kelson-controller carries its own ClusterRole for it. Least-privilege for the
+# apply is #84's work along with the rest of the threat model.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -20,22 +19,37 @@ metadata:
   labels:
     {{- include "kelson.labels" . | nindent 4 }}
 rules:
-  # internal/serverstate: the spec store (Get/Create/Update/Delete, List by
-  # label), the history store (Create, List, Get, Delete when trimming past
-  # --keep), and the audit trail (issue #78, ADR-0026: one ConfigMap per UTC
-  # day, Get and Update to append, List to query, Delete to prune past
-  # --audit-retention). The trail needs no grant of its own — it is the same
-  # verbs on the same resource in the same namespace, which is a large part of
-  # why it is stored this way.
+  # internal/controlstore's audit trail (issue #78, ADR-0026): one ConfigMap per
+  # UTC day, Get and Update to append, List to query, Delete to prune past
+  # --audit-retention.
   #
   # No `watch`: no store watches, all read on demand, and a verb nothing calls
-  # is a verb that should not be granted. No `patch`: the spec store and the
-  # audit store both do read-modify-Update against a resourceVersion, which is
-  # what makes concurrent writes conflict instead of silently interleaving.
+  # is a verb that should not be granted. No `patch`: the audit store does
+  # read-modify-Update against a resourceVersion, which is what makes concurrent
+  # writes conflict instead of silently interleaving.
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get", "list", "create", "update", "delete"]
-  # internal/serverstate's agent identity store (issue #74, ADR-0024): one
+  # internal/controlstore's spec store (ADR-0027 decision 6). A project is one
+  # Project custom resource plus one Environment per environment, in this
+  # namespace, written with server-side apply under the field manager
+  # `kelson-server`.
+  #
+  # `patch` is the apply — server-side apply is a PATCH with the apply content
+  # type — and it is why there is no `update` here: the store never sends a full
+  # replacement. `create` is not granted either, because an apply of an absent
+  # object creates it through the same verb. `delete` is DeleteSpec, and it
+  # removes the Environments before the Project so a reader never sees an
+  # Environment whose Project is gone.
+  #
+  # No `watch`: the server reads on demand and the controller does the watching,
+  # with its own ClusterRole. No `status` subresource: status is the
+  # controller's to write, and a server that cannot write it cannot race it
+  # (ADR-0027 decision 1).
+  - apiGroups: ["kelson.dev"]
+    resources: ["projects", "environments"]
+    verbs: ["get", "list", "patch", "delete"]
+  # internal/controlstore's agent identity store (issue #74, ADR-0024): one
   # Secret per agent identity, holding a salted HMAC of the credential and never
   # the credential. Get on every request (revocation must be immediate, so no
   # allow decision is cached), List for `kelson agent list`, Create at issuance,

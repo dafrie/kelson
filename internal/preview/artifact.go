@@ -8,10 +8,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/dafrie/kelson/internal/delivery"
-	"github.com/dafrie/kelson/internal/delivery/git"
 	"github.com/dafrie/kelson/internal/preview/naming"
 )
 
@@ -103,11 +104,11 @@ func (a Artifact) Reference() string { return a.Repository + "@" + a.Digest }
 
 // Package turns a rendered preview into a Flux OCI artifact.
 //
-// The layout is internal/delivery/git's: the same ManifestFiles that lays out a
-// Git-mode commit lays out the tar, so an artifact's contents and an ejected
-// repository's contents are the same bytes with the same names. ADR-0017 asked
-// stage 2 to reuse that vocabulary and this is where it happens — one ordering
-// rule, one naming rule, one place to change them.
+// The layout is [ManifestFiles]', the flat directory ADR-0017 decision 10
+// specifies. It arrived here from the deleted git writer and is now the one
+// layout kelson publishes: ADR-0028 decision 2 converges the preview pipeline
+// and the delivery spine on a single publisher, so there is one ordering rule,
+// one naming rule and one place to change them.
 //
 // The Kustomization the ResourceSet templates builds `path: ./`, so the files
 // sit at the root of the tar with no directory above them.
@@ -129,7 +130,7 @@ func Package(set *Set) (Artifact, error) {
 			YAML:       body,
 		})
 	}
-	files := git.ManifestFiles(ms)
+	files := ManifestFiles(ms)
 	if len(files) == 0 {
 		return Artifact{}, fmt.Errorf("preview: the render produced no manifests to publish")
 	}
@@ -203,7 +204,7 @@ func Package(set *Set) (Artifact, error) {
 // [artifactEpoch] — including gzip's own header, which is why the writer is
 // given an explicit empty header rather than the default. USTAR is chosen over
 // PAX so no extended header can carry a field this function did not set.
-func tarball(files []git.File) ([]byte, error) {
+func tarball(files []File) ([]byte, error) {
 	var buf bytes.Buffer
 	gz, err := gzip.NewWriterLevel(&buf, gzip.BestCompression)
 	if err != nil {
@@ -288,4 +289,59 @@ func marshal(v any) ([]byte, error) {
 func digestOf(b []byte) string {
 	sum := sha256.Sum256(b)
 	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// File is one file in a published artifact: its path inside the tar and its
+// bytes.
+//
+// It and [ManifestFiles] arrived here from the deleted git writer
+// (internal/delivery/git), which is where the layout was first written and
+// which ADR-0028 decision 9 keeps by name while deleting everything around it.
+// The layout is the artifact's, not the transport's: ADR-0017 decision 10
+// specifies a flat directory of rendered manifests, and the spine and the
+// preview pipeline publish the same one (ADR-0028 decision 2, "one publisher
+// rather than two").
+type File struct {
+	// Path is the file's name inside the artifact, relative to its root.
+	Path string
+	// Data is the file's contents, byte for byte as the renderer produced them.
+	Data []byte
+}
+
+// ManifestFiles lays a rendered ManifestSet out as files. It is a pure function
+// of the set: the same manifests always produce the same file names and
+// contents, which is what makes an unchanged render produce a digest the
+// registry already holds.
+//
+// The name carries the renderer's apply order as a zero-padded prefix. Flux does
+// not need that ordering — kustomize-controller sorts resources itself — but it
+// makes the directory readable when someone pulls an artifact to see what was
+// deployed, and it keeps the listing stable when a resource is added in the
+// middle.
+//
+// This is packaging, not rendering: the manifest bytes are passed through
+// verbatim (ADR-0001).
+func ManifestFiles(set delivery.ManifestSet) []File {
+	files := make([]File, 0, len(set.Manifests))
+	seen := map[string]int{}
+	for i, m := range set.Manifests {
+		name := fmt.Sprintf("%03d-%s-%s.yaml", i+1, slugify(m.Kind), slugify(m.Name))
+		if n := seen[name]; n > 0 {
+			// Same kind+name in two namespaces: keep both, deterministically.
+			name = fmt.Sprintf("%03d-%s-%s-%s.yaml", i+1, slugify(m.Kind), slugify(m.Namespace), slugify(m.Name))
+		}
+		seen[name]++
+		files = append(files, File{Path: name, Data: m.YAML})
+	}
+	return files
+}
+
+var slugUnsafe = regexp.MustCompile(`[^a-z0-9]+`)
+
+func slugify(s string) string {
+	out := strings.Trim(slugUnsafe.ReplaceAllString(strings.ToLower(s), "-"), "-")
+	if out == "" {
+		return "resource"
+	}
+	return out
 }

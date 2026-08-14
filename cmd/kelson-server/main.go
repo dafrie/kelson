@@ -3,10 +3,21 @@
 //
 // # The process holds no state
 //
-// Specs and deployment history live in ConfigMaps in the namespace the server
-// runs against (--namespace, default kelson-system). A restart or a second
-// replica loses and forks nothing, which is why there is no volume, no
+// Specs are `kelson.dev/v1alpha1` Project and Environment custom resources in
+// the namespace the server runs against (--namespace, default kelson-system),
+// written with server-side apply (ADR-0027 decision 6); agent identities and the
+// audit ring are Secrets and ConfigMaps in the same namespace. A restart or a
+// second replica loses and forks nothing, which is why there is no volume, no
 // migration and no leader election here (ADR-0013 §1).
+//
+// # Deploying is not this process's job any more
+//
+// [ADR-0028](docs/adr/0028-delivery-spine.md) made delivery a controller loop:
+// kelson-controller renders an Environment, publishes an OCI artifact and lets
+// Flux reconcile it. This server renders, validates, previews, builds, reads
+// logs and stores specs; the RPCs that used to apply, roll back or list history
+// answer `CodeUnimplemented` with a `delivery/not-implemented` detail naming
+// issue #224 until the controller publishes.
 //
 // # Loopback by default; one shared password buys more than that
 //
@@ -69,16 +80,13 @@ import (
 	"github.com/dafrie/kelson/internal/build/registry"
 	"github.com/dafrie/kelson/internal/clusterprofile"
 	"github.com/dafrie/kelson/internal/clusterprofile/detect"
-	"github.com/dafrie/kelson/internal/delivery"
-	"github.com/dafrie/kelson/internal/delivery/direct"
+	"github.com/dafrie/kelson/internal/controlstore"
 	"github.com/dafrie/kelson/internal/delivery/dryrun"
 	"github.com/dafrie/kelson/internal/delivery/flux"
-	"github.com/dafrie/kelson/internal/delivery/git"
 	"github.com/dafrie/kelson/internal/delivery/kube"
-	"github.com/dafrie/kelson/internal/delivery/rollback"
+	"github.com/dafrie/kelson/internal/gitref"
 	"github.com/dafrie/kelson/internal/observation"
 	"github.com/dafrie/kelson/internal/secret"
-	"github.com/dafrie/kelson/internal/serverstate"
 	"github.com/dafrie/kelson/internal/version"
 	"github.com/dafrie/kelson/internal/webui"
 )
@@ -103,7 +111,6 @@ type config struct {
 	insecureBind bool
 	kubeconfig   string
 	namespace    string
-	keep         int
 
 	// auditRetention is how many UTC days of audit records to keep. Zero
 	// selects the store's default; a negative value turns the trail off.
@@ -242,10 +249,9 @@ func parseFlags(args []string, stderr io.Writer) (config, error) {
 	fs.BoolVar(&cfg.insecureBind, "insecure-bind", false, "allow binding a non-loopback address; v0 has no authentication (see #84)")
 	fs.StringVar(&cfg.kubeconfig, "kubeconfig", "", "path to a kubeconfig (default: $KUBECONFIG, in-cluster credentials, then ~/.kube/config)")
 	fs.StringVar(&cfg.namespace, "namespace", defaultNamespace, "namespace holding kelson-server's state ConfigMaps")
-	fs.IntVar(&cfg.keep, "keep", direct.DefaultKeep, "number of deployment revisions to retain per environment")
-	fs.IntVar(&cfg.auditRetention, "audit-retention", serverstate.DefaultAuditRetentionDays,
+	fs.IntVar(&cfg.auditRetention, "audit-retention", controlstore.DefaultAuditRetentionDays,
 		fmt.Sprintf("days of audit records to retain (maximum %d); 0 disables the audit trail, which is a choice to make out loud (issue #78)",
-			serverstate.MaxAuditRetentionDays))
+			controlstore.MaxAuditRetentionDays))
 	fs.StringVar(&cfg.password, "password", os.Getenv(passwordEnv),
 		"shared password web clients log in with and non-browser clients send as a bearer token (default: $"+passwordEnv+"); empty disables authentication")
 	fs.StringVar(&cfg.registry, "registry", os.Getenv(registryEnv), "destination registry and namespace for builds, e.g. ghcr.io/acme (default: $"+registryEnv+"); a Build request may override it")
@@ -268,7 +274,7 @@ func parseFlags(args []string, stderr io.Writer) (config, error) {
 		return config{}, fmt.Errorf("unexpected argument %q: kelson-server takes flags only", fs.Arg(0))
 	}
 	if cfg.namespace == "" {
-		return config{}, errors.New("--namespace must not be empty: it is where the spec and history ConfigMaps live")
+		return config{}, errors.New("--namespace must not be empty: it is where the Project and Environment resources, the agent identities and the audit ring live")
 	}
 	if cfg.auditRetention < 0 {
 		return config{}, fmt.Errorf("--audit-retention %d is not a number of days; pass 0 to disable the audit trail",
@@ -416,22 +422,22 @@ func healthz(w http.ResponseWriter, _ *http.Request) {
 // delivery plane is rebuilt per request instead — kube.Connect's REST mapper is
 // discovery-backed and never refreshed, so a long-running process reusing one
 // would not see a CRD registered after it started (see kube.Connect's doc).
-func connectServer(cfg config, attribution *slog.Logger) (*api.Server, *serverstate.AgentStore, error) {
+func connectServer(cfg config, attribution *slog.Logger) (*api.Server, *controlstore.AgentStore, error) {
 	cluster, err := kube.Connect(cfg.kubeconfig)
 	if err != nil {
 		return nil, nil, err
 	}
-	specs, err := serverstate.NewSpecStore(serverstate.SpecStoreOptions{
-		Client:    cluster.Typed,
-		Namespace: cfg.namespace,
-	})
+	// The spec store speaks to custom resources, which needs a client the
+	// typed clientset above cannot give: controlstore builds it from the same
+	// resolved credentials so the two cannot disagree about which cluster this
+	// is (ADR-0027 decision 6).
+	crClient, err := controlstore.NewClient(cluster.Config)
 	if err != nil {
 		return nil, nil, err
 	}
-	history, err := serverstate.NewHistoryStore(serverstate.HistoryOptions{
-		Client:    cluster.Typed,
+	specs, err := controlstore.NewSpecStore(controlstore.SpecStoreOptions{
+		Client:    crClient,
 		Namespace: cfg.namespace,
-		Keep:      cfg.keep,
 	})
 	if err != nil {
 		return nil, nil, err
@@ -447,7 +453,7 @@ func connectServer(cfg config, attribution *slog.Logger) (*api.Server, *serverst
 	// pre-#78 posture, chosen deliberately rather than arrived at.
 	var audit api.AuditSink
 	if cfg.auditRetention != 0 {
-		store, err := serverstate.NewAuditStore(serverstate.AuditOptions{
+		store, err := controlstore.NewAuditStore(controlstore.AuditOptions{
 			Client:     cluster.Typed,
 			Namespace:  cfg.namespace,
 			RetainDays: cfg.auditRetention,
@@ -464,7 +470,7 @@ func connectServer(cfg config, attribution *slog.Logger) (*api.Server, *serverst
 	// the gate resolves the credential and the handlers issue them, and both
 	// must be looking at the same store or a revocation would be visible to
 	// only one of them.
-	agents, err := serverstate.NewAgentStore(serverstate.AgentStoreOptions{
+	agents, err := controlstore.NewAgentStore(controlstore.AgentStoreOptions{
 		Client:    cluster.Typed,
 		Namespace: cfg.namespace,
 	})
@@ -480,7 +486,7 @@ func connectServer(cfg config, attribution *slog.Logger) (*api.Server, *serverst
 		Profile: api.CaptureFunc(func(context.Context) (clusterprofile.ClusterProfile, error) {
 			return detect.FromCluster(cfg.kubeconfig)
 		}),
-		Delivery: deliveryConnector(cfg, history),
+		Delivery: observationConnector(cfg),
 		Preview:  previewConnector(cfg),
 		Logs:     api.LogQueryEngine{Engine: logs},
 		Build:    buildConnector(cfg),
@@ -497,48 +503,21 @@ func connectServer(cfg config, attribution *slog.Logger) (*api.Server, *serverst
 	}), agents, nil
 }
 
-// deliveryConnector is the server's connectDelivery: one cluster connection per
-// request, the direct adapter over the cluster-backed history store, the flux
-// adapter when the environment names a deployment repository, and an
-// observation probe for status verdicts. It mirrors cmd/kelson/deploy.go's
-// function of the same purpose — the difference is where history lives.
-func deliveryConnector(cfg config, history *serverstate.HistoryStore) api.DeliveryConnector {
-	return func(ctx context.Context, t api.Target) (*api.Plane, error) {
+// observationConnector is the server's connectObservation: one cluster
+// connection per request and a workload probe over it, mirroring
+// cmd/kelson/deploy.go's function of the same purpose.
+//
+// It used to assemble a delivery registry as well — the direct adapter over the
+// cluster-backed history store, the flux adapter when the environment named a
+// deployment repository — and that is what ADR-0028 deleted. What survives is
+// the half that reads the cluster: the workload probe behind Status and
+// Explain, and the preview reader behind ListPreviews.
+func observationConnector(cfg config) api.DeliveryConnector {
+	return func(_ context.Context, _ api.Target) (*api.Plane, error) {
 		cluster, err := kube.Connect(cfg.kubeconfig)
 		if err != nil {
 			return nil, err
 		}
-		// WithContext hands the request's context through direct.History, which
-		// is context-free; without it a cancelled RPC would leave a ConfigMap
-		// write in flight (ADR-0013 §1).
-		store := history.WithContext(ctx)
-
-		reg := delivery.NewRegistry()
-		if _, err := direct.RegisterDirect(reg, direct.Options{
-			Client:  cluster.Dynamic,
-			Mapper:  cluster.Mapper,
-			History: store,
-			// A failed release command quotes its own output back (issue #104),
-			// which needs the typed client this connection already has.
-			Logs: observation.ClientGoLogSource{Client: cluster.Typed},
-		}); err != nil {
-			return nil, err
-		}
-		if t.Git != nil && t.Git.Repo != "" {
-			if _, err := flux.RegisterFlux(reg, flux.Options{
-				Writer: git.Config{
-					Target:   git.Target{Repo: t.Git.Repo, Branch: t.Git.Branch, Path: t.Git.Path},
-					Mode:     git.ModeCommit,
-					Identity: git.IdentityFromEnv(nil),
-					Auth:     gitAuth(),
-				},
-				Reconciler: flux.AnnotationReconciler{Client: cluster.Dynamic},
-				Status:     flux.DynamicStatusReader{Client: cluster.Dynamic, FluxOperator: t.FluxOperator},
-			}); err != nil {
-				return nil, err
-			}
-		}
-
 		probe, err := observation.NewProbe(observation.ProbeConfig{
 			Client: cluster.Dynamic,
 			Logs:   observation.ClientGoLogSource{Client: cluster.Typed},
@@ -547,16 +526,14 @@ func deliveryConnector(cfg config, history *serverstate.HistoryStore) api.Delive
 			return nil, err
 		}
 		return &api.Plane{
-			Registry: reg,
-			Health:   probe,
-			Recorded: &rollback.DirectSource{Store: store, Project: t.Project, Environment: t.Environment},
-			// The preview reader is wired unconditionally, unlike the flux
-			// adapter above: reading which pull requests are running needs no
-			// deployment repository and no write credential, only the cluster
-			// this connection already opened. An environment whose mode cannot
-			// run previews never reaches here — the gate answers first
-			// (internal/api/preview.go).
-			Previews: flux.DynamicStatusReader{Client: cluster.Dynamic, FluxOperator: t.FluxOperator},
+			Health: probe,
+			// Reading which pull requests are running needs no deployment
+			// repository and no write credential, only the cluster this
+			// connection already opened. FluxOperator is nil because nothing
+			// resolves a ClusterProfile on this path any more; the reader
+			// probes rather than acting on an absence nobody established
+			// (internal/delivery/flux/status.go).
+			Previews: flux.DynamicStatusReader{Client: cluster.Dynamic},
 		}, nil
 	}
 }
@@ -583,10 +560,11 @@ func buildConnector(cfg config) api.BuildConnector {
 		}
 		return &api.BuildPlane{
 			Builder: driver,
-			// The source repository and the deployment repository are commonly
-			// the same forge, so the build reuses the delivery credential
-			// rather than inventing a second one — the CLI's choice, unchanged.
-			Revisions: git.RemoteResolver{Auth: gitAuth()},
+			// KELSON_GIT_TOKEN reads the *source* repository. It was named
+			// for the deployment repository the git writer pushed to, and that
+			// writer is gone (ADR-0028); reading a private source is the one
+			// job the credential still has — the CLI's choice, unchanged.
+			Revisions: gitref.RemoteResolver{Auth: sourceAuth()},
 		}, nil
 	}
 }
@@ -649,12 +627,12 @@ func previewConnector(cfg config) api.PreviewConnector {
 	}
 }
 
-// gitAuth reads the delivery credential from the environment, exactly as the
-// CLI does. A missing token is anonymous, which is correct for public remotes
-// and fails loudly at push time for anything else.
-func gitAuth() git.Auth {
+// sourceAuth reads the source-repository credential from the environment,
+// exactly as the CLI does. A missing token is anonymous, which is correct for
+// public remotes and fails loudly at ls-remote time for anything else.
+func sourceAuth() gitref.Auth {
 	if token := strings.TrimSpace(os.Getenv("KELSON_GIT_TOKEN")); token != "" {
-		return git.Token{Token: token}
+		return gitref.Token{Token: token}
 	}
-	return git.Anonymous{}
+	return gitref.Anonymous{}
 }

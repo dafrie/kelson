@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"reflect"
 	"sort"
 	"strings"
 
@@ -321,43 +320,19 @@ func wireManifests(manifests []renderer.Manifest) ([]*kelsonv1alpha1.Manifest, e
 	return out, nil
 }
 
-// target derives the delivery target from a resolved spec, applying the mode
-// override the request may carry. Mode selection stays a property of the
-// Environment spec (delivery.Selector); the request field is the deliberate
-// override, exactly like the CLI's --mode.
-func target(out *rendered, mode string) Target {
-	t := Target{
-		Project:      out.project.Metadata.Name,
-		Environment:  out.environment.Metadata.Name,
-		Namespace:    out.resolved.Environment.Namespace,
-		Mode:         mode,
-		Git:          out.resolved.Environment.Delivery.Git,
-		FluxOperator: fluxOperatorFinding(out.profile),
-	}
-	if t.Mode == "" {
-		t.Mode = string(out.resolved.Environment.Mode)
-	}
-	return t
-}
-
-// fluxOperatorFinding reduces a ClusterProfile to the tri-state the flux status
-// reader gates its FluxReport read on (issue #157), mirroring cmd/kelson's
-// function of the same name.
+// target derives the addressing a cluster-reading RPC needs from a resolved
+// spec: which project, which environment, which namespace.
 //
-// Nil means nobody looked, and the reader keeps probing rather than acting on
-// an absence nobody established. Two inputs mean exactly that: a zero profile,
-// which reports every component absent because none was asked about (the API's
-// equivalent of the CLI's empty --profile), and a probe that recorded a gap for
-// this field instead of a finding.
-func fluxOperatorFinding(p clusterprofile.ClusterProfile) *bool {
-	if reflect.DeepEqual(p, clusterprofile.ClusterProfile{}) {
-		return nil
+// It used to also resolve a delivery mode — the Environment's, or the request's
+// override — and hand the flux adapter the profile's flux-operator finding.
+// ADR-0028 decision 9 deleted the adapters and the mode with them, so the
+// request's `mode` field is accepted by the schema and consulted by nothing;
+// it stays on the wire because ADR-0027 decision 6 keeps the ConnectRPC surface
+// unchanged.
+func target(out *rendered) Target {
+	return Target{
+		Project:     out.project.Metadata.Name,
+		Environment: out.environment.Metadata.Name,
+		Namespace:   out.resolved.Environment.Namespace,
 	}
-	for _, g := range p.Incomplete {
-		if g.Field == "fluxOperator" {
-			return nil
-		}
-	}
-	present := p.FluxOperator != nil
-	return &present
 }

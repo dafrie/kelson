@@ -140,6 +140,12 @@ func sortScopes(scopes []Scope) []Scope {
 // call (ui/src/pages/ProjectsPage.tsx). That parity is the point: a scope whose
 // Status a client cannot read has no events either, rather than a second,
 // quieter definition of what this environment's state is.
+//
+// The parity is why the snapshot carries no phase. Status stopped reporting one
+// when ADR-0028 deleted the adapters, so a watcher diffing on phase would be
+// diffing on a field nothing writes; health is what changes and health is what
+// this now watches. The phase field comes back with issue #224, on both at
+// once.
 func (s *Server) observeScope(ctx context.Context, sc Scope) (Snapshot, error) {
 	out, err := s.renderSpec(ctx,
 		&kelsonv1alpha1.SpecRef{Spec: &kelsonv1alpha1.SpecRef_Project{Project: sc.Project}},
@@ -151,12 +157,8 @@ func (s *Server) observeScope(ctx context.Context, sc Scope) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
-	t := target(out, "")
-	adapter, plane, err := s.selectAdapter(ctx, t)
-	if err != nil {
-		return Snapshot{}, err
-	}
-	st, err := adapter.Status(ctx, set)
+	t := target(out)
+	plane, err := s.plane(ctx, t)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -165,7 +167,7 @@ func (s *Server) observeScope(ctx context.Context, sc Scope) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 
-	snap := Snapshot{Phase: string(st.Phase), Revision: st.Revision, Cause: st.Cause}
+	snap := Snapshot{}
 	for _, v := range verdicts {
 		snap.Health = append(snap.Health, HealthState{
 			Resource: v.GetResource(),

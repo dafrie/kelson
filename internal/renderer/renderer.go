@@ -147,7 +147,7 @@ func Render(resolved *model.Resolved, profile clusterprofile.ClusterProfile, res
 	// before everything that must not roll until it has finished (issue #104).
 	// The set expresses that as order and nothing more — the waiting is the
 	// direct adapter's, which is the whole reason the field is direct-only
-	// (ADR-0019, internal/delivery/direct/release.go).
+	// (ADR-0019; the plane that honoured it is deleted — ADR-0028 decision 8).
 	for i := range resolved.Components {
 		c := &resolved.Components[i]
 		if c.Release == nil {

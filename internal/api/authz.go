@@ -9,7 +9,7 @@ import (
 	"connectrpc.com/connect"
 
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
-	"github.com/dafrie/kelson/internal/serverstate"
+	"github.com/dafrie/kelson/internal/controlstore"
 )
 
 // Server-side authorization for agent principals (issue #74, ADR-0024 §3).
@@ -266,7 +266,7 @@ func (a *authorizer) admit(ctx context.Context, p Principal, procedure string) (
 			Message:     fmt.Sprintf("the credential for agent identity %q expired at %s", agent.Name, agent.Expires.Format(time.RFC3339)),
 			Remediation: "rotate: create the successor identity and revoke this one (`kelson agent create` then `kelson agent revoke`)",
 		})
-	case row.Operation == serverstate.OpAdmin:
+	case row.Operation == controlstore.OpAdmin:
 		return methodScope{}, a.refuse(ctx, p, procedure, "human-only", denied, authzError{
 			Code:     ErrHumanOnly,
 			Resource: procedure,
@@ -386,7 +386,7 @@ func (a *authorizer) allows(ctx context.Context, p Principal, procedure string, 
 // allowsAny reports whether any candidate target is in scope. It is the
 // namespace rule: several (project, environment) splits can produce the same
 // namespace and one match is enough.
-func allowsAny(scope serverstate.Scope, targets []scopeTarget) bool {
+func allowsAny(scope controlstore.Scope, targets []scopeTarget) bool {
 	for _, t := range targets {
 		if scope.AllowsProject(t.Project) && t.Environment != "" && scope.AllowsEnvironment(t.Environment) {
 			return true

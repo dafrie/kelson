@@ -76,7 +76,7 @@
 //
 // Everything that talks to an API server is delivery-plane by the architecture's
 // own rule, and this package's lint allow-list says so (.golangci.yml lists it
-// beside internal/serverstate for the same reason). It is not a delivery
+// beside internal/controlstore for the same reason). It is not a delivery
 // *adapter*, though: it applies nothing the renderer produced, takes part in no
 // revision, and records no history. It is one narrow capability — write this
 // Secret, list what kelson wrote, delete what kelson wrote — that the CLI, the

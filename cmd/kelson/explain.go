@@ -1,11 +1,8 @@
 package main
 
 import (
-	"context"
-
 	"github.com/spf13/cobra"
 
-	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/explain"
 )
 
@@ -15,13 +12,26 @@ import (
 //
 // # What it is next to `kelson status`
 //
-// `status` reports two facts side by side — the delivery phase and each
-// workload's verdict — and leaves the correlation to the reader. `explain`
-// makes the correlation: it takes those same two facts, adds the recorded
-// manifests of the last two revisions and the container output the probe
-// captured, and answers with causes that carry a confidence, the evidence
-// behind them and, where it can be determined, the revision that introduced
-// the change being blamed.
+// `status` reports the facts and leaves the correlation to the reader.
+// `explain` makes the correlation: it takes each workload's verdict, adds the
+// container output the probe captured, and answers with causes that carry a
+// confidence and the evidence behind them.
+//
+// # It degrades rather than refusing, which is what a diagnosis must do
+//
+// [ADR-0028](docs/adr/0028-delivery-spine.md) deleted the delivery adapters and
+// the rendered-history store, which cost this command two of its four inputs:
+// the delivery phase, and the recorded manifests that let a cause name the
+// revision that introduced the change it blames. Both were already optional —
+// internal/explain has carried a `notes` channel for exactly this since
+// ADR-0023, because a tool people reach for when something is already broken
+// must not itself break when a second source is unavailable — so the missing
+// inputs arrive as notes and the verdict-derived causes, which are the ones
+// that fire in a real incident, are unaffected.
+//
+// The change correlation returns with the spine (issue #224): the artifact
+// history is the registry's tag list, and the manifests of any revision are one
+// `flux pull artifact` away.
 //
 // # Why it takes -f and not a project name
 //
@@ -34,9 +44,9 @@ import (
 // disagree about what a cause is. A server-backed `kelson explain <project>` is
 // a change to what this CLI is, and it belongs with the client work rather than
 // here (ADR-0023, decision 6).
-func newExplainCmd() *cobra.Command { return newExplainCmdFactory(connectDelivery) }
+func newExplainCmd() *cobra.Command { return newExplainCmdFactory(connectObservation) }
 
-func newExplainCmdFactory(connect deliveryConnector) *cobra.Command {
+func newExplainCmdFactory(connect observationConnector) *cobra.Command {
 	opts := &explainOptions{connect: connect}
 	cmd := &cobra.Command{
 		Use:   "explain -f spec.yaml --env <name>",
@@ -60,18 +70,14 @@ func newExplainCmdFactory(connect deliveryConnector) *cobra.Command {
 	f.StringVar(&opts.env, "env", "", "name of the Environment to explain (optional when the input holds exactly one)")
 	f.StringVar(&opts.profile, "profile", "", "ClusterProfile YAML file, or from-cluster to capture a live profile (requires cluster access)")
 	f.StringVar(&opts.kubeconfig, "kubeconfig", "", "path to a kubeconfig (default: $KUBECONFIG, in-cluster credentials, then ~/.kube/config)")
-	f.StringVar(&opts.mode, "mode", "", "delivery adapter to query, overriding the environment's delivery mode (direct or flux)")
 	f.StringVar(&opts.image, "image", "", imageFlagUsage)
-	f.StringVar(&opts.history, "history", "", "kelson data directory holding the direct-mode rendered history (default: $KELSON_DATA_DIR, else $XDG_DATA_HOME/kelson)")
 	cobra.CheckErr(cmd.MarkFlagRequired("file"))
 	return cmd
 }
 
 type explainOptions struct {
 	specInput
-	mode    string
-	history string
-	connect deliveryConnector
+	connect observationConnector
 }
 
 // runExplain reports and exits 0, for the reason `kelson status` does: this is
@@ -79,20 +85,16 @@ type explainOptions struct {
 // exit would make it unusable in the `set -e` scripts that need it most.
 // `kelson deploy` is the command that gates on health.
 func runExplain(cmd *cobra.Command, opts *explainOptions) error {
-	target, set, err := resolveDeliveryTarget(opts.specInput, opts.history, opts.mode, cmd.ErrOrStderr())
+	target, set, err := resolveObservationTarget(opts.specInput, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}
-	adapter, plane, err := selectAdapter(opts.connect, target)
+	plane, err := connectPlane(opts.connect, target)
 	if err != nil {
 		return err
 	}
 
 	ctx := cmd.Context()
-	status, err := adapter.Status(ctx, set)
-	if err != nil {
-		return err
-	}
 	verdicts, err := workloadVerdicts(ctx, plane, set, target.namespace)
 	if err != nil {
 		return err
@@ -102,19 +104,17 @@ func runExplain(cmd *cobra.Command, opts *explainOptions) error {
 		Project:     set.Project,
 		Environment: set.Environment,
 		Namespace:   target.namespace,
-		Status:      status,
 		Verdicts:    verdicts,
-		Manifests:   recordedManifests(plane),
 	}
-	// History is what makes the change correlation possible. A mode that keeps
-	// none, or a store that cannot be read, costs the correlation and says so —
-	// it never costs the explanation.
-	entries, err := adapter.History(ctx, set)
-	if err != nil {
-		in.Notes = append(in.Notes,
-			"the "+adapter.Name()+" adapter could not report its history ("+err.Error()+"), so no change was correlated")
-	}
-	in.History = entries
+	// Status and History are left zero, and the notes say so rather than the
+	// output implying kelson looked and found nothing. Which sources were
+	// consulted is part of the answer (ADR-0023): a diagnosis that quietly
+	// omits an input is a diagnosis a reader cannot weigh.
+	in.Notes = append(in.Notes,
+		"the delivery phase was not read: the adapters that reported it were deleted with the old "+
+			"delivery machinery (ADR-0028) and it returns with issue #224",
+		"no revision history was available, so no change was correlated: history becomes the artifact "+
+			"registry's tag list under the new spine (issue #224)")
 	if plane.health == nil {
 		in.Notes = append(in.Notes,
 			"no observation probe was available, so no workload health was read and no verdict-derived cause could be found")
@@ -123,16 +123,4 @@ func runExplain(cmd *cobra.Command, opts *explainOptions) error {
 	out := &printer{w: cmd.OutOrStdout()}
 	out.printf("%s\n", explain.Explain(ctx, in).Text())
 	return out.err
-}
-
-// recordedManifests adapts the plane's rollback source onto explain's seam. The
-// recorded bytes are what was applied — never a re-render — which is the only
-// thing a claim like "this revision removed DATABASE_URL" can be built from.
-func recordedManifests(plane *deliveryPlane) explain.ManifestFn {
-	if plane == nil || plane.recorded == nil {
-		return nil
-	}
-	return func(ctx context.Context, revision string) ([]delivery.Manifest, error) {
-		return plane.recorded.Revision(ctx, revision)
-	}
 }

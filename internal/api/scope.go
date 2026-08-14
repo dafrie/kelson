@@ -5,7 +5,7 @@ import (
 
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
 	"github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1/kelsonv1alpha1connect"
-	"github.com/dafrie/kelson/internal/serverstate"
+	"github.com/dafrie/kelson/internal/controlstore"
 )
 
 // The RPC-to-scope table (issue #74, ADR-0024) — the #141 gate-table discipline
@@ -87,7 +87,7 @@ func (t scopeTarget) String() string {
 // methodScope is one row of the table.
 type methodScope struct {
 	// Operation is the class the method belongs to.
-	Operation serverstate.Operation
+	Operation controlstore.Operation
 	// Reach is how far it goes.
 	Reach reach
 	// Targets reads the (project, environment) pairs out of a reachTargeted
@@ -108,12 +108,12 @@ var rpcScopes = map[string]methodScope{
 	// the spec here — the interceptor would then have to agree with the
 	// resolver about what a project name is, in a second place.
 	kelsonv1alpha1connect.SpecServicePutSpecProcedure: {
-		Operation: serverstate.OpMutate,
+		Operation: controlstore.OpMutate,
 		Reach:     reachTargeted,
 		Targets:   func(any) ([]scopeTarget, bool) { return nil, false },
 	},
 	kelsonv1alpha1connect.SpecServiceGetSpecProcedure: {
-		Operation: serverstate.OpRead,
+		Operation: controlstore.OpRead,
 		Reach:     reachTargeted,
 		Targets: func(msg any) ([]scopeTarget, bool) {
 			req, ok := msg.(*kelsonv1alpha1.GetSpecRequest)
@@ -124,11 +124,11 @@ var rpcScopes = map[string]methodScope{
 		},
 	},
 	kelsonv1alpha1connect.SpecServiceListSpecsProcedure: {
-		Operation: serverstate.OpRead,
+		Operation: controlstore.OpRead,
 		Reach:     reachEveryProject,
 	},
 	kelsonv1alpha1connect.SpecServiceDeleteSpecProcedure: {
-		Operation: serverstate.OpMutate,
+		Operation: controlstore.OpMutate,
 		Reach:     reachTargeted,
 		Targets: func(msg any) ([]scopeTarget, bool) {
 			req, ok := msg.(*kelsonv1alpha1.DeleteSpecRequest)
@@ -142,7 +142,7 @@ var rpcScopes = map[string]methodScope{
 	// RenderService. Rendering touches no cluster, but it reads a stored spec
 	// and returns it as manifests, so it is a read of the project it names.
 	kelsonv1alpha1connect.RenderServiceRenderProcedure: {
-		Operation: serverstate.OpRead,
+		Operation: controlstore.OpRead,
 		Reach:     reachTargeted,
 		Targets: func(msg any) ([]scopeTarget, bool) {
 			req, ok := msg.(*kelsonv1alpha1.RenderRequest)
@@ -153,7 +153,7 @@ var rpcScopes = map[string]methodScope{
 		},
 	},
 	kelsonv1alpha1connect.RenderServiceDiffProcedure: {
-		Operation: serverstate.OpRead,
+		Operation: controlstore.OpRead,
 		Reach:     reachTargeted,
 		Targets: func(msg any) ([]scopeTarget, bool) {
 			req, ok := msg.(*kelsonv1alpha1.DiffRequest)
@@ -167,7 +167,7 @@ var rpcScopes = map[string]methodScope{
 	// ProfileService reports what the cluster can do. There is no project in
 	// the question and none in the answer.
 	kelsonv1alpha1connect.ProfileServiceGetProfileProcedure: {
-		Operation: serverstate.OpRead,
+		Operation: controlstore.OpRead,
 		Reach:     reachClusterWide,
 	},
 
@@ -176,7 +176,7 @@ var rpcScopes = map[string]methodScope{
 	// refused by the Targets extractor below and the scope check that consumes
 	// it, server-side, before the handler runs.
 	kelsonv1alpha1connect.DeployServiceDeployProcedure: {
-		Operation: serverstate.OpMutate,
+		Operation: controlstore.OpMutate,
 		Reach:     reachTargeted,
 		Targets: func(msg any) ([]scopeTarget, bool) {
 			req, ok := msg.(*kelsonv1alpha1.DeployRequest)
@@ -187,7 +187,7 @@ var rpcScopes = map[string]methodScope{
 		},
 	},
 	kelsonv1alpha1connect.DeployServiceStatusProcedure: {
-		Operation: serverstate.OpRead,
+		Operation: controlstore.OpRead,
 		Reach:     reachTargeted,
 		Targets: func(msg any) ([]scopeTarget, bool) {
 			req, ok := msg.(*kelsonv1alpha1.StatusRequest)
@@ -198,7 +198,7 @@ var rpcScopes = map[string]methodScope{
 		},
 	},
 	kelsonv1alpha1connect.DeployServiceRollbackProcedure: {
-		Operation: serverstate.OpMutate,
+		Operation: controlstore.OpMutate,
 		Reach:     reachTargeted,
 		Targets: func(msg any) ([]scopeTarget, bool) {
 			req, ok := msg.(*kelsonv1alpha1.RollbackRequest)
@@ -209,7 +209,7 @@ var rpcScopes = map[string]methodScope{
 		},
 	},
 	kelsonv1alpha1connect.DeployServiceHistoryProcedure: {
-		Operation: serverstate.OpRead,
+		Operation: controlstore.OpRead,
 		Reach:     reachTargeted,
 		Targets: func(msg any) ([]scopeTarget, bool) {
 			req, ok := msg.(*kelsonv1alpha1.HistoryRequest)
@@ -223,7 +223,7 @@ var rpcScopes = map[string]methodScope{
 	// production is a read of production, and a credential that may not see it
 	// may not launder it into an environment it does own.
 	kelsonv1alpha1connect.DeployServicePromoteProcedure: {
-		Operation: serverstate.OpMutate,
+		Operation: controlstore.OpMutate,
 		Reach:     reachTargeted,
 		Targets: func(msg any) ([]scopeTarget, bool) {
 			req, ok := msg.(*kelsonv1alpha1.PromoteRequest)
@@ -240,7 +240,7 @@ var rpcScopes = map[string]methodScope{
 	// LogService addresses a namespace; see this file's header for what that
 	// costs a scoped credential.
 	kelsonv1alpha1connect.LogServiceQueryLogsProcedure: {
-		Operation: serverstate.OpRead,
+		Operation: controlstore.OpRead,
 		Reach:     reachNamespace,
 		Namespace: func(msg any) (string, bool) {
 			req, ok := msg.(*kelsonv1alpha1.QueryLogsRequest)
@@ -251,7 +251,7 @@ var rpcScopes = map[string]methodScope{
 		},
 	},
 	kelsonv1alpha1connect.LogServiceFollowLogsProcedure: {
-		Operation: serverstate.OpRead,
+		Operation: controlstore.OpRead,
 		Reach:     reachNamespace,
 		Namespace: func(msg any) (string, bool) {
 			req, ok := msg.(*kelsonv1alpha1.FollowLogsRequest)
@@ -266,7 +266,7 @@ var rpcScopes = map[string]methodScope{
 	// which a restricted credential cannot be served: the stream would carry
 	// events from projects it may not see.
 	kelsonv1alpha1connect.EventServiceWatchProcedure: {
-		Operation: serverstate.OpRead,
+		Operation: controlstore.OpRead,
 		Reach:     reachTargeted,
 		Targets: func(msg any) ([]scopeTarget, bool) {
 			req, ok := msg.(*kelsonv1alpha1.WatchRequest)
@@ -287,7 +287,7 @@ var rpcScopes = map[string]methodScope{
 	// BuildService pushes an image and is therefore a mutation, even though it
 	// deploys nothing: it spends the server's push credential.
 	kelsonv1alpha1connect.BuildServiceBuildProcedure: {
-		Operation: serverstate.OpMutate,
+		Operation: controlstore.OpMutate,
 		Reach:     reachTargeted,
 		Targets: func(msg any) ([]scopeTarget, bool) {
 			req, ok := msg.(*kelsonv1alpha1.BuildRequest)
@@ -302,7 +302,7 @@ var rpcScopes = map[string]methodScope{
 	// schema can return a value (ADR-0009) — and writing is a mutation of the
 	// environment's namespace.
 	kelsonv1alpha1connect.SecretServiceSetSecretProcedure: {
-		Operation: serverstate.OpMutate,
+		Operation: controlstore.OpMutate,
 		Reach:     reachTargeted,
 		Targets: func(msg any) ([]scopeTarget, bool) {
 			req, ok := msg.(*kelsonv1alpha1.SetSecretRequest)
@@ -313,7 +313,7 @@ var rpcScopes = map[string]methodScope{
 		},
 	},
 	kelsonv1alpha1connect.SecretServiceListSecretsProcedure: {
-		Operation: serverstate.OpRead,
+		Operation: controlstore.OpRead,
 		Reach:     reachTargeted,
 		Targets: func(msg any) ([]scopeTarget, bool) {
 			req, ok := msg.(*kelsonv1alpha1.ListSecretsRequest)
@@ -324,7 +324,7 @@ var rpcScopes = map[string]methodScope{
 		},
 	},
 	kelsonv1alpha1connect.SecretServiceDeleteSecretProcedure: {
-		Operation: serverstate.OpMutate,
+		Operation: controlstore.OpMutate,
 		Reach:     reachTargeted,
 		Targets: func(msg any) ([]scopeTarget, bool) {
 			req, ok := msg.(*kelsonv1alpha1.DeleteSecretRequest)
@@ -339,7 +339,7 @@ var rpcScopes = map[string]methodScope{
 	// (issue #77). It reads the same live state Status does and renders the same
 	// spec, so it is a read of the project and environment it names.
 	kelsonv1alpha1connect.ExplainServiceExplainProcedure: {
-		Operation: serverstate.OpRead,
+		Operation: controlstore.OpRead,
 		Reach:     reachTargeted,
 		Targets: func(msg any) ([]scopeTarget, bool) {
 			req, ok := msg.(*kelsonv1alpha1.ExplainRequest)
@@ -352,7 +352,7 @@ var rpcScopes = map[string]methodScope{
 
 	// PreviewService reads which pull-request previews are running.
 	kelsonv1alpha1connect.PreviewServiceListPreviewsProcedure: {
-		Operation: serverstate.OpRead,
+		Operation: controlstore.OpRead,
 		Reach:     reachTargeted,
 		Targets: func(msg any) ([]scopeTarget, bool) {
 			req, ok := msg.(*kelsonv1alpha1.ListPreviewsRequest)
@@ -363,20 +363,20 @@ var rpcScopes = map[string]methodScope{
 		},
 	},
 
-	// AgentService is administrative in full. serverstate.OpAdmin cannot be
+	// AgentService is administrative in full. controlstore.OpAdmin cannot be
 	// granted to an agent identity at issuance, so these three rows are what
 	// make "an agent may not mint an agent" a server-side fact rather than a
 	// convention (ADR-0024 §5).
 	kelsonv1alpha1connect.AgentServiceCreateAgentProcedure: {
-		Operation: serverstate.OpAdmin,
+		Operation: controlstore.OpAdmin,
 		Reach:     reachClusterWide,
 	},
 	kelsonv1alpha1connect.AgentServiceListAgentsProcedure: {
-		Operation: serverstate.OpAdmin,
+		Operation: controlstore.OpAdmin,
 		Reach:     reachClusterWide,
 	},
 	kelsonv1alpha1connect.AgentServiceRevokeAgentProcedure: {
-		Operation: serverstate.OpAdmin,
+		Operation: controlstore.OpAdmin,
 		Reach:     reachClusterWide,
 	},
 
@@ -389,7 +389,7 @@ var rpcScopes = map[string]methodScope{
 	// agent legitimately explains itself is the reason field it supplies on the
 	// way in, not a read on the way out.
 	kelsonv1alpha1connect.AuditServiceQueryAuditProcedure: {
-		Operation: serverstate.OpAdmin,
+		Operation: controlstore.OpAdmin,
 		Reach:     reachClusterWide,
 	},
 }
@@ -452,7 +452,7 @@ func scopeFor(procedure string) (methodScope, bool) {
 
 // describeScope renders a scope for an error message, in the vocabulary the
 // issuance flags use.
-func describeScope(s serverstate.Scope) string {
+func describeScope(s controlstore.Scope) string {
 	parts := make([]string, 0, 3)
 	parts = append(parts, "projects="+listOrAny(s.Projects))
 	parts = append(parts, "environments="+listOrAny(s.Environments))

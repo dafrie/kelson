@@ -8,8 +8,8 @@ import (
 	"connectrpc.com/connect"
 
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
-	"github.com/dafrie/kelson/internal/delivery"
-	"github.com/dafrie/kelson/internal/serverstate"
+	"github.com/dafrie/kelson/internal/controlstore"
+	"github.com/dafrie/kelson/internal/observation"
 )
 
 // The Watch tests here run over a real HTTP server and the generated Connect
@@ -34,27 +34,30 @@ spec:
 func seededStore(t *testing.T) *fakeSpecStore {
 	t.Helper()
 	store := newFakeSpecStore()
-	_, err := store.Put(context.Background(), "hello", serverstate.Documents{
+	_, err := store.Put(context.Background(), "hello", controlstore.Documents{
 		Project:      []byte(projectDoc),
 		Environments: map[string][]byte{"development": []byte(watchEnvironmentDoc)},
-	}, serverstate.PutOptions{})
+	}, controlstore.PutOptions{})
 	if err != nil {
 		t.Fatalf("seeding the spec store: %v", err)
 	}
 	return store
 }
 
-// watchOptions is a server whose broker polls fast enough for a test and whose
-// adapter walks the given statuses.
-func watchOptions(store *fakeSpecStore, statuses ...delivery.Status) (Options, *fakeAdapter) {
-	adapter := newFakeAdapter("direct")
-	adapter.statuses = statuses
-	connector, _ := connectorFor(adapter, nil, fakeEvaluator{})
+// watchOptions is a server whose broker polls fast enough for a test, over the
+// given health evaluator.
+//
+// It used to walk an adapter through a list of delivery statuses, because the
+// broker diffed on the phase as well as on health. ADR-0028 deleted the source
+// of the phase (internal/api/events.go says so at the observer), so health is
+// what a watcher sees change.
+func watchOptions(store *fakeSpecStore, health observation.Evaluator) Options {
+	connector, _ := connectorFor(health)
 	return Options{
 		Specs:         store,
 		Delivery:      connector,
 		WatchInterval: 2 * time.Millisecond,
-	}, adapter
+	}
 }
 
 func watchRequest(cursor string, types ...kelsonv1alpha1.EventType) *kelsonv1alpha1.WatchRequest {
@@ -82,14 +85,14 @@ func nextEvent(t *testing.T, stream *connect.ServerStreamForClient[kelsonv1alpha
 	return ev
 }
 
-// TestWatchStreamsTransition is the #76 smoke test: a phase change observed by
-// the broker arrives on the wire as a typed event with a cursor.
-func TestWatchStreamsTransition(t *testing.T) {
-	opts, _ := watchOptions(seededStore(t),
-		delivery.Status{Phase: delivery.PhaseReconciling, Revision: "rev-00000001"},
-		delivery.Status{Phase: delivery.PhaseHealthy, Revision: "rev-00000001", Cause: "3/3 replicas ready"},
-	)
-	c := serve(t, opts)
+// TestWatchStreamsHealthChange is the #76 smoke test: a change observed by the
+// broker arrives on the wire as a typed event with a cursor.
+//
+// It watched a *phase* change until ADR-0028 deleted the source of the phase;
+// health is what the broker can still see move, and the wire mechanics being
+// asserted — typing, cursors, timestamps — are the same either way.
+func TestWatchStreamsHealthChange(t *testing.T) {
+	c := serve(t, watchOptions(seededStore(t), &steppingEvaluator{}))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -103,15 +106,15 @@ func TestWatchStreamsTransition(t *testing.T) {
 	if ev.GetProject() != "hello" || ev.GetEnvironment() != "development" {
 		t.Errorf("event addressed %s/%s", ev.GetProject(), ev.GetEnvironment())
 	}
-	tr := ev.GetStatusTransition()
-	if tr == nil {
-		t.Fatalf("event payload = %T, want a status transition", ev.GetPayload())
+	hc := ev.GetHealthChange()
+	if hc == nil {
+		t.Fatalf("event payload = %T, want a health change", ev.GetPayload())
 	}
-	if tr.GetPhase() != string(delivery.PhaseHealthy) || tr.GetPreviousPhase() != string(delivery.PhaseReconciling) {
-		t.Errorf("transition = %+v, want Reconciling -> Healthy", tr)
+	if hc.GetCode() != "crash-loop-back-off" || hc.GetHealthy() {
+		t.Errorf("health change = %+v, want the crash-loop verdict", hc)
 	}
-	if tr.GetRevision() != "rev-00000001" || tr.GetCause() != "3/3 replicas ready" {
-		t.Errorf("transition = %+v, want the revision and cause carried", tr)
+	if hc.GetPreviousCode() != "healthy" {
+		t.Errorf("previous code = %q, want healthy", hc.GetPreviousCode())
 	}
 	if ev.GetCursor() == "" {
 		t.Error("an event carried no cursor, so nothing can resume after it")
@@ -124,13 +127,7 @@ func TestWatchStreamsTransition(t *testing.T) {
 // TestWatchResumesFromCursor: a second watch handed the first one's cursor
 // replays what it missed, in order, before anything new.
 func TestWatchResumesFromCursor(t *testing.T) {
-	opts, _ := watchOptions(seededStore(t),
-		delivery.Status{Phase: delivery.PhaseCommitted, Revision: "rev-00000001"},
-		delivery.Status{Phase: delivery.PhaseReconciling, Revision: "rev-00000001"},
-		delivery.Status{Phase: delivery.PhaseApplied, Revision: "rev-00000001"},
-		delivery.Status{Phase: delivery.PhaseHealthy, Revision: "rev-00000001"},
-	)
-	c := serve(t, opts)
+	c := serve(t, watchOptions(seededStore(t), &cyclingEvaluator{}))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -141,13 +138,13 @@ func TestWatchResumesFromCursor(t *testing.T) {
 	defer first.Close() //nolint:errcheck // the test is done with the stream
 
 	var cursor string
-	var phases []string
+	var codes []string
 	for i := 0; i < 3; i++ {
 		ev := nextEvent(t, first)
 		if i == 0 {
 			cursor = ev.GetCursor()
 		} else {
-			phases = append(phases, ev.GetStatusTransition().GetPhase())
+			codes = append(codes, ev.GetHealthChange().GetCode())
 		}
 	}
 
@@ -157,8 +154,8 @@ func TestWatchResumesFromCursor(t *testing.T) {
 	}
 	defer resumed.Close() //nolint:errcheck // the test is done with the stream
 
-	for i, want := range phases {
-		got := nextEvent(t, resumed).GetStatusTransition().GetPhase()
+	for i, want := range codes {
+		got := nextEvent(t, resumed).GetHealthChange().GetCode()
 		if got != want {
 			t.Fatalf("replayed event %d = %q, want %q (the replay is out of order or incomplete)", i, got, want)
 		}
@@ -169,11 +166,7 @@ func TestWatchResumesFromCursor(t *testing.T) {
 // Resync as the FIRST message — the client must relist before it believes
 // anything that follows.
 func TestWatchStaleCursorResyncs(t *testing.T) {
-	opts, _ := watchOptions(seededStore(t),
-		delivery.Status{Phase: delivery.PhaseReconciling},
-		delivery.Status{Phase: delivery.PhaseHealthy},
-	)
-	c := serve(t, opts)
+	c := serve(t, watchOptions(seededStore(t), &steppingEvaluator{}))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -195,24 +188,22 @@ func TestWatchStaleCursorResyncs(t *testing.T) {
 	}
 	// And the stream keeps going from now: relisting is the client's job, not
 	// reconnecting.
-	if tr := nextEvent(t, stream).GetStatusTransition(); tr.GetPhase() != string(delivery.PhaseHealthy) {
-		t.Errorf("after the resync the stream carried %+v", tr)
+	if hc := nextEvent(t, stream).GetHealthChange(); hc == nil {
+		t.Errorf("after the resync the stream carried %T", nextEvent(t, stream).GetPayload())
 	}
 }
 
-// TestWatchFiltersByType: a client that asked only for health changes is not
-// sent transitions.
+// TestWatchFiltersByType: a client that asked only for health changes gets
+// health changes.
+//
+// The complement — that a status transition is dropped — cannot be exercised
+// while nothing produces one (ADR-0028; the phase returns with issue #224). The
+// filter itself is unchanged and the type is still on the wire, so what this
+// still proves is that the filter does not drop the type it was asked for,
+// which is the half that would break a client.
 func TestWatchFiltersByType(t *testing.T) {
 	store := seededStore(t)
-	adapter := newFakeAdapter("direct")
-	adapter.statuses = []delivery.Status{
-		{Phase: delivery.PhaseReconciling, Revision: "rev-00000001"},
-		{Phase: delivery.PhaseHealthy, Revision: "rev-00000001"},
-	}
-	// The evaluator's verdict changes on the second call, so a health change
-	// follows the transition the filter must drop.
-	evaluator := &steppingEvaluator{}
-	connector, _ := connectorFor(adapter, nil, evaluator)
+	connector, _ := connectorFor(&steppingEvaluator{})
 	c := serve(t, Options{Specs: store, Delivery: connector, WatchInterval: 2 * time.Millisecond})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -244,13 +235,13 @@ func TestWatchScopeResolution(t *testing.T) {
 	store := newFakeSpecStore()
 	ctx := context.Background()
 	for _, project := range []string{"hello", "checkout"} {
-		if _, err := store.Put(ctx, project, serverstate.Documents{
+		if _, err := store.Put(ctx, project, controlstore.Documents{
 			Project: []byte(projectDoc),
 			Environments: map[string][]byte{
 				"development": []byte(watchEnvironmentDoc),
 				"production":  []byte(watchEnvironmentDoc),
 			},
-		}, serverstate.PutOptions{}); err != nil {
+		}, controlstore.PutOptions{}); err != nil {
 			t.Fatalf("seeding %s: %v", project, err)
 		}
 	}
@@ -291,11 +282,7 @@ func TestWatchScopeResolution(t *testing.T) {
 // TestWatchStopsPollingWhenTheLastClientLeaves: the stream is what keeps a poll
 // loop alive, so a server nobody watches costs nothing.
 func TestWatchStopsPollingWhenTheLastClientLeaves(t *testing.T) {
-	opts, _ := watchOptions(seededStore(t),
-		delivery.Status{Phase: delivery.PhaseReconciling},
-		delivery.Status{Phase: delivery.PhaseHealthy},
-	)
-	srv := New(opts)
+	srv := New(watchOptions(seededStore(t), &steppingEvaluator{}))
 	c := serveServer(t, srv)
 
 	ctx, cancel := context.WithCancel(context.Background())

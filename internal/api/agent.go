@@ -8,7 +8,7 @@ import (
 	"connectrpc.com/connect"
 
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
-	"github.com/dafrie/kelson/internal/serverstate"
+	"github.com/dafrie/kelson/internal/controlstore"
 )
 
 // AgentService served: issue, list and revoke agent identities (issue #74,
@@ -17,7 +17,7 @@ import (
 // # The token appears once, in one field, and is never logged
 //
 // CreateAgent is the only RPC in this schema that returns a credential.
-// internal/serverstate registers the value with internal/redact the moment it
+// internal/controlstore registers the value with internal/redact the moment it
 // mints it, so from before this handler sees it the token cannot reach a log
 // line, an error message or an error detail (issue #117) — including the audit
 // line the authorization interceptor writes for this very call.
@@ -44,11 +44,11 @@ func (s *Server) CreateAgent(ctx context.Context, req *connect.Request[kelsonv1a
 	if err != nil {
 		return nil, failAgent(err)
 	}
-	agent, token, err := s.agents.Create(ctx, serverstate.AgentSpec{
+	agent, token, err := s.agents.Create(ctx, controlstore.AgentSpec{
 		Name:  msg.GetName(),
 		TTL:   ttl,
 		Scope: scope,
-		Limit: serverstate.Limit{
+		Limit: controlstore.Limit{
 			RequestsPerMinute: int(msg.GetLimit().GetRequestsPerMinute()),
 			Burst:             int(msg.GetLimit().GetBurst()),
 		},
@@ -98,10 +98,10 @@ func (s *Server) RevokeAgent(ctx context.Context, req *connect.Request[kelsonv1a
 // unrelated lifetime, which would be an expiry nobody asked for and nobody
 // could see was wrong.
 func storeTTL(seconds int64) (time.Duration, error) {
-	const maxSeconds = int64(serverstate.MaxAgentTTL / time.Second)
+	const maxSeconds = int64(controlstore.MaxAgentTTL / time.Second)
 	if seconds < 0 || seconds > maxSeconds {
 		return 0, authzError{
-			Code:        string(serverstate.ErrAgentScope),
+			Code:        string(controlstore.ErrAgentScope),
 			Resource:    "agent/scope",
 			Message:     fmt.Sprintf("a lifetime of %d seconds is outside the permitted range (0 < ttl <= %d)", seconds, maxSeconds),
 			Remediation: "ask for a shorter lifetime and rotate: create the successor identity, then revoke this one",
@@ -113,20 +113,20 @@ func storeTTL(seconds int64) (time.Duration, error) {
 // storeScope translates the wire scope. An unspecified operation is refused
 // here rather than dropped: a client that sent one meant something by it, and
 // silently narrowing the grant would be the quiet success this project rejects.
-func storeScope(scope *kelsonv1alpha1.AgentScope) (serverstate.Scope, error) {
-	out := serverstate.Scope{
+func storeScope(scope *kelsonv1alpha1.AgentScope) (controlstore.Scope, error) {
+	out := controlstore.Scope{
 		Projects:     scope.GetProjects(),
 		Environments: scope.GetEnvironments(),
 	}
 	for _, op := range scope.GetOperations() {
 		switch op {
 		case kelsonv1alpha1.AgentOperation_AGENT_OPERATION_READ:
-			out.Operations = append(out.Operations, serverstate.OpRead)
+			out.Operations = append(out.Operations, controlstore.OpRead)
 		case kelsonv1alpha1.AgentOperation_AGENT_OPERATION_MUTATE:
-			out.Operations = append(out.Operations, serverstate.OpMutate)
+			out.Operations = append(out.Operations, controlstore.OpMutate)
 		default:
-			return serverstate.Scope{}, authzError{
-				Code:        string(serverstate.ErrAgentScope),
+			return controlstore.Scope{}, authzError{
+				Code:        string(controlstore.ErrAgentScope),
 				Resource:    "agent/scope",
 				Message:     "the scope names an unrecognised operation class",
 				Remediation: "grant AGENT_OPERATION_READ, or READ and MUTATE",
@@ -139,7 +139,7 @@ func storeScope(scope *kelsonv1alpha1.AgentScope) (serverstate.Scope, error) {
 // wireAgent projects an identity onto the wire. Timestamps are Unix
 // milliseconds, matching EventService rather than the history entries' RFC 3339
 // strings, because these are compared and sorted by clients rather than shown.
-func wireAgent(agent serverstate.Agent) *kelsonv1alpha1.AgentIdentity {
+func wireAgent(agent controlstore.Agent) *kelsonv1alpha1.AgentIdentity {
 	out := &kelsonv1alpha1.AgentIdentity{
 		Name:          agent.Name,
 		CreatedUnixMs: agent.Created.UnixMilli(),
@@ -151,8 +151,8 @@ func wireAgent(agent serverstate.Agent) *kelsonv1alpha1.AgentIdentity {
 			Operations:   wireOperations(agent.Scope.Operations),
 		},
 		Limit: &kelsonv1alpha1.AgentLimit{
-			RequestsPerMinute: int32(agent.Limit.RequestsPerMinute), //nolint:gosec // bounded by serverstate.MaxRequestsPerMinute
-			Burst:             int32(agent.Limit.Burst),             //nolint:gosec // bounded by serverstate.MaxRequestsPerMinute
+			RequestsPerMinute: int32(agent.Limit.RequestsPerMinute), //nolint:gosec // bounded by controlstore.MaxRequestsPerMinute
+			Burst:             int32(agent.Limit.Burst),             //nolint:gosec // bounded by controlstore.MaxRequestsPerMinute
 		},
 	}
 	if agent.Revoked {
@@ -161,13 +161,13 @@ func wireAgent(agent serverstate.Agent) *kelsonv1alpha1.AgentIdentity {
 	return out
 }
 
-func wireOperations(ops []serverstate.Operation) []kelsonv1alpha1.AgentOperation {
+func wireOperations(ops []controlstore.Operation) []kelsonv1alpha1.AgentOperation {
 	out := make([]kelsonv1alpha1.AgentOperation, 0, len(ops))
 	for _, op := range ops {
 		switch op {
-		case serverstate.OpRead:
+		case controlstore.OpRead:
 			out = append(out, kelsonv1alpha1.AgentOperation_AGENT_OPERATION_READ)
-		case serverstate.OpMutate:
+		case controlstore.OpMutate:
 			out = append(out, kelsonv1alpha1.AgentOperation_AGENT_OPERATION_MUTATE)
 		default:
 			out = append(out, kelsonv1alpha1.AgentOperation_AGENT_OPERATION_UNSPECIFIED)
@@ -182,11 +182,11 @@ func wireOperations(ops []serverstate.Operation) []kelsonv1alpha1.AgentOperation
 // split failSecret makes.
 func failAgent(err error) error {
 	switch {
-	case serverstate.AsAgentExists(err):
+	case controlstore.AsAgentExists(err):
 		return fail(connect.CodeAlreadyExists, err)
-	case serverstate.AsAgentScope(err):
+	case controlstore.AsAgentScope(err):
 		return fail(connect.CodeInvalidArgument, err)
-	case serverstate.AsAgentCredential(err):
+	case controlstore.AsAgentCredential(err):
 		return fail(connect.CodeUnauthenticated, err)
 	default:
 		return failRequest(err)

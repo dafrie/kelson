@@ -1,4 +1,4 @@
-package serverstate
+package controlstore
 
 import (
 	"context"
@@ -350,17 +350,17 @@ type AuditStore struct {
 // NewAuditStore returns a store over the day ConfigMaps in one namespace.
 func NewAuditStore(opts AuditOptions) (*AuditStore, error) {
 	if opts.Client == nil {
-		return nil, fmt.Errorf("serverstate: a Kubernetes client is required")
+		return nil, fmt.Errorf("controlstore: a Kubernetes client is required")
 	}
 	if opts.Namespace == "" {
-		return nil, fmt.Errorf("serverstate: a namespace is required")
+		return nil, fmt.Errorf("controlstore: a namespace is required")
 	}
 	retain := opts.RetainDays
 	switch {
 	case retain == 0:
 		retain = DefaultAuditRetentionDays
 	case retain < 0 || retain > MaxAuditRetentionDays:
-		return nil, fmt.Errorf("serverstate: audit retention of %d days is outside the permitted range (0 < days <= %d); "+
+		return nil, fmt.Errorf("controlstore: audit retention of %d days is outside the permitted range (0 < days <= %d); "+
 			"longer retention is an external sink, not a longer ring (ADR-0026)", retain, MaxAuditRetentionDays)
 	}
 	perDay := opts.MaxPerDay
@@ -395,13 +395,13 @@ func (s *AuditStore) Append(ctx context.Context, rec AuditRecord) error {
 	rec = s.normalise(rec)
 	blob, err := json.Marshal(rec)
 	if err != nil {
-		return fmt.Errorf("serverstate: encode audit record: %w", err)
+		return fmt.Errorf("controlstore: encode audit record: %w", err)
 	}
 	if len(blob) > maxAuditDayBytes/4 {
 		// A single record a quarter of the day's budget wide is a bug in a
 		// caller, not a record. Refusing it keeps one malformed write from
 		// evicting a day's history.
-		return fmt.Errorf("serverstate: audit record for %s is %d bytes, over the %d-byte per-record ceiling",
+		return fmt.Errorf("controlstore: audit record for %s is %d bytes, over the %d-byte per-record ceiling",
 			rec.Procedure, len(blob), maxAuditDayBytes/4)
 	}
 
@@ -414,12 +414,12 @@ func (s *AuditStore) Append(ctx context.Context, rec AuditRecord) error {
 				if apierrors.IsAlreadyExists(err) {
 					continue // Another writer created the day between the Get and the Create.
 				}
-				return fmt.Errorf("serverstate: create audit day %s: %w", day, err)
+				return fmt.Errorf("controlstore: create audit day %s: %w", day, err)
 			}
 			return s.retain(ctx)
 		}
 		if err != nil {
-			return fmt.Errorf("serverstate: read audit day %s: %w", day, err)
+			return fmt.Errorf("controlstore: read audit day %s: %w", day, err)
 		}
 
 		data := map[string]string{}
@@ -435,7 +435,7 @@ func (s *AuditStore) Append(ctx context.Context, rec AuditRecord) error {
 			if apierrors.IsConflict(err) {
 				continue // Another request appended first; re-read and append again.
 			}
-			return fmt.Errorf("serverstate: append audit record to %s: %w", day, err)
+			return fmt.Errorf("controlstore: append audit record to %s: %w", day, err)
 		}
 		return s.retain(ctx)
 	}
@@ -503,7 +503,7 @@ func (s *AuditStore) retain(ctx context.Context) error {
 		}
 		err := s.client.CoreV1().ConfigMaps(s.namespace).Delete(ctx, days[i].Name, metav1.DeleteOptions{})
 		if err != nil && !apierrors.IsNotFound(err) {
-			return fmt.Errorf("serverstate: prune audit day %s: %w", day, err)
+			return fmt.Errorf("controlstore: prune audit day %s: %w", day, err)
 		}
 	}
 	return nil
@@ -612,7 +612,7 @@ func (s *AuditStore) Query(ctx context.Context, q AuditQuery) (AuditPage, error)
 		for id, blob := range cm.Data {
 			var rec AuditRecord
 			if err := json.Unmarshal([]byte(blob), &rec); err != nil {
-				return AuditPage{}, fmt.Errorf("serverstate: corrupt audit record %s in %s/%s: %w",
+				return AuditPage{}, fmt.Errorf("controlstore: corrupt audit record %s in %s/%s: %w",
 					id, cm.Namespace, cm.Name, err)
 			}
 			if rec.ID == "" {
@@ -723,7 +723,7 @@ func (s *AuditStore) days(ctx context.Context) ([]corev1.ConfigMap, error) {
 		}).String(),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("serverstate: list audit days in %s: %w", s.namespace, err)
+		return nil, fmt.Errorf("controlstore: list audit days in %s: %w", s.namespace, err)
 	}
 	items := list.Items
 	sort.Slice(items, func(i, j int) bool {

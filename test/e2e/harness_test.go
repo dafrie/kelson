@@ -195,14 +195,18 @@ func childEnv() []string {
 
 // --- the per-test harness ---------------------------------------------------
 
-// harness is one test's view of the world: where the binary is, which
-// namespace it is working in, and where the direct adapter's rendered history
-// lives. The history directory is per-test so revisions start at 1 and two
-// tests can never roll each other back.
+// harness is one test's view of the world: where the binary is and which
+// namespace it is working in.
+//
+// It used to carry a per-test rendered-history directory as well, because the
+// suite deployed through the direct adapter and rolled back through its
+// journal. ADR-0028 deleted both; what the suite applies with now is
+// [harness.applyRendered], which is `kelson render | kubectl apply -f -` — the
+// same manifests, put in the cluster by a tool that is not kelson, which is
+// also the anti-lock-in property ADR-0028 decision 10 claims.
 type harness struct {
 	t         *testing.T
 	namespace string
-	history   string
 	work      string
 }
 
@@ -216,7 +220,6 @@ func newHarness(t *testing.T, namespace string) *harness {
 	h := &harness{
 		t:         t,
 		namespace: namespace,
-		history:   filepath.Join(t.TempDir(), "history"),
 		work:      t.TempDir(),
 	}
 	t.Cleanup(func() {
@@ -454,4 +457,36 @@ func sortedKeys(set map[string]bool) string {
 	}
 	slices.Sort(out)
 	return strings.Join(out, ", ")
+}
+
+// applyRendered renders a spec offline and applies the result with kubectl.
+//
+// This is what the suite uses to put a set in the cluster now that the delivery
+// verbs are gated (ADR-0028, issue #224). It is not a workaround: it is the
+// property ADR-0028 decision 10 relies on — a kelson render is a flat set of
+// standard manifests that a tool which is not kelson can apply — and it is the
+// same set the controller will publish as an artifact for Flux to apply, so the
+// sweeps these tests do afterwards are testing the objects that will really be
+// there.
+//
+// What it deliberately does NOT reproduce is anything kelson's own applier did
+// beyond apply: no wait for readiness, no prune, no revision. Tests that need
+// those wait on the cluster themselves (waitForRollout).
+func (h *harness) applyRendered(spec, env string) {
+	h.t.Helper()
+	rendered := h.kelsonOK("render", "-f", spec, "--env", env)
+
+	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "kubectl", "apply", "-f", "-")
+	cmd.Dir = h.work
+	cmd.Env = childEnv()
+	cmd.Stdin = strings.NewReader(rendered.stdout)
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		h.t.Fatalf("kubectl apply of the rendered set failed: %v\n%s%s", err, stdout.String(), stderr.String())
+	}
+	h.t.Logf("$ kelson render -f %s --env %s | kubectl apply -f -\n%s", spec, env, stdout.String())
 }

@@ -88,7 +88,7 @@ func TestDeployRoleGrantsNamespacePatch(t *testing.T) {
 	for _, verb := range []string{"get", "list", "create", "patch"} {
 		if !granted(rules, "", "namespaces", verb) {
 			t.Errorf("the deploy ClusterRole does not grant %q on namespaces; "+
-				"internal/delivery/direct.stampNamespaceOwnership and the apply that follows it need all four", verb)
+				"a server-side apply of a namespaced set needs all four", verb)
 		}
 	}
 	// Not granted, and the template says why: pruning excludes namespaces and

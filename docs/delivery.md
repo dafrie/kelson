@@ -62,17 +62,24 @@ stored journal — a pointer moves to bytes that already exist and cannot have
 changed.
 
 > **Transition (R1/R2, [#224](https://github.com/dafrie/kelson/issues/224) /
-> [#225](https://github.com/dafrie/kelson/issues/225)).** The controller is
-> being scaffolded now. `internal/delivery` still contains `direct` (the
-> server-side applier, its wait logic and its JSONL history store), `git` (the
-> go-git writer), `rollback`, and the `Adapter`/`Registry`/`Capabilities` seam;
-> `internal/serverstate` still holds the ConfigMap spec and history stores.
-> ADR-0028 decision 9 deletes all of it. Surviving: `flux`, `statemachine`,
-> `install`, `uninstall`, `kube`, `dryrun`, `provenance.go`, and `ManifestFiles`
-> from `git`, which is the artifact's layout function and moves to the
-> publisher. Until R1 lands, an environment with `delivery.mode: direct` is
-> still applied by kelson itself and the sections below marked *transitional*
-> describe what it does.
+> [#225](https://github.com/dafrie/kelson/issues/225)).** The old machinery is
+> deleted. `internal/delivery/direct` (the server-side applier, its wait logic
+> and its JSONL history store), `internal/delivery/git` (the go-git writer),
+> `internal/delivery/rollback`, the flux *adapter* and the
+> `Adapter`/`Registry`/`Capabilities` seam are gone, and so are the ConfigMap
+> spec and history stores. Surviving: `flux`'s status reader, reconciler,
+> dynamic client and preview reader, plus `statemachine`, `install`,
+> `uninstall`, `kube`, `dryrun` and `provenance.go`; `ManifestFiles` — the
+> artifact's layout function — moved to `internal/preview`, the publisher.
+>
+> **Nothing applies yet.** `kelson deploy`, `kelson rollback`, `kelson promote`,
+> `DeployService.{Deploy(dry_run=none),Rollback,History,Promote}` and
+> `RenderService.Diff(from_revision)` refuse with the structured
+> `delivery/not-implemented` code naming #224. `kelson render`, `kelson diff`,
+> `kelson build`, `kelson profile`, `kelson install`/`uninstall`, the cluster
+> secret backend and the MCP read and dry-run tools are unaffected.
+> `kelson status` and `kelson explain` answer from the observation plane and
+> state, in their output, that the delivery phase is not reported.
 
 ### Status: one state machine, three answers
 

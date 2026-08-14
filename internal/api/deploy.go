@@ -3,34 +3,40 @@ package api
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"connectrpc.com/connect"
 
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
 	"github.com/dafrie/kelson/internal/delivery"
-	"github.com/dafrie/kelson/internal/delivery/rollback"
 	"github.com/dafrie/kelson/internal/delivery/statemachine"
 	"github.com/dafrie/kelson/internal/diff"
 	"github.com/dafrie/kelson/internal/model"
 	"github.com/dafrie/kelson/internal/observation"
-	"github.com/dafrie/kelson/internal/redact"
-	"github.com/dafrie/kelson/internal/serverstate"
 )
 
-// Deploy renders the spec, hands the manifests to the environment's adapter and
-// streams the deployment until it settles.
+// Deploy renders the spec and answers with what it would do. The rungs that
+// change the cluster are gated (issue #224); the rungs that do not are intact.
 //
-// The event order is the deployment's own story and never varies: Proposed
-// (what is about to happen), Committed (the apply landed, revision assigned),
-// one Transition per state-machine phase change, and exactly one Settled last.
-// The transitions are the engine's, not this handler's (issue #37) — the CLI
-// prints the same ones, so `kelson deploy` and any UI cannot disagree about
-// what a phase means.
+// # Which half of this RPC survives, and why that split is the honest one
 //
-// A deployment that settles unhealthy completes the stream cleanly with the
-// error on the Settled event. That is statemachine.Run's contract: "not healthy"
-// is an answer about the deployment, not a failure of the RPC carrying it.
+// [ADR-0028](docs/adr/0028-delivery-spine.md) deleted the delivery adapters, so
+// there is nothing left to call Apply on. What it did not touch is everything
+// upstream of the apply: dry_run=RENDER is the offline rung — the manifests ARE
+// the answer and no adapter was ever built — and dry_run=SERVER is the API
+// server's own verdict on the rendered set through internal/delivery/dryrun,
+// which is a cluster capability and not an adapter. Both keep working, exactly
+// as before, and an agent whose mutations default to dry-run (ADR-0025, the MCP
+// surface) notices nothing.
+//
+// The apply rung answers `CodeUnimplemented` carrying a
+// `delivery/not-implemented` detail. It answers it AFTER the Proposed event,
+// deliberately: a caller streaming this RPC learns what would have been
+// deployed — the project, the environment, the resource count — and then learns
+// that kelson cannot deploy it, which is strictly more than a bare refusal and
+// is the shape a dry run already has.
+//
+// The event order for the rungs that still run is unchanged and never varies:
+// Proposed (what is about to happen), then the rung's own answer.
 func (s *Server) Deploy(ctx context.Context, req *connect.Request[kelsonv1alpha1.DeployRequest], stream *connect.ServerStream[kelsonv1alpha1.DeployResponse]) error {
 	msg := req.Msg
 	// The audit record is opened by the interceptor and enriched here, where
@@ -46,7 +52,6 @@ func (s *Server) Deploy(ctx context.Context, req *connect.Request[kelsonv1alpha1
 	if err != nil {
 		return fail(connect.CodeInternal, err)
 	}
-	t := target(out, msg.GetMode())
 	dryRun := msg.GetDryRun()
 	auditChange(ctx, changeFromSet(set))
 
@@ -55,6 +60,10 @@ func (s *Server) Deploy(ctx context.Context, req *connect.Request[kelsonv1alpha1
 	// shop/production is asking about the shop/production kelson holds. A dry
 	// run is exempt on purpose: rendering and previewing change nothing, and
 	// they are precisely what a propose-only agent is told to send instead.
+	//
+	// It still runs ahead of the gate below. A propose-only agent must be told
+	// it may not deploy before it is told kelson cannot: the policy answer is
+	// about them and is stable, the gate is about kelson and is temporary.
 	var guard agentGuard
 	if persists(dryRun) {
 		if guard, err = s.guard(ctx, model.AgentOpDeploy, set.Project, set.Environment); err != nil {
@@ -69,12 +78,10 @@ func (s *Server) Deploy(ctx context.Context, req *connect.Request[kelsonv1alpha1
 		Project:     set.Project,
 		Environment: set.Environment,
 		Resources:   int32(len(set.Manifests)), //nolint:gosec // a rendered set is orders of magnitude below int32
-		Mode:        t.Mode,
 	}
 	if dryRun == kelsonv1alpha1.DryRun_DRY_RUN_RENDER {
 		// RENDER is the offline rung: the manifests ARE the answer, so they
-		// ride the Proposed event and the stream ends without an adapter ever
-		// being built.
+		// ride the Proposed event and the stream ends.
 		if proposed.Manifests, err = wireManifests(out.manifests); err != nil {
 			return fail(connect.CodeInternal, err)
 		}
@@ -92,54 +99,25 @@ func (s *Server) Deploy(ctx context.Context, req *connect.Request[kelsonv1alpha1
 	}
 
 	// `require: [dry-run]` is satisfied by kelson running one here, on the set
-	// that is about to be applied — never by a claim on the request that one
-	// was run elsewhere (ADR-0025 §5).
+	// that would be applied — never by a claim on the request that one was run
+	// elsewhere (ADR-0025 §5). It still runs ahead of the gate for the reason
+	// the doc comment gives: what an agent may do is a stable answer about
+	// them, and what kelson can do is a temporary one about kelson.
 	if err := s.requireDryRun(ctx, guard, out.profile, set); err != nil {
 		return err
 	}
+	return fail(connect.CodeUnimplemented, deployUnavailable())
+}
 
-	adapter, _, err := s.selectAdapter(ctx, t)
-	if err != nil {
-		return failRequest(err)
-	}
-
-	timeout := s.deployTimeout
-	if secs := msg.GetTimeoutSeconds(); secs > 0 {
-		timeout = time.Duration(secs) * time.Second
-	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	res, err := adapter.Apply(ctx, set)
-	if err != nil {
-		return failRequest(err)
-	}
-	if !res.Applied {
-		return fail(connect.CodeInternal,
-			fmt.Errorf("api: the %s adapter did not complete the apply for %s/%s", adapter.Name(), set.Project, set.Environment))
-	}
-	set.Revision = res.Revision
-	auditRevision(ctx, res.Revision)
-	if err := stream.Send(&kelsonv1alpha1.DeployResponse{
-		Event: &kelsonv1alpha1.DeployResponse_Committed_{
-			Committed: &kelsonv1alpha1.DeployResponse_Committed{Revision: res.Revision, Adapter: adapter.Name()},
-		},
-	}); err != nil {
-		return err
-	}
-
-	state, err := s.watch(ctx, adapter, set, timeout, stream)
-	if err != nil {
-		return err
-	}
-	return stream.Send(&kelsonv1alpha1.DeployResponse{
-		Event: &kelsonv1alpha1.DeployResponse_Settled_{
-			Settled: &kelsonv1alpha1.DeployResponse_Settled{
-				Final: wireTransition(state),
-				Error: firstWireError(state.Err()),
-			},
-		},
-	})
+// deployUnavailable is the refusal every deleted apply path in this package
+// shares, so the message a caller reads does not depend on which RPC they
+// happened to call.
+func deployUnavailable() error {
+	return delivery.NotImplemented("deploy",
+		"kelson cannot apply a rendered set: the direct applier and the git writer were deleted with "+
+			"the old delivery machinery, and the controller that replaces them does not publish yet. "+
+			"dry_run=RENDER and dry_run=SERVER are unaffected and still answer",
+		"#224")
 }
 
 // previewDeploy is the dry_run=SERVER rung: the API server's own verdict on the
@@ -188,88 +166,20 @@ func previewSummary(d *diff.Diff) string {
 		d.Summary.Added, d.Summary.Modified, d.Summary.Removed, d.Summary.MaxRisk)
 }
 
-// watch drives the deployment state machine off the adapter's status, pushing
-// one Transition per change. It is the streaming twin of cmd/kelson's
-// watchDeployment, including the de-duplication: only a change of phase or
-// stuckness is an event, so a two-second poll does not become a two-second
-// heartbeat on the wire.
-func (s *Server) watch(ctx context.Context, adapter delivery.Adapter, set delivery.ManifestSet, timeout time.Duration, stream *connect.ServerStream[kelsonv1alpha1.DeployResponse]) (statemachine.State, error) {
-	last := delivery.PhaseCommitted
-	lastStuck := false
-	// OnState is called from the engine's Run goroutine, which is this
-	// goroutine — Run blocks — so the send error needs no synchronisation.
-	var sendErr error
-	engine, err := statemachine.New(statemachine.Config{
-		Target:    statemachine.TargetFromSet(set),
-		Source:    adapterSource(adapter, set, s.pollInterval),
-		Timeout:   timeout,
-		Component: adapter.Name(),
-		OnState: func(st statemachine.State) {
-			if sendErr != nil || (st.Phase == last && st.Stuck == lastStuck) {
-				return
-			}
-			last, lastStuck = st.Phase, st.Stuck
-			sendErr = stream.Send(&kelsonv1alpha1.DeployResponse{
-				Event: &kelsonv1alpha1.DeployResponse_Transition_{Transition: wireTransition(st)},
-			})
-		},
-	})
-	if err != nil {
-		return statemachine.State{}, fail(connect.CodeInternal, err)
-	}
-
-	state, runErr := engine.Run(ctx)
-	if sendErr != nil {
-		return statemachine.State{}, sendErr
-	}
-	switch {
-	case runErr == nil:
-		return state, nil
-	case ctx.Err() != nil:
-		// The budget expired. That is an answer ("not healthy in time"), not a
-		// machinery failure — the engine's own progress timer gives the same
-		// answer and the two expire together, so which fires first is scheduler
-		// jitter. Ask the engine for the stuck verdict either way.
-		return engine.MarkStuck(), nil
-	default:
-		return statemachine.State{}, fail(connect.CodeInternal, runErr)
-	}
-}
-
-// adapterSource feeds the state machine from an adapter's Status, opening with
-// a synthetic Committed observation because kelson watched the commit itself:
-// Apply has already returned. An adapter still reporting Proposed is forwarded
-// as Committed with its cause intact, because Proposed may only be followed by
-// Committed or Rejected and anything else would be a backwards transition the
-// engine rejects as an adapter bug. This mirrors cmd/kelson's adapterSource.
-func adapterSource(adapter delivery.Adapter, set delivery.ManifestSet, interval time.Duration) statemachine.Source {
-	poll := statemachine.Poll(statemachine.ObserverFunc(func(ctx context.Context) (delivery.Status, error) {
-		st, err := adapter.Status(ctx, set)
-		if err != nil {
-			return delivery.Status{}, err
-		}
-		if st.Phase == delivery.PhaseProposed {
-			st.Phase = delivery.PhaseCommitted
-		}
-		if st.Revision == "" {
-			st.Revision = set.Revision
-		}
-		return st, nil
-	}), interval)
-
-	return statemachine.SourceFunc(func(ctx context.Context, out chan<- delivery.Status) error {
-		committed := delivery.Status{Phase: delivery.PhaseCommitted, Revision: set.Revision}
-		if err := statemachine.Send(ctx, out, committed); err != nil {
-			return err
-		}
-		return poll.Watch(ctx, out)
-	})
-}
-
-// Status reports the delivery phase of the rendered spec and the observation
-// plane's verdict for each workload it declares. Both are needed and neither
-// substitutes for the other: the phase says whether the change arrived, the
-// verdicts say whether it works (issue #53).
+// Status reports the observation plane's verdict for each workload the
+// rendered spec declares.
+//
+// It used to report two things and say that neither substituted for the other
+// (issue #53): the delivery phase said whether the change ARRIVED, the verdicts
+// said whether it WORKS. The phase came from an adapter, and ADR-0028 deleted
+// the adapters; ADR-0027 decision 6 says where it comes back from — this handler
+// reads `Environment.status` — and issue #224 is when.
+//
+// So the response carries an empty phase and an empty revision rather than a
+// guess. Empty is a value a client can branch on and "Healthy" would not be;
+// the UI reads the same field it always did and finds nothing in it, which is
+// the truth. The verdicts, the namespace and the causes behind each verdict are
+// unchanged, and they are the half a caller looks at when something is broken.
 func (s *Server) Status(ctx context.Context, req *connect.Request[kelsonv1alpha1.StatusRequest]) (*connect.Response[kelsonv1alpha1.StatusResponse], error) {
 	msg := req.Msg
 	out, err := s.renderSpec(ctx, msg.GetSpec(), msg.GetEnvironment(), msg.GetImage(), msg.GetProfile())
@@ -280,30 +190,24 @@ func (s *Server) Status(ctx context.Context, req *connect.Request[kelsonv1alpha1
 	if err != nil {
 		return nil, fail(connect.CodeInternal, err)
 	}
-	t := target(out, msg.GetMode())
-	adapter, plane, err := s.selectAdapter(ctx, t)
+	t := target(out)
+	plane, err := s.plane(ctx, t)
 	if err != nil {
 		return nil, failRequest(err)
 	}
 
-	st, err := adapter.Status(ctx, set)
-	if err != nil {
-		return nil, failRequest(err)
-	}
 	verdicts, err := workloadVerdicts(ctx, plane, set, t.Namespace)
 	if err != nil {
 		return nil, failRequest(err)
 	}
 	return connect.NewResponse(&kelsonv1alpha1.StatusResponse{
-		Phase:    string(st.Phase),
-		Revision: st.Revision,
-		Cause:    st.Cause,
-		Detail:   st.Detail,
 		Verdicts: verdicts,
 		// The namespace the target resolved to, so a client addressing this
 		// environment's workloads reads it rather than reconstructing the
 		// model's default and missing a spec.namespace override (#161).
 		Namespace: t.Namespace,
+		Cause: "the delivery phase is not reported: the adapters that answered it were deleted with the " +
+			"old delivery machinery (ADR-0028) and it returns with issue #224, read from Environment.status",
 	}), nil
 }
 
@@ -386,246 +290,84 @@ func observeWorkloads(ctx context.Context, plane *Plane, set delivery.ManifestSe
 	return verdicts, nil
 }
 
-// Rollback returns an environment to a recorded revision, streaming the
-// irreversibility preview FIRST and always.
+// Rollback is gated (issue #224).
 //
-// A rollback is what people reach for when they are already in trouble, and the
-// one thing that must not happen is discovering afterwards that it could not
-// restore what they thought (issues #38, #55). dry_run=RENDER stops after the
-// preview; anything else applies it.
-func (s *Server) Rollback(ctx context.Context, req *connect.Request[kelsonv1alpha1.RollbackRequest], stream *connect.ServerStream[kelsonv1alpha1.RollbackResponse]) error {
+// Every one of its three parts is deleted. The recorded revisions came from the
+// history store (ADR-0027 decision 7 deletes it), the irreversibility preview
+// came from internal/delivery/rollback, and the replay was an adapter's
+// Rollback. [ADR-0028](docs/adr/0028-delivery-spine.md) decision 5 replaces all
+// three with a pointer move — repoint the environment's OCIRepository at an
+// immutable tag that already exists, via a `kelson.dev/rollback-to` annotation
+// that also suspends re-render.
+//
+// Even dry_run=RENDER is refused, unlike Deploy's. The preview rung of a
+// rollback is not a render: it is the comparison of two recorded revisions, and
+// answering it with "no findings" because there is nothing to compare would be
+// the precise failure the preview exists to prevent — a rollback that looked
+// safe because kelson could not look.
+func (s *Server) Rollback(ctx context.Context, req *connect.Request[kelsonv1alpha1.RollbackRequest], _ *connect.ServerStream[kelsonv1alpha1.RollbackResponse]) error {
 	msg := req.Msg
 	auditDryRun(ctx, msg.GetDryRun())
-	// Rollback replays recorded bytes rather than a re-render, but the spec is
-	// still what names the project, environment and delivery mode; no image is
-	// carried, so a spec that builds from source resolves without one.
+
+	// Agent policy answers first, and the ordering is the same one Deploy
+	// states: `forbid: [rollback]` and `propose-only` are stable statements
+	// about this principal, and the gate is a temporary one about kelson. An
+	// agent told "not implemented" would learn nothing about the rule that will
+	// still refuse it when the capability returns.
+	//
+	// It needs the project and the environment, which come from the spec — the
+	// only thing this handler still resolves.
 	out, err := s.renderSpec(ctx, msg.GetSpec(), msg.GetEnvironment(), "", msg.GetProfile())
 	if err != nil {
 		return failRequest(err)
 	}
-	set, err := manifestSet(out)
-	if err != nil {
-		return fail(connect.CodeInternal, err)
-	}
-	// A rollback replays recorded bytes rather than this render, so the
-	// blast-radius rules have nothing here to read (ADR-0025 records the gap
-	// and the rule that covers it: `forbid: [rollback]`). What does apply is
-	// the pair that needs no spec — propose-only and forbid — and, as with
-	// Deploy, the preview-only rung is exempt because it changes nothing.
 	if msg.GetDryRun() != kelsonv1alpha1.DryRun_DRY_RUN_RENDER {
-		if _, err := s.guard(ctx, model.AgentOpRollback, set.Project, set.Environment); err != nil {
+		t := target(out)
+		if _, err := s.guard(ctx, model.AgentOpRollback, t.Project, t.Environment); err != nil {
 			return err
 		}
 	}
-	adapter, plane, err := s.selectAdapter(ctx, target(out, msg.GetMode()))
-	if err != nil {
-		return failRequest(err)
-	}
-	if !adapter.Capabilities().SupportsRollback {
-		return fail(connect.CodeFailedPrecondition,
-			delivery.UnsupportedError(adapter.Name(), "rollback"))
-	}
 
-	entries, err := adapter.History(ctx, set)
-	if err != nil {
-		return failRequest(err)
-	}
-	entry, err := rollbackTarget(entries, msg.GetToRevision())
-	if err != nil {
-		return fail(connect.CodeFailedPrecondition, err)
-	}
-	auditChange(ctx, serverstate.AuditChange{From: entry.Revision})
-	if err := s.sendPreview(ctx, plane, set, entry, stream); err != nil {
-		return err
-	}
-	if msg.GetDryRun() == kelsonv1alpha1.DryRun_DRY_RUN_RENDER {
-		return nil
-	}
-
-	res, err := adapter.Rollback(ctx, set, entry)
-	if err != nil {
-		return stream.Send(&kelsonv1alpha1.RollbackResponse{
-			Event: &kelsonv1alpha1.RollbackResponse_Settled_{
-				Settled: &kelsonv1alpha1.RollbackResponse_Settled{Error: firstWireError(err)},
-			},
-		})
-	}
-	if !res.Applied {
-		return fail(connect.CodeInternal,
-			fmt.Errorf("api: the %s adapter did not complete the rollback to %s", adapter.Name(), entry.Revision))
-	}
-	auditRevision(ctx, res.Revision)
-	if err := stream.Send(&kelsonv1alpha1.RollbackResponse{
-		Event: &kelsonv1alpha1.RollbackResponse_Committed_{
-			Committed: &kelsonv1alpha1.RollbackResponse_Committed{
-				RestoredRevision: entry.Revision,
-				AsRevision:       res.Revision,
-			},
-		},
-	}); err != nil {
-		return err
-	}
-	return stream.Send(&kelsonv1alpha1.RollbackResponse{
-		Event: &kelsonv1alpha1.RollbackResponse_Settled_{Settled: &kelsonv1alpha1.RollbackResponse_Settled{}},
-	})
+	return fail(connect.CodeUnimplemented, delivery.NotImplemented("rollback",
+		"kelson cannot roll back: the recorded rendered history and the irreversibility preview it is "+
+			"computed from were deleted with the old delivery machinery, and the annotation-driven "+
+			"rollback that replaces them is not built",
+		"#224"))
 }
 
-// sendPreview streams what the rollback cannot safely revert. A mode whose
-// recorded history kelson cannot read still gets a Preview event, carrying the
-// target revision and no findings: an absent warning must never be mistaken for
-// "nothing to warn about", so the event is present and empty rather than
-// skipped.
-func (s *Server) sendPreview(ctx context.Context, plane *Plane, set delivery.ManifestSet, entry delivery.Entry, stream *connect.ServerStream[kelsonv1alpha1.RollbackResponse]) error {
-	preview := &kelsonv1alpha1.RollbackResponse_Preview{ToRevision: entry.Revision}
-	if plane.Recorded != nil {
-		d, findings, err := rollback.PreviewRevision(ctx, plane.Recorded, set.Project, set.Environment, entry.Revision)
-		if err != nil {
-			return failRequest(err)
-		}
-		encoded, err := diff.EncodeJSON(d)
-		if err != nil {
-			return fail(connect.CodeInternal, err)
-		}
-		auditChange(ctx, changeFromDiff(d))
-		preview.DiffJson = encoded
-		for _, f := range findings {
-			preview.Findings = append(preview.Findings, &kelsonv1alpha1.RollbackResponse_Finding{
-				Resource:      f.Resource,
-				Path:          f.Path,
-				Cause:         string(f.Cause),
-				Message:       f.Message,
-				Unrecoverable: f.Never,
-			})
-		}
-	}
-	return stream.Send(&kelsonv1alpha1.RollbackResponse{
-		Event: &kelsonv1alpha1.RollbackResponse_Preview_{Preview: preview},
-	})
-}
-
-// rollbackTarget picks the revision to restore, matching the CLI's rule: with
-// no to_revision it is the entry before the current one — "undo the last
-// deploy" — and history is newest first, so that is index 1.
-func rollbackTarget(entries []delivery.Entry, to string) (delivery.Entry, error) {
-	if len(entries) == 0 {
-		return delivery.Entry{}, fmt.Errorf("api: no recorded history: nothing has been deployed for this environment, so there is nothing to roll back to")
-	}
-	if to == "" {
-		if len(entries) < 2 {
-			return delivery.Entry{}, fmt.Errorf("api: only one recorded revision (%s): there is no previous state to restore", entries[0].Revision)
-		}
-		return entries[1], nil
-	}
-	if e, ok := findRevision(entries, to); ok {
-		return e, nil
-	}
-	return delivery.Entry{}, fmt.Errorf("api: revision %q is not in the retained history", to)
-}
-
-// findRevision looks one revision up in a history listing.
-func findRevision(entries []delivery.Entry, revision string) (delivery.Entry, bool) {
-	for _, e := range entries {
-		if e.Revision == revision {
-			return e, true
-		}
-	}
-	return delivery.Entry{}, false
-}
-
-// History returns the recorded revisions for an environment.
+// History is gated (issue #224).
 //
-// It resolves the spec but does not render it: history needs the project,
-// environment and delivery mode, and nothing else. Rendering would additionally
-// require an image for a spec that builds from source (#136), which would make
-// reading the past fail for a reason about the present.
-func (s *Server) History(ctx context.Context, req *connect.Request[kelsonv1alpha1.HistoryRequest]) (*connect.Response[kelsonv1alpha1.HistoryResponse], error) {
-	msg := req.Msg
-	project, environment, resolved, err := s.resolve(ctx, msg.GetSpec(), msg.GetEnvironment(), "")
-	if err != nil {
-		return nil, failRequest(err)
-	}
-	t := Target{
-		Project:     project.Metadata.Name,
-		Environment: environment.Metadata.Name,
-		Namespace:   resolved.Environment.Namespace,
-		Mode:        msg.GetMode(),
-		Git:         resolved.Environment.Delivery.Git,
-	}
-	if t.Mode == "" {
-		t.Mode = string(resolved.Environment.Mode)
-	}
-	adapter, _, err := s.selectAdapter(ctx, t)
-	if err != nil {
-		return nil, failRequest(err)
-	}
-
-	entries, err := adapter.History(ctx, delivery.ManifestSet{Project: t.Project, Environment: t.Environment})
-	if err != nil {
-		return nil, failRequest(err)
-	}
-	out := make([]*kelsonv1alpha1.HistoryEntry, 0, len(entries))
-	for _, e := range entries {
-		out = append(out, &kelsonv1alpha1.HistoryEntry{
-			Revision:    e.Revision,
-			SpecHash:    e.SpecHash,
-			CommittedAt: e.CommittedAt,
-			Message:     e.Message,
-			Author:      e.Author,
-		})
-	}
-	return connect.NewResponse(&kelsonv1alpha1.HistoryResponse{Entries: out}), nil
+// [ADR-0028](docs/adr/0028-delivery-spine.md) decision 4 moves the record out of
+// kelson entirely: the registry holds every artifact ever published for an
+// environment, immutably, and that IS the history — nothing stores rendered
+// manifests a second time. `Environment.status.history[]` mirrors the most
+// recent 20 entries for humans and for this RPC, and anything older is a
+// registry query.
+//
+// Neither the mirror nor the publisher exists yet, so this answers with the
+// refusal rather than with an empty list. An empty history and an unavailable
+// history are different facts, and a caller that cannot tell them apart would
+// conclude nothing was ever deployed.
+func (s *Server) History(ctx context.Context, _ *connect.Request[kelsonv1alpha1.HistoryRequest]) (*connect.Response[kelsonv1alpha1.HistoryResponse], error) {
+	_ = ctx
+	return nil, fail(connect.CodeUnimplemented, delivery.NotImplemented("history",
+		"kelson cannot list an environment's revisions: the rendered-history store was deleted with the "+
+			"old delivery machinery, and the registry tag list and Environment.status mirror that replace "+
+			"it are not built",
+		"#224"))
 }
 
-// selectAdapter builds the delivery plane for this request and resolves the
-// mode to an adapter, mirroring cmd/kelson's function of the same name.
-func (s *Server) selectAdapter(ctx context.Context, t Target) (delivery.Adapter, *Plane, error) {
+// plane builds the cluster-reading plane for this request, mirroring
+// cmd/kelson's connectPlane. It replaces selectAdapter, which additionally
+// resolved a delivery mode to an adapter — a step with nothing left to resolve
+// (ADR-0028 decision 9).
+func (s *Server) plane(ctx context.Context, t Target) (*Plane, error) {
 	if s.delivery == nil {
-		return nil, nil, unimplemented("the delivery plane")
+		return nil, unimplemented("the observation plane")
 	}
 	plane, err := s.delivery(ctx, t)
 	if err != nil {
-		return nil, nil, unavailable("api: building the delivery plane: %w", err)
+		return nil, unavailable("api: building the observation plane: %w", err)
 	}
-	adapter, err := plane.Registry.Select(t.Mode)
-	if err != nil {
-		return nil, nil, fmt.Errorf("api: delivery mode %q is not available: %w "+
-			"(direct always is; flux needs spec.delivery.git on the Environment)", t.Mode, err)
-	}
-	return adapter, plane, nil
-}
-
-// wireTransition projects a statemachine.State onto the wire. The stream speaks
-// the engine's snapshots verbatim (ADR-0013 §2) so no phase gains a second
-// meaning on the way out.
-func wireTransition(st statemachine.State) *kelsonv1alpha1.DeployResponse_Transition {
-	t := &kelsonv1alpha1.DeployResponse_Transition{
-		Phase:            string(st.Phase),
-		Answer:           string(st.Answer()),
-		Stuck:            st.Stuck,
-		ObservedRevision: st.ObservedRevision,
-	}
-	if !st.Cause.IsZero() {
-		t.Cause = &kelsonv1alpha1.DeployResponse_Cause{
-			Component: st.Cause.Component,
-			Reason:    st.Cause.Reason,
-			Message:   st.Cause.Message,
-		}
-	}
-	if !st.Since.IsZero() {
-		t.SinceUnixMs = st.Since.UnixMilli()
-	}
-	return t
-}
-
-// firstWireError projects a settled failure onto the single Error the Settled
-// events carry.
-func firstWireError(err error) *kelsonv1alpha1.Error {
-	wire := wireErrors(err)
-	if len(wire) == 0 {
-		if err == nil {
-			return nil
-		}
-		return &kelsonv1alpha1.Error{Code: string(delivery.ErrApplyFailed), Message: redact.Scrub(err.Error())}
-	}
-	return wire[0]
+	return plane, nil
 }

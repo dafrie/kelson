@@ -50,7 +50,8 @@ linters:
             - "!**/internal/delivery/**"
             - "!**/internal/observation/**"
             - "!**/internal/clusterprofile/detect/**"
-            - "!**/internal/serverstate/**"
+            - "!**/internal/controlstore/**"
+            - "!**/internal/gitref/**"
             - "!**/internal/secret/**"
             - "!**/internal/sops/**"
             - "!**/internal/api/**"
@@ -83,13 +84,16 @@ linters:
             - "**/internal/delivery/**"
             - "**/internal/observation/**"
             - "**/internal/clusterprofile/detect/**"
-            # ADR-0013: all kelson-server state is cluster state. The spec and
-            # history stores are ConfigMap clients, so they belong to the
-            # cluster-facing plane rather than the api plane below.
-            - "**/internal/serverstate/**"
+            - "**/internal/gitref/**"
+            # ADR-0013: all kelson-server state is cluster state. The agent and
+            # audit stores are ConfigMap and Secret clients, so they belong to
+            # the cluster-facing plane rather than the api plane below. The spec
+            # store beside them speaks custom resources and needs one library
+            # more; it is fenced separately below.
+            - "**/internal/controlstore/**"
             # ADR-0009's cluster secret backend (issue #116). It writes a
             # Secret through the Kubernetes API and reads it back masked, so it
-            # is a cluster client by definition — the same reason serverstate
+            # is a cluster client by definition — the same reason controlstore
             # is here rather than under internal/api.
             - "**/internal/secret/**"
           allow:
@@ -99,8 +103,26 @@ linters:
             - k8s.io/api
             - k8s.io/apimachinery
             - sigs.k8s.io/yaml
+            # internal/controlstore's spec store is typed over the kelson.dev
+            # custom resources (ADR-0027 decision 6), which needs a client the
+            # typed clientset cannot give. controller-runtime's is the one this
+            # repository already depends on and already fakes in
+            # internal/controller's tests, so the store uses it rather than
+            # hand-rolling unstructured conversions — and it stays behind the
+            # SpecStore seam, so no handler ever sees it.
+            - sigs.k8s.io/controller-runtime
+            # …and yaml.v3, because the store re-serializes a stored spec into
+            # the document a user would have written, and the model's yaml tags
+            # are what model.DecodeDocuments reads back.
+            - gopkg.in/yaml.v3
+            # The build plane's `git ls-remote` (internal/gitref). ADR-0028 said
+            # choosing OCI "removes go-git", and that is true of the transport:
+            # nothing commits, pushes or keeps a worktree any more, and
+            # go-billy — the writer's in-memory filesystem — went from a direct
+            # dependency to an indirect one with it. Resolving a branch to the
+            # commit a build records is a different question, it predates the
+            # writer, and it is the only reason go-git is still in go.mod.
             - github.com/go-git/go-git/v5
-            - github.com/go-git/go-billy/v5
         # The SOPS writer (issue #81, ADR-0021). It gets exactly one library
         # beyond the standard one — filippo.io/age, the reference age
         # implementation — because the alternative was importing
@@ -120,7 +142,7 @@ linters:
         # The api plane (ADR-0013 §2): the ConnectRPC handlers and the server
         # binary. It gets the transport and the generated code, and nothing
         # else — the cluster clients stay behind the store interfaces in
-        # internal/serverstate, so a handler cannot reach for a client-go call
+        # internal/controlstore, so a handler cannot reach for a client-go call
         # instead of going through the store.
         # The api plane and its clients. internal/mcp and cmd/kelson-mcp are
         # here rather than in a rule of their own because they are the same

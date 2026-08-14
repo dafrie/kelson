@@ -1,4 +1,4 @@
-package serverstate
+package controlstore
 
 import (
 	"context"
@@ -267,10 +267,10 @@ type AgentStore struct {
 // NewAgentStore returns a store over Secrets in one namespace.
 func NewAgentStore(opts AgentStoreOptions) (*AgentStore, error) {
 	if opts.Client == nil {
-		return nil, fmt.Errorf("serverstate: a Kubernetes client is required")
+		return nil, fmt.Errorf("controlstore: a Kubernetes client is required")
 	}
 	if opts.Namespace == "" {
-		return nil, fmt.Errorf("serverstate: a namespace is required")
+		return nil, fmt.Errorf("controlstore: a namespace is required")
 	}
 	now := opts.Now
 	if now == nil {
@@ -294,11 +294,11 @@ func (s *AgentStore) Create(ctx context.Context, spec AgentSpec) (Agent, string,
 
 	secretBytes := make([]byte, agentSecretBytes)
 	if _, err := rand.Read(secretBytes); err != nil {
-		return Agent{}, "", fmt.Errorf("serverstate: generating an agent credential: %w", err)
+		return Agent{}, "", fmt.Errorf("controlstore: generating an agent credential: %w", err)
 	}
 	salt := make([]byte, agentSecretBytes)
 	if _, err := rand.Read(salt); err != nil {
-		return Agent{}, "", fmt.Errorf("serverstate: generating an agent credential salt: %w", err)
+		return Agent{}, "", fmt.Errorf("controlstore: generating an agent credential salt: %w", err)
 	}
 	token := AgentTokenPrefix + agent.Name + "." + base64.RawURLEncoding.EncodeToString(secretBytes)
 	redact.Register(token)
@@ -310,7 +310,7 @@ func (s *AgentStore) Create(ctx context.Context, spec AgentSpec) (Agent, string,
 				fmt.Sprintf("an agent identity named %q already exists", agent.Name),
 				"choose another name, or revoke the existing identity first; rotation is create-then-revoke, so the successor needs its own name")
 		}
-		return Agent{}, "", fmt.Errorf("serverstate: create agent %q: %w", agent.Name, err)
+		return Agent{}, "", fmt.Errorf("controlstore: create agent %q: %w", agent.Name, err)
 	}
 	return agent, token, nil
 }
@@ -402,7 +402,7 @@ func (s *AgentStore) Get(ctx context.Context, name string) (Agent, error) {
 		return Agent{}, notAnAgent(name)
 	}
 	if err != nil {
-		return Agent{}, fmt.Errorf("serverstate: read agent %q: %w", name, err)
+		return Agent{}, fmt.Errorf("controlstore: read agent %q: %w", name, err)
 	}
 	agent, _, _, decodeErr := decodeAgent(object)
 	if decodeErr != nil {
@@ -422,7 +422,7 @@ func (s *AgentStore) List(ctx context.Context) ([]Agent, error) {
 		}).String(),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("serverstate: list agents in %s: %w", s.namespace, err)
+		return nil, fmt.Errorf("controlstore: list agents in %s: %w", s.namespace, err)
 	}
 	out := make([]Agent, 0, len(list.Items))
 	for i := range list.Items {
@@ -454,7 +454,7 @@ func (s *AgentStore) Revoke(ctx context.Context, name string) (Agent, error) {
 			return Agent{}, notAnAgent(name)
 		}
 		if err != nil {
-			return Agent{}, fmt.Errorf("serverstate: read agent %q: %w", name, err)
+			return Agent{}, fmt.Errorf("controlstore: read agent %q: %w", name, err)
 		}
 		agent, salt, hash, err := decodeAgent(object)
 		if err != nil {
@@ -473,7 +473,7 @@ func (s *AgentStore) Revoke(ctx context.Context, name string) (Agent, error) {
 			continue // Something else wrote the identity; re-read and revoke again.
 		}
 		if err != nil {
-			return Agent{}, fmt.Errorf("serverstate: revoke agent %q: %w", name, err)
+			return Agent{}, fmt.Errorf("controlstore: revoke agent %q: %w", name, err)
 		}
 		agent.Version = written.ResourceVersion
 		return agent, nil
@@ -502,7 +502,7 @@ func (s *AgentStore) Authenticate(ctx context.Context, token string) (Agent, err
 		return Agent{}, invalidCredential()
 	}
 	if err != nil {
-		return Agent{}, fmt.Errorf("serverstate: read agent credential: %w", err)
+		return Agent{}, fmt.Errorf("controlstore: read agent credential: %w", err)
 	}
 	agent, salt, hash, err := decodeAgent(object)
 	if err != nil {
@@ -578,7 +578,7 @@ func (s *AgentStore) secret(agent Agent, salt, hash []byte) *corev1.Secret {
 func decodeAgent(object *corev1.Secret) (Agent, []byte, []byte, error) {
 	name := object.Labels[labelAgent]
 	if object.Type != agentSecretType || name == "" {
-		return Agent{}, nil, nil, fmt.Errorf("serverstate: Secret %s/%s is not a kelson agent identity",
+		return Agent{}, nil, nil, fmt.Errorf("controlstore: Secret %s/%s is not a kelson agent identity",
 			object.Namespace, object.Name)
 	}
 	agent := Agent{
@@ -613,11 +613,11 @@ func decodeAgent(object *corev1.Secret) (Agent, []byte, []byte, error) {
 func parseStamp(object *corev1.Secret, key string) (time.Time, error) {
 	raw, present := object.Data[key]
 	if !present || len(raw) == 0 {
-		return time.Time{}, fmt.Errorf("serverstate: agent identity %s/%s has no %s", object.Namespace, object.Name, key)
+		return time.Time{}, fmt.Errorf("controlstore: agent identity %s/%s has no %s", object.Namespace, object.Name, key)
 	}
 	stamp, err := time.Parse(time.RFC3339, string(raw))
 	if err != nil {
-		return time.Time{}, fmt.Errorf("serverstate: agent identity %s/%s has an unreadable %s: %w",
+		return time.Time{}, fmt.Errorf("controlstore: agent identity %s/%s has an unreadable %s: %w",
 			object.Namespace, object.Name, key, err)
 	}
 	return stamp.UTC(), nil

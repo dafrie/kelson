@@ -40,17 +40,19 @@ const deletableTypes = "deployments,statefulsets,daemonsets,cronjobs,jobs,servic
 //     kelson.dev/namespace-ownership. That annotation is why deleting the
 //     namespace is a separate decision from deleting the labelled set: the
 //     renderer stamps "declared" and claims nothing about authorship
-//     (internal/renderer/namespace.go), and the delivery plane overwrites it
-//     with "created" or "adopted" at apply time — the only licence `kelson
-//     uninstall` accepts for removing a namespace (uninstall_test.go).
+//     (internal/renderer/namespace.go). The applier used to overwrite it with
+//     "created" or "adopted", and that applier is deleted (ADR-0028), so the
+//     annotation this suite sees today is the renderer's "declared" — enough
+//     for `kelson uninstall` to know the namespace is kelson's to consider, and
+//     the authorship half returns with the controller (issue #224).
 func TestDeleteByLabelIsExactlyTheRenderedSet(t *testing.T) {
 	h := newHarness(t, "kelson-e2e-additivity")
 	const env = "additivity"
 
 	spec := h.copyFixture("spec.yaml")
 
-	t.Log("== deploy the set ==")
-	h.kelsonOK("deploy", "-f", spec, "--env", env, "--history", h.history, "--timeout", deployTimeout, "--yes")
+	t.Log("== put the rendered set in the cluster ==")
+	h.applyRendered(spec, env)
 	h.waitForRollout("web", baseImage, rolloutTimeout)
 
 	t.Log("== plant bystanders kelson must not touch ==")
@@ -92,18 +94,12 @@ func TestDeleteByLabelIsExactlyTheRenderedSet(t *testing.T) {
 			h.namespace, phase)
 	}
 	annotations := h.kubectlOK("get", "namespace", h.namespace, "-o", "jsonpath={.metadata.annotations}").stdout
-	// The deploy created this namespace, so the delivery plane recorded
-	// "created" over the renderer's "declared". Any of the three values is a
-	// pass here — what must not happen is the annotation disappearing, because
-	// an uninstall with no ownership record refuses to delete the namespace and
-	// this test would then be asserting nothing.
+	// Any value is a pass here — what must not happen is the annotation
+	// disappearing, because an uninstall with no ownership record refuses to
+	// delete the namespace and this test would then be asserting nothing.
 	if !strings.Contains(annotations, `"kelson.dev/namespace-ownership":`) {
 		t.Errorf("namespace %s carries no kelson.dev/namespace-ownership annotation; that annotation is what tells an "+
 			"uninstall whether the namespace is kelson's to delete\nannotations: %s", h.namespace, strings.TrimSpace(annotations))
-	}
-	if !strings.Contains(annotations, `"kelson.dev/namespace-ownership":"created"`) {
-		t.Errorf("namespace %s does not record that kelson created it, and this deploy did create it; an uninstall "+
-			"would leave it standing\nannotations: %s", h.namespace, strings.TrimSpace(annotations))
 	}
 }
 

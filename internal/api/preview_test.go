@@ -9,7 +9,6 @@ import (
 	"connectrpc.com/connect"
 
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
-	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/delivery/flux"
 )
 
@@ -72,7 +71,7 @@ func (f *fakePreviewReader) Previews(_ context.Context, scope flux.PreviewScope)
 
 func previewConnectorFor(reader flux.PreviewReader) DeliveryConnector {
 	return func(_ context.Context, _ Target) (*Plane, error) {
-		return &Plane{Registry: delivery.NewRegistry(), Previews: reader}, nil
+		return &Plane{Previews: reader}, nil
 	}
 }
 
@@ -256,7 +255,7 @@ func TestListPreviewsWithoutADeliveryPlaneIsUnimplemented(t *testing.T) {
 // with no previews. Reporting an empty list would be a claim.
 func TestListPreviewsWithoutAReaderIsUnimplemented(t *testing.T) {
 	c := serve(t, Options{Delivery: func(context.Context, Target) (*Plane, error) {
-		return &Plane{Registry: delivery.NewRegistry()}, nil
+		return &Plane{}, nil
 	}})
 
 	_, err := c.previews.ListPreviews(context.Background(), connect.NewRequest(&kelsonv1alpha1.ListPreviewsRequest{

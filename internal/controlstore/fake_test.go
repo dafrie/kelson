@@ -1,11 +1,9 @@
-package serverstate
+package controlstore
 
 import (
 	"errors"
 	"strconv"
 	"sync"
-	"testing"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -90,32 +88,4 @@ func newFakeClient(objs ...runtime.Object) *fake.Clientset {
 	})
 
 	return c
-}
-
-// fixedClock keeps recorded timestamps deterministic.
-func fixedClock() func() time.Time {
-	base := time.Date(2026, 8, 13, 9, 0, 0, 0, time.UTC)
-	n := 0
-	return func() time.Time {
-		n++
-		return base.Add(time.Duration(n) * time.Second)
-	}
-}
-
-func newSpecStore(t *testing.T, client *fake.Clientset) *SpecStore {
-	t.Helper()
-	s, err := NewSpecStore(SpecStoreOptions{Client: client, Namespace: testNamespace})
-	if err != nil {
-		t.Fatalf("new spec store: %v", err)
-	}
-	return s
-}
-
-func newHistoryStore(t *testing.T, client *fake.Clientset, keep int) *HistoryStore {
-	t.Helper()
-	h, err := NewHistoryStore(HistoryOptions{Client: client, Namespace: testNamespace, Keep: keep, Now: fixedClock()})
-	if err != nil {
-		t.Fatalf("new history store: %v", err)
-	}
-	return h
 }

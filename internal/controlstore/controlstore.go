@@ -1,37 +1,46 @@
-// Package serverstate is kelson-server's state plane: the spec documents
-// clients converge on and the deployment history of what kelson actually did
-// (issue #139, ADR-0013 §1).
+// Package controlstore is kelson-server's cluster-backed state plane: the
+// project specs clients converge on ([SpecStore]), the agent identities that
+// may act ([AgentStore], ADR-0024) and the bounded audit ring of what they did
+// ([AuditStore], ADR-0026).
+//
+// # Why this package is not called serverstate any more
+//
+// It was, and it also held the ConfigMap spec store and the ConfigMap
+// rendered-history store. [ADR-0027](docs/adr/0027-crd-native-control-plane.md)
+// deleted the history store outright — history is the registry's tag list now
+// (ADR-0028 decision 4) — and re-backed the spec store with custom resources.
+// What is left is *control-plane records*: who a principal is, what a principal
+// did, and the documents a principal authored. None of it is a memory of a
+// deployment, and the old name said it was (ADR-0027 decision 7).
 //
 // # All server state is cluster state
 //
 // The kelson-server process holds nothing a restart or a second replica would
-// lose or fork. Every byte this package owns lives in ConfigMaps in one
-// namespace, carrying kelson's provenance labels, which makes
-// `kubectl get configmaps -l kelson.dev/project=shop` the audit trail and
-// namespaced RBAC the access control.
+// lose or fork. Specs are `kelson.dev/v1alpha1` custom resources; identities and
+// the audit ring are Secrets and ConfigMaps in one namespace, carrying kelson's
+// provenance labels, which makes `kubectl get configmaps -l
+// kelson.dev/state=audit` the trail and namespaced RBAC the access control.
 //
-// ConfigMaps rather than a CRD, deliberately. ADR-0003's additive-install
-// doctrine means the server must work against a cluster where kelson has
-// installed nothing: ConfigMaps need no CRD registration and no admission
-// wiring, and `get/list/watch/create/update/delete configmaps` in one namespace
-// is the entire permission footprint. A CRD-backed store is the recorded
-// migration target for when the controller exists (M13+); it lands behind the
-// same interfaces (direct.History here, SpecStore's methods for specs) so the
-// swap does not touch a handler.
+// Whether the identity and audit records should *also* become custom resources
+// is a real question with a weaker case — an audit ring wants a fixed-size
+// buffer more than it wants a typed API — and it is a tracked follow-up rather
+// than part of the CRD swap (ADR-0027 decision 7).
 //
 // # Optimistic concurrency is Kubernetes resourceVersion
 //
-// Spec writes carry the ConfigMap's resourceVersion through as an opaque
+// Spec writes carry the stored object's resourceVersion through as an opaque
 // version string. kelson does not reimplement what the API server already
-// guarantees; a stale write comes back as a store/version-conflict.
+// guarantees; a stale write comes back as a store/version-conflict, and it did
+// so identically when the store was a ConfigMap (ADR-0027 decision 6: the store
+// vocabulary is unchanged, only what it is a vocabulary *about* changed).
 //
 // # Idempotency is honest about its scope
 //
 // Mutating calls record their idempotency key as an annotation on the object
 // they wrote, and a replayed key returns the recorded outcome. There is no
-// distributed dedup beyond what one namespace's ConfigMaps provide — two
-// servers pointed at different namespaces do not share keys.
-package serverstate
+// distributed dedup beyond what one namespace's objects provide — two servers
+// pointed at different namespaces do not share keys.
+package controlstore
 
 import (
 	"errors"
@@ -48,15 +57,18 @@ const (
 	labelManagedBy   = "app.kubernetes.io/managed-by"
 	labelProject     = "kelson.dev/project"
 	labelEnvironment = "kelson.dev/environment"
-	labelRevision    = "kelson.dev/revision"
 
-	// labelState separates the two kinds of state object living in the same
-	// namespace, so listing specs never has to filter history out by name
+	// labelState separates the kinds of state object living in the same
+	// namespace, so listing one never has to filter the others out by name
 	// prefix.
 	labelState = "kelson.dev/state"
 
-	stateSpec    = "spec"
-	stateHistory = "history"
+	// stateSpec marks the custom resources the spec store owns. The Project and
+	// Environment CRDs make the kind itself queryable, so the label is
+	// provenance rather than a selector this package needs — it is what tells a
+	// reader of `kubectl get environments -A --show-labels` which objects
+	// kelson-server wrote.
+	stateSpec = "spec"
 
 	managedByKelson = "kelson"
 
@@ -153,19 +165,21 @@ func withCause(e Error, cause error) Error {
 
 var _ error = Error{}
 
+// writeAttempts bounds the read-modify-write retry a forced write performs when
+// something else changed the object between the read and the update.
+const writeAttempts = 3
+
 // validSegment keeps a caller-supplied identifier safe to splice into an object
-// name and a label value. It is the cluster-side counterpart of direct's
-// path-safety check: there the risk is escaping the data dir, here it is
-// building a name the API server rejects — or worse, one that collides with
-// another project's. A DNS-1123 label is the strictest of the constraints in
-// play (object names, label values, ConfigMap data keys), so requiring it once
-// satisfies all three.
+// name and a label value. The risk it guards is building a name the API server
+// rejects — or worse, one that collides with another project's. A DNS-1123
+// label is the strictest of the constraints in play (object names, label
+// values, ConfigMap data keys), so requiring it once satisfies all three.
 func validSegment(what, v string) error {
 	if v == "" {
-		return fmt.Errorf("serverstate: %s must not be empty", what)
+		return fmt.Errorf("controlstore: %s must not be empty", what)
 	}
 	if problems := validation.IsDNS1123Label(v); len(problems) > 0 {
-		return fmt.Errorf("serverstate: %s %q is not a DNS-safe name: %s", what, v, strings.Join(problems, "; "))
+		return fmt.Errorf("controlstore: %s %q is not a DNS-safe name: %s", what, v, strings.Join(problems, "; "))
 	}
 	return nil
 }

@@ -7,10 +7,10 @@
 //
 // A handler must be testable without a cluster, and the api plane's depguard
 // rule (.golangci.yml) forbids the Kubernetes client libraries outright — the
-// cluster stays behind internal/serverstate, internal/delivery and
+// cluster stays behind internal/controlstore, internal/delivery and
 // internal/observation. So every cluster-facing capability enters through a
 // narrow interface declared here: [SpecStore] for the spec store,
-// [ProfileCapture] for live detection, [DeliveryConnector] for the delivery
+// [ProfileCapture] for live detection, [DeliveryConnector] for the observation
 // plane, [PreviewConnector] for the server-side dry-run engine, [LogEngine]
 // for log queries and [BuildConnector] for the build plane.
 // cmd/kelson-server supplies the production implementations;
@@ -24,9 +24,20 @@
 // has no filesystem, so the server's copy of that pipeline lives here
 // (pipeline.go) and deliberately refuses overlays rather than ignoring them.
 // Everything downstream — model.Resolve, renderer.Render, internal/diff, the
-// delivery adapters, the state machine — is the identical code path the CLI
-// runs, which is what keeps `kelson deploy` and this API from disagreeing about
-// what a phase or a diff means (issue #37).
+// observation plane — is the identical code path the CLI runs, which is what
+// keeps `kelson status` and this API from disagreeing about what a verdict
+// means (issue #37).
+//
+// # The delivery verbs are gated, and the schema is not
+//
+// [ADR-0028](docs/adr/0028-delivery-spine.md) deleted the delivery adapters,
+// the rendered-history store and the rollback machinery. The wire schema is
+// unchanged — ADR-0027 decision 6 keeps the ConnectRPC surface exactly as
+// ADR-0013 §2 defined it — so the RPCs that needed those things still exist and
+// answer `CodeUnimplemented` with a `delivery/not-implemented` detail naming the
+// tracking issue, rather than being removed from the schema or, worse, half
+// answering. Deploy keeps both of its dry-run rungs, because rendering and
+// previewing never needed an adapter (deploy.go).
 //
 // # An invalid spec is an answer, not a transport failure
 //
@@ -48,14 +59,12 @@ import (
 	"github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1/kelsonv1alpha1connect"
 	"github.com/dafrie/kelson/internal/build"
 	"github.com/dafrie/kelson/internal/clusterprofile"
+	"github.com/dafrie/kelson/internal/controlstore"
 	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/delivery/flux"
-	"github.com/dafrie/kelson/internal/delivery/rollback"
 	"github.com/dafrie/kelson/internal/diff"
-	"github.com/dafrie/kelson/internal/model"
 	"github.com/dafrie/kelson/internal/observation"
 	"github.com/dafrie/kelson/internal/secret"
-	"github.com/dafrie/kelson/internal/serverstate"
 )
 
 // DefaultDeployTimeout is the budget a deployment gets to reach a healthy
@@ -68,18 +77,18 @@ const DefaultDeployTimeout = 5 * time.Minute
 // deployment is in flight, mirroring cmd/kelson's deployPollInterval.
 const DefaultPollInterval = 2 * time.Second
 
-// SpecStore is the spec-store seam. *serverstate.SpecStore implements it; a
+// SpecStore is the spec-store seam. *controlstore.SpecStore implements it; a
 // CRD-backed store is the recorded successor and lands behind this same
 // interface (ADR-0013 §1).
 type SpecStore interface {
-	Put(ctx context.Context, project string, docs serverstate.Documents, opts serverstate.PutOptions) (serverstate.Stored, error)
-	Get(ctx context.Context, project string) (serverstate.Stored, error)
-	List(ctx context.Context) ([]serverstate.Stored, error)
-	Delete(ctx context.Context, project string, opts serverstate.DeleteOptions) error
+	Put(ctx context.Context, project string, docs controlstore.Documents, opts controlstore.PutOptions) (controlstore.Stored, error)
+	Get(ctx context.Context, project string) (controlstore.Stored, error)
+	List(ctx context.Context) ([]controlstore.Stored, error)
+	Delete(ctx context.Context, project string, opts controlstore.DeleteOptions) error
 }
 
 // AgentStore is the agent-identity seam (issue #74, ADR-0024).
-// *serverstate.AgentStore implements it. A nil one is a server with no agent
+// *controlstore.AgentStore implements it. A nil one is a server with no agent
 // principals: AgentService answers CodeUnimplemented and the gate in auth.go
 // recognises no agent tokens, which is the pre-#74 posture exactly.
 //
@@ -88,10 +97,10 @@ type SpecStore interface {
 // identity lives in — a revocation written through one and not seen by the
 // other would be precisely the bug #74 exists to prevent.
 type AgentStore interface {
-	Create(ctx context.Context, spec serverstate.AgentSpec) (serverstate.Agent, string, error)
-	List(ctx context.Context) ([]serverstate.Agent, error)
-	Revoke(ctx context.Context, name string) (serverstate.Agent, error)
-	Authenticate(ctx context.Context, token string) (serverstate.Agent, error)
+	Create(ctx context.Context, spec controlstore.AgentSpec) (controlstore.Agent, string, error)
+	List(ctx context.Context) ([]controlstore.Agent, error)
+	Revoke(ctx context.Context, name string) (controlstore.Agent, error)
+	Authenticate(ctx context.Context, token string) (controlstore.Agent, error)
 }
 
 // The audit-trail seam is [AuditSink] in audit.go, beside the capture points
@@ -113,49 +122,40 @@ func (f CaptureFunc) Capture(ctx context.Context) (clusterprofile.ClusterProfile
 	return f(ctx)
 }
 
-// Target is what a delivery RPC resolved from its spec: which application
-// model, in which mode, against which cluster shape. It mirrors cmd/kelson's
-// deliveryTarget minus the CLI-only fields (kubeconfig and the local history
-// directory) — the server's history is cluster state (ADR-0013 §1).
+// Target is what a cluster-reading RPC resolved from its spec: which
+// application model, in which namespace. It mirrors cmd/kelson's
+// observationTarget minus the CLI-only kubeconfig.
+//
+// It used to carry a delivery mode, a git target and the profile's
+// flux-operator finding, because it also selected an adapter. ADR-0028 decision
+// 9 deleted the adapters, so what remains is addressing.
 type Target struct {
 	Project     string
 	Environment string
 	// Namespace is the environment's resolved namespace, used when a rendered
 	// manifest carries none of its own.
 	Namespace string
-	Mode      string
-	Git       *model.GitTarget
-	// FluxOperator carries the profile's flux-operator finding to the flux
-	// adapter's health readback (issue #157). Nil means nobody looked.
-	FluxOperator *bool
 }
 
-// Plane is the assembled delivery plane for one request, mirroring
-// cmd/kelson's deliveryPlane.
+// Plane is the assembled cluster-reading plane for one request, mirroring
+// cmd/kelson's observationPlane.
 type Plane struct {
-	// Registry holds the adapters available for this request; selection is by
-	// delivery mode (delivery.Registry.Select).
-	Registry *delivery.Registry
 	// Health is the observation-plane verdict source used by Status. Nil when
 	// the plane could not build one.
 	Health observation.Evaluator
-	// Recorded supplies the manifests a rollback preview compares. Nil for a
-	// mode that keeps no rendered history kelson can read.
-	Recorded rollback.Source
 	// Previews reads an environment's PR previews back out of the cluster
-	// (ADR-0017 stage 3). It rides the delivery plane rather than an Options
-	// seam of its own because a preview is delivery state: the objects it reads
-	// are the ones flux-operator instantiated from the ResourceSet kelson
-	// delivered, and they are in the same cluster this plane just connected to.
-	// Nil means this build cannot read previews, which ListPreviews reports as
+	// (ADR-0017 stage 3). It rides this plane rather than an Options seam of
+	// its own because a preview is delivery state: the objects it reads are the
+	// ones flux-operator instantiated from the ResourceSet kelson delivered,
+	// and they are in the same cluster this plane just connected to. Nil means
+	// this build cannot read previews, which ListPreviews reports as
 	// unimplemented rather than as an empty list.
 	Previews flux.PreviewReader
 }
 
-// DeliveryConnector builds the delivery plane for one request. It takes the
-// request's context because the server's history store is cluster-backed and
-// context-free (serverstate.HistoryStore.WithContext): a cancelled RPC must not
-// leave a ConfigMap write in flight.
+// DeliveryConnector builds the cluster-reading plane for one request. It takes
+// the request's context because everything behind it is a cluster call a
+// cancelled RPC must not leave in flight.
 type DeliveryConnector func(ctx context.Context, t Target) (*Plane, error)
 
 // PreviewEngine is the L2 (server-side dry-run) preview seam, the same shape
@@ -256,7 +256,7 @@ type SecretStore interface {
 // RevisionResolver answers "what commit does this ref name?" against a remote
 // repository. It is an interface for the same reason the CLI's is: the answer
 // needs the git libraries, which this plane's depguard rule forbids
-// (.golangci.yml). internal/delivery/git's RemoteResolver implements it.
+// (.golangci.yml). internal/gitref's RemoteResolver implements it.
 type RevisionResolver interface {
 	Resolve(ctx context.Context, repo, ref string) (string, error)
 }
@@ -306,7 +306,7 @@ type Options struct {
 	Agents   AgentStore
 
 	// Audit is the durable audit trail (issue #78, ADR-0026).
-	// *serverstate.AuditStore implements it. A nil one is a server that keeps
+	// *controlstore.AuditStore implements it. A nil one is a server that keeps
 	// no trail: AuditService answers CodeUnimplemented and every capture point
 	// is a no-op, which is the pre-#78 posture exactly. The slog attribution
 	// line of #74 is unaffected either way.

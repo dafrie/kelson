@@ -65,7 +65,7 @@ func TestRenderNamespace(t *testing.T) {
 		t.Fatalf("%s = %q, want %q", AnnNamespaceOwnership, got, NamespaceOwnershipDeclared)
 	}
 	// The direct adapter refuses to apply anything without these, and prunes
-	// only by them (internal/delivery/direct).
+	// only by them (the applier that read them is deleted, ADR-0028).
 	for key, want := range map[string]string{
 		"app.kubernetes.io/managed-by": "kelson",
 		"kelson.dev/project":           "checkout",

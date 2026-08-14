@@ -1,4 +1,4 @@
-package serverstate
+package controlstore
 
 import (
 	"strings"
@@ -94,7 +94,7 @@ func TestAuthenticateRefusesEveryWrongCredentialTheSameWay(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	forged := token[:len(token)-1] + flipLast(token)
+	forged := forgeSecret(token)
 	cases := map[string]string{
 		"a wrong secret for a real identity": forged,
 		"an identity that does not exist":    AgentTokenPrefix + "ghost." + strings.TrimPrefix(token, AgentTokenPrefix+testAgent+"."),
@@ -120,12 +120,25 @@ func TestAuthenticateRefusesEveryWrongCredentialTheSameWay(t *testing.T) {
 	}
 }
 
-func flipLast(token string) string {
-	last := token[len(token)-1]
-	if last == 'A' {
-		return "B"
+// forgeSecret changes one character of a token's secret half, keeping the
+// prefix and the identity name intact — the "right name, wrong secret" case.
+//
+// It mutates the FIRST character of the secret rather than the last, and that
+// is not arbitrary: the secret is unpadded base64, whose final character
+// carries fewer bits than a full sextet, so two different last characters can
+// decode to identical bytes. Flipping the last one therefore forges a token
+// that is sometimes still valid, which made this test fail about one run in
+// four.
+func forgeSecret(token string) string {
+	i := strings.LastIndex(token, ".") + 1
+	if i <= 0 || i >= len(token) {
+		panic("forgeSecret: the token has no secret half")
 	}
-	return "A"
+	replacement := byte('A')
+	if token[i] == 'A' {
+		replacement = 'B'
+	}
+	return token[:i] + string(replacement) + token[i+1:]
 }
 
 // TestRevokeIsImmediateIdempotentAndLocal: the identity is marked dead in one

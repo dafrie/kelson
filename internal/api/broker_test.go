@@ -7,7 +7,6 @@ import (
 	"time"
 
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
-	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/observation"
 )
 
@@ -368,16 +367,16 @@ func TestBrokerFailedObservationIsNotATransition(t *testing.T) {
 	}
 }
 
-// TestObserveScopeMirrorsStatus: the production observer reads the same two
-// seams DeployService.Status reads, and nothing else.
+// TestObserveScopeMirrorsStatus: the production observer reads the same seam
+// DeployService.Status reads, and nothing else.
+//
+// It used to assert the phase, the revision and the cause as well, and it
+// asserts their absence now: ADR-0028 deleted what produced them, and a
+// snapshot that invented one would make a watcher fire on a value nothing
+// wrote. They come back with issue #224, on Status and here at once — the
+// parity is the property, not the fields.
 func TestObserveScopeMirrorsStatus(t *testing.T) {
-	adapter := newFakeAdapter("direct")
-	adapter.statuses = []delivery.Status{{
-		Phase:    delivery.PhaseDegraded,
-		Revision: "rev-00000007",
-		Cause:    "web: 1 of 3 replicas are not ready",
-	}}
-	connector, _ := connectorFor(adapter, nil, fakeEvaluator{"web": {
+	connector, _ := connectorFor(fakeEvaluator{"web": {
 		Resource: "Deployment/hello-development/web",
 		Code:     observation.CodeCrashLoopBackOff,
 		Reason:   "back-off restarting failed container",
@@ -388,11 +387,8 @@ func TestObserveScopeMirrorsStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("observeScope: %v", err)
 	}
-	if snap.Phase != string(delivery.PhaseDegraded) || snap.Revision != "rev-00000007" {
-		t.Errorf("snapshot = %+v, want the adapter's phase and revision", snap)
-	}
-	if snap.Cause != "web: 1 of 3 replicas are not ready" {
-		t.Errorf("cause = %q", snap.Cause)
+	if snap.Phase != "" || snap.Revision != "" || snap.Cause != "" {
+		t.Errorf("snapshot = %+v, want no delivery phase until it has a source again (#224)", snap)
 	}
 	if len(snap.Health) != 1 {
 		t.Fatalf("health = %+v, want one verdict for the rendered Deployment", snap.Health)

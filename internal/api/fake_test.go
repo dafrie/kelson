@@ -13,11 +13,10 @@ import (
 
 	"github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1/kelsonv1alpha1connect"
 	"github.com/dafrie/kelson/internal/clusterprofile"
+	"github.com/dafrie/kelson/internal/controlstore"
 	"github.com/dafrie/kelson/internal/delivery"
-	"github.com/dafrie/kelson/internal/delivery/rollback"
 	"github.com/dafrie/kelson/internal/diff"
 	"github.com/dafrie/kelson/internal/observation"
-	"github.com/dafrie/kelson/internal/serverstate"
 )
 
 // The handlers are assembly: they decode a request, run the same pipeline the
@@ -80,10 +79,10 @@ func serveServer(t *testing.T, server *Server) clients {
 
 // --- spec store -------------------------------------------------------------
 
-// fakeSpecStore is an in-memory SpecStore that reproduces serverstate's
+// fakeSpecStore is an in-memory SpecStore that reproduces controlstore's
 // optimistic-concurrency and idempotency contract, including its error values.
-// The ConfigMap-backed store is tested against a fake clientset in
-// internal/serverstate; what matters here is that the handler maps those errors
+// The custom-resource-backed store is tested against a fake client in
+// internal/controlstore; what matters here is that the handler maps those errors
 // onto the right ConnectRPC codes and details.
 type fakeSpecStore struct {
 	mu      sync.Mutex
@@ -92,7 +91,7 @@ type fakeSpecStore struct {
 }
 
 type fakeSpecEntry struct {
-	stored serverstate.Stored
+	stored controlstore.Stored
 	key    string // the idempotency key of the write that produced it
 }
 
@@ -100,7 +99,7 @@ func newFakeSpecStore() *fakeSpecStore {
 	return &fakeSpecStore{entries: map[string]*fakeSpecEntry{}}
 }
 
-func (f *fakeSpecStore) Put(_ context.Context, project string, docs serverstate.Documents, opts serverstate.PutOptions) (serverstate.Stored, error) {
+func (f *fakeSpecStore) Put(_ context.Context, project string, docs controlstore.Documents, opts controlstore.PutOptions) (controlstore.Stored, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -108,13 +107,13 @@ func (f *fakeSpecStore) Put(_ context.Context, project string, docs serverstate.
 	existing, ok := f.entries[project]
 	switch {
 	case !ok && opts.ExpectedVersion != "" && !opts.Force:
-		return serverstate.Stored{}, serverstate.NotFound(ref, "no spec is stored", "put without a version to create the project")
+		return controlstore.Stored{}, controlstore.NotFound(ref, "no spec is stored", "put without a version to create the project")
 	case ok && opts.IdempotencyKey != "" && existing.key == opts.IdempotencyKey:
 		return existing.stored, nil
 	case ok && !opts.Force && opts.ExpectedVersion == "":
-		return serverstate.Stored{}, serverstate.VersionConflict(ref, "the write carried no version", "read the spec and retry with its version")
+		return controlstore.Stored{}, controlstore.VersionConflict(ref, "the write carried no version", "read the spec and retry with its version")
 	case ok && !opts.Force && opts.ExpectedVersion != existing.stored.Version:
-		return serverstate.Stored{}, serverstate.VersionConflict(ref, "version mismatch", "re-read the spec and retry")
+		return controlstore.Stored{}, controlstore.VersionConflict(ref, "version mismatch", "re-read the spec and retry")
 	}
 
 	f.version++
@@ -123,9 +122,9 @@ func (f *fakeSpecStore) Put(_ context.Context, project string, docs serverstate.
 		envs = append(envs, name)
 	}
 	sort.Strings(envs)
-	stored := serverstate.Stored{
+	stored := controlstore.Stored{
 		Project:      project,
-		Documents:    serverstate.Documents{Project: docs.Project, Environments: maps.Clone(docs.Environments)},
+		Documents:    controlstore.Documents{Project: docs.Project, Environments: maps.Clone(docs.Environments)},
 		Version:      strconv.Itoa(f.version),
 		Environments: envs,
 	}
@@ -133,21 +132,21 @@ func (f *fakeSpecStore) Put(_ context.Context, project string, docs serverstate.
 	return stored, nil
 }
 
-func (f *fakeSpecStore) Get(_ context.Context, project string) (serverstate.Stored, error) {
+func (f *fakeSpecStore) Get(_ context.Context, project string) (controlstore.Stored, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	entry, ok := f.entries[project]
 	if !ok {
-		return serverstate.Stored{}, serverstate.NotFound("spec/"+project,
+		return controlstore.Stored{}, controlstore.NotFound("spec/"+project,
 			fmt.Sprintf("no spec is stored for project %q", project), "create it with PutSpec")
 	}
 	return entry.stored, nil
 }
 
-func (f *fakeSpecStore) List(context.Context) ([]serverstate.Stored, error) {
+func (f *fakeSpecStore) List(context.Context) ([]controlstore.Stored, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	out := make([]serverstate.Stored, 0, len(f.entries))
+	out := make([]controlstore.Stored, 0, len(f.entries))
 	for _, entry := range f.entries {
 		out = append(out, entry.stored)
 	}
@@ -155,7 +154,7 @@ func (f *fakeSpecStore) List(context.Context) ([]serverstate.Stored, error) {
 	return out, nil
 }
 
-func (f *fakeSpecStore) Delete(_ context.Context, project string, opts serverstate.DeleteOptions) error {
+func (f *fakeSpecStore) Delete(_ context.Context, project string, opts controlstore.DeleteOptions) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	entry, ok := f.entries[project]
@@ -163,146 +162,29 @@ func (f *fakeSpecStore) Delete(_ context.Context, project string, opts serversta
 		if opts.IdempotencyKey != "" {
 			return nil
 		}
-		return serverstate.NotFound("spec/"+project, "no spec is stored", "list the stored projects")
+		return controlstore.NotFound("spec/"+project, "no spec is stored", "list the stored projects")
 	}
 	if !opts.Force && opts.ExpectedVersion != entry.stored.Version {
-		return serverstate.VersionConflict("spec/"+project, "version mismatch", "re-read the spec and retry")
+		return controlstore.VersionConflict("spec/"+project, "version mismatch", "re-read the spec and retry")
 	}
 	delete(f.entries, project)
 	return nil
 }
 
-// --- delivery ---------------------------------------------------------------
+// --- the observation plane ---------------------------------------------------
 
-// fakeAdapter is a delivery.Adapter whose answers are scripted, the same shape
-// cmd/kelson's tests use. Status is polled from the state machine's watch
-// goroutine while the test reads the call log, so every field is guarded.
-type fakeAdapter struct {
-	name string
-	caps delivery.Capabilities
-
-	mu       sync.Mutex
-	calls    []string
-	rolledTo []delivery.Entry
-
-	applyResult delivery.Result
-	applyErr    error
-	// statuses are returned in order; the last one repeats forever.
-	statuses    []delivery.Status
-	history     []delivery.Entry
-	historyErr  error
-	rollbackRes delivery.Result
-	rollbackErr error
-}
-
-func newFakeAdapter(name string) *fakeAdapter {
-	return &fakeAdapter{name: name, caps: delivery.Capabilities{SupportsRollback: true}}
-}
-
-func (f *fakeAdapter) Name() string                        { return f.name }
-func (f *fakeAdapter) Capabilities() delivery.Capabilities { return f.caps }
-
-func (f *fakeAdapter) record(call string) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.calls = append(f.calls, call)
-}
-
-func (f *fakeAdapter) callLog() []string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([]string(nil), f.calls...)
-}
-
-func (f *fakeAdapter) Apply(context.Context, delivery.ManifestSet) (delivery.Result, error) {
-	f.record("apply")
-	if f.applyErr != nil {
-		return delivery.Result{}, f.applyErr
-	}
-	res := f.applyResult
-	if res.Revision == "" {
-		res = delivery.Result{Revision: "rev-00000001", Applied: true}
-	}
-	return res, nil
-}
-
-func (f *fakeAdapter) Status(context.Context, delivery.ManifestSet) (delivery.Status, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.calls = append(f.calls, "status")
-	switch {
-	case len(f.statuses) == 0:
-		return delivery.Status{Phase: delivery.PhaseHealthy}, nil
-	case len(f.statuses) == 1:
-		return f.statuses[0], nil
-	default:
-		st := f.statuses[0]
-		f.statuses = f.statuses[1:]
-		return st, nil
-	}
-}
-
-func (f *fakeAdapter) History(context.Context, delivery.ManifestSet) ([]delivery.Entry, error) {
-	f.record("history")
-	if f.historyErr != nil {
-		return nil, f.historyErr
-	}
-	return f.history, nil
-}
-
-func (f *fakeAdapter) Rollback(_ context.Context, _ delivery.ManifestSet, to delivery.Entry) (delivery.Result, error) {
-	f.mu.Lock()
-	f.calls = append(f.calls, "rollback")
-	f.rolledTo = append(f.rolledTo, to)
-	f.mu.Unlock()
-	if f.rollbackErr != nil {
-		return delivery.Result{}, f.rollbackErr
-	}
-	res := f.rollbackRes
-	if res.Revision == "" {
-		res = delivery.Result{Revision: "rev-00000009", Applied: true}
-	}
-	return res, nil
-}
-
-// fakeRecorded is a rollback.Source over recorded manifest sets, the seam the
-// rollback preview and the from_revision diff (#162) both read their prior
-// state through. Revision returns the recorded bytes verbatim; a revision it
-// does not hold fails the way the cluster-backed history store does
-// (serverstate.NotFound), so the handler's mapping of that error is exercised
-// rather than assumed.
-type fakeRecorded struct {
-	current   []delivery.Manifest
-	revisions map[string][]delivery.Manifest
-}
-
-var _ rollback.Source = (*fakeRecorded)(nil)
-
-func (f *fakeRecorded) Current(context.Context) ([]delivery.Manifest, error) {
-	return f.current, nil
-}
-
-func (f *fakeRecorded) Revision(_ context.Context, revision string) ([]delivery.Manifest, error) {
-	ms, ok := f.revisions[revision]
-	if !ok {
-		return nil, serverstate.NotFound("history/"+revision,
-			fmt.Sprintf("revision %q is not in the retained history", revision),
-			"list the history for the revisions that still exist")
-	}
-	return ms, nil
-}
-
-// connectorFor returns a DeliveryConnector serving one adapter, recording the
+// connectorFor returns a DeliveryConnector serving one probe, recording the
 // targets it was asked for.
-func connectorFor(adapter *fakeAdapter, recorded rollback.Source, health observation.Evaluator) (DeliveryConnector, *[]Target) {
+//
+// The fake adapter and the fake recorded-history source that used to live here
+// went with the seams they implemented (ADR-0028 decision 9). What a handler
+// can be handed now is a health evaluator and a preview reader, which is what
+// this builds.
+func connectorFor(health observation.Evaluator) (DeliveryConnector, *[]Target) {
 	var targets []Target
 	return func(_ context.Context, t Target) (*Plane, error) {
 		targets = append(targets, t)
-		reg := delivery.NewRegistry()
-		if err := reg.Register(adapter); err != nil {
-			return nil, err
-		}
-		return &Plane{Registry: reg, Health: health, Recorded: recorded}, nil
+		return &Plane{Health: health}, nil
 	}, &targets
 }
 
@@ -448,4 +330,33 @@ func (s syncingEvaluator) EvaluateSecretSync(_ context.Context, namespace, name 
 // fakeProfile is a ProfileCapture returning a fixture.
 func fakeProfile(p clusterprofile.ClusterProfile) ProfileCapture {
 	return CaptureFunc(func(context.Context) (clusterprofile.ClusterProfile, error) { return p, nil })
+}
+
+// cyclingEvaluator walks a list of verdict codes, one per call, so a scope
+// observed repeatedly produces a run of distinct health changes — which is what
+// a cursor-replay test needs and what a single step cannot give it.
+type cyclingEvaluator struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (c *cyclingEvaluator) Evaluate(_ context.Context, namespace, name string) (observation.Verdict, error) {
+	codes := []observation.Code{
+		observation.CodeHealthy,
+		observation.CodeProgressing,
+		observation.CodeCrashLoopBackOff,
+		observation.CodeImagePullBackOff,
+	}
+	c.mu.Lock()
+	i := c.calls
+	c.calls++
+	c.mu.Unlock()
+	if i >= len(codes) {
+		i = len(codes) - 1
+	}
+	return observation.Verdict{
+		Healthy:  codes[i] == observation.CodeHealthy,
+		Code:     codes[i],
+		Resource: "Deployment/" + namespace + "/" + name,
+	}, nil
 }

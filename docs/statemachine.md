@@ -14,9 +14,9 @@ watching the Flux objects it owns and the workloads they produced, writing the
 result into `Environment.status`. The engine itself is unchanged — same phases,
 same transition table, same timeout, same correlation rules.
 
-> **Transition ([#224](https://github.com/dafrie/kelson/issues/224)).** Until R1
-> lands the engine also has a direct-mode source, fed by the applier in
-> `internal/delivery/direct`. It goes with the adapter.
+> **Transition ([#224](https://github.com/dafrie/kelson/issues/224)).** The
+> direct-mode source went with the applier. The engine, its phases and its
+> transition table are intact and unused until the controller feeds them.
 
 ## The model
 

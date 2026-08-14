@@ -8,7 +8,7 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
 
-	"github.com/dafrie/kelson/internal/serverstate"
+	"github.com/dafrie/kelson/internal/controlstore"
 )
 
 // The scope table's coverage harness (issue #74), modelled on the field
@@ -87,7 +87,7 @@ func TestScopeTableHasNoStaleRows(t *testing.T) {
 func TestEveryScopeRowIsWellFormed(t *testing.T) {
 	for procedure, row := range rpcScopes {
 		switch row.Operation {
-		case serverstate.OpRead, serverstate.OpMutate, serverstate.OpAdmin:
+		case controlstore.OpRead, controlstore.OpMutate, controlstore.OpAdmin:
 		default:
 			t.Errorf("%s has operation class %q, which is not one an identity can be granted or refused",
 				procedure, row.Operation)
@@ -121,7 +121,7 @@ func TestEveryScopeRowIsWellFormed(t *testing.T) {
 			t.Errorf("%s has an unknown reach %d", procedure, row.Reach)
 		}
 
-		if row.Operation == serverstate.OpAdmin && !adminService(procedure) {
+		if row.Operation == controlstore.OpAdmin && !adminService(procedure) {
 			t.Errorf("%s is classed admin but belongs to none of the administrative services (%s): admin is "+
 				"refused to every agent credential, so classing an ordinary RPC that way locks agents out of it "+
 				"entirely. If this service really is administrative, add it to adminServices and say why in its ADR",
@@ -162,9 +162,9 @@ func TestMutatingMethodsAreClassedAsMutations(t *testing.T) {
 	for procedure, row := range rpcScopes {
 		method := procedure[strings.LastIndex(procedure, "/")+1:]
 		switch {
-		case namesMethod(mutating, method) && row.Operation != serverstate.OpMutate:
+		case namesMethod(mutating, method) && row.Operation != controlstore.OpMutate:
 			t.Errorf("%s changes state but is classed %q", procedure, row.Operation)
-		case namesMethod(reading, method) && row.Operation != serverstate.OpRead:
+		case namesMethod(reading, method) && row.Operation != controlstore.OpRead:
 			t.Errorf("%s only reads but is classed %q", procedure, row.Operation)
 		}
 	}

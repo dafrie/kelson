@@ -126,64 +126,27 @@ func checkDiffBefore(msg *kelsonv1alpha1.DiffRequest) error {
 	return nil
 }
 
-// revisionDiff computes the rendered diff against what a recorded revision
-// actually rendered: the before side is the manifests the delivery history kept
-// for that revision, the after side is today's render of the spec.
+// revisionDiff is gated (issue #224).
 //
-// It reads the before side through the same seam the rollback preview uses
-// (Plane.Recorded, a rollback.Source) and for the same reason (#38): the
-// recorded bytes are what was applied, and re-rendering the old spec would
-// report what that spec produces under today's renderer and ClusterProfile —
-// a different question. rollback.PreviewRevision is not reused because its
-// before side is the recorded *current* state rather than the spec being
-// diffed, and because its irreversibility annotation is a rollback verdict, not
-// a property of a diff. What is reused is the comparison underneath it,
-// diff.BetweenDocuments, which is also the only entry point that takes recorded
-// bytes on one side: diff.Between wants renderer.Manifest on both, and a
-// recorded revision has none to offer.
-func (s *Server) revisionDiff(ctx context.Context, revision string, cur *rendered) (*diff.Diff, error) {
-	set, err := manifestSet(cur)
-	if err != nil {
-		return nil, err
-	}
-	adapter, plane, err := s.selectAdapter(ctx, target(cur, ""))
-	if err != nil {
-		return nil, err
-	}
-	if plane.Recorded == nil {
-		return nil, fmt.Errorf("api: delivery mode %q keeps no rendered history kelson can read, so there is no revision to compare against; diff against the live cluster with dry_run=SERVER instead", adapter.Name())
-	}
-
-	// The revision is checked against the adapter's history first so "no such
-	// revision" is the same answer in every mode. A rollback.Source reports a
-	// missing revision differently depending on which store backs it, and a
-	// caller branching on the code must not be reading which store the server
-	// was started with.
-	entries, err := adapter.History(ctx, delivery.ManifestSet{Project: set.Project, Environment: set.Environment})
-	if err != nil {
-		return nil, err
-	}
-	if _, ok := findRevision(entries, revision); !ok {
-		return nil, fail(connect.CodeNotFound,
-			fmt.Errorf("api: revision %q is not in the recorded history for %s/%s; call History for the revisions that still exist, older ones are pruned by the retention policy",
-				revision, set.Project, set.Environment))
-	}
-
-	prev, err := plane.Recorded.Revision(ctx, revision)
-	if err != nil {
-		return nil, err
-	}
-	return diff.BetweenDocuments(set.Project, set.Environment, recordedDocuments(prev), recordedDocuments(set.Manifests), nil)
-}
-
-// recordedDocuments extracts the rendered bytes of a manifest list, preserving
-// apply order.
-func recordedDocuments(ms []delivery.Manifest) [][]byte {
-	out := make([][]byte, 0, len(ms))
-	for _, m := range ms {
-		out = append(out, m.YAML)
-	}
-	return out
+// Diffing against a recorded revision compared today's render with the bytes
+// that were actually applied then, read through the rendered-history store.
+// ADR-0027 decision 7 deleted that store, and its replacement — pull the
+// immutable OCI artifact for the revision and compare against its contents
+// (ADR-0028 decision 4) — is not built.
+//
+// It refuses rather than falling back to re-rendering the old spec, which would
+// answer a different question: what that spec produces under TODAY's renderer
+// and ClusterProfile, which is not what was applied. The two other diff modes
+// are unaffected — `from` re-renders documents the caller supplies, and
+// dry_run=SERVER is the live cluster's verdict on the current set — and the
+// refusal names them.
+func (s *Server) revisionDiff(_ context.Context, revision string, cur *rendered) (*diff.Diff, error) {
+	return nil, delivery.NotImplemented("diff",
+		fmt.Sprintf("kelson cannot compare against revision %q: the recorded manifests of a past revision "+
+			"came from the rendered-history store, which was deleted with the old delivery machinery. "+
+			"Diff against documents you supply with `from`, or against the live cluster with "+
+			"dry_run=SERVER, both of which are unaffected", revision),
+		"#224")
 }
 
 // serverDiff drives the L2 engine. It never falls back to a rendered diff on

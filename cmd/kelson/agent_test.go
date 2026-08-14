@@ -9,7 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dafrie/kelson/internal/serverstate"
+	"github.com/dafrie/kelson/internal/controlstore"
 )
 
 // `kelson agent` is the surface that mints credentials, so the assertions here
@@ -18,49 +18,49 @@ import (
 //
 // The store is faked for the reason every command test here fakes its plane —
 // the real one needs a cluster, and it has its own tests against a fake
-// clientset in internal/serverstate.
+// clientset in internal/controlstore.
 
 const testToken = "kagt.deploybot.TOKEN-SENTINEL-4d9a"
 
 type fakeAgentStore struct {
-	created []serverstate.AgentSpec
+	created []controlstore.AgentSpec
 	revoked []string
-	agents  []serverstate.Agent
+	agents  []controlstore.Agent
 	err     error
 }
 
-func (f *fakeAgentStore) Create(_ context.Context, spec serverstate.AgentSpec) (serverstate.Agent, string, error) {
+func (f *fakeAgentStore) Create(_ context.Context, spec controlstore.AgentSpec) (controlstore.Agent, string, error) {
 	f.created = append(f.created, spec)
 	if f.err != nil {
-		return serverstate.Agent{}, "", f.err
+		return controlstore.Agent{}, "", f.err
 	}
 	ttl := spec.TTL
 	if ttl == 0 {
-		ttl = serverstate.DefaultAgentTTL
+		ttl = controlstore.DefaultAgentTTL
 	}
 	created := time.Date(2026, 8, 14, 9, 0, 0, 0, time.UTC)
-	return serverstate.Agent{
+	return controlstore.Agent{
 		Name:    spec.Name,
 		Created: created,
 		Expires: created.Add(ttl),
 		Scope:   spec.Scope,
-		Limit:   serverstate.Limit{RequestsPerMinute: serverstate.DefaultRequestsPerMinute, Burst: serverstate.DefaultBurst},
+		Limit:   controlstore.Limit{RequestsPerMinute: controlstore.DefaultRequestsPerMinute, Burst: controlstore.DefaultBurst},
 	}, testToken, nil
 }
 
-func (f *fakeAgentStore) List(context.Context) ([]serverstate.Agent, error) {
+func (f *fakeAgentStore) List(context.Context) ([]controlstore.Agent, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
 	return f.agents, nil
 }
 
-func (f *fakeAgentStore) Revoke(_ context.Context, name string) (serverstate.Agent, error) {
+func (f *fakeAgentStore) Revoke(_ context.Context, name string) (controlstore.Agent, error) {
 	f.revoked = append(f.revoked, name)
 	if f.err != nil {
-		return serverstate.Agent{}, f.err
+		return controlstore.Agent{}, f.err
 	}
-	return serverstate.Agent{
+	return controlstore.Agent{
 		Name:      name,
 		Revoked:   true,
 		RevokedAt: time.Date(2026, 8, 14, 10, 0, 0, 0, time.UTC),
@@ -108,7 +108,7 @@ func TestAgentCreatePassesTheScopeThroughAndPrintsTheTokenOnce(t *testing.T) {
 	if len(spec.Scope.Environments) != 1 || spec.Scope.Environments[0] != "development" {
 		t.Errorf("environments = %v, want [development]", spec.Scope.Environments)
 	}
-	if len(spec.Scope.Operations) != 1 || spec.Scope.Operations[0] != serverstate.OpMutate {
+	if len(spec.Scope.Operations) != 1 || spec.Scope.Operations[0] != controlstore.OpMutate {
 		t.Errorf("operations = %v, want [mutate]", spec.Scope.Operations)
 	}
 
@@ -131,11 +131,11 @@ func TestAgentCreateDefaultsToReadOnly(t *testing.T) {
 		t.Fatalf("create exited %d: %s", code, msg)
 	}
 	ops := store.created[0].Scope.Operations
-	if len(ops) != 1 || ops[0] != serverstate.OpRead {
+	if len(ops) != 1 || ops[0] != controlstore.OpRead {
 		t.Errorf("the default grant = %v, want [read]", ops)
 	}
-	if store.created[0].TTL != serverstate.DefaultAgentTTL {
-		t.Errorf("the default lifetime = %s, want %s", store.created[0].TTL, serverstate.DefaultAgentTTL)
+	if store.created[0].TTL != controlstore.DefaultAgentTTL {
+		t.Errorf("the default lifetime = %s, want %s", store.created[0].TTL, controlstore.DefaultAgentTTL)
 	}
 }
 
@@ -172,11 +172,11 @@ func TestAgentCreateRefusesAnUnknownOperationClass(t *testing.T) {
 // TestAgentListReportsStateAndNeverACredential.
 func TestAgentListReportsStateAndNeverACredential(t *testing.T) {
 	base := time.Now()
-	store := &fakeAgentStore{agents: []serverstate.Agent{
+	store := &fakeAgentStore{agents: []controlstore.Agent{
 		{
 			Name: "deploybot", Expires: base.Add(time.Hour),
-			Scope: serverstate.Scope{Projects: []string{"shop"}, Operations: []serverstate.Operation{serverstate.OpMutate}},
-			Limit: serverstate.Limit{RequestsPerMinute: 120, Burst: 30},
+			Scope: controlstore.Scope{Projects: []string{"shop"}, Operations: []controlstore.Operation{controlstore.OpMutate}},
+			Limit: controlstore.Limit{RequestsPerMinute: 120, Burst: 30},
 		},
 		{Name: "gone", Expires: base.Add(time.Hour), Revoked: true, RevokedAt: base},
 		{Name: "stale", Expires: base.Add(-time.Hour)},

@@ -1,4 +1,6 @@
-package git
+// Package gitref answers "what commit does this ref name?" against a remote
+// repository, for the build plane.
+package gitref
 
 import (
 	"context"
@@ -16,13 +18,14 @@ import (
 // names, by asking the remote — the `git ls-remote` question, with no clone
 // and no working tree.
 //
-// # Why it lives in the delivery plane
+// # Why this package still exists after ADR-0028
 //
-// Because go-git does. The lint allow-lists (.golangci.yml) put the git
-// libraries on this plane and nowhere else: the command plane may not import
-// them and neither may internal/build, which is pure by construction. So the
-// build command consumes this through a one-method interface the same way it
-// consumes the cluster — production wires this type in, tests wire a fake.
+// [ADR-0028](docs/adr/0028-delivery-spine.md) deleted the git writer and said
+// choosing OCI "removes go-git" from kelson. That is true of the *transport*:
+// nothing commits, pushes, opens a pull request or keeps an in-memory worktree
+// any more. It was never true of this, which is the BUILD plane's question and
+// not the delivery plane's — it only lived beside the writer because go-git
+// did, and it survives the writer for the same reason it existed before it.
 //
 // # Why the build needs it at all
 //
@@ -32,6 +35,10 @@ import (
 // produce a different image under the same tag. Resolving the ref once, in the
 // CLI, means the tag, the recorded revision and the commit the build pod
 // checks out are all the same 40-hex string.
+//
+// The command plane may not import the git libraries (.golangci.yml), so
+// `kelson build` consumes this through a one-method interface the same way it
+// consumes the cluster — production wires this type in, tests wire a fake.
 type RemoteResolver struct {
 	// Auth authenticates the remote read. Nil means anonymous, which is
 	// correct for public repositories and local paths.

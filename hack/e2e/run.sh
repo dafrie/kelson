@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
-# Drives the full kind-based E2E lifecycle (issue #86) against
-# examples/hello-e2e: cluster -> build -> profile -> render -> deploy ->
-# induce a CrashLoopBackOff -> status -> rollback -> verify restored.
+# Drives the kind-based E2E lifecycle (issue #86) against examples/hello-e2e:
+# cluster -> build -> profile -> render -> apply -> induce a CrashLoopBackOff
+# -> status -> verify the verdict.
 #
 # Every stage asserts and exits non-zero with a clear message on failure.
-# The deploy/status/rollback stage needs `kelson deploy/status/rollback`
-# (issue #135); when the binary predates that CLI wiring, this script fails
-# fast with an explicit message instead of silently skipping assertions.
+#
+# The deploy and rollback stages are gone, not skipped. ADR-0028 deleted the
+# applier and the rollback and the CLI refuses both with
+# `delivery/not-implemented` naming issue #224; this script asserts that
+# refusal and applies the rendered set with kubectl instead, which is the
+# property ADR-0028 decision 10 relies on and the same set the controller will
+# publish for Flux. The deploy/rollback lifecycle comes back with #224.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -57,7 +61,7 @@ log "== stage: profile + render =="
 "$KELSON" render -f "$PROJECT_FILE" -f "$ENV_FILE" --env "$ENV_NAME" \
 	--profile "$WORKDIR/cluster-profile.yaml" >"$WORKDIR/rendered.yaml" ||
 	die "kelson render failed for examples/hello-e2e"
-# Without the Namespace (issue #150) the deploy stage below fails on its first
+# Without the Namespace (issue #150) the apply stage below fails on its first
 # resource against a fresh cluster, so assert it rather than pre-creating it.
 grep -q '^kind: Namespace$' "$WORKDIR/rendered.yaml" || die "render did not produce a Namespace for hello-e2e"
 grep -q '^kind: Deployment$' "$WORKDIR/rendered.yaml" || die "render did not produce a Deployment for hello-e2e/web"
@@ -68,20 +72,31 @@ NAMESPACE="$(grep -m1 'namespace:' "$WORKDIR/rendered.yaml" | sed -E 's/^[[:spac
 [[ -n "$NAMESPACE" ]] || die "could not determine the target namespace from the rendered manifests"
 log "target namespace: ${NAMESPACE}"
 
-log "== stage: probe for deploy/status/rollback (issue #135) =="
-if ! "$KELSON" deploy --help >/dev/null 2>&1; then
-	die "kelson binary lacks 'deploy' — build from a branch containing #135 (the CLI wiring for deploy/status/rollback). Cluster provisioning, profile capture and render all passed; the deploy/status/rollback lifecycle cannot run until that command exists."
-fi
+log "== stage: the deleted verbs refuse honestly (issue #224) =="
+# A gated verb is only acceptable if it refuses in a shape a caller can act on.
+# Asserting it here, against the real binary in a real cluster, is what keeps a
+# future "temporarily comment out the gate" from going unnoticed.
+for verb in deploy rollback; do
+	refusal=$("$KELSON" "$verb" -f "$PROJECT_FILE" -f "$ENV_FILE" --env "$ENV_NAME" \
+		--kubeconfig "$KUBECONFIG_FILE" --yes 2>&1 || true)
+	if "$KELSON" "$verb" -f "$PROJECT_FILE" -f "$ENV_FILE" --env "$ENV_NAME" \
+		--kubeconfig "$KUBECONFIG_FILE" --yes >/dev/null 2>&1; then
+		die "kelson ${verb} exited 0; the machinery behind it was deleted (ADR-0028)"
+	fi
+	grep -q "delivery/not-implemented" <<<"$refusal" ||
+		die "kelson ${verb} did not refuse with the delivery/not-implemented code: ${refusal}"
+	grep -q "#224" <<<"$refusal" ||
+		die "kelson ${verb} did not name the tracking issue: ${refusal}"
+done
+log "deploy and rollback refuse with the tracked code"
 
-log "== stage: deploy (good revision) =="
-if ! "$KELSON" deploy -f "$PROJECT_FILE" -f "$ENV_FILE" --env "$ENV_NAME" \
-	--profile from-cluster --kubeconfig "$KUBECONFIG_FILE" --timeout 120s --yes; then
-	die "kelson deploy did not reach healthy for the good revision (non-zero exit; deploy's contract is exit 0 only on healthy)"
-fi
-log "deploy exited 0"
+log "== stage: apply the rendered set =="
+kubectl apply -f "$WORKDIR/rendered.yaml" ||
+	die "kubectl could not apply the rendered set; a kelson render must be plain, applicable manifests"
+log "kubectl applied the rendered set"
 
-kubectl -n "$NAMESPACE" rollout status deployment/"$APP_NAME" --timeout=60s ||
-	die "kubectl does not agree the Deployment is rolled out after a successful deploy"
+kubectl -n "$NAMESPACE" rollout status deployment/"$APP_NAME" --timeout=120s ||
+	die "kubectl does not agree the Deployment is rolled out after applying the rendered set"
 wait_for "a ready ${APP_NAME} pod" '{.items[*].status.containerStatuses[*].ready}' "true" 1 0
 log "kubectl confirms ${APP_NAME} is running and ready in ${NAMESPACE}"
 
@@ -108,11 +123,11 @@ spec:
       command: ["/whoami", "--this-flag-does-not-exist"]
 EOF
 
-if "$KELSON" deploy -f "$WORKDIR/broken-project.yaml" -f "$ENV_FILE" --env "$ENV_NAME" \
-	--profile from-cluster --kubeconfig "$KUBECONFIG_FILE" --timeout 90s --yes; then
-	die "kelson deploy exited 0 for a revision that crash-loops and should never report healthy"
-fi
-log "deploy correctly refused to report healthy for the broken revision"
+"$KELSON" render -f "$WORKDIR/broken-project.yaml" -f "$ENV_FILE" --env "$ENV_NAME" \
+	--profile from-cluster --kubeconfig "$KUBECONFIG_FILE" >"$WORKDIR/broken.yaml" ||
+	die "kelson render failed for the broken revision"
+kubectl apply -f "$WORKDIR/broken.yaml" || die "kubectl could not apply the broken revision"
+log "the broken revision is applied"
 
 wait_for "CrashLoopBackOff" '{.items[*].status.containerStatuses[*].state.waiting.reason}' "CrashLoopBackOff" 12 5
 log "kubectl confirms CrashLoopBackOff on ${SELECTOR}"
@@ -126,18 +141,19 @@ printf '%s\n' "$status_out"
 grep -q "crash-loop-back-off" <<<"$status_out" || die "kelson status did not print the crash-loop-back-off verdict"
 log "kelson status verdict confirmed"
 
-log "== stage: rollback =="
-if ! "$KELSON" rollback -f "$PROJECT_FILE" -f "$ENV_FILE" --env "$ENV_NAME" --kubeconfig "$KUBECONFIG_FILE" --yes; then
-	die "kelson rollback exited non-zero (rollback's contract is exit 0 on a successful restore with --yes)"
-fi
-log "rollback exited 0"
+log "== stage: restore the good revision =="
+# `kelson rollback` would have done this from recorded bytes; it is gated
+# (issue #224), so the restore is a re-apply of the good render — which proves
+# the cluster recovers but NOT the property rollback exists for, that the bytes
+# replayed are the bytes that were live. That assertion returns with #224.
+kubectl apply -f "$WORKDIR/rendered.yaml" || die "kubectl could not re-apply the good revision"
 
-kubectl -n "$NAMESPACE" rollout status deployment/"$APP_NAME" --timeout=60s ||
-	die "kubectl does not agree the Deployment rolled out after rollback"
+kubectl -n "$NAMESPACE" rollout status deployment/"$APP_NAME" --timeout=120s ||
+	die "kubectl does not agree the Deployment rolled out after re-applying the good revision"
 
 command_after=$(kubectl -n "$NAMESPACE" get deployment "$APP_NAME" -o jsonpath='{.spec.template.spec.containers[0].command}')
 if [[ -n "$command_after" && "$command_after" != "[]" ]]; then
-	die "rollback did not restore the original container command (found: ${command_after})"
+	die "the restore did not clear the broken container command (found: ${command_after})"
 fi
 
 # The broken revision's pod may still be terminating when we get here; it
@@ -153,7 +169,7 @@ for _ in $(seq 1 12); do
 	sleep 5
 done
 [[ "$ready_after" == *"true"* && "$ready_after" != *"false"* ]] ||
-	die "not every surviving ${APP_NAME} pod is ready after rollback (found: ${ready_after:-none})"
+	die "not every surviving ${APP_NAME} pod is ready after the restore (found: ${ready_after:-none})"
 log "kubectl confirms the original workload is restored and healthy"
 
 elapsed=$(($(date +%s) - start_ts))

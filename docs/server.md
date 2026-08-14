@@ -26,10 +26,15 @@ always was. `kelson-server` becomes what it should have been: an API over cluste
 a file.
 
 > **Transition (R1/R2, [#224](https://github.com/dafrie/kelson/issues/224) /
-> [#225](https://github.com/dafrie/kelson/issues/225)).** Today the specs and the deployment history
-> are still ConfigMaps in `internal/serverstate`, and the server still calls a delivery adapter to
-> apply. Both are deleted by [ADR-0027](adr/0027-crd-native-control-plane.md) decision 7 and
-> [ADR-0028](adr/0028-delivery-spine.md) decision 9. The **agent identity and audit records are not** —
+> [#225](https://github.com/dafrie/kelson/issues/225)).** The spec store is CR-backed as of the first
+> deletion slice: `SpecService` reads and writes `Project` and `Environment` custom resources with
+> server-side apply under the field manager `kelson-server`, in the server's own namespace
+> (`internal/controlstore`). The ConfigMap spec store and the ConfigMap history store are gone
+> ([ADR-0027](adr/0027-crd-native-control-plane.md) decision 7), and so are the delivery adapters
+> ([ADR-0028](adr/0028-delivery-spine.md) decision 9): `Deploy`'s applying rung, `Rollback`, `History`,
+> `Promote` and `Diff`'s `from_revision` answer `CodeUnimplemented` with a `delivery/not-implemented`
+> detail naming #224. `Deploy`'s two dry-run rungs, `Status`'s workload verdicts and everything the
+> renderer does are unaffected. The **agent identity and audit records are not** —
 > they are control-plane records rather than delivery state, and they relocate unchanged to
 > `internal/controlstore` so the package name stops implying they are the server's memory of a
 > deployment. Whether they should also become custom resources is
@@ -540,10 +545,11 @@ The fix is one value, `rbac.createDeployClusterRole=true`, which renders a `Clus
 That was the earlier answer and it does not work, for two reasons that are not going away:
 
 - **The renderer emits the environment's `Namespace`**
-  ([#150](https://github.com/dafrie/kelson/issues/150)), and `internal/delivery/direct` reads it
+  ([#150](https://github.com/dafrie/kelson/issues/150)), and whatever applies it reads that namespace
   immediately before the apply and PATCHes it with `kelson.dev/namespace-ownership` — the record
   of whether kelson created the namespace or adopted one that predates it, which is the only thing
-  `kelson uninstall` accepts as licence to delete it. A namespace is cluster-scoped, and no
+  `kelson uninstall` accepts as licence to delete it. (The applier that did this is deleted; the
+  controller takes it over with [#224](https://github.com/dafrie/kelson/issues/224).) A namespace is cluster-scoped, and no
   namespaced Role can grant a verb on a cluster-scoped object.
 - **The web UI deploys into a namespace that does not exist yet.** Creating an application targets
   `<project>-<environment>`, brought into existence by that first apply. `rbac.targetNamespaces`
@@ -646,9 +652,9 @@ environment's previews.
 - `api/kelson/v1alpha1` — the public CR types (`Project`, `Environment`, their status structs and
   generated deepcopy) the façade reads and writes. The spec structs themselves stay in
   `internal/model` ([ADR-0027](adr/0027-crd-native-control-plane.md) decision 3).
-- `internal/controlstore` — the audit ring (`audit.go`) and the Secret-backed agent identity store
-  (`agent.go`). *Transitional:* both still live in `internal/serverstate` beside the ConfigMap spec and
-  history stores that ADR-0027 deletes ([#224](https://github.com/dafrie/kelson/issues/224)).
+- `internal/controlstore` — the CR-backed spec store (`spec.go`), the audit ring (`audit.go`) and the
+  Secret-backed agent identity store (`agent.go`). It was `internal/serverstate`; the ConfigMap spec
+  and history stores it also held are deleted (ADR-0027 decision 7).
 - `internal/api/audit.go` — the audit capture points and `AuditService`; `cmd/kelson/audit.go` — the
   `kelson audit` command and its JSONL export.
 - `internal/secret` — the cluster secret backend behind `SecretService`.

@@ -81,7 +81,7 @@ const (
 const promoteDocsBase = "https://kelson.dev/model/promotion"
 
 // Error is one structured promotion failure. It shares the shape of
-// delivery.Error and serverstate.Error so the API layer maps it onto the one
+// delivery.Error and controlstore.Error so the API layer maps it onto the one
 // wire Error without inventing a second taxonomy.
 type Error struct {
 	Code        Code   `json:"code"`

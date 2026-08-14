@@ -1,12 +1,15 @@
-package git
+package gitref
 
 import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/filemode"
+	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
 const (
@@ -149,5 +152,77 @@ func TestRemoteResolverErrors(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "does-not-exist") {
 		t.Errorf("the error should name the ref that was not found, got: %v", err)
+	}
+}
+
+// bareRemote is an empty bare repository on disk: enough for `ls-remote` to
+// answer, and no network.
+func bareRemote(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if _, err := gogit.PlainInit(dir, true); err != nil {
+		t.Fatalf("init bare remote: %v", err)
+	}
+	return dir
+}
+
+// seedMain gives the bare remote one commit on refs/heads/main, written
+// straight through go-git's object store: this package reads refs and never
+// writes any, so a test worktree would be machinery proving nothing.
+func seedMain(t *testing.T, remote string) {
+	t.Helper()
+	repo, err := gogit.PlainOpen(remote)
+	if err != nil {
+		t.Fatalf("open remote: %v", err)
+	}
+	store := repo.Storer
+
+	blob := store.NewEncodedObject()
+	blob.SetType(plumbing.BlobObject)
+	w, err := blob.Writer()
+	if err != nil {
+		t.Fatalf("blob writer: %v", err)
+	}
+	if _, err := w.Write([]byte("# deploy\n")); err != nil {
+		t.Fatalf("write blob: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("close blob: %v", err)
+	}
+	blobHash, err := store.SetEncodedObject(blob)
+	if err != nil {
+		t.Fatalf("store blob: %v", err)
+	}
+
+	tree := &object.Tree{Entries: []object.TreeEntry{
+		{Name: "README.md", Mode: filemode.Regular, Hash: blobHash},
+	}}
+	treeObj := store.NewEncodedObject()
+	if err := tree.Encode(treeObj); err != nil {
+		t.Fatalf("encode tree: %v", err)
+	}
+	treeHash, err := store.SetEncodedObject(treeObj)
+	if err != nil {
+		t.Fatalf("store tree: %v", err)
+	}
+
+	when := time.Date(2026, 8, 13, 9, 0, 0, 0, time.UTC)
+	commit := &object.Commit{
+		Author:    object.Signature{Name: "Test User", Email: "test@example.com", When: when},
+		Committer: object.Signature{Name: "Test User", Email: "test@example.com", When: when},
+		Message:   "seed\n",
+		TreeHash:  treeHash,
+	}
+	commitObj := store.NewEncodedObject()
+	if err := commit.Encode(commitObj); err != nil {
+		t.Fatalf("encode commit: %v", err)
+	}
+	commitHash, err := store.SetEncodedObject(commitObj)
+	if err != nil {
+		t.Fatalf("store commit: %v", err)
+	}
+	ref := plumbing.NewHashReference(plumbing.NewBranchReferenceName("main"), commitHash)
+	if err := store.SetReference(ref); err != nil {
+		t.Fatalf("set refs/heads/main: %v", err)
 	}
 }

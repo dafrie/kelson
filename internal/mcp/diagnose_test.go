@@ -83,7 +83,7 @@ func TestDiagnoseComposesTheWholeAnswer(t *testing.T) {
 	out := h.call(t, "diagnose_application", map[string]any{"project": "hello", "environment": "production"})
 
 	mustContain(t, out,
-		"hello/production: Degraded — 1 of 2 workloads failing, first is web (crash-loop-back-off)",
+		"hello/production: Degraded at revision 43 — 1 of 2 workloads failing, first is web (crash-loop-back-off)",
 		"namespace  hello-production",
 		"FAIL Deployment/hello-production/web",
 		"fix: check the container command and the logs before termination",
@@ -266,7 +266,6 @@ func TestDiagnoseStatusFailureIsTheAnswer(t *testing.T) {
 		"docs_url: https://kelson.dev/model/errors",
 	)
 }
-
 
 // TestDiagnoseReportsVersionSkew is issue #57 on the agent surface: an adopted
 // operator too old to serve the API kelson writes must be named in the

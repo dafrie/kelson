@@ -52,7 +52,7 @@
 // Two consequences of that split are worth stating because they look like
 // omissions:
 //
-//   - The rendered-history store keeps real bytes ([internal/serverstate]).
+//   - A published artifact keeps the rendered bytes verbatim ([internal/preview]).
 //     Rollback replays exactly what was applied (#38), so a redacted history
 //     would be a history that cannot restore. What is redacted is the
 //     *readback for display* — the diffs computed from those bytes, which is

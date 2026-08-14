@@ -10,7 +10,6 @@ import (
 	"connectrpc.com/connect"
 
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
-	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/redact"
 	"github.com/dafrie/kelson/internal/secret"
 )
@@ -40,105 +39,12 @@ const (
 	authoredSecretValue = "authored-secret-SENTINEL-7c2e"
 )
 
-// recordedSecret is what an overlay-injected Secret looks like once it has been
-// rendered and recorded. The spec cannot hold a secret literal (ADR-0009), but
-// an overlay may inject any manifest at all, and the history store keeps what
-// was applied — real bytes, deliberately (#38). Everything that reads those
-// bytes back for a human is what this file is about.
-func recordedSecret() delivery.Manifest {
-	return delivery.Manifest{
-		APIVersion: "v1",
-		Kind:       "Secret",
-		Name:       "hello-db",
-		Namespace:  "hello-development",
-		YAML: []byte("apiVersion: v1\n" +
-			"kind: Secret\n" +
-			"metadata:\n" +
-			"  name: hello-db\n" +
-			"  namespace: hello-development\n" +
-			"type: Opaque\n" +
-			"data:\n" +
-			"  DATABASE_URL: " + secretManifestValue + "\n"),
-	}
-}
-
-// Surface 1: the rendered-level diff against a recorded revision (#162). The
-// history store keeps real bytes; what a reader gets back is a diff, and this
-// is the readback path a Secret in the history would surface through.
-func TestHistoryReadbackDiffCarriesNoSecretValue(t *testing.T) {
-	adapter := newFakeAdapter("direct")
-	adapter.history = []delivery.Entry{{Revision: "rev-00000001", SpecHash: "sha256:a"}}
-	recorded := &fakeRecorded{revisions: map[string][]delivery.Manifest{}}
-	connector, _ := connectorFor(adapter, recorded, nil)
-	c := serve(t, Options{Delivery: connector})
-	recorded.revisions["rev-00000001"] = append(recordAs(t, c, projectDoc), recordedSecret())
-
-	res, err := c.render.Diff(context.Background(), connect.NewRequest(&kelsonv1alpha1.DiffRequest{
-		Spec:         inlineSpec(projectDocV2, map[string]string{"development": developmentDoc}),
-		Environment:  "development",
-		Profile:      profileRef(),
-		FromRevision: "rev-00000001",
-	}))
-	if err != nil {
-		t.Fatalf("Diff: %v", err)
-	}
-	assertNoSentinel(t, "from_revision diff", res.Msg.GetDiffJson(), secretManifestValue)
-	// The resource itself is still reported — redaction removes values, never
-	// the fact that something changed. (Field-level keys are asserted in
-	// internal/diff, where a Secret can be on both sides; here it can only be a
-	// removal, since today's render of a spec cannot contain one.)
-	if !bytes.Contains(res.Msg.GetDiffJson(), []byte("hello-db")) {
-		t.Errorf("the diff hid the Secret entirely instead of redacting its value:\n%s", res.Msg.GetDiffJson())
-	}
-}
-
-// Surface 2: the rollback preview, which reads both sides out of the recorded
-// history and is the one a user reaches for while already in trouble (#38).
-func TestRollbackPreviewCarriesNoSecretValue(t *testing.T) {
-	adapter := newFakeAdapter("direct")
-	adapter.history = []delivery.Entry{
-		{Revision: "rev-00000002", SpecHash: "sha256:b"},
-		{Revision: "rev-00000001", SpecHash: "sha256:a"},
-	}
-	recorded := &fakeRecorded{revisions: map[string][]delivery.Manifest{}}
-	connector, _ := connectorFor(adapter, recorded, nil)
-	c := serve(t, Options{Delivery: connector})
-
-	current := append(recordAs(t, c, projectDocV2), recordedSecret())
-	recorded.current = current
-	recorded.revisions["rev-00000001"] = append(recordAs(t, c, projectDoc), recordedSecret())
-
-	stream, err := c.deploy.Rollback(context.Background(), connect.NewRequest(&kelsonv1alpha1.RollbackRequest{
-		Spec:        inlineSpec(projectDocV2, map[string]string{"development": developmentDoc}),
-		Environment: "development",
-		Profile:     profileRef(),
-		ToRevision:  "rev-00000001",
-		DryRun:      kelsonv1alpha1.DryRun_DRY_RUN_RENDER,
-	}))
-	if err != nil {
-		t.Fatalf("Rollback: %v", err)
-	}
-	defer func() { _ = stream.Close() }()
-
-	seen := false
-	for stream.Receive() {
-		preview, ok := stream.Msg().GetEvent().(*kelsonv1alpha1.RollbackResponse_Preview_)
-		if !ok {
-			continue
-		}
-		seen = true
-		assertNoSentinel(t, "rollback preview diff", preview.Preview.GetDiffJson(), secretManifestValue)
-		for _, f := range preview.Preview.GetFindings() {
-			assertNoSentinel(t, "rollback finding", []byte(f.GetMessage()+f.GetPath()), secretManifestValue)
-		}
-	}
-	if err := stream.Err(); err != nil {
-		t.Fatalf("stream: %v", err)
-	}
-	if !seen {
-		t.Fatal("no Preview event: a rollback must always say what it cannot revert")
-	}
-}
+// Surfaces 1 and 2 — the rendered diff against a recorded revision (#162) and
+// the rollback preview (#38) — read the history store's real bytes back, and
+// both were the readback paths a Secret in the history would surface through.
+// ADR-0027 decision 7 deleted the store and ADR-0028 the preview, so there is
+// no such readback to redact today; when the artifact-backed replacements land
+// (issue #224) they need these two tests back, against the same sentinel.
 
 // Surface 3: structured errors. A credential kelson has resolved is registered
 // when it is learned, so it cannot reach an error message however deep in the
@@ -146,31 +52,27 @@ func TestRollbackPreviewCarriesNoSecretValue(t *testing.T) {
 func TestStructuredErrorsCarryNoResolvedCredential(t *testing.T) {
 	redact.Register(resolvedCredential)
 
-	adapter := newFakeAdapter("direct")
-	adapter.applyErr = delivery.Error{
-		Code:        delivery.ErrApplyFailed,
+	// The failure is produced by the secret backend rather than by a scripted
+	// adapter: the adapters are deleted (ADR-0028), and what matters is that a
+	// *plane* error carrying a resolved credential is scrubbed on its way onto
+	// the wire, whichever plane wrote it.
+	store := newFakeSecrets()
+	store.err = secret.Error{
+		Code:        secret.ErrWriteFailed,
 		Resource:    "Secret/hello-db",
 		Message:     "the API server rejected the write: could not authenticate with " + resolvedCredential,
 		Remediation: "check the credential " + resolvedCredential,
 		Cause:       "unauthorized: " + resolvedCredential,
 	}
-	connector, _ := connectorFor(adapter, nil, nil)
-	c := serve(t, Options{Delivery: connector})
+	c := serve(t, Options{Secrets: store})
 
-	stream, err := c.deploy.Deploy(context.Background(), connect.NewRequest(&kelsonv1alpha1.DeployRequest{
-		Spec:        inlineSpec(projectDoc, map[string]string{"development": developmentDoc}),
-		Environment: "development",
-		Profile:     profileRef(),
+	_, streamErr := c.secrets.SetSecret(context.Background(), connect.NewRequest(&kelsonv1alpha1.SetSecretRequest{
+		Target: secretTargetOf("hello", "development"),
+		Name:   "hello-db",
+		Values: map[string]string{"url": "irrelevant"},
 	}))
-	if err != nil {
-		t.Fatalf("Deploy: %v", err)
-	}
-	defer func() { _ = stream.Close() }()
-	for stream.Receive() { //nolint:revive // the stream is drained for its error
-	}
-	streamErr := stream.Err()
 	if streamErr == nil {
-		t.Fatal("the failing apply did not surface as an error")
+		t.Fatal("the failing write did not surface as an error")
 	}
 	assertNoSentinel(t, "connect error message", []byte(streamErr.Error()), resolvedCredential)
 
@@ -190,7 +92,7 @@ func TestStructuredErrorsCarryNoResolvedCredential(t *testing.T) {
 		}
 		details++
 		assertNoSentinel(t, "structured error", []byte(wire.GetMessage()+wire.GetRemediation()+wire.GetCause()), resolvedCredential)
-		if wire.GetCode() != string(delivery.ErrApplyFailed) {
+		if wire.GetCode() != string(secret.ErrWriteFailed) {
 			t.Errorf("the code was rewritten by the scrub: %q", wire.GetCode())
 		}
 		if wire.GetResource() != "Secret/hello-db" {
