@@ -24,7 +24,7 @@ This reference is **generated** from the committed JSON Schema [`schema/project.
 | `build` | object | no |  |  |
 | `components` | array of object · min 1 item(s) | yes |  |  |
 | `defaults` | object | no |  |  |
-| `env` | map of one of: string, object | no |  |  |
+| `env` | map of one of: string, object {from}, object {secret, key} | no |  |  |
 | `image` | string | no |  | pre-built image reference |
 | `overlays` | array of object | no |  |  |
 | `source` | object | no |  |  |
@@ -44,7 +44,7 @@ This reference is **generated** from the committed JSON Schema [`schema/project.
 | `chartVersion` | string | no |  | helm components only; the exact chart version — required because an unpinned chart is not reproducible |
 | `command` | array of string | no |  | container command; wins over the image default |
 | `domains` | array of string | no |  |  |
-| `env` | map of one of: string, object | no |  |  |
+| `env` | map of one of: string, object {from}, object {secret, key} | no |  |  |
 | `health` | string | no |  | HTTP liveness/readiness path |
 | `image` | string | no |  | overrides the Project image (rule P3) |
 | `kind` | string enum `"service"`, `"worker"`, `"cron"`, `"agent"`, `"postgres"`, `"valkey"`, `"helm"` | no |  | derived from port/schedule when omitted; required for postgres and valkey and helm |

@@ -1,0 +1,4 @@
+# Empty profile: a secret reference needs nothing from the cluster to render.
+# The kubelet resolves the secretKeyRef at pod start, and whether the Secret is
+# there is the cluster's answer at apply time, not a capability finding.
+{}

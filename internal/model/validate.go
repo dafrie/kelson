@@ -42,6 +42,9 @@ var (
 	cronNameRE   = regexp.MustCompile(`^[A-Za-z]{3}$`)
 	secretNameRE = regexp.MustCompile(`(?i)(PASSWORD|PASSWD|SECRET|TOKEN|API[_-]?KEY|PRIVATE[_-]?KEY|CREDENTIAL|_AUTH)`)
 	envVarNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	// secretKeyRE is Kubernetes' own alphabet for a key of a Secret's data
+	// map. A reference kelson accepts must be one the kubelet could project.
+	secretKeyRE = regexp.MustCompile(`^[-._a-zA-Z0-9]+$`)
 )
 
 // SecretShapedName reports whether a variable name is one people put
@@ -98,9 +101,10 @@ func (v *validator) domain(field, s string) {
 	}
 }
 
-// envMap validates one env map: variable names, secret literals (ADR-0009) and
-// service bindings. Passing services nil checks a binding's shape only, for the
-// Environment pass whose targets are re-checked against the Project later.
+// envMap validates one env map: variable names, secret literals (ADR-0009),
+// secret references (ADR-0018) and service bindings. Passing services nil
+// checks a binding's shape only, for the Environment pass whose targets are
+// re-checked against the Project later.
 func (v *validator) envMap(field string, env map[string]EnvValue, services map[string]Component) {
 	keys := make([]string, 0, len(env))
 	for k := range env {
@@ -114,6 +118,10 @@ func (v *validator) envMap(field string, env map[string]EnvValue, services map[s
 			v.err(ErrInvalidFormat, f,
 				fmt.Sprintf("%q is not a valid environment variable name", k),
 				"use letters, digits and underscores, not starting with a digit")
+		}
+		if ev.Secret != nil {
+			v.secretRef(f, ev.Secret)
+			continue
 		}
 		if ev.From != nil {
 			if services != nil {
@@ -160,21 +168,63 @@ func (v *validator) serviceRef(field string, b *ServiceBinding, services map[str
 	}
 }
 
+// secretRef checks a secret reference (ADR-0018). Both halves are required and
+// each is held to what the mechanism it renders into can actually address: the
+// name is a Secret's, so DNS-1123; the key is a Secret's data key, so
+// Kubernetes' own key alphabet.
+//
+// Nothing here resolves anything. Whether the Secret exists, and what is in it,
+// is the cluster's to know at apply time — kelson references it and never reads
+// it, which is the whole point of the reference model.
+func (v *validator) secretRef(field string, r *SecretRef) {
+	if r.Name == "" {
+		v.err(ErrMissingRequired, field+".secret",
+			"a secret reference needs the name of a Secret",
+			"set secret: <name of a Secret in the environment's namespace>, e.g. {secret: checkout-db, key: url}")
+	} else {
+		v.name(field+".secret", r.Name, "secret")
+	}
+	switch {
+	case r.Key == "":
+		v.err(ErrMissingRequired, field+".key",
+			"a secret reference needs the key to read within that Secret",
+			"set key: <key within the Secret>, e.g. {secret: "+refExample(r.Name)+", key: url}")
+	case !secretKeyRE.MatchString(r.Key):
+		v.err(ErrInvalidFormat, field+".key",
+			fmt.Sprintf("%q is not a key a Kubernetes Secret can hold", r.Key),
+			"use letters, digits, '-', '_' and '.', which is the key alphabet Kubernetes enforces on Secret data")
+	}
+}
+
+// refExample keeps a remediation's example concrete when the author already
+// wrote half the reference.
+func refExample(name string) string {
+	if name == "" {
+		return "<secret name>"
+	}
+	return name
+}
+
 // secretLiteral rejects values that look like credentials (ADR-0009): URLs
 // embedding passwords, and literals for secret-shaped variable names.
 //
 // The remediation names only what kelson can actually do today. It used to
 // send authors to a `kelson secret set` that does not exist (issue #142), and
-// then — while issue #141 gated bindings — to an overlay only. A binding to a
-// managed service now renders end to end (issue #89), so it is named first: it
-// is the answer for the credential this check catches most often, a database
-// URL. Everything else is still an overlay against a Secret the user manages.
-const secretRemediation = "the spec carries references, never values (ADR-0009). For a managed service, declare it " +
-	"under spec.components with kind: postgres and bind: {from: {service: <name>, key: uri}} — kelson renders a " +
-	"secretKeyRef against the " +
-	"credentials the operator generates. For anything else kelson cannot hold the value yet (there is no command to " +
-	"set one, milestone M8 · Secrets): remove this variable and inject it with an overlay patch (spec.overlays) that " +
-	"references a Secret you manage."
+// then — while issue #141 gated bindings — to an overlay only. Two things
+// render end to end now, so both are named ahead of the overlay: a binding to a
+// managed service (issue #89), which is the answer for the credential this
+// check catches most often, and a secret reference (ADR-0018), which is the
+// answer for every other credential. The command that writes the Secret is
+// still issue #116, so the remediation names kubectl — a next step an author
+// can take today beats a command that does not exist.
+const secretRemediation = "the spec carries references, never values (ADR-0009). Write the variable as a reference: " +
+	"{secret: <secret name>, key: <key>}, which kelson renders as a valueFrom.secretKeyRef against a Secret in the " +
+	"environment's namespace and never reads (ADR-0018). Create that Secret out of band — " +
+	"`kubectl -n <namespace> create secret generic <secret name> --from-literal=<key>=…`; a kelson command that " +
+	"writes it for you is milestone M8 · Secrets, issue #116. For a managed service there is a shorter path: declare it under " +
+	"spec.components with kind: postgres and bind {from: {service: <name>, key: uri}}, and kelson derives the " +
+	"secretKeyRef from the credentials the operator generates. An overlay patch (spec.overlays) remains the escape " +
+	"hatch for anything neither form expresses."
 
 func (v *validator) secretLiteral(field, name, literal string) {
 	if literal == "" {
@@ -379,9 +429,18 @@ func (v *validator) policy(field string, p *Policy) {
 	}
 }
 
+// secrets validates the Environment-scoped backend selector (ADR-0009,
+// ADR-0018). The enum is checked here and nothing else is: whether kelson can
+// *render* the selected backend is a render error, because it is the renderer
+// that turns a reference into a secretKeyRef and the renderer that has to
+// refuse when it cannot. `store` stays gated (issue #141) — it configures the
+// externalSecrets backend alone, and that backend is issue #80.
 func (v *validator) secrets(field string, s *SecretBackend) {
 	if s == nil {
 		return
+	}
+	if s.Store != "" {
+		v.gate(field+".store", field+".store")
 	}
 	switch s.Backend {
 	case SecretsCluster, SecretsSOPS:
@@ -1043,9 +1102,6 @@ func validateProject(p *Project, v *validator) {
 		if d.Policy != nil {
 			v.gate("$.spec.defaults.policy", "$.spec.defaults.policy")
 		}
-		if d.Secrets != nil {
-			v.gate("$.spec.defaults.secrets", "$.spec.defaults.secrets")
-		}
 		v.policy("$.spec.defaults.policy", d.Policy)
 		v.secrets("$.spec.defaults.secrets", d.Secrets)
 	}
@@ -1083,9 +1139,6 @@ func validateEnvironmentShape(e *Environment, v *validator) {
 	v.delivery("$.spec.delivery", s.Delivery)
 	if s.Policy != nil {
 		v.gate("$.spec.policy", "$.spec.policy")
-	}
-	if s.Secrets != nil {
-		v.gate("$.spec.secrets", "$.spec.secrets")
 	}
 	v.policy("$.spec.policy", s.Policy)
 	v.secrets("$.spec.secrets", s.Secrets)

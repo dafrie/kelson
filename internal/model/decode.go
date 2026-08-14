@@ -205,6 +205,13 @@ func typeErrors(err error, resource string, pos positions) Errors {
 				e.Column = pos[e.Field].Column
 			}
 		}
+		// An env value knows its own remediation and cannot return it: a
+		// custom unmarshaller reports through a yaml.TypeError string or it
+		// aborts the document. The prefix is the handshake (envvalue.go).
+		if strings.HasPrefix(e.Message, envValueShapePrefix) {
+			e.Message = strings.TrimPrefix(e.Message, envValueShapePrefix)
+			e.Remediation = EnvValueRemediation
+		}
 		errs = append(errs, e)
 	}
 	return errs
@@ -304,31 +311,40 @@ func walkStructNode(n *yaml.Node, t reflect.Type, path, resource string, pos pos
 	}
 }
 
+// walkEnvValue rejects every key an environment mapping does not define. The
+// three top-level keys are `from` (a service binding), and `secret`/`key` (a
+// secret reference, written flat because `secret:` carries the name itself).
+// Which combinations are legal is the unmarshaller's judgement, not this
+// walk's: here a key is either part of the vocabulary or it is not.
 func walkEnvValue(n *yaml.Node, path, resource string, pos positions, errs *Errors) {
 	if n.Kind != yaml.MappingNode {
 		return
 	}
-	allowed := map[string]bool{"from": true, "service": true, "key": true}
+	topLevel := map[string]bool{"from": true, "secret": true, "key": true}
+	binding := map[string]bool{"service": true, "key": true}
 	for i := 0; i+1 < len(n.Content); i += 2 {
 		key := n.Content[i]
-		if key.Value != "from" {
+		if !topLevel[key.Value] {
 			p := pos.at(path + "." + key.Value)
 			*errs = append(*errs, Error{
 				Code:        ErrUnknownField,
 				Resource:    resource,
 				Field:       path + "." + key.Value,
 				Message:     fmt.Sprintf("unknown field %q in environment value", key.Value),
-				Remediation: "an environment value is a plain string or {from: {service, key}}",
+				Remediation: EnvValueRemediation,
 				DocsURL:     docsURL(ErrUnknownField),
 				Line:        p.Line,
 				Column:      p.Column,
 			})
 			continue
 		}
+		if key.Value != "from" {
+			continue
+		}
 		if fm := n.Content[i+1]; fm.Kind == yaml.MappingNode {
 			for j := 0; j+1 < len(fm.Content); j += 2 {
 				k := fm.Content[j]
-				if !allowed[k.Value] {
+				if !binding[k.Value] {
 					p := pos.at(path + ".from." + k.Value)
 					*errs = append(*errs, Error{
 						Code:        ErrUnknownField,

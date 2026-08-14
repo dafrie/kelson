@@ -131,6 +131,21 @@ This amendment does not decide the reference model. `spec`-level secret referenc
 the `kelson secret set` command remain [#79](https://github.com/dafrie/kelson/issues/79) and
 [#116](https://github.com/dafrie/kelson/issues/116); nothing here invents spec surface for them.
 
+### Pointer (2026-08-14): the reference model is decided in ADR-0018
+
+[ADR-0018](0018-secret-references.md) takes the decision this ADR deferred, within this ADR's frame and
+without reversing anything in it. In short: an environment value that is a **mapping** is a reference —
+`{secret: <name>, key: <key>}` alongside the existing `{from: {service, key}}` binding — and both render
+into `valueFrom.secretKeyRef`. `secrets.backend` is consumed from that point on (`cluster` renders;
+`externalSecrets` and `sops` are a structured render refusal naming [#80](https://github.com/dafrie/kelson/issues/80)
+and [#81](https://github.com/dafrie/kelson/issues/81)), while `secrets.store` stays gated.
+
+ADR-0018 also states the honest version of the "fails validation" clause above and of
+[#82](https://github.com/dafrie/kelson/issues/82): what became structural is that **everything typed as
+a reference stays a reference** and that the renderer has no mechanism capable of emitting a Secret's
+value at all. The name heuristic in `internal/model/validate.go` is unchanged and still the only thing
+catching a literal under a creatively named key — the honesty note above stands.
+
 ## Consequences
 
 **Positive.**

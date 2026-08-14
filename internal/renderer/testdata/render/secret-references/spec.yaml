@@ -1,0 +1,50 @@
+# Fixture: secret references (#79, #82, ADR-0018). An env value written as
+# `{secret: <name>, key: <key>}` renders as a valueFrom.secretKeyRef against a
+# Secret in the environment's namespace — one kelson references and never
+# creates, reads or writes. Nothing in this output carries a value: that is the
+# property, and the absence of any `kind: Secret` below is what makes it
+# structural rather than a promise.
+#
+# It exercises both scopes a reference can be written at (Project env, shared by
+# every component; component env), a component mixing plain and reference values
+# in one map, and the two workload shapes that carry env — a Deployment and a
+# CronJob.
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: checkout
+spec:
+  image: ghcr.io/acme/checkout:1.4.2
+
+  env:
+    LOG_LEVEL: info
+    DATABASE_URL: { secret: checkout-db, key: url }
+
+  components:
+    - name: web
+      port: 8080
+      env:
+        # A plain string and two references in one map: the mapping value is
+        # what makes a variable a reference, so both read together and there is
+        # no second map to cross-check.
+        FEATURE_FLAGS: "checkout-v2,fast-refund"
+        STRIPE_API_KEY: { secret: payments, key: stripe-api-key }
+        SESSION_PEPPER: { secret: payments, key: session.pepper }
+    - name: nightly-report
+      schedule: "0 3 * * *"
+      command: ["checkout", "report"]
+      env:
+        REPORT_BUCKET: s3://acme-reports
+        SMTP_PASSWORD: { secret: mail-relay, key: password }
+---
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: staging
+spec:
+  project: checkout
+  namespace: checkout-staging
+  secrets:
+    # The v0 backend, and the default — stated explicitly here so the fixture
+    # pins that `cluster` is accepted and renders nothing extra of its own.
+    backend: cluster

@@ -153,8 +153,10 @@ spec:
 			// The remediation may only name things that work today. It used to
 			// send authors to a `kelson secret set` that does not exist (#142),
 			// and while #141 gated bindings it could only offer the overlay
-			// escape hatch. A binding renders end to end since #89, so both are
-			// now legitimate answers and both must be named.
+			// escape hatch. A binding renders end to end since #89 and a secret
+			// reference since ADR-0018, so all three are legitimate answers and
+			// all three must be named — the reference first, because it is the
+			// one that covers every credential rather than a managed service's.
 			if strings.Contains(secret.Remediation, "kelson secret set") {
 				t.Errorf("remediation references the nonexistent `kelson secret set` command, got %q", secret.Remediation)
 			}
@@ -163,6 +165,9 @@ spec:
 			}
 			if !strings.Contains(secret.Remediation, "{from:") {
 				t.Errorf("remediation should name the service binding now that it renders, got %q", secret.Remediation)
+			}
+			if !strings.Contains(secret.Remediation, "{secret:") {
+				t.Errorf("remediation should name the secret reference now that it renders, got %q", secret.Remediation)
 			}
 		})
 	}

@@ -27,7 +27,7 @@ milestone that will implement the field.
 | Field | Rejected until |
 |---|---|
 | `Project.spec.components[].tools` (`kind: agent`) | M7 · Agent surface & MCP ([#75](https://github.com/dafrie/kelson/issues/75)) |
-| `Project.spec.defaults.secrets`, `Environment.spec.secrets` | M8 · Secrets |
+| `Project.spec.defaults.secrets.store`, `Environment.spec.secrets.store` | M8 · Secrets ([#80](https://github.com/dafrie/kelson/issues/80)) |
 | `Project.spec.defaults.policy`, `Environment.spec.policy` | M7 · Agent surface & MCP |
 | `Environment.spec.cluster` | M10 · Environments & promotion |
 
@@ -35,7 +35,9 @@ The gate lives in validation only: `internal/model/notimplemented.go` holds the 
 `internal/model/coverage_test.go` fails the build if a new spec field is neither consumed nor gated.
 Resolution of these fields already works, so a milestone lands by deleting a table row — the data-service
 fields and the `from:` bindings left the table exactly that way with
-[#89](https://github.com/dafrie/kelson/issues/89).
+[#89](https://github.com/dafrie/kelson/issues/89). A row may also *narrow*: `secrets:` was gated whole
+until [ADR-0018](adr/0018-secret-references.md), and now `backend` is consumed while `store` — which
+configures the `externalSecrets` backend alone — stays gated.
 
 Not every refusal is a gate. A field can be consumed and still have values kelson will not render:
 `preset: branch`, and a preset the target cluster's operator cannot host, are structured *render*
@@ -45,7 +47,9 @@ render error for a different reason — the refusal depends on the *Environment*
 is valid on its own terms against every environment it will ever meet (`render/helm-requires-flux`,
 [below](#the-flux-only-gate-and-why-it-exists)). `Environment.spec.previews` carries the same gate for
 the same reason, and is the only other field that does (`render/previews-require-flux`,
-[Previews](#previews-a-child-environment-per-pull-request)).
+[Previews](#previews-a-child-environment-per-pull-request)). `Environment.spec.secrets.backend` is a
+third: `externalSecrets` and `sops` are `render/secret-backend-unsupported` rather than gated fields,
+because the field *is* consumed — see [Choosing the backend](#choosing-the-backend).
 
 And not every refusal is either: a field that belongs to another kind is a plain validation error, because
 one list means one type carrying fields only some of its kinds use. `preset` on a worker, `port` on a
@@ -130,10 +134,11 @@ version — rollback of `web` does not touch `worker`. Each rendered workload ca
 so an unchanged Component produces an unchanged artifact and no rollout. Coordinated multi-Component
 rollback is explicitly out of scope (ADR-0006 consequence) and would be a separately designed operation.
 
-**7. How service bindings are expressed.**
-See *Services and bindings* below. Bindings are data (`{from: {service, key}}`), enumerable through the
-JSON Schema, so the renderer can turn them into `secretKeyRef`s and agents can reason about them without
-parsing prose.
+**7. How service bindings and secret references are expressed.**
+See *Data components and bindings* and *Secrets* below. Both are data — `{from: {service, key}}` for a
+binding, `{secret: <name>, key: <key>}` for a reference to a Secret kelson does not manage — and both are
+enumerable through the JSON Schema, so the renderer turns them into the same `secretKeyRef` and agents
+reason about them without parsing prose.
 
 **8. Score as an input format (#31).**
 Deferred, and not part of these schemas. Interop stays a later translator that emits this model.
@@ -359,6 +364,13 @@ credentials live in the shared cluster's namespace and a pod cannot reference a 
 database is still created; distributing its credentials is
 [#93](https://github.com/dafrie/kelson/issues/93). See [docs/data-services.md](data-services.md).
 
+**A binding and a secret reference are the same mechanism.** Both are mappings in an env value, both
+render into `valueFrom.secretKeyRef` through the same code, and neither can carry a value. They differ
+only in who names the Secret: a binding names a *component* and kelson derives the Secret its operator
+generates, while `{secret: <name>, key: <key>}` names the Secret directly, for every credential that is
+not a data service kelson manages. See [Secrets](#secrets-references-never-literals) and
+[ADR-0018](adr/0018-secret-references.md).
+
 ## Helm components: a chart, delegated
 
 > Implemented since [ADR-0016](adr/0016-delivery-flows-v0.md) decision 4. Available in **Flux mode
@@ -442,7 +454,10 @@ them, and pretending otherwise would be the more dangerous mistake.
 
 So chart credentials go in `valuesFrom`, as a `secretRef` to a Secret somebody else manages in the
 environment's namespace. helm-controller reads it at release time and kelson never sees the value
-([ADR-0009](adr/0009-secrets.md), [#79](https://github.com/dafrie/kelson/issues/79)).
+([ADR-0009](adr/0009-secrets.md)). It is the same bargain a workload's
+`{secret: <name>, key: <key>}` makes ([ADR-0018](adr/0018-secret-references.md)) — the spec carries a
+Secret's name and somebody else does the reading — with the resolution done by helm-controller instead
+of the kubelet, because a chart's values are not a container's environment.
 
 **Nothing enforces this beyond saying it.** kelson does *not* inspect the content of a value to guess
 whether it is a credential: a key called `password` is accepted, because content-sniffing would block
@@ -700,25 +715,77 @@ whether flux-operator is actually installed is a capability finding
 
 ## Secrets: references, never literals
 
-Per [ADR-0009](adr/0009-secrets.md), enforcement lives in one place and validation mirrors it so authors
-see the failure before render:
+> The reference syntax is [ADR-0018](adr/0018-secret-references.md); the doctrine it implements is
+> [ADR-0009](adr/0009-secrets.md).
 
-- An environment value is either a plain string or `{from: ...}` — nothing else is representable.
-- A string value is rejected with `secret/literal` when:
-  - it parses as a URL containing a password (`postgres://user:pass@host/db`), or
-  - the variable name matches a secret pattern (`PASSWORD`, `SECRET`, `TOKEN`, `_KEY`, `PRIVATE`,
-    `CREDENTIAL`, `AUTH`) and the value is non-empty.
-- The error names the field and a fix that exists today. For a database URL that is a `from:` binding
-  against a declared service, which renders end to end since
-  [#89](https://github.com/dafrie/kelson/issues/89). For anything else there is still no
-  `kelson secret set` command ([#142](https://github.com/dafrie/kelson/issues/142)), so the remediation
-  points at an overlay patch referencing a Secret you manage, until M8 · Secrets lands.
+**An environment value is one of exactly three things.** A scalar is a value; a mapping is a reference,
+and which reference is decided by its own key:
 
-The heuristic deliberately errs toward rejection on secret-shaped variables; the fix is cheap and correct
-in both directions. The Environment is designed to pick the backend (`cluster` built-in default,
-`externalSecrets` with `store:`, `sops`) — a schema-level choice since day one so v0.2 backends are not a
-breaking change — but `secrets:` is rejected with `schema/not-implemented` until M8, because nothing
-reads the resolved backend.
+```yaml
+env:
+  LOG_LEVEL: info                                    # a plain string — non-secret configuration
+  DATABASE_URL: { secret: checkout-db, key: url }    # a secret reference (ADR-0018)
+  CACHE_URL:    { from: { service: cache, key: uri } }  # a data-service binding (ADR-0009)
+```
+
+There is no fourth form and no templating language — no `${...}`, no interpolation into a larger
+string. A variable comes from one place and the spec says which place in a shape the JSON Schema
+describes, so an agent generates it without parsing prose. A mapping that is neither form is
+`schema/invalid-format` and the remediation lists all three.
+
+### What a reference names
+
+`secret:` is the name of a **Secret in the environment's namespace**, and `key:` is a key within it.
+kelson references it and nothing else: it does not create it, read it, diff it or own it. The rendered
+manifest carries `valueFrom.secretKeyRef` and the kubelet performs the projection at pod start.
+
+Writing the Secret is out of band — `kubectl -n <namespace> create secret generic <name>
+--from-literal=<key>=…` today, `kelson secret set` when
+[#116](https://github.com/dafrie/kelson/issues/116) lands. Names are DNS-1123 labels; keys use
+Kubernetes' own key alphabet (letters, digits, `-`, `_`, `.`).
+
+A reference is legal wherever an env value is: `Project.spec.env`, a component's `env`, and
+`Environment.spec.components[].env`. **Rule P1 is unchanged** — references merge key by key like any
+other value, innermost scope wins, and an environment may replace a plain value with a reference or a
+reference with a plain value. Nothing in the merge asks what form either side has.
+
+### The guarantee, and its boundary
+
+**Rendered output never contains a secret value, by construction.** Everything typed as a reference
+stays a reference from the YAML you write to the bytes the cluster receives; kelson never inlines a
+Secret's data into a workload manifest (the renderer has no cluster client and cannot read one); and a
+plaintext Secret is not something the renderer can emit at all — there is no code path that writes
+`data:` or `stringData:`, so there is no field a value could be placed in.
+
+What that does **not** claim: kelson cannot stop you writing a password as a plain string.
+`SESSION_PEPPER: hunter2` renders. A string value is rejected with `secret/literal` when
+
+- it parses as a URL containing a password (`postgres://user:pass@host/db`), or
+- the variable name matches a secret pattern (`PASSWORD`, `SECRET`, `TOKEN`, `_KEY`, `PRIVATE`,
+  `CREDENTIAL`, `AUTH`) and the value is non-empty,
+
+and that is a heuristic, deliberately erring toward rejection because the fix is cheap in both
+directions. The error names the field and leads with the reference form, keeps the `from:` binding as
+the shorter path for a managed service ([#89](https://github.com/dafrie/kelson/issues/89)), and keeps
+`spec.overlays` last. Overlays remain the escape hatch, including for a raw `kind: Secret` — and
+`internal/redact` replaces its `data`/`stringData` with `[redacted]` in every diff, preview, API
+read-back and log ([#117](https://github.com/dafrie/kelson/issues/117)).
+
+### Choosing the backend
+
+`Environment.spec.secrets.backend` selects the mechanism that puts a value where a reference points,
+and the spec text does not change when it changes:
+
+| Backend | What it does | Status |
+|---|---|---|
+| `cluster` | the reference addresses a Kubernetes Secret written out of band. The built-in default | renders |
+| `externalSecrets` | an `ExternalSecret` per reference, resolved from Vault or a cloud secret manager | `render/secret-backend-unsupported`, [#80](https://github.com/dafrie/kelson/issues/80) |
+| `sops` | values encrypted in Git with age keys, decrypted in-cluster | `render/secret-backend-unsupported`, [#81](https://github.com/dafrie/kelson/issues/81) |
+
+The refusal is a **render** error rather than a validation one, for the reason the Helm gate is: it is
+decided from spec data alone, before anything is emitted, so the same document renders the same way
+against every cluster. `secrets.store`, which configures the `externalSecrets` backend and nothing
+else, is still `schema/not-implemented` (#141).
 
 ## Environment schema
 
@@ -745,8 +812,9 @@ spec:
     agents: propose-only             # allow | propose-only
     require: [dry-run]               # only dry-run is defined today
     deployers: [team-platform]       # who may deploy; default: the Project's team
-  secrets:                           # whole block rejected until M8 (#141)
-    backend: sops                    # cluster | externalSecrets | sops
+  secrets:
+    backend: cluster                 # cluster | externalSecrets | sops — only cluster renders today
+    store: vault-backend             # externalSecrets only, and rejected until M8 (#141, #80)
   previews:                          # Flux mode only — see "Previews" below
     provider: github                 # github | gitlab
     repo: https://github.com/acme/checkout           # the SOURCE repo, not delivery.git.repo
@@ -805,12 +873,12 @@ Stable code taxonomy:
 |---|---|---|
 | `schema/unknown-field` | schema | `spec.port` on Project |
 | `schema/missing-required` | schema | Environment without `spec.project` |
-| `schema/invalid-format` | schema | malformed domain, quantity, cron, name |
+| `schema/invalid-format` | schema | malformed domain, quantity, cron, name; an env mapping that is neither reference form |
 | `schema/out-of-range` | schema | `port: 70000` |
 | `schema/invalid-enum` | schema | `delivery.mode: github` |
 | `schema/duplicate-name` | schema | two Components named `web` |
 | `schema/mutually-exclusive` | semantic-shape | `schedule:` with `port:`; `preset:` on a worker; `chart:` on a service; `kind:` against the shape |
-| `schema/not-implemented` | schema | `tools:`, `policy:`, `secrets:`, `cluster:` — validated, not yet rendered |
+| `schema/not-implemented` | schema | `tools:`, `policy:`, `secrets.store:`, `cluster:` — validated, not yet rendered |
 | `ref/unknown-component` | semantic | Environment override for an undeclared component |
 | `ref/unknown-service` | semantic | `from: {service: cache}` names no data component |
 | `ref/unknown-service-key` | semantic | `from: {service: db, key: tls}` |
@@ -819,7 +887,8 @@ Stable code taxonomy:
 | `semantic/git-target-missing` | semantic | `mode: flux` without `git.repo` |
 
 Every class carries a remediation: ranges state the accepted range, enums list the valid values,
-references list declared names, and secret literals name the exact `from:` replacement. `docsUrl` uses
+references list declared names, and secret literals name the exact `{secret: …, key: …}` replacement
+and the command that creates the Secret. `docsUrl` uses
 the stable basis `https://kelson.dev/model/errors/<code>`; these URLs are a compatibility promise like
 the codes themselves.
 

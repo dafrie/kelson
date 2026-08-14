@@ -27,9 +27,11 @@
 //     anything but an agent — is a validation error (issue #141).
 //   - A Component belongs to exactly one Project, identified by the pair
 //     (project, component).
-//   - Secret values are never literals: environment values are plain strings
-//     or {from: {service, key}} bindings (ADR-0009). Literal-looking secrets
-//     are validation errors (secret/literal).
+//   - Secret values are never literals: an environment value is a plain string,
+//     a {secret: <name>, key: <key>} reference (ADR-0018) or a
+//     {from: {service, key}} binding (ADR-0009), and both mapping forms render
+//     into the same secretKeyRef. Literal-looking secrets are validation errors
+//     (secret/literal).
 //   - The Project document is the versioned unit; Components deploy
 //     independently from any version.
 //

@@ -1,0 +1,36 @@
+# Fixture: an Environment override replacing a plain value with a reference
+# (ADR-0018). A reference merges under rule P1 like any other env value —
+# innermost scope wins, taken whole — so no rule was added for it: the Project
+# says `API_BASE_URL: https://sandbox.example` and this environment replaces the
+# same key with a reference to a Secret it manages.
+#
+# The reverse direction is equally legal and is here too: `QUEUE_NAME` is a
+# reference on the Project and a plain string in this environment. Nothing about
+# the merge asks what form either side has.
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: billing
+spec:
+  image: ghcr.io/acme/billing:3.1.0
+
+  components:
+    - name: api
+      port: 9090
+      env:
+        API_BASE_URL: https://sandbox.example
+        QUEUE_NAME: { secret: billing-queue, key: name }
+        LOG_LEVEL: debug
+---
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: production
+spec:
+  project: billing
+  namespace: billing-prod
+  components:
+    - name: api
+      env:
+        API_BASE_URL: { secret: billing-upstream, key: base-url }
+        QUEUE_NAME: billing-prod

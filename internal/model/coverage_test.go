@@ -43,6 +43,8 @@ var renderedFields = map[string]map[string]string{
 		"$.spec.env.*":              "renderer: container env (literal form)",
 		"$.spec.env.*.from.service": "renderer: secretKeyRef name — the credentials Secret of the bound data component",
 		"$.spec.env.*.from.key":     "renderer: secretKeyRef key, mapped onto the operator's own key names",
+		"$.spec.env.*.secret":       "renderer: secretKeyRef name — the Secret the author names, never read by kelson (ADR-0018)",
+		"$.spec.env.*.key":          "renderer: secretKeyRef key within that Secret (ADR-0018)",
 
 		"$.spec.components[].name":                      "renderer: workload, data-service or HelmRelease resource name, and the binding target",
 		"$.spec.components[].kind":                      "model: selects workload, data or chart rendering, and which operator a component delegates to (postgres → CloudNativePG, valkey → the Valkey operator, helm → helm-controller)",
@@ -69,8 +71,11 @@ var renderedFields = map[string]map[string]string{
 		"$.spec.components[].env.*":                     "renderer: container env (literal form)",
 		"$.spec.components[].env.*.from.service":        "renderer: secretKeyRef name — the credentials Secret of the bound data component",
 		"$.spec.components[].env.*.from.key":            "renderer: secretKeyRef key, mapped onto the operator's own key names",
+		"$.spec.components[].env.*.secret":              "renderer: secretKeyRef name — the Secret the author names, never read by kelson (ADR-0018)",
+		"$.spec.components[].env.*.key":                 "renderer: secretKeyRef key within that Secret (ADR-0018)",
 
-		"$.spec.defaults.deliveryMode": "resolve P4 → internal/delivery: adapter selection",
+		"$.spec.defaults.deliveryMode":    "resolve P4 → internal/delivery: adapter selection",
+		"$.spec.defaults.secrets.backend": "resolve P4 → renderer: selects the reference mechanism; cluster renders, externalSecrets and sops are render/secret-backend-unsupported (#80, #81)",
 
 		"$.spec.overlays[].patch":    "renderer: strategic-merge patch against rendered resources",
 		"$.spec.overlays[].manifest": "renderer: extra manifest emitted as-is",
@@ -82,6 +87,8 @@ var renderedFields = map[string]map[string]string{
 
 		"$.spec.project":   "resolve: binds the Environment to its Project",
 		"$.spec.namespace": "renderer: target namespace on every resource",
+
+		"$.spec.secrets.backend": "renderer: selects the reference mechanism; cluster renders, externalSecrets and sops are render/secret-backend-unsupported (#80, #81)",
 
 		"$.spec.routing.domainSuffix": "renderer: default hostname for ported components",
 		"$.spec.routing.gatewayClass": "renderer: HTTPRoute parentRef",
@@ -115,6 +122,8 @@ var renderedFields = map[string]map[string]string{
 		"$.spec.components[].env.*":                     "renderer: container env (literal form)",
 		"$.spec.components[].env.*.from.service":        "renderer: secretKeyRef name — the credentials Secret of the bound data component",
 		"$.spec.components[].env.*.from.key":            "renderer: secretKeyRef key, mapped onto the operator's own key names",
+		"$.spec.components[].env.*.secret":              "renderer: secretKeyRef name — the Secret the author names, never read by kelson (ADR-0018)",
+		"$.spec.components[].env.*.key":                 "renderer: secretKeyRef key within that Secret (ADR-0018)",
 		"$.spec.components[].preset":                    "resolve P5 → renderer: the per-environment CNPG topology",
 
 		"$.spec.overlays[].patch":    "renderer: strategic-merge patch against rendered resources",
@@ -224,13 +233,13 @@ spec:
   defaults:
     policy: {agents: allow}`,
 
-	KindProject + " $.spec.defaults.secrets": `
+	KindProject + " $.spec.defaults.secrets.store": `
 spec:
   image: i:1
   components:
     - {name: web, port: 8080}
   defaults:
-    secrets: {backend: cluster}`,
+    secrets: {backend: externalSecrets, store: vault-backend}`,
 
 	KindEnvironment + " $.spec.cluster": `
 spec:
@@ -242,10 +251,10 @@ spec:
   project: p
   policy: {agents: allow, require: [dry-run], deployers: [team]}`,
 
-	KindEnvironment + " $.spec.secrets": `
+	KindEnvironment + " $.spec.secrets.store": `
 spec:
   project: p
-  secrets: {backend: sops}`,
+  secrets: {backend: externalSecrets, store: vault-backend}`,
 }
 
 // TestGateTableIsEnforced renders each gated field into a document and demands
@@ -377,10 +386,14 @@ func walkFieldPaths(t reflect.Type, path string, out *[]string, stack []reflect.
 	stack = append(stack, t)
 
 	// EnvValue is a union with a custom unmarshaller and no yaml tags: a plain
-	// scalar, or {from: {service, key}}. Both arms are spec surface.
+	// scalar, {from: {service, key}}, or {secret: <name>, key: <key>}. All
+	// three arms are spec surface. The secret reference is walked at `path`
+	// itself because it is written flat — `secret:` carries the name, so there
+	// is no wrapper key to descend through.
 	if t == reflect.TypeOf(EnvValue{}) {
 		*out = append(*out, path)
 		walkFieldPaths(reflect.TypeOf(ServiceBinding{}), path+".from", out, stack)
+		walkFieldPaths(reflect.TypeOf(SecretRef{}), path, out, stack)
 		return
 	}
 
@@ -444,6 +457,8 @@ func TestSpecFieldPathsWalksTheModel(t *testing.T) {
 		"$.spec.components[].resources.limits.memory",
 		"$.spec.components[].env.*",
 		"$.spec.components[].env.*.from.service",
+		"$.spec.components[].env.*.secret",
+		"$.spec.components[].env.*.key",
 		"$.spec.components[].preset",
 		"$.spec.components[].tools",
 		"$.spec.defaults.policy.deployers",

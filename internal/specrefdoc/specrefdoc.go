@@ -160,7 +160,7 @@ func typeString(s *schema, _ string) string {
 	if len(s.OneOf) > 0 {
 		one := make([]string, 0, len(s.OneOf))
 		for _, o := range s.OneOf {
-			one = append(one, typeString(o, ""))
+			one = append(one, oneOfArm(o))
 		}
 		return "one of: " + strings.Join(one, ", ")
 	}
@@ -185,6 +185,19 @@ func typeString(s *schema, _ string) string {
 		parts = append(parts, c)
 	}
 	return strings.Join(parts, " ")
+}
+
+// oneOfArm names one arm of a union. An object arm is named by its required
+// keys — `object {secret, key}` — because a union of two object arms otherwise
+// reads as "object, object", which tells an author nothing about which one they
+// are choosing between. The required keys are exactly what distinguishes them:
+// an environment value is a string, a `{from}` binding, or a `{secret, key}`
+// reference.
+func oneOfArm(s *schema) string {
+	if s.Type == "object" && len(s.Required) > 0 {
+		return "object {" + strings.Join(s.Required, ", ") + "}"
+	}
+	return typeString(s, "")
 }
 
 // constraints renders length/range/pattern/format bounds, if any.

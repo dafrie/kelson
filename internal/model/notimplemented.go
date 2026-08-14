@@ -23,6 +23,13 @@ import (
 // the `from:` bindings left this table when the renderer began emitting
 // CloudNativePG resources for them (issue #89), and nothing else had to move.
 //
+// A row may also *narrow* rather than disappear. `secrets:` was gated whole
+// until ADR-0018; now `backend` is consumed — `cluster` renders secret
+// references as secretKeyRefs and the other two backends are a structured
+// render refusal naming their issue — while `store`, which configures only the
+// externalSecrets backend, stays gated. Narrowing keeps the rule intact: what
+// remains in the table is exactly what still renders nothing.
+//
 // What replaced their rows is *not* silence. A data component the renderer
 // cannot emit — `preset: branch`, `preset: shared`, or a preset that is not a
 // topology of the component's kind — is a structured render error naming its
@@ -75,10 +82,14 @@ var notImplementedFields = []notImplemented{
 		TrackedBy: "milestone M7 · Agent surface & MCP",
 	},
 	{
-		Kind:      KindProject,
-		Path:      "$.spec.defaults.secrets",
-		What:      "secret backends",
-		TrackedBy: "milestone M8 · Secrets",
+		Kind: KindProject,
+		Path: "$.spec.defaults.secrets.store",
+		What: "the external-secrets ClusterSecretStore selector",
+		// The row narrowed from `$.spec.defaults.secrets` when ADR-0018 landed:
+		// `backend` is consumed now (cluster renders, the other two are a
+		// structured render refusal naming their issue), and `store` configures
+		// only the externalSecrets backend, which is #80's work.
+		TrackedBy: "milestone M8 · Secrets, issue #80",
 	},
 	{
 		Kind:      KindEnvironment,
@@ -94,9 +105,9 @@ var notImplementedFields = []notImplemented{
 	},
 	{
 		Kind:      KindEnvironment,
-		Path:      "$.spec.secrets",
-		What:      "secret backends",
-		TrackedBy: "milestone M8 · Secrets",
+		Path:      "$.spec.secrets.store",
+		What:      "the external-secrets ClusterSecretStore selector",
+		TrackedBy: "milestone M8 · Secrets, issue #80",
 	},
 }
 

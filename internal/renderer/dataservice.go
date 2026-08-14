@@ -606,7 +606,7 @@ func bindingRef(app string, field string, b *model.ServiceBinding, services map[
 		}
 	}
 	if key, ok := svc.keys[b.Key]; ok {
-		return "valueFrom", mapNode("secretKeyRef", mapNode("name", svc.secret, "key", key)), nil
+		return "valueFrom", secretKeyRefNode(svc.secret, key), nil
 	}
 	if value, ok := svc.values[b.Key]; ok {
 		return "value", strNode(value), nil
