@@ -113,6 +113,11 @@ const (
 	reasonPruneFailed      = "PruneFailed"
 	reasonDependencyNR     = "DependencyNotReady"
 	reasonProgressing      = "Progressing"
+	// reasonDecryptionFailed is kustomize-controller's own reason for a
+	// decryption error where it reports one. Older releases fold the same
+	// failure into BuildFailed with the detail in the message, which is why
+	// decryptionCause matches on the message as well as on this reason.
+	reasonDecryptionFailed = "DecryptionFailed"
 )
 
 // rejectedReasons are failures where Flux processed the change and refused it:
@@ -122,6 +127,7 @@ var rejectedReasons = map[string]bool{
 	reasonArtifactFailed:   true,
 	reasonValidationFailed: true,
 	reasonReconcileFailed:  true,
+	reasonDecryptionFailed: true,
 }
 
 // degradedReasons are failures after the apply landed: it is live and wrong.
@@ -159,7 +165,8 @@ func phaseFor(k Kustomization, revision string) delivery.Status {
 		case rejectedReasons[k.Reason] && (attempted || applied):
 			return delivery.Status{
 				Phase: delivery.PhaseRejected, Revision: revision,
-				Cause: fmt.Sprintf("%s rejected the change (%s): %s", ref, k.Reason, k.Message), Detail: detail,
+				Cause: fmt.Sprintf("%s rejected the change (%s): %s%s",
+					ref, k.Reason, k.Message, decryptionCause(k)), Detail: detail,
 			}
 		case degradedReasons[k.Reason]:
 			return delivery.Status{
@@ -174,7 +181,8 @@ func phaseFor(k Kustomization, revision string) delivery.Status {
 		case attempted || applied:
 			return delivery.Status{
 				Phase: delivery.PhaseRejected, Revision: revision,
-				Cause: fmt.Sprintf("%s is not ready (%s): %s", ref, k.Reason, k.Message), Detail: detail,
+				Cause: fmt.Sprintf("%s is not ready (%s): %s%s",
+					ref, k.Reason, k.Message, decryptionCause(k)), Detail: detail,
 			}
 		}
 	}
@@ -198,6 +206,62 @@ func phaseFor(k Kustomization, revision string) delivery.Status {
 			Detail:   detail,
 		}
 	}
+}
+
+// decryptionMarkers are the substrings that identify a kustomize-controller
+// build failure as a SOPS decryption failure.
+//
+// They are matched on the controller's message rather than only on its reason
+// because the reason is usually just `BuildFailed`: decryption happens inside
+// the build, and which release folds it into which reason has changed. Each
+// marker is specific enough not to fire on an ordinary build error — "age"
+// deliberately is not one of them, because it is a substring of "image",
+// "message" and "storage".
+var decryptionMarkers = []string{
+	"decrypt",        // "failed to decrypt secret", "decryption failed"
+	"sops",           // "sops metadata not found", "cannot get sops data key"
+	"data key",       // "Error getting data key: 0 successful groups required"
+	"creation rules", // "no matching creation rules found"
+	"age identity",   // "no age identity found"
+	"identity file",  // the age key Secret is present but holds no usable key
+}
+
+// decryptionCause names a decryption failure as its own cause, appended to the
+// controller's message.
+//
+// A Kustomization that cannot decrypt reports a build failure, and the
+// controller's own message describes the *mechanism* ("Error getting data
+// key") rather than the situation. The situation is almost always one of three
+// setup mistakes, all of them far from where the reader is standing: the
+// Kustomization has no `spec.decryption`, or the Secret it names is absent, or
+// the identity in it is not one of the file's recipients. Naming them here is
+// what turns "my deploy is red" into a next step, and it costs nothing when
+// the failure is something else — the markers do not match and nothing is
+// appended (issue #81, ADR-0021).
+//
+// The controller's message is relayed verbatim ahead of this, as every other
+// reason's is. sops does not put secret material in its errors, and
+// internal/redact covers the display path regardless.
+func decryptionCause(k Kustomization) string {
+	if k.Reason != reasonDecryptionFailed && !matchesAny(k.Message, decryptionMarkers) {
+		return ""
+	}
+	return "\n  cause: this Kustomization could not decrypt the SOPS-encrypted manifests at " +
+		normalizePath(k.Path) + "." +
+		"\n  fix: check, in this order — (1) the Kustomization has spec.decryption: {provider: sops, secretRef: " +
+		"{name: …}}; (2) that Secret exists in namespace " + k.Namespace +
+		" and holds the age identity under a .agekey key; (3) the identity is one of the recipients the files " +
+		"are encrypted to — `kelson secret rotate` lists them without needing a key."
+}
+
+func matchesAny(s string, markers []string) bool {
+	lower := strings.ToLower(s)
+	for _, m := range markers {
+		if strings.Contains(lower, m) {
+			return true
+		}
+	}
+	return false
 }
 
 // revisionMatches compares a Flux revision string against a git sha. Flux

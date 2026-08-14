@@ -130,6 +130,64 @@ func TestRevisionMatches(t *testing.T) {
 	}
 }
 
+// TestDecryptionFailureIsNamed: a Kustomization that cannot decrypt reports a
+// build failure whose message describes a mechanism ("Error getting data
+// key"), not a situation. The situation is one of three setup mistakes, all of
+// them far from where the reader is standing, so kelson names them (issue #81,
+// ADR-0021).
+func TestDecryptionFailureIsNamed(t *testing.T) {
+	messages := []struct {
+		reason  string
+		message string
+	}{
+		{reasonBuildFailed, "failed to decrypt secret clusters/prod/secrets/checkout-db.enc.yaml: Error getting data key: 0 successful groups required, got 0"},
+		{reasonBuildFailed, "cannot get sops metadata for file secrets/payments.enc.yaml"},
+		{reasonDecryptionFailed, "no age identity found in the provided Secret"},
+		{reasonBuildFailed, "no matching creation rules found"},
+	}
+	for _, m := range messages {
+		k := Kustomization{
+			Name: "checkout", Namespace: "flux-system", Path: "./clusters/prod",
+			Ready: ConditionFalse, Reason: m.reason, Message: m.message,
+			LastAttemptedRevision: "main@sha1:" + rev,
+		}
+		st := phaseFor(k, rev)
+		if st.Phase != delivery.PhaseRejected {
+			t.Fatalf("phase = %q, want rejected", st.Phase)
+		}
+		// The controller's own words are relayed verbatim ahead of kelson's,
+		// exactly as every other reason's are.
+		if !contains(st.Cause, m.message) {
+			t.Errorf("cause must relay the controller's message: %q", st.Cause)
+		}
+		for _, want := range []string{"could not decrypt", "spec.decryption", "flux-system", "kelson secret rotate"} {
+			if !contains(st.Cause, want) {
+				t.Errorf("cause must name %q:\n%s", want, st.Cause)
+			}
+		}
+	}
+}
+
+// TestOrdinaryBuildFailureGetsNoDecryptionCause: the markers must not fire on
+// a build error that has nothing to do with SOPS, or every red deploy would
+// come with three irrelevant things to check.
+func TestOrdinaryBuildFailureGetsNoDecryptionCause(t *testing.T) {
+	for _, message := range []string{
+		"kustomize build failed: accumulating resources: missing metadata.name",
+		"failed to pull image ghcr.io/acme/api: manifest unknown",
+		"Deployment/apps/web dry-run failed: unknown field spec.templates",
+	} {
+		k := Kustomization{
+			Name: "web", Namespace: "apps", Path: "./apps/web",
+			Ready: ConditionFalse, Reason: reasonBuildFailed, Message: message,
+			LastAttemptedRevision: "main@sha1:" + rev,
+		}
+		if contains(phaseFor(k, rev).Cause, "could not decrypt") {
+			t.Errorf("a non-SOPS build failure must not be explained as a decryption failure: %q", message)
+		}
+	}
+}
+
 func containsAny(s string, subs ...string) bool {
 	for _, sub := range subs {
 		if len(sub) == 0 || contains(s, sub) {
