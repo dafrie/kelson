@@ -35,11 +35,27 @@
 //     anything else kelson labelled that is not in another tier.
 //  4. Data. Last, because it is the only irreversible step: everything above is
 //     re-creatable from the spec, and a Postgres cluster is not.
-//  5. The Namespace, and only when the delivery plane recorded that kelson
-//     created it (delivery.AnnNamespaceOwnership). Deleting a namespace
-//     cascades to everything inside it including resources kelson never
-//     created, so a namespace that predates kelson is left behind holding
-//     whatever else lives there.
+//  5. The Namespace, and only when both halves of the licence hold: the
+//     delivery plane recorded that kelson created it
+//     (delivery.AnnNamespaceOwnership), AND nothing of anyone else's is still
+//     living in it. Deleting a namespace cascades to everything inside it
+//     including resources kelson never created, so a namespace that predates
+//     kelson is left behind holding whatever else lives there.
+//
+// The second half of that licence exists because a namespace is per-Environment
+// but its NAME is overridable (spec.namespace), so two projects — or two
+// environments of one project — can be pointed at the same one. Ownership
+// records who created the namespace and cannot see who moved in afterwards, so
+// before deleting one kelson lists it for resources carrying
+// app.kubernetes.io/managed-by=kelson whose kelson.dev/project /
+// kelson.dev/environment pair is not the one being uninstalled. Any such
+// resource keeps the namespace standing, and the run says what stayed and whose
+// it is. The check runs at plan time, so the preview is honest, and again
+// immediately before the delete, so a tenant who arrived in between is not
+// evicted by a stale plan (issue #215). Its boundary is the sweep's own kind
+// set, and both directions of failure — an unreadable kind, an unresolvable API
+// group — leave the namespace alone: deleting one is the only step here that
+// reaches resources the scope never selected.
 //
 // # What this deliberately does NOT remove
 //
