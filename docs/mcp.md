@@ -71,6 +71,26 @@ The Protobuf schema is a consistency check here, never the design.
 | Deploy transitions, watch events | 20 |
 | Manifests in a deploy preview | 30, identities and sizes only — never bodies |
 
+## Every mutating tool takes a `reason`
+
+`deploy`, `rollback`, `promote`, `put_spec` and `set_secret` each accept an optional `reason`: one
+sentence saying why. It travels to the server as a request header and lands in that action's audit
+record ([#78](https://github.com/dafrie/kelson/issues/78),
+[ADR-0026](adr/0026-agent-audit-trail.md)), where `kelson audit` shows it beside what the action did.
+
+It is the half of "what did it actually do?" that no amount of server-side observation can
+reconstruct: kelson can see that an agent deployed, never why it decided to. Supplying one is how an
+agent makes its own work reviewable.
+
+Nothing is invented when it is absent — a record with no reason says so rather than guessing. The
+value is bounded and any truncation is marked. **Never put a secret value in it**: `set_secret`'s
+values stay in the request body where kelson's redaction registry receives them, and a reason quoting
+one would be the leak this surface exists to prevent.
+
+Reading the audit trail is *not* an MCP tool. It is administrative and refused to agent credentials
+whatever their scope: an agent that could read the trail could read what its reviewer is about to
+see. See [the server guide](server.md#the-audit-trail).
+
 ## Configuration
 
 `kelson-mcp` needs a reachable `kelson-server`:

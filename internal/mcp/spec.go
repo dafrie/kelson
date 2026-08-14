@@ -30,6 +30,7 @@ type putSpecInput struct {
 	EnvironmentDocuments map[string]string `json:"environment_documents,omitempty" jsonschema:"environment name to its Environment YAML document, verbatim"`
 	DryRun               *bool             `json:"dry_run,omitempty" jsonschema:"true (default) validates and renders without storing; false stores the spec"`
 	Version              string            `json:"version,omitempty" jsonschema:"the version from the last read or write; required to update an existing project"`
+	Reason               string            `json:"reason,omitempty" jsonschema:"why you are changing the spec, in one sentence; recorded in the audit trail beside the action"`
 }
 
 func putSpecTool(c *clients) tool {
@@ -69,12 +70,12 @@ func (c *clients) putSpec(ctx context.Context, in putSpecInput) (*mcpsdk.CallToo
 		documents.Environments[name] = []byte(body)
 	}
 
-	res, err := c.spec.PutSpec(ctx, connect.NewRequest(&kelsonv1alpha1.PutSpecRequest{
+	res, err := c.spec.PutSpec(ctx, reasoned(connect.NewRequest(&kelsonv1alpha1.PutSpecRequest{
 		Documents:      documents,
 		Version:        in.Version,
 		DryRun:         dryRun,
 		IdempotencyKey: newIdempotencyKey(),
-	}))
+	}), in.Reason))
 	if err != nil {
 		return nil, nil, c.fail(rpcPutSpec, err)
 	}

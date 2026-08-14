@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"strings"
 
 	"connectrpc.com/connect"
 
@@ -133,6 +134,41 @@ func connectMessage(err error) string {
 		return connect.CodeOf(err).String() + ": " + cerr.Message()
 	}
 	return err.Error()
+}
+
+// ReasonHeader is the request header a caller's stated reason travels in. It
+// mirrors api.ReasonHeader, which this package deliberately does not import: a
+// stdio sidecar should not link the whole server plane for one string constant.
+// TestReasonHeaderMatchesTheServer asserts the two are the same, so the copy
+// cannot drift.
+const ReasonHeader = "Kelson-Reason"
+
+// maxReason bounds what this process will send. The server bounds it again on
+// arrival; this bound exists so a model that pastes a stack trace into `reason`
+// does not put it on the wire, and the truncation is marked so the recorded
+// reason is never quietly half a sentence.
+const maxReason = 512
+
+// reasoned attaches the caller's stated reason to an outbound request (issue
+// #78, ADR-0026 §4).
+//
+// It is why an agent's audit record can say *why* rather than only what. The
+// server records what arrives and invents nothing, so a tool call with no
+// reason produces a record with no reason — which is the honest answer, and the
+// reason the parameter is optional on every tool that has it.
+func reasoned[T any](req *connect.Request[T], reason string) *connect.Request[T] {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return req
+	}
+	if len(reason) > maxReason {
+		reason = reason[:maxReason] + "…[truncated]"
+	}
+	// A header value cannot carry a line break, and a reason is prose that
+	// might. Folding to spaces keeps the whole sentence rather than dropping
+	// the value or the tail of it.
+	req.Header().Set(ReasonHeader, strings.Join(strings.Fields(reason), " "))
+	return req
 }
 
 // specRef addresses a stored project. Tools never take inline documents for

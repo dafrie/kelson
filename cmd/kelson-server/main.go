@@ -33,8 +33,17 @@
 // mint an agent could mint one wider than itself.
 //
 // Every authenticated request leaves one JSON line on stderr naming the
-// principal, its type, the method and the outcome. That is the attribution the
-// audit trail of #78 will build on; it is not the audit trail itself.
+// principal, its type, the method and the outcome.
+//
+// # And every mutation leaves a durable record
+//
+// Beside that line there is an audit trail (issue #78, ADR-0026): one record per
+// mutation and per refusal, in ConfigMaps in the state namespace, naming the
+// principal, its scope, the target, the outcome, the revision the change
+// produced and the reason the caller stated. `kelson audit` reads it, and so
+// does AuditService for a human at the API — never an agent, whatever its scope.
+// Retention is --audit-retention days of a bounded ring; a query says when its
+// window is incomplete rather than letting a partial answer read as a whole one.
 package main
 
 import (
@@ -92,6 +101,10 @@ type config struct {
 	namespace    string
 	keep         int
 
+	// auditRetention is how many UTC days of audit records to keep. Zero
+	// selects the store's default; a negative value turns the trail off.
+	auditRetention int
+
 	// password is the single shared secret web and non-browser clients
 	// authenticate with (#84's interim cut, ADR-0013 §3). Empty disables
 	// authentication entirely, which is the pre-#84 behaviour.
@@ -139,13 +152,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		_, _ = fmt.Fprintln(stderr, "warning:", warning)
 	}
 
-	// The audit line every authenticated request leaves (issue #74, the seam
-	// #78 builds on) goes to stderr as JSON, beside the banner and the
-	// warnings. stdout is left to the banner alone so a caller piping it is not
-	// handed a stream of records it did not ask for.
-	audit := slog.New(slog.NewJSONHandler(stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	// The attribution line every authenticated request leaves (issue #74) goes
+	// to stderr as JSON, beside the banner and the warnings. stdout is left to
+	// the banner alone so a caller piping it is not handed a stream of records
+	// it did not ask for.
+	//
+	// It is not the audit trail — that is durable and lives in the cluster
+	// (issue #78) — but it is what carries an audit *write failure* to whatever
+	// collects this process's stderr, which is the visibility half of "a lost
+	// record must never be silent" (ADR-0026 §3).
+	attribution := slog.New(slog.NewJSONHandler(stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
-	server, agents, err := connectServer(cfg, audit)
+	server, agents, err := connectServer(cfg, attribution)
 	if err != nil {
 		return err
 	}
@@ -176,7 +194,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	// The banner is courtesy, not a result: a failed write to stdout must not
 	// stop a server that is already listening.
 	_, _ = fmt.Fprintf(stdout, "kelson-server %s serving the kelson.v1alpha1 schema on http://%s (namespace %s, %s)\n",
-		version.String(), listener.Addr(), cfg.namespace, authBanner(auth))
+		version.String(), listener.Addr(), cfg.namespace, authBanner(auth)+", "+auditBanner(cfg))
 
 	errs := make(chan error, 1)
 	go func() {
@@ -210,6 +228,9 @@ func parseFlags(args []string, stderr io.Writer) (config, error) {
 	fs.StringVar(&cfg.kubeconfig, "kubeconfig", "", "path to a kubeconfig (default: $KUBECONFIG, in-cluster credentials, then ~/.kube/config)")
 	fs.StringVar(&cfg.namespace, "namespace", defaultNamespace, "namespace holding kelson-server's state ConfigMaps")
 	fs.IntVar(&cfg.keep, "keep", direct.DefaultKeep, "number of deployment revisions to retain per environment")
+	fs.IntVar(&cfg.auditRetention, "audit-retention", serverstate.DefaultAuditRetentionDays,
+		fmt.Sprintf("days of audit records to retain (maximum %d); 0 disables the audit trail, which is a choice to make out loud (issue #78)",
+			serverstate.MaxAuditRetentionDays))
 	fs.StringVar(&cfg.password, "password", os.Getenv(passwordEnv),
 		"shared password web clients log in with and non-browser clients send as a bearer token (default: $"+passwordEnv+"); empty disables authentication")
 	fs.StringVar(&cfg.registry, "registry", os.Getenv(registryEnv), "destination registry and namespace for builds, e.g. ghcr.io/acme (default: $"+registryEnv+"); a Build request may override it")
@@ -223,6 +244,10 @@ func parseFlags(args []string, stderr io.Writer) (config, error) {
 	}
 	if cfg.namespace == "" {
 		return config{}, errors.New("--namespace must not be empty: it is where the spec and history ConfigMaps live")
+	}
+	if cfg.auditRetention < 0 {
+		return config{}, fmt.Errorf("--audit-retention %d is not a number of days; pass 0 to disable the audit trail",
+			cfg.auditRetention)
 	}
 	return cfg, nil
 }
@@ -313,6 +338,17 @@ func authBanner(auth *api.Auth) string {
 // healthz reports liveness and the build it is reporting for. Version is part
 // of the answer because "the server is up" and "the server is the build you
 // deployed" are different questions and an operator asks both at once.
+// auditBanner says whether this process keeps a trail and for how long. A
+// server whose audit trail is off must say so at startup: discovering it by
+// finding no records after an incident is the worst possible moment to learn it
+// (issue #78).
+func auditBanner(cfg config) string {
+	if cfg.auditRetention == 0 {
+		return "audit trail: OFF (--audit-retention 0)"
+	}
+	return fmt.Sprintf("audit trail: %d days", cfg.auditRetention)
+}
+
 func healthz(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	body, err := json.Marshal(map[string]string{
@@ -336,7 +372,7 @@ func healthz(w http.ResponseWriter, _ *http.Request) {
 // delivery plane is rebuilt per request instead — kube.Connect's REST mapper is
 // discovery-backed and never refreshed, so a long-running process reusing one
 // would not see a CRD registered after it started (see kube.Connect's doc).
-func connectServer(cfg config, audit *slog.Logger) (*api.Server, *serverstate.AgentStore, error) {
+func connectServer(cfg config, attribution *slog.Logger) (*api.Server, *serverstate.AgentStore, error) {
 	cluster, err := kube.Connect(cfg.kubeconfig)
 	if err != nil {
 		return nil, nil, err
@@ -360,6 +396,23 @@ func connectServer(cfg config, audit *slog.Logger) (*api.Server, *serverstate.Ag
 	if err != nil {
 		return nil, nil, err
 	}
+	// The audit trail (issue #78, ADR-0026). It rides the startup clientset for
+	// the same reason the other state stores do: ConfigMaps in one namespace,
+	// no discovery mapper involved. A zero retention leaves it nil, which makes
+	// every capture point a no-op and AuditService answer unimplemented — the
+	// pre-#78 posture, chosen deliberately rather than arrived at.
+	var audit api.AuditSink
+	if cfg.auditRetention != 0 {
+		store, err := serverstate.NewAuditStore(serverstate.AuditOptions{
+			Client:     cluster.Typed,
+			Namespace:  cfg.namespace,
+			RetainDays: cfg.auditRetention,
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+		audit = store
+	}
 	// The agent identity store rides the startup clientset for the same reason
 	// the state stores do: it only ever gets, lists, creates and updates
 	// Secrets in one namespace, so no discovery mapper is involved (issue #74).
@@ -378,7 +431,8 @@ func connectServer(cfg config, audit *slog.Logger) (*api.Server, *serverstate.Ag
 	return api.New(api.Options{
 		Specs:  specs,
 		Agents: agents,
-		Logger: audit,
+		Audit:  audit,
+		Logger: attribution,
 		Profile: api.CaptureFunc(func(context.Context) (clusterprofile.ClusterProfile, error) {
 			return detect.FromCluster(cfg.kubeconfig)
 		}),

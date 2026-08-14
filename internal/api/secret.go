@@ -10,6 +10,7 @@ import (
 	"github.com/dafrie/kelson/internal/model"
 	"github.com/dafrie/kelson/internal/redact"
 	"github.com/dafrie/kelson/internal/secret"
+	"github.com/dafrie/kelson/internal/serverstate"
 )
 
 // SecretService served: write the Secrets a spec's references point at, list
@@ -47,6 +48,7 @@ func (s *Server) SetSecret(ctx context.Context, req *connect.Request[kelsonv1alp
 	for _, value := range msg.GetValues() {
 		redact.Register(value)
 	}
+	auditDryRun(ctx, msg.GetDryRun())
 
 	request := secret.SetRequest{
 		Target: secretTarget(msg.GetTarget()),
@@ -92,6 +94,14 @@ func (s *Server) SetSecret(ctx context.Context, req *connect.Request[kelsonv1alp
 	if err != nil {
 		return nil, failSecret(err)
 	}
+	// The record counts keys and names the kind. It cannot carry a value —
+	// there is no field for one here, the values went to internal/redact on
+	// entry, and the store scrubs every free-text field it accepts (#117).
+	auditChange(ctx, serverstate.AuditChange{
+		Source:    serverstate.ChangeFromRendered,
+		Resources: len(request.Keys()),
+		Kinds:     []string{"Secret"},
+	})
 	return connect.NewResponse(&kelsonv1alpha1.SetSecretResponse{
 		Secret:      wireSecret(written),
 		WrittenKeys: request.Keys(),
@@ -127,6 +137,7 @@ func (s *Server) ListSecrets(ctx context.Context, req *connect.Request[kelsonv1a
 // it.
 func (s *Server) DeleteSecret(ctx context.Context, req *connect.Request[kelsonv1alpha1.DeleteSecretRequest]) (*connect.Response[kelsonv1alpha1.DeleteSecretResponse], error) {
 	msg := req.Msg
+	auditDryRun(ctx, msg.GetDryRun())
 	request := secret.DeleteRequest{
 		Target: secretTarget(msg.GetTarget()),
 		Name:   msg.GetName(),
@@ -150,6 +161,11 @@ func (s *Server) DeleteSecret(ctx context.Context, req *connect.Request[kelsonv1
 	if err := s.secrets.Delete(ctx, request); err != nil {
 		return nil, failSecret(err)
 	}
+	auditChange(ctx, serverstate.AuditChange{
+		Source:    serverstate.ChangeFromRendered,
+		Resources: 1,
+		Kinds:     []string{"Secret"},
+	})
 	return connect.NewResponse(&kelsonv1alpha1.DeleteSecretResponse{
 		Deleted:   !request.DryRun,
 		Namespace: namespace,

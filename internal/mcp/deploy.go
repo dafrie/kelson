@@ -25,7 +25,9 @@ Preconditions: the project must be stored (put_spec) and declare the environment
 
 Cost: dry_run="render" is fast. dry_run="none" blocks until the deployment settles or the server's timeout expires (5 minutes by default), so call it once and use wait_for_outcome or diagnose_application to follow up rather than calling it again.
 
-Every call carries an idempotency key, returned in the answer. If you retry after a timeout, pass the same idempotency_key back so the retry is the same deployment rather than a second one.`
+Every call carries an idempotency key, returned in the answer. If you retry after a timeout, pass the same idempotency_key back so the retry is the same deployment rather than a second one.
+
+Pass reason to say why you are deploying. It is recorded in kelson's audit trail beside the action, which is what makes the deployment reviewable afterwards by someone who was not here.`
 
 type deployInput struct {
 	Project        string `json:"project" jsonschema:"the stored project name"`
@@ -33,6 +35,7 @@ type deployInput struct {
 	Image          string `json:"image,omitempty" jsonschema:"image reference to deploy; resolves a spec that builds from source"`
 	DryRun         string `json:"dry_run,omitempty" jsonschema:"one of render (default, previews and applies nothing), server (Kubernetes server-side dry-run), none (actually deploy)"`
 	IdempotencyKey string `json:"idempotency_key,omitempty" jsonschema:"reuse the key from a previous attempt so a retry is the same deployment, not a second one"`
+	Reason         string `json:"reason,omitempty" jsonschema:"why you are deploying, in one sentence; recorded in the audit trail beside the action"`
 }
 
 func deployTool(c *clients) tool {
@@ -66,13 +69,13 @@ func (c *clients) deployEnvironment(ctx context.Context, in deployInput) (*mcpsd
 		key = newIdempotencyKey()
 	}
 
-	stream, err := c.deploy.Deploy(ctx, connect.NewRequest(&kelsonv1alpha1.DeployRequest{
+	stream, err := c.deploy.Deploy(ctx, reasoned(connect.NewRequest(&kelsonv1alpha1.DeployRequest{
 		Spec:           specRef(in.Project),
 		Environment:    in.Environment,
 		Image:          in.Image,
 		DryRun:         dryRun,
 		IdempotencyKey: key,
-	}))
+	}), in.Reason))
 	if err != nil {
 		return nil, nil, c.fail(rpcDeploy, err)
 	}

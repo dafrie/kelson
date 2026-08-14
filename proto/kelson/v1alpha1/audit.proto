@@ -1,0 +1,211 @@
+// AuditService: what each principal actually did (issue #78, ADR-0026).
+//
+// # One trail, principal-typed
+//
+// This is the general audit log of issue #12 and the agent audit trail of #78
+// in one implementation. Every record names its principal and that principal's
+// type, so "what did the agents do" is a filter on one trail rather than a
+// second trail nobody would keep in sync. Distinguishing agent from human is
+// therefore a property of the data, not of the storage.
+//
+// # What is recorded, and what is not
+//
+// Mutations and refusals. Every mutating call leaves a record — allowed,
+// refused or failed — and every *refused* call of any class leaves one, because
+// a refusal is a security event and there are few of them. Allowed reads are
+// not recorded: a status poll changes nothing, and the volume would evict the
+// mutations the trail exists for from a bounded store (ADR-0026 §3). An
+// operator who needs read auditing points the server at an external sink; that
+// is the recorded way out, and it is not this schema's business.
+//
+// # The record points at the diff rather than carrying it
+//
+// `change.revision` names the entry in the environment's rendered history, from
+// which the exact manifests and any comparison against them can be
+// reconstructed with DeployService.History and the rollback preview. Beside it
+// is a bounded summary — counts, kinds touched, max risk — for a reader who
+// only wants the blast radius. Manifests are stored once, under a name, and a
+// second unbounded copy per record would exhaust the store in one deploy.
+//
+// # Reading the trail is administrative
+//
+// QueryAudit is filed under the admin operation class in kelson's RPC scope table,
+// beside AgentService. An agent credential cannot read it, whatever its scope:
+// the trail is what an operator uses to review what the agents did, and a
+// principal that can read its own audit trail can plan around it (ADR-0026 §5).
+//
+// # Export is this RPC, paged
+//
+// There is no separate export RPC. `kelson audit --export jsonl` pages QueryAudit to
+// exhaustion and writes one JSON object per line, so the filters, the bounds
+// and the truncation reporting have exactly one implementation.
+syntax = "proto3";
+
+package kelson.v1alpha1;
+
+option go_package = "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1;kelsonv1alpha1";
+
+// AuditOutcome is what became of one request. Three values rather than the two
+// an authorization decision has: "the caller was allowed and the thing failed
+// anyway" is the answer to "what did it actually do?" as often as either of the
+// others.
+enum AuditOutcome {
+  AUDIT_OUTCOME_UNSPECIFIED = 0;
+  // Authorized, and the handler returned without error.
+  AUDIT_OUTCOME_ALLOWED = 1;
+  // Authorization turned the request away; `code` says which refusal.
+  AUDIT_OUTCOME_REFUSED = 2;
+  // Authorized and then failed; `code` carries the failing plane's own code.
+  AUDIT_OUTCOME_FAILED = 3;
+}
+
+// AuditPrincipal is who acted.
+message AuditPrincipal {
+  // "agent", "human" or "anonymous".
+  string type = 1;
+  // The agent identity's name, or a logged-in human's display name. Empty for
+  // a bearer-password caller, because a shared password names nobody.
+  string name = 2;
+}
+
+// AuditTarget is the (project, environment) the request acted on, as kelson's
+// scope table derived it from the request. Empty where the request named none.
+message AuditTarget {
+  string project = 1;
+  string environment = 2;
+}
+
+// AuditChange is the resulting-diff half of #78's acceptance criterion,
+// bounded.
+message AuditChange {
+  // What the operation recorded, empty when it recorded nothing. For a deploy
+  // or a rollback it is the delivery revision the environment's rendered
+  // history is keyed by — the pointer from which the exact manifests and any
+  // comparison against them can be reconstructed. For a spec write (PutSpec,
+  // Promote) it is the spec store's version.
+  string revision = 1;
+  // How to read the counts: "diff" when they come from a computed comparison,
+  // "rendered" when no comparison was computed and they describe the set that
+  // was applied. The two are different claims and a record must not blur them.
+  string source = 2;
+  int32 added = 3;
+  int32 modified = 4;
+  int32 removed = 5;
+  // How many resources the applied set held (source="rendered").
+  int32 resources = 6;
+  // Kubernetes kinds touched, sorted and deduplicated, capped with a trailing
+  // "…[truncated]" entry when there were more.
+  repeated string kinds = 7;
+  // diff.Summary.MaxRisk, where a comparison was computed.
+  string max_risk = 8;
+  // What the change was computed against or restored from: the source revision
+  // of a promotion, the revision a rollback returned to.
+  string from_revision = 9;
+}
+
+// AuditRecord is one durable record of one request.
+message AuditRecord {
+  // Sortable, unique, and the pagination cursor: `<unix millis>-<8 hex>`.
+  string id = 1;
+  int64 time_unix_ms = 2;
+
+  AuditPrincipal principal = 3;
+  // The credential's scope at the moment it acted, as the one-line summary
+  // kelson's refusal messages use
+  // ("projects=shop environments=development operations=mutate"). Recorded
+  // rather than looked up later: an identity can be re-issued, and a record
+  // must say what was true then.
+  string scope = 4;
+
+  // The full ConnectRPC procedure, "/kelson.v1alpha1.DeployService/Deploy".
+  string procedure = 5;
+  // The operation class the scope table files the procedure under: "read",
+  // "mutate" or "admin".
+  string operation = 6;
+  AuditTarget target = 7;
+
+  AuditOutcome outcome = 8;
+  // The refusal or failure code, empty on an allowed outcome. It is the same
+  // vocabulary every other kelson error uses ("auth/out-of-scope",
+  // "delivery/apply-failed"), so an agent branches on one taxonomy.
+  string code = 9;
+  // Bounded, redaction-scrubbed free text about a refusal or failure.
+  string message = 10;
+
+  // The dry-run rung the request asked for: "none", "render" or "server".
+  string dry_run = 11;
+  // What the dry run found, bounded, when the handler computed it.
+  string dry_run_summary = 12;
+
+  AuditChange change = 13;
+
+  // The caller's own statement of why, from the `Kelson-Reason` request header
+  // or a mutating MCP tool's `reason` parameter. Absent when the caller
+  // supplied none — kelson never invents one.
+  string reason = 14;
+
+  // The idempotency key the call carried (issue #71), tying a retry to the
+  // operation it repeats.
+  string idempotency_key = 15;
+}
+
+// AuditWindow is what the answer could not have covered. It rides on every
+// response, always populated: a result that does not say where the store's
+// memory ends is a result a reader will over-trust.
+message AuditWindow {
+  // True only when the queried range lies inside the retention window and no
+  // record inside it was dropped.
+  bool complete = 1;
+  // How many records the store dropped from the days this query covered.
+  int32 dropped = 2;
+  // Start of the oldest day the store keeps.
+  int64 retained_from_unix_ms = 3;
+  // Retention in whole days.
+  int32 retain_days = 4;
+  // Time of the oldest record present in the days this query covered.
+  int64 oldest_recorded_unix_ms = 5;
+  // Why `complete` is false, in words. Empty when it is true.
+  string reason = 6;
+}
+
+// QueryAuditRequest filters the trail. Every field is optional; an empty one
+// means "any".
+message QueryAuditRequest {
+  // Exact agent identity or human display name.
+  string principal = 1;
+  // "agent", "human" or "anonymous".
+  string principal_type = 2;
+  string project = 3;
+  string environment = 4;
+  // "allowed", "refused" or "failed". An unrecognised value is refused rather
+  // than matched against nothing.
+  AuditOutcome outcome = 5;
+  // Case-insensitive substring of the procedure, so "Deploy" finds
+  // /kelson.v1alpha1.DeployService/Deploy.
+  string procedure = 6;
+  // Inclusive lower bound and exclusive upper bound on record time. Zero
+  // leaves that end open, which the response's window then reports as a range
+  // the store cannot promise to have covered.
+  int64 since_unix_ms = 7;
+  int64 until_unix_ms = 8;
+  // Page size. Zero selects the server default; above the server maximum is
+  // refused rather than clamped, so a caller that asked for ten thousand
+  // records learns it did not get them.
+  int32 page_size = 9;
+  // The `next_page_token` of a previous response.
+  string page_token = 10;
+}
+
+message QueryAuditResponse {
+  // Records, newest first.
+  repeated AuditRecord records = 1;
+  // Empty when this was the last page.
+  string next_page_token = 2;
+  AuditWindow window = 3;
+}
+
+service AuditService {
+  // QueryAudit returns audit records newest first, filtered and paged. It is
+  // administrative: an agent credential is refused whatever its scope.
+  rpc QueryAudit(QueryAuditRequest) returns (QueryAuditResponse);
+}

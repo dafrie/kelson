@@ -379,6 +379,19 @@ var rpcScopes = map[string]methodScope{
 		Operation: serverstate.OpAdmin,
 		Reach:     reachClusterWide,
 	},
+
+	// AuditService is administrative for the same reason AgentService is, with
+	// a different argument (issue #78, ADR-0026 §5). An agent that could read
+	// the audit trail could read what the reviewer will see and plan around it,
+	// and it could read every other principal's actions besides its own — the
+	// trail spans every project, so there is no scoped version of the answer
+	// that would be safe to serve. The default is therefore no, and the way an
+	// agent legitimately explains itself is the reason field it supplies on the
+	// way in, not a read on the way out.
+	kelsonv1alpha1connect.AuditServiceQueryAuditProcedure: {
+		Operation: serverstate.OpAdmin,
+		Reach:     reachClusterWide,
+	},
 }
 
 // specRef turns a stored-spec reference into a target. An inline spec has no

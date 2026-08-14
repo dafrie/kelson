@@ -28,6 +28,7 @@ type rollbackInput struct {
 	ToRevision     string `json:"to_revision,omitempty" jsonschema:"the revision to restore; omitted restores the revision before the current one"`
 	Execute        bool   `json:"execute,omitempty" jsonschema:"false (default) previews only; true applies the rollback"`
 	IdempotencyKey string `json:"idempotency_key,omitempty" jsonschema:"reuse the key from a previous attempt so a retry is the same rollback, not a second one"`
+	Reason         string `json:"reason,omitempty" jsonschema:"why you are rolling back, in one sentence; recorded in the audit trail beside the action"`
 }
 
 func rollbackTool(c *clients) tool {
@@ -56,13 +57,13 @@ func (c *clients) rollbackEnvironment(ctx context.Context, in rollbackInput) (*m
 		key = newIdempotencyKey()
 	}
 
-	stream, err := c.deploy.Rollback(ctx, connect.NewRequest(&kelsonv1alpha1.RollbackRequest{
+	stream, err := c.deploy.Rollback(ctx, reasoned(connect.NewRequest(&kelsonv1alpha1.RollbackRequest{
 		Spec:           specRef(in.Project),
 		Environment:    in.Environment,
 		ToRevision:     in.ToRevision,
 		DryRun:         dryRun,
 		IdempotencyKey: key,
-	}))
+	}), in.Reason))
 	if err != nil {
 		return nil, nil, c.fail(rpcRollback, err)
 	}

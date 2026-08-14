@@ -32,6 +32,10 @@ type setSecretInput struct {
 	Values      map[string]string `json:"values" jsonschema:"the keys to write, as key to value. Keys already in the Secret and not named here are preserved"`
 	Execute     bool              `json:"execute,omitempty" jsonschema:"false (default) validates and writes nothing; true writes the Secret"`
 	Namespace   string            `json:"namespace,omitempty" jsonschema:"override the derived <project>-<environment> namespace; needed only when the Environment sets spec.namespace"`
+	// Never put the value here. The reason is recorded in the audit trail; the
+	// values are not, and a reason that quoted one would be the leak this whole
+	// surface is built to prevent (issue #117).
+	Reason string `json:"reason,omitempty" jsonschema:"why you are writing this secret, in one sentence; recorded in the audit trail beside the action. Never include the value itself"`
 }
 
 func setSecretTool(c *clients) tool {
@@ -63,7 +67,7 @@ func (c *clients) setSecret(ctx context.Context, in setSecretInput) (*mcpsdk.Cal
 		dryRun = kelsonv1alpha1.DryRun_DRY_RUN_NONE
 	}
 
-	res, err := c.secrets.SetSecret(ctx, connect.NewRequest(&kelsonv1alpha1.SetSecretRequest{
+	res, err := c.secrets.SetSecret(ctx, reasoned(connect.NewRequest(&kelsonv1alpha1.SetSecretRequest{
 		Target: &kelsonv1alpha1.SecretTarget{
 			Project:     in.Project,
 			Environment: in.Environment,
@@ -72,7 +76,7 @@ func (c *clients) setSecret(ctx context.Context, in setSecretInput) (*mcpsdk.Cal
 		Name:   in.Name,
 		Values: in.Values,
 		DryRun: dryRun,
-	}))
+	}), in.Reason))
 	if err != nil {
 		// c.fail relays the server's structured error verbatim. The server
 		// scrubs every free-text field through the process-wide known-value

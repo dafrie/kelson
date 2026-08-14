@@ -37,6 +37,15 @@ import (
 // criterion. Revoking an agent cannot lock a person out because a person's
 // credential is never consulted here.
 //
+// # It is also where the audit trail is captured
+//
+// Because every request passes through here, this is where one durable audit
+// record per request is opened, stamped with the decision, and — after the
+// handler has run and enriched it — written (issue #78, ADR-0026; the machinery
+// is in audit.go). The refusal paths below therefore all funnel through
+// [authorizer.refuse], so a refusal cannot reach a caller without also reaching
+// the trail.
+//
 // # The target check and streaming
 //
 // The target lives in the request message, which for a server-streaming RPC
@@ -110,18 +119,23 @@ type authorizer struct {
 	now    func() time.Time
 	logger *slog.Logger
 	limits *limiter
+	// audit turns each decision into a durable record (issue #78, ADR-0026).
+	// It lives here because this is the one place every request passes through.
+	// A nil sink inside it makes every capture point a no-op, which is the
+	// pre-#78 posture exactly.
+	audit *auditor
 }
 
 var _ connect.Interceptor = (*authorizer)(nil)
 
-func newAuthorizer(now func() time.Time, logger *slog.Logger) *authorizer {
+func newAuthorizer(now func() time.Time, logger *slog.Logger, sink AuditSink) *authorizer {
 	if now == nil {
 		now = time.Now
 	}
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
 	}
-	return &authorizer{now: now, logger: logger, limits: newLimiter()}
+	return &authorizer{now: now, logger: logger, limits: newLimiter(), audit: newAuditor(sink, logger)}
 }
 
 // WrapUnary gates a unary RPC. The message is already decoded, so the whole
@@ -130,15 +144,21 @@ func (a *authorizer) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
 		p := principalOf(ctx)
 		procedure := req.Spec().Procedure
-		row, err := a.admit(p, procedure)
+		ctx, entry := a.audit.begin(ctx, p, procedure, req.Header())
+		row, err := a.admit(ctx, p, procedure)
 		if err != nil {
+			a.audit.finish(ctx, entry, err)
 			return nil, err
 		}
-		if err := a.checkTarget(p, procedure, row, req.Any()); err != nil {
+		entry.target(req.Any())
+		if err := a.checkTarget(ctx, p, procedure, row, req.Any()); err != nil {
+			a.audit.finish(ctx, entry, err)
 			return nil, err
 		}
 		a.record(p, procedure, "allowed", nil)
-		return next(ctx, req)
+		res, err := next(ctx, req)
+		a.audit.finish(ctx, entry, err)
+		return res, err
 	}
 }
 
@@ -148,24 +168,36 @@ func (a *authorizer) WrapStreamingHandler(next connect.StreamingHandlerFunc) con
 	return func(ctx context.Context, conn connect.StreamingHandlerConn) error {
 		p := principalOf(ctx)
 		procedure := conn.Spec().Procedure
-		row, err := a.admit(p, procedure)
+		ctx, entry := a.audit.begin(ctx, p, procedure, conn.RequestHeader())
+		row, err := a.admit(ctx, p, procedure)
 		if err != nil {
+			a.audit.finish(ctx, entry, err)
 			return err
 		}
+		// The connection is wrapped whatever the principal is. For an agent
+		// the wrapper carries the scope check; for every caller it carries the
+		// target the audit record needs, which is only knowable once the
+		// request message has been decoded — including on a refusal, so a
+		// refused record still says what the caller tried to touch.
 		if p.Type != PrincipalAgent {
 			a.record(p, procedure, "allowed", nil)
-			return next(ctx, conn)
 		}
-		return next(ctx, &scopedConn{
+		err = next(ctx, &scopedConn{
 			StreamingHandlerConn: conn,
 			check: func(msg any) error {
-				if err := a.checkTarget(p, procedure, row, msg); err != nil {
+				entry.target(msg)
+				if p.Type != PrincipalAgent {
+					return nil
+				}
+				if err := a.checkTarget(ctx, p, procedure, row, msg); err != nil {
 					return err
 				}
 				a.record(p, procedure, "allowed", nil)
 				return nil
 			},
 		})
+		a.audit.finish(ctx, entry, err)
+		return err
 	}
 }
 
@@ -198,20 +230,18 @@ func (c *scopedConn) Receive(msg any) error {
 
 // admit runs every check that does not need the request message, and records
 // the outcome. It returns the table row so the caller can finish the decision.
-func (a *authorizer) admit(p Principal, procedure string) (methodScope, error) {
+func (a *authorizer) admit(ctx context.Context, p Principal, procedure string) (methodScope, error) {
 	row, ok := scopeFor(procedure)
 	if !ok {
 		// Fail closed, for humans too. An RPC with no row is an RPC nobody
 		// decided the rules for, and the honest answer to "may I?" is no.
-		err := denied(authzError{
+		return methodScope{}, a.refuse(ctx, p, procedure, "unmapped", denied, authzError{
 			Code:     ErrUnmappedMethod,
 			Resource: procedure,
 			Message:  "this method has no entry in kelson's RPC scope table, so the server cannot say who may call it",
 			Remediation: "add a row to rpcScopes in internal/api/scope.go naming the method's operation class and reach; " +
 				"the coverage test in scope_coverage_test.go fails until it is there (issue #74)",
 		})
-		a.record(p, procedure, "unmapped", err)
-		return methodScope{}, err
 	}
 
 	if p.Type != PrincipalAgent {
@@ -223,62 +253,53 @@ func (a *authorizer) admit(p Principal, procedure string) (methodScope, error) {
 	now := a.now()
 	switch {
 	case agent.Revoked:
-		err := denied(authzError{
+		return methodScope{}, a.refuse(ctx, p, procedure, "revoked", denied, authzError{
 			Code:        ErrCredentialRevoked,
 			Resource:    "agent/" + agent.Name,
 			Message:     fmt.Sprintf("agent identity %q was revoked at %s", agent.Name, agent.RevokedAt.Format(time.RFC3339)),
 			Remediation: "ask an operator for a new identity: `kelson agent create`. Revocation is immediate and cannot be undone",
 		})
-		a.record(p, procedure, "revoked", err)
-		return methodScope{}, err
 	case agent.Expired(now):
-		err := denied(authzError{
+		return methodScope{}, a.refuse(ctx, p, procedure, "expired", denied, authzError{
 			Code:        ErrCredentialExpired,
 			Resource:    "agent/" + agent.Name,
 			Message:     fmt.Sprintf("the credential for agent identity %q expired at %s", agent.Name, agent.Expires.Format(time.RFC3339)),
 			Remediation: "rotate: create the successor identity and revoke this one (`kelson agent create` then `kelson agent revoke`)",
 		})
-		a.record(p, procedure, "expired", err)
-		return methodScope{}, err
 	case row.Operation == serverstate.OpAdmin:
-		err := denied(authzError{
+		return methodScope{}, a.refuse(ctx, p, procedure, "human-only", denied, authzError{
 			Code:     ErrHumanOnly,
 			Resource: procedure,
-			Message:  "issuing, listing and revoking agent identities is reserved to a human principal",
-			Remediation: "run `kelson agent create|list|revoke` with a kube context, or call AgentService with the server password; " +
-				"an agent that could mint an agent could mint one wider than itself (ADR-0024)",
+			Message:  "issuing agent identities and reading the audit trail are reserved to a human principal",
+			Remediation: "run `kelson agent create|list|revoke` or `kelson audit` with a kube context, or call the service with the " +
+				"server password; an agent that could mint an agent could mint one wider than itself, and an agent that could read " +
+				"the audit trail could plan around it (ADR-0024 §5, ADR-0026 §5)",
 		})
-		a.record(p, procedure, "human-only", err)
-		return methodScope{}, err
 	case !agent.Scope.Allows(row.Operation):
-		err := denied(authzError{
+		return methodScope{}, a.refuse(ctx, p, procedure, "out-of-scope", denied, authzError{
 			Code:     ErrOutOfScope,
 			Resource: procedure,
 			Message: fmt.Sprintf("agent identity %q is not granted the %s operation class (scope: %s)",
 				agent.Name, row.Operation, describeScope(agent.Scope)),
 			Remediation: "issue a credential granting that class, or use a method the identity's classes cover",
 		})
-		a.record(p, procedure, "out-of-scope", err)
-		return methodScope{}, err
 	}
 
 	if !a.limits.allow(agent.Name, agent.Limit.RequestsPerMinute, agent.Limit.Burst, now) {
-		err := exhausted(authzError{
+		return methodScope{}, a.refuse(ctx, p, procedure, "rate-limited", exhausted, authzError{
 			Code:     ErrRateLimited,
 			Resource: "agent/" + agent.Name,
 			Message: fmt.Sprintf("agent identity %q is over its request budget of %d/minute (burst %d)",
 				agent.Name, agent.Limit.RequestsPerMinute, agent.Limit.Burst),
 			Remediation: "back off and retry; the budget refills continuously. An agent that needs a larger one is re-issued with a higher --rate",
 		})
-		a.record(p, procedure, "rate-limited", err)
-		return methodScope{}, err
 	}
 	return row, nil
 }
 
 // checkTarget is the scope check that needs the request message. It is a no-op
 // for anything but an agent — see admit.
-func (a *authorizer) checkTarget(p Principal, procedure string, row methodScope, msg any) error {
+func (a *authorizer) checkTarget(ctx context.Context, p Principal, procedure string, row methodScope, msg any) error {
 	if p.Type != PrincipalAgent {
 		return nil
 	}
@@ -290,15 +311,13 @@ func (a *authorizer) checkTarget(p Principal, procedure string, row methodScope,
 		// No project is named in the question or in the answer.
 	case reachEveryProject:
 		if restricted {
-			err := denied(authzError{
+			return a.refuse(ctx, p, procedure, "out-of-scope", denied, authzError{
 				Code:     ErrOutOfScope,
 				Resource: procedure,
 				Message: fmt.Sprintf("%s spans every project, and agent identity %q is scoped to %s",
 					procedure, agent.Name, describeScope(agent.Scope)),
 				Remediation: "call the project-addressed method instead (GetSpec names one project), or use an unscoped credential",
 			})
-			a.record(p, procedure, "out-of-scope", err)
-			return err
 		}
 	case reachNamespace:
 		if !restricted {
@@ -310,10 +329,10 @@ func (a *authorizer) checkTarget(p Principal, procedure string, row methodScope,
 			namespace, ok = row.Namespace(msg)
 		}
 		if !ok {
-			return a.unknownTarget(p, procedure, "the request names no namespace")
+			return a.unknownTarget(ctx, p, procedure, "the request names no namespace")
 		}
 		if !allowsAny(agent.Scope, namespaceTargets(namespace)) {
-			err := denied(authzError{
+			return a.refuse(ctx, p, procedure, "out-of-scope", denied, authzError{
 				Code:     ErrOutOfScope,
 				Resource: procedure,
 				Message: fmt.Sprintf("namespace %q is not one agent identity %q may read (scope: %s)",
@@ -321,8 +340,6 @@ func (a *authorizer) checkTarget(p Principal, procedure string, row methodScope,
 				Remediation: "a scoped credential reaches a namespace only through the renderer's `<project>-<environment>` convention; " +
 					"name a namespace of a project and environment the identity is scoped to",
 			})
-			a.record(p, procedure, "out-of-scope", err)
-			return err
 		}
 	case reachTargeted:
 		if !restricted {
@@ -334,11 +351,11 @@ func (a *authorizer) checkTarget(p Principal, procedure string, row methodScope,
 			targets, ok = row.Targets(msg)
 		}
 		if !ok || len(targets) == 0 {
-			return a.unknownTarget(p, procedure,
+			return a.unknownTarget(ctx, p, procedure,
 				"the request does not name the project and environment it acts on (an inline spec carries them inside the document)")
 		}
 		for _, t := range targets {
-			if err := a.allows(p, procedure, t); err != nil {
+			if err := a.allows(ctx, p, procedure, t); err != nil {
 				return err
 			}
 		}
@@ -349,7 +366,7 @@ func (a *authorizer) checkTarget(p Principal, procedure string, row methodScope,
 // allows is the per-target check. An environment the request did not name is
 // refused for an environment-restricted credential rather than read as "all of
 // them", which is the difference between a scope and a suggestion.
-func (a *authorizer) allows(p Principal, procedure string, t scopeTarget) error {
+func (a *authorizer) allows(ctx context.Context, p Principal, procedure string, t scopeTarget) error {
 	scope := p.Agent.Scope
 	inScope := scope.AllowsProject(t.Project) &&
 		(t.Environment != "" || len(scope.Environments) == 0) &&
@@ -357,15 +374,13 @@ func (a *authorizer) allows(p Principal, procedure string, t scopeTarget) error 
 	if inScope {
 		return nil
 	}
-	err := denied(authzError{
+	return a.refuse(ctx, p, procedure, "out-of-scope", denied, authzError{
 		Code:     ErrOutOfScope,
 		Resource: procedure,
 		Message: fmt.Sprintf("agent identity %q may not act on %s (scope: %s)",
 			p.Agent.Name, t.String(), describeScope(scope)),
 		Remediation: "name a project and environment the identity is scoped to, or ask an operator for a credential that covers this one",
 	})
-	a.record(p, procedure, "out-of-scope", err)
-	return err
 }
 
 // allowsAny reports whether any candidate target is in scope. It is the
@@ -380,8 +395,8 @@ func allowsAny(scope serverstate.Scope, targets []scopeTarget) bool {
 	return false
 }
 
-func (a *authorizer) unknownTarget(p Principal, procedure, why string) error {
-	err := denied(authzError{
+func (a *authorizer) unknownTarget(ctx context.Context, p Principal, procedure, why string) error {
+	return a.refuse(ctx, p, procedure, "target-unknown", denied, authzError{
 		Code:     ErrTargetUnknown,
 		Resource: procedure,
 		Message: fmt.Sprintf("%s: %s, so a credential scoped to %s cannot be checked against it",
@@ -389,15 +404,30 @@ func (a *authorizer) unknownTarget(p Principal, procedure, why string) error {
 		Remediation: "address a stored spec by project name rather than inline, name the environment explicitly, " +
 			"or use a credential that is not scoped to particular projects or environments",
 	})
-	a.record(p, procedure, "target-unknown", err)
+}
+
+// refuse is the single exit for every authorization failure: it builds the
+// wire refusal, writes the attribution line and stamps the code onto the
+// request's audit record, so the error the caller receives and the record the
+// operator later reads name the same thing (issue #78).
+//
+// `as` is denied or exhausted — which ConnectRPC code the refusal travels as.
+func (a *authorizer) refuse(ctx context.Context, p Principal, procedure, outcome string, as func(authzError) error, e authzError) error {
+	err := as(e)
+	a.record(p, procedure, outcome, err)
+	auditFrom(ctx).refuse(e)
 	return err
 }
 
-// record is the audit attribution seam (#78). Every authenticated request that
-// reaches the API leaves one line naming the principal, its type, the method
-// and the outcome — which is the minimum an audit trail needs and the maximum
-// this issue builds. It deliberately logs no request payload: the one RPC that
-// carries secret values would put them here (issue #117).
+// record writes the attribution line: every authenticated request that reaches
+// the API leaves one naming the principal, its type, the method and the
+// outcome (issue #74).
+//
+// It is the volatile half. The durable half is the audit record (#78,
+// audit.go), and the two are deliberately both kept: a log line survives a
+// server with no audit sink and reaches whatever collects stderr, while a
+// record survives a restart and can be queried. Neither logs a request payload:
+// the one RPC that carries secret values would put them here (issue #117).
 func (a *authorizer) record(p Principal, procedure, outcome string, err error) {
 	attrs := []any{
 		slog.String("principal", p.Subject()),
