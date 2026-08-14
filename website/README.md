@@ -18,14 +18,14 @@ Node >= 20 (`engines` in `package.json`). Dependencies are pinned to exact versi
 ## Deployment
 
 `.github/workflows/docs.yml` builds the site on every push and PR that touches `docs/`,
-`website/`, or the workflow itself. On push to `main` (and on manual dispatch) it also publishes
-`website/build` to the `gh-pages` branch, which GitHub Pages serves at
-<https://dafrie.github.io/kelson/>. PR builds only validate — they never publish.
+`website/`, or the workflow itself. On push to `main` (and on manual dispatch) it also deploys
+the build to GitHub Pages at <https://dafrie.github.io/kelson/> via `actions/deploy-pages`.
+PR builds only validate — they never publish.
 
-It publishes to a branch rather than using `actions/deploy-pages` because creating the Pages site
-through the API needs repo-admin rights the workflow token doesn't have. One manual step remains,
-once, and it takes an admin: Settings → Pages → Source: "Deploy from a branch" → `gh-pages` /
-`/ (root)`. After that, every publish to `gh-pages` goes live automatically.
+This needs the repository's Pages source set to "GitHub Actions" (Settings → Pages), which an
+admin did on 2026-08-14. That setting is the one thing the workflow token cannot manage itself:
+creating or reconfiguring the Pages site through the API needs repo-admin rights. A short-lived
+`gh-pages`-branch setup from the same day was replaced by this flow and the branch deleted.
 
 ## The content lives in `../docs`, not here
 
