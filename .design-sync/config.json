@@ -1,0 +1,41 @@
+{
+  "projectId": "a2cba098-4499-4c58-b7cc-f198668ef934",
+  "shape": "package",
+  "readmeHeader": ".design-sync/conventions.md",
+  "pkg": "kelson-ui",
+  "globalName": "KelsonUI",
+  "srcDir": "src",
+  "entry": "ui/design-sync.entry.ts",
+  "tsconfig": "tsconfig.json",
+  "extraFonts": [
+    "node_modules/@fontsource/space-grotesk/400.css",
+    "node_modules/@fontsource/space-grotesk/500.css",
+    "node_modules/@fontsource/space-grotesk/600.css",
+    "node_modules/@fontsource/ibm-plex-mono/400.css",
+    "node_modules/@fontsource/ibm-plex-mono/500.css"
+  ],
+  "extraEntries": ["../.design-sync/preview-support.tsx"],
+  "provider": { "component": "PreviewProvider" },
+  "overrides": {
+    "DiffView": { "cardMode": "column" },
+    "EnvValueFields": { "cardMode": "column" }
+  },
+  "componentSrcMap": {
+    "AppShell": "src/components/AppShell.tsx",
+    "StatusPill": "src/components/StatusPill.tsx",
+    "ErrorPanel": "src/components/ErrorPanel.tsx",
+    "Disclosure": "src/components/Disclosure.tsx",
+    "YamlBlock": "src/components/Disclosure.tsx",
+    "LiveIndicator": "src/components/LiveIndicator.tsx",
+    "ThemeToggle": "src/components/ThemeToggle.tsx",
+    "Copyable": "src/components/Copyable.tsx",
+    "KelsonMark": "src/components/KelsonMark.tsx",
+    "EnvValueFields": "src/components/EnvValueFields.tsx",
+    "LoadingState": "src/components/States.tsx",
+    "EmptyState": "src/components/States.tsx",
+    "ErrorState": "src/components/States.tsx",
+    "ServerUnreachableState": "src/components/States.tsx",
+    "PhaseRail": "src/deploy/PhaseRail.tsx",
+    "DiffView": "src/diff/DiffView.tsx"
+  }
+}
