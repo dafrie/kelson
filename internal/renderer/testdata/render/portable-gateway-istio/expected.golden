@@ -19,12 +19,12 @@ metadata:
   namespace: portable-production
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: web
+    kelson.dev/component: web
     kelson.dev/environment: production
     kelson.dev/project: portable
   annotations:
     kelson.dev/renderer-version: 0.2.0
-    kelson.dev/spec-hash: sha256:0545c0792f046e0c9a009f6a289a89e7e03a8c74c20b6030ac25cd18167fd78a
+    kelson.dev/spec-hash: sha256:575d663d975388745e089a40211fbe8adbbb99a5394dcbcea88c9968d410adad
 ---
 apiVersion: v1
 kind: Service
@@ -33,16 +33,16 @@ metadata:
   namespace: portable-production
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: web
+    kelson.dev/component: web
     kelson.dev/environment: production
     kelson.dev/project: portable
   annotations:
     kelson.dev/renderer-version: 0.2.0
-    kelson.dev/spec-hash: sha256:0545c0792f046e0c9a009f6a289a89e7e03a8c74c20b6030ac25cd18167fd78a
+    kelson.dev/spec-hash: sha256:575d663d975388745e089a40211fbe8adbbb99a5394dcbcea88c9968d410adad
 spec:
   selector:
     kelson.dev/project: portable
-    kelson.dev/application: web
+    kelson.dev/component: web
   ports:
     - name: http
       port: 8080
@@ -55,23 +55,23 @@ metadata:
   namespace: portable-production
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: web
+    kelson.dev/component: web
     kelson.dev/environment: production
     kelson.dev/project: portable
   annotations:
     kelson.dev/renderer-version: 0.2.0
-    kelson.dev/spec-hash: sha256:0545c0792f046e0c9a009f6a289a89e7e03a8c74c20b6030ac25cd18167fd78a
+    kelson.dev/spec-hash: sha256:575d663d975388745e089a40211fbe8adbbb99a5394dcbcea88c9968d410adad
 spec:
   replicas: 1
   selector:
     matchLabels:
       kelson.dev/project: portable
-      kelson.dev/application: web
+      kelson.dev/component: web
   template:
     metadata:
       labels:
         app.kubernetes.io/managed-by: kelson
-        kelson.dev/application: web
+        kelson.dev/component: web
         kelson.dev/environment: production
         kelson.dev/project: portable
     spec:
@@ -101,12 +101,12 @@ metadata:
   namespace: portable-production
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: web
+    kelson.dev/component: web
     kelson.dev/environment: production
     kelson.dev/project: portable
   annotations:
     kelson.dev/renderer-version: 0.2.0
-    kelson.dev/spec-hash: sha256:0545c0792f046e0c9a009f6a289a89e7e03a8c74c20b6030ac25cd18167fd78a
+    kelson.dev/spec-hash: sha256:575d663d975388745e089a40211fbe8adbbb99a5394dcbcea88c9968d410adad
 spec:
   parentRefs:
     - name: istio

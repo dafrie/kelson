@@ -38,7 +38,7 @@ func baseRequest() build.Request {
 	return build.Request{
 		Project:     testProject,
 		Environment: testEnv,
-		Application: testApp,
+		Component:   testApp,
 		Image:       testImage,
 		Tag:         "deadbeefabcd1234",
 		Revision:    "deadbeefabcd1234cafe0000",
@@ -232,7 +232,7 @@ func TestWorkloadRequiresImageAndNamespace(t *testing.T) {
 }
 
 // TestWorkloadJobNameIsDNS1123Safe guards the name mangling: the Job name is
-// a legal Kubernetes object name derived from project/application/revision.
+// a legal Kubernetes object name derived from project/component/revision.
 func TestWorkloadJobNameIsDNS1123Safe(t *testing.T) {
 	req := baseRequest()
 	name := workloadFor(t, req, Config{Namespace: testNS}).Metadata.Name
@@ -240,7 +240,7 @@ func TestWorkloadJobNameIsDNS1123Safe(t *testing.T) {
 		t.Fatalf("Job name %q is not DNS-1123 safe", name)
 	}
 	if !strings.HasPrefix(name, "build-shop-checkout-") {
-		t.Fatalf("Job name %q does not derive from project/application", name)
+		t.Fatalf("Job name %q does not derive from project/component", name)
 	}
 	if !strings.Contains(name, "deadbeef") {
 		t.Fatalf("Job name %q should carry a short source revision", name)

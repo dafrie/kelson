@@ -117,7 +117,7 @@ func TestThePasswordRidesOnEveryCall(t *testing.T) {
 		},
 	}
 	h := startWith(t, fake, "hunter2")
-	h.call(t, "list_applications", map[string]any{})
+	h.call(t, "list_components", map[string]any{})
 
 	events := kelsonv1alpha1connect.NewEventServiceClient(h.client, h.address, bearerOptions("hunter2")...)
 	stream, err := events.Watch(context.Background(), connect.NewRequest(&kelsonv1alpha1.WatchRequest{
@@ -153,7 +153,7 @@ func TestNoPasswordSendsNoHeader(t *testing.T) {
 		},
 	}
 	h := start(t, fake)
-	h.call(t, "list_applications", map[string]any{})
+	h.call(t, "list_components", map[string]any{})
 
 	for i, got := range fake.credentials() {
 		if got != "" {

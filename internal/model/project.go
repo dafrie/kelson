@@ -328,7 +328,7 @@ type ResourceList struct {
 }
 
 // ServicePreset is the topology of a data component. kelson owns the
-// application-facing abstraction; the topology itself is delegated to
+// component-facing abstraction; the topology itself is delegated to
 // operators (ADR-0005, ADR-0007).
 type ServicePreset string
 

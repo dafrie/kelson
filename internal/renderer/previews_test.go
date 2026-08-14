@@ -11,7 +11,7 @@ import (
 
 // PR previews (ADR-0017). The rendered shapes are pinned by the golden fixtures
 // under testdata/render/previews-*; these tests pin what a golden file cannot
-// hold — the delivery-mode gate, the boundary that keeps application manifests
+// hold — the delivery-mode gate, the boundary that keeps component manifests
 // out of the template, the name cap, and the fact that the template string is
 // the same bytes every time.
 
@@ -132,11 +132,11 @@ func TestPreviewsPairIsTheWholeInventory(t *testing.T) {
 	}
 }
 
-// TestPreviewTemplateCarriesNoApplicationManifests is ADR-0016 decision 5
+// TestPreviewTemplateCarriesNoComponentManifests is ADR-0016 decision 5
 // asserted mechanically. The template instantiates an OCIRepository and a
 // Kustomization and nothing else; the day a Deployment appears in it,
 // artifact-per-PR has failed rather than grown, and this test is the alarm.
-func TestPreviewTemplateCarriesNoApplicationManifests(t *testing.T) {
+func TestPreviewTemplateCarriesNoComponentManifests(t *testing.T) {
 	tmpl := renderedTemplate(t, previewsFixture(githubPreviews()))
 	var kinds []string
 	for _, doc := range strings.Split(tmpl, "---\n") {

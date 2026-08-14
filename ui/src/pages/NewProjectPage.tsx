@@ -75,8 +75,10 @@ import {
  * ADR-0014's kind set is wider than the three this form derives — an `agent`,
  * a `postgres`, a `valkey` are components too — and none of them is offered
  * here on purpose. A kind picker on the first screen is the forty questions
- * arriving one step later; those components are written on the YAML tab, and
- * the edit form's byte guard sends any document containing one there.
+ * arriving one step later. What this creates is a project with its *first*
+ * component, and the second one — a worker, a nightly job, the database they
+ * share — is added afterwards from the project's own page (#214), which is
+ * where a kind picker costs nothing because the project already exists.
  *
  * Two things are deliberately not offered at all: secret backends, deployment
  * policy and multi-cluster targeting, because #141 has kelson reject those
@@ -218,6 +220,15 @@ export function NewProjectPage() {
             : "a name, an image, a port"}
         </span>
       </div>
+
+      {/* A project is a container of components (ADR-0014), and this screen
+          creates it with the first one. Saying so here is what keeps the next
+          component from looking like a second project. */}
+      <p className="k-note">
+        A project holds its components — a service, its worker, a nightly job,
+        the database they share. This creates the project and its first
+        component; the rest are added afterwards from the project's page.
+      </p>
 
       <form
         className="k-new"
@@ -410,9 +421,9 @@ export function NewProjectPage() {
               Secret backends, deployment policy and cluster targeting are not
               offered here: kelson validates those fields and renders nothing
               for them, so it rejects them outright (#141). They arrive with the
-              milestones that implement them. Data services do render now (#89);
-              declare them in the spec editor until this form grows a control
-              for them.
+              milestones that implement them. Data services do render now (#89)
+              and are one of the kinds “Add component” offers on the project's
+              page, once this project exists.
             </p>
           </div>
         </details>

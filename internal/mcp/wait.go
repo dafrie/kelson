@@ -18,11 +18,11 @@ READ-ONLY. Changes nothing — it watches the server's event stream.
 
 Returns as soon as one of these arrives: the environment transitions to Healthy or Rejected, a workload's health verdict turns to a failure, or the timeout expires. The answer is the triggering signal plus a bounded trail of the events seen on the way.
 
-Use it after deploy or rollback, or after any change you expect the cluster to react to: it is how "deploy, then react to what happened" costs one blocking call instead of a polling loop, and polling diagnose_application in a loop is the thing this tool exists to replace.
+Use it after deploy or rollback, or after any change you expect the cluster to react to: it is how "deploy, then react to what happened" costs one blocking call instead of a polling loop, and polling diagnose_component in a loop is the thing this tool exists to replace.
 
 Preconditions: the project must be stored and declare the environment. timeout_seconds defaults to 60 and is capped at 600.
 
-A timeout is an answer, not an error: it means nothing terminal happened in the window, and the environment may still be progressing. Follow up with diagnose_application.`
+A timeout is an answer, not an error: it means nothing terminal happened in the window, and the environment may still be progressing. Follow up with diagnose_component.`
 
 const (
 	defaultWaitSeconds = 60
@@ -102,13 +102,13 @@ func (c *clients) waitForOutcome(ctx context.Context, in waitForOutcomeInput) (*
 	case outcome != "":
 		r.addf("wait %s/%s: OUTCOME after %s — %s", in.Project, in.Environment, elapsed(started), outcome)
 	case timedOut:
-		r.addf("wait %s/%s: TIMEOUT after %ds — nothing terminal happened in the window. The environment may still be progressing; call diagnose_application to see where it is.",
+		r.addf("wait %s/%s: TIMEOUT after %ds — nothing terminal happened in the window. The environment may still be progressing; call diagnose_component to see where it is.",
 			in.Project, in.Environment, seconds)
 	default:
 		if err := stream.Err(); err != nil {
 			return nil, nil, c.fail(rpcWatch, err)
 		}
-		r.addf("wait %s/%s: STREAM ENDED after %s with no terminal signal. The server closes a watch whose scope matches nothing stored — check the project and environment names with list_applications.",
+		r.addf("wait %s/%s: STREAM ENDED after %s with no terminal signal. The server closes a watch whose scope matches nothing stored — check the project and environment names with list_components.",
 			in.Project, in.Environment, elapsed(started))
 	}
 

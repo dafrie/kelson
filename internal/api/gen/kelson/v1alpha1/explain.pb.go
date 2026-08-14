@@ -1,7 +1,7 @@
 // ExplainService: "why is this application degraded?" answered with
 // structured, causal data (issue #77, ADR-0023).
 //
-// It is the API capability, and `diagnose_application` in the MCP surface
+// It is the API capability, and `diagnose_component` in the MCP surface
 // (issue #73) is its task-shaped presentation. The structured-cause machinery
 // lives behind this service — in internal/explain — so the CLI, the UI and the
 // agent surface compose one answer instead of implementing three diagnoses.

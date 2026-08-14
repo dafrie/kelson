@@ -26,7 +26,7 @@ import (
 // capturing a cluster profile is not a task, but the version skew in it is
 // something an agent needs *while* diagnosing one, which is precisely when
 // ADR-0008 says to extend an existing tool rather than add a read tool beside
-// it. diagnose_application composes it (issue #57).
+// it. diagnose_component composes it (issue #57).
 type clients struct {
 	addr    string
 	spec    kelsonv1alpha1connect.SpecServiceClient

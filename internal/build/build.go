@@ -21,7 +21,7 @@ import (
 type Request struct {
 	Project     string
 	Environment string
-	Application string
+	Component   string
 
 	// SourceGit is the repository the build clones, from Project.source.git.
 	//

@@ -94,7 +94,7 @@ func TestAuthenticateRefusesEveryWrongCredentialTheSameWay(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	forged := token[:len(token)-1] + flipLast(token)
+	forged := flipSecret(token)
 	cases := map[string]string{
 		"a wrong secret for a real identity": forged,
 		"an identity that does not exist":    AgentTokenPrefix + "ghost." + strings.TrimPrefix(token, AgentTokenPrefix+testAgent+"."),
@@ -120,12 +120,20 @@ func TestAuthenticateRefusesEveryWrongCredentialTheSameWay(t *testing.T) {
 	}
 }
 
-func flipLast(token string) string {
-	last := token[len(token)-1]
-	if last == 'A' {
-		return "B"
+// flipSecret rewrites the first character of the token's secret, after the
+// last dot. The LAST character is the wrong one to forge with: the 32-byte
+// secret encodes to 43 base64url characters, so the final character carries
+// only four significant bits, and 'A' through 'D' all decode to the same
+// bytes — a "forgery" that differed only there authenticated legitimately
+// about one run in sixteen (#208). Every bit of the first character survives
+// decoding, so flipping it always yields a different secret.
+func flipSecret(token string) string {
+	i := strings.LastIndexByte(token, '.') + 1
+	flipped := byte('A')
+	if token[i] == 'A' {
+		flipped = 'B'
 	}
-	return "A"
+	return token[:i] + string(flipped) + token[i+1:]
 }
 
 // TestRevokeIsImmediateIdempotentAndLocal: the identity is marked dead in one

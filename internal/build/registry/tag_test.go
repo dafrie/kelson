@@ -12,49 +12,49 @@ var validDockerTag = regexp.MustCompile(`^[\w][\w.-]{0,127}$`)
 
 func TestTagValue(t *testing.T) {
 	cases := []struct {
-		name        string
-		project     string
-		application string
-		revision    string
-		want        string
+		name      string
+		project   string
+		component string
+		revision  string
+		want      string
 	}{
 		{
-			name:        "plain identifiers and a short sha",
-			project:     "checkout",
-			application: "web",
-			revision:    "abc1234",
-			want:        "checkout-web-abc1234",
+			name:      "plain identifiers and a short sha",
+			project:   "checkout",
+			component: "web",
+			revision:  "abc1234",
+			want:      "checkout-web-abc1234",
 		},
 		{
-			name:        "40-character sha passes through",
-			project:     "checkout",
-			application: "web",
-			revision:    "0123456789abcdef0123456789abcdef01234567",
-			want:        "checkout-web-0123456789abcdef0123456789abcdef01234567",
+			name:      "40-character sha passes through",
+			project:   "checkout",
+			component: "web",
+			revision:  "0123456789abcdef0123456789abcdef01234567",
+			want:      "checkout-web-0123456789abcdef0123456789abcdef01234567",
 		},
 		{
-			name:        "slash-heavy branch name collapses to dashes",
-			project:     "checkout",
-			application: "web",
-			revision:    "feature/payments-v2",
-			want:        "checkout-web-feature-payments-v2",
+			name:      "slash-heavy branch name collapses to dashes",
+			project:   "checkout",
+			component: "web",
+			revision:  "feature/payments-v2",
+			want:      "checkout-web-feature-payments-v2",
 		},
 		{
-			name:        "revision with at-sign and colon",
-			project:     "checkout",
-			application: "web",
-			revision:    "refs/heads/topic@2",
-			want:        "checkout-web-refs-heads-topic-2",
+			name:      "revision with at-sign and colon",
+			project:   "checkout",
+			component: "web",
+			revision:  "refs/heads/topic@2",
+			want:      "checkout-web-refs-heads-topic-2",
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := Tag(tc.project, tc.application, tc.revision)
+			got := Tag(tc.project, tc.component, tc.revision)
 			if got != tc.want {
-				t.Fatalf("Tag(%q,%q,%q) = %q, want %q", tc.project, tc.application, tc.revision, got, tc.want)
+				t.Fatalf("Tag(%q,%q,%q) = %q, want %q", tc.project, tc.component, tc.revision, got, tc.want)
 			}
 			if !validDockerTag.MatchString(got) {
-				t.Fatalf("Tag(%q,%q,%q) = %q is not a valid Docker tag", tc.project, tc.application, tc.revision, got)
+				t.Fatalf("Tag(%q,%q,%q) = %q is not a valid Docker tag", tc.project, tc.component, tc.revision, got)
 			}
 		})
 	}

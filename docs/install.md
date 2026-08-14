@@ -184,12 +184,12 @@ There are **separate layers**, and removing one never removes another. That sepa
 
 | Layer | What removes it | What it leaves |
 |---|---|---|
-| An application environment kelson deployed | `kelson uninstall --project <p> --env <e>` | everything in the namespace that is not kelson's |
-| The kelson server | `helm uninstall kelson -n kelson-system` | every application kelson deployed, still running |
+| An environment kelson deployed | `kelson uninstall --project <p> --env <e>` | everything in the namespace that is not kelson's |
+| The kelson server | `helm uninstall kelson -n kelson-system` | every workload kelson deployed, still running |
 | A platform component **kelson installed** | `kelson uninstall --component <name>` | every part of it kelson adopted rather than created |
 | A platform component kelson did **not** install | your own tooling — never kelson's | — |
 
-### The applications: `kelson uninstall`
+### The deployed workloads: `kelson uninstall`
 
 ```sh
 kelson uninstall --project checkout --env production
@@ -225,10 +225,23 @@ answer the prompt.
 workloads, so nothing is left holding a connection to a database being deleted. Then configuration.
 Then data, last, because it is the only irreversible step. Then the namespace.
 
-**The namespace is deleted only when kelson created it.** A deploy records that fact in
-`kelson.dev/namespace-ownership` — `created` when the apply brought the namespace into existence,
-`adopted` when it was already there. Deleting a namespace cascades to everything inside it, so an
-adopted namespace stays, and so does everything in it that is not kelson's.
+**The namespace is deleted only when kelson created it, and only when nothing of anyone else's is
+left in it.** A deploy records the first half in `kelson.dev/namespace-ownership` — `created` when
+the apply brought the namespace into existence, `adopted` when it was already there. Deleting a
+namespace cascades to everything inside it, so an adopted namespace stays, and so does everything in
+it that is not kelson's.
+
+The second half is there because a namespace belongs to an environment but its *name* does not: an
+Environment can set `spec.namespace`, so two projects — or two environments of one project — can be
+pointed at the same namespace, and the one that created it has no claim on what moved in afterwards.
+Before deleting a namespace kelson lists it for resources carrying
+`app.kubernetes.io/managed-by=kelson` with a different `kelson.dev/project` / `kelson.dev/environment`
+pair. If any are there, the namespace stays and the preview says what stayed and whose it is
+(`left behind: 2 resource(s) of grocery/production live here`). The check runs again immediately
+before the delete, so a deployment that arrives after the preview is not evicted by a stale plan, and
+it fails in one direction only: if kelson cannot read some kind or API group in that namespace it
+cannot rule the other tenant out, so the namespace stays. A namespace left behind costs one
+`kubectl delete namespace`; a tenant's database costs the database.
 
 Two flags for the two things people want kept:
 
@@ -253,6 +266,7 @@ Two flags for the two things people want kept:
   PVCs to CloudNativePG's own garbage collection. They are named in the preview because they are
   about to be destroyed; kelson does not delete them itself.
 - **Anything without kelson's provenance labels**, including Secrets kelson did not write.
+- **A namespace another deployment shares**, even one kelson created — see above.
 - **The server's stored specs and history.** Those are ConfigMaps in the server's namespace, and
   removing them is an authorization decision that does not exist yet. Today `kelson uninstall`
   removes the CLI's own local rendered history and says so; the API and UI uninstall is future work

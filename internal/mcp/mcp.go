@@ -157,7 +157,7 @@ func New(opts Options) *Server {
 		Name:    "kelson",
 		Title:   "kelson",
 		Version: version,
-		Description: "Deploy, diagnose and roll back applications on a Kubernetes cluster through kelson-server. " +
+		Description: "Deploy, diagnose and roll back workloads on a Kubernetes cluster through kelson-server. " +
 			"Tools are task-shaped compositions of kelson's v1alpha1 API; mutating tools all offer a dry run.",
 		WebsiteURL: "https://kelson.dev",
 	}, nil)

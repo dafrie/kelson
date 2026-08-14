@@ -108,7 +108,7 @@ func TestDeploySettledUnhealthy(t *testing.T) {
 						Code:        "delivery/timeout",
 						Resource:    "Deployment/hello-production/web",
 						Message:     "the deployment did not become healthy within 5m0s",
-						Remediation: "run diagnose_application to read the workload's logs",
+						Remediation: "run diagnose_component to read the workload's logs",
 					},
 				}},
 			})
@@ -122,7 +122,7 @@ func TestDeploySettledUnhealthy(t *testing.T) {
 		"stuck      true",
 		"direct/progress-deadline: web has not become ready",
 		"code: delivery/timeout",
-		"remediation: run diagnose_application to read the workload's logs",
+		"remediation: run diagnose_component to read the workload's logs",
 	)
 }
 

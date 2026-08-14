@@ -1,7 +1,7 @@
 package renderer_test
 
 // TestPortabilityClaim is the mechanical form of issue #56's acceptance
-// criterion: the SAME Application spec renders identically on two clusters,
+// criterion: the SAME Component spec renders identically on two clusters,
 // the only difference being what the cluster itself provides.
 //
 // Since #140 kelson renders Gateway API only, so the portability the claim is

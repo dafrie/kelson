@@ -75,9 +75,9 @@ func TestRenderNamespace(t *testing.T) {
 			t.Fatalf("label %s = %q, want %q", key, got, want)
 		}
 	}
-	// The Namespace spans every application, so claiming one would be wrong.
-	if got, ok := doc.Metadata.Labels["kelson.dev/application"]; ok {
-		t.Fatalf("Namespace must not claim an application, got %q", got)
+	// The Namespace spans every component, so claiming one would be wrong.
+	if got, ok := doc.Metadata.Labels["kelson.dev/component"]; ok {
+		t.Fatalf("Namespace must not claim a component, got %q", got)
 	}
 	if !strings.Contains(string(body), "kelson.dev/spec-hash: sha256:") {
 		t.Fatalf("Namespace is missing a spec-hash:\n%s", body)
@@ -85,7 +85,7 @@ func TestRenderNamespace(t *testing.T) {
 }
 
 // TestRenderNamespaceHashIsIndependent: the Namespace's spec-hash covers only
-// what the Namespace document is built from, so editing an application must not
+// what the Namespace document is built from, so editing a component must not
 // churn it.
 func TestRenderNamespaceHashIsIndependent(t *testing.T) {
 	before, err := namespaceHash(resolvedFixture())
@@ -99,7 +99,7 @@ func TestRenderNamespaceHashIsIndependent(t *testing.T) {
 		t.Fatalf("namespaceHash failed: %v", err)
 	}
 	if before != after {
-		t.Fatalf("an application edit changed the Namespace spec-hash: %s -> %s", before, after)
+		t.Fatalf("a component edit changed the Namespace spec-hash: %s -> %s", before, after)
 	}
 
 	renamed := resolvedFixture()

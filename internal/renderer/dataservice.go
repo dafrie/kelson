@@ -138,7 +138,7 @@ const valkeyEvictionPolicy = "allkeys-lru"
 // controller). Written into the `port` and `uri` bindings.
 const valkeyPort = "6379"
 
-// boundService is what an application binding resolves against.
+// boundService is what a component binding resolves against.
 //
 // A binding key is answered from exactly one of three maps, and which one it is
 // says something real about the service. `keys` are credentials: they resolve to
@@ -196,7 +196,7 @@ func scopedResourceName(project, environment, component string) string {
 // rendered Secret would put a credential in a manifest (ADR-0009).
 func appSecretName(cluster string) string { return cluster + "-app" }
 
-// serviceManifests renders one resolved service, and returns what applications
+// serviceManifests renders one resolved service, and returns what components
 // binding to it should reference.
 //
 // Every refusal here is structured and names the issue that would lift it. A
@@ -647,8 +647,8 @@ func dedicatedCluster(resolved *model.Resolved, svc *model.ResolvedDataService, 
 }
 
 // serviceProvenance stamps a service resource like every other manifest, with
-// one difference: no kelson.dev/application label. A data service is not owned
-// by one application — being bindable by several is the point.
+// one difference: no kelson.dev/component label. A data service is not owned
+// by one component — being bindable by several is the point.
 func serviceProvenance(resolved *model.Resolved, name, hash string) provenance {
 	return provenance{
 		project:      resolved.Project,
@@ -661,7 +661,7 @@ func serviceProvenance(resolved *model.Resolved, name, hash string) provenance {
 
 // serviceHash is the service's kelson.dev/spec-hash. It covers only what the
 // service's own manifest is built from, so an unrelated spec edit — a new
-// application, a changed image — leaves a database's annotation untouched.
+// component, a changed image — leaves a database's annotation untouched.
 func serviceHash(resolved *model.Resolved, svc *model.ResolvedDataService, name string) (string, error) {
 	return hashJSON(struct {
 		Project     string                    `json:"project"`
@@ -691,8 +691,8 @@ func bindingRef(app string, field string, b *model.ServiceBinding, services map[
 	svc, ok := services[b.Service]
 	if !ok {
 		return "", nil, &Error{
-			Code:        ErrBindingUnknownService,
-			Application: app,
+			Code:      ErrBindingUnknownService,
+			Component: app,
 			Message: "environment variable " + quoted(field) + " binds to service " + quoted(b.Service) +
 				", which the resolved spec does not declare",
 			Remediation: "declare it under spec.components on the Project with kind: postgres or kind: valkey, " +
@@ -707,16 +707,16 @@ func bindingRef(app string, field string, b *model.ServiceBinding, services map[
 	}
 	if why, ok := svc.withheld[b.Key]; ok {
 		return "", nil, &Error{
-			Code:        ErrBindingUnavailableKey,
-			Application: app,
+			Code:      ErrBindingUnavailableKey,
+			Component: app,
 			Message: "environment variable " + quoted(field) + " binds to key " + quoted(b.Key) +
 				" of service " + quoted(b.Service) + ", which kelson cannot supply for this service type",
 			Remediation: why,
 		}
 	}
 	return "", nil, &Error{
-		Code:        ErrBindingUnknownKey,
-		Application: app,
+		Code:      ErrBindingUnknownKey,
+		Component: app,
 		Message: "environment variable " + quoted(field) + " binds to key " + quoted(b.Key) +
 			" of service " + quoted(b.Service) + ", which kelson does not map to a connection detail",
 		Remediation: "use one of: " + strings.Join(svc.bindable(), ", "),

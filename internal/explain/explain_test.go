@@ -590,10 +590,10 @@ func TestLogSeamIsUsedWhenTheVerdictCarriesNoLogs(t *testing.T) {
 		Resource: "Deployment/" + namespace + "/web",
 	}}
 	asked := 0
-	in.Logs = func(_ context.Context, ns, application string, lines int) ([]observation.Line, error) {
+	in.Logs = func(_ context.Context, ns, component string, lines int) ([]observation.Line, error) {
 		asked++
-		if ns != namespace || application != "web" || lines != MaxLogLines {
-			return nil, fmt.Errorf("unexpected query %s/%s/%d", ns, application, lines)
+		if ns != namespace || component != "web" || lines != MaxLogLines {
+			return nil, fmt.Errorf("unexpected query %s/%s/%d", ns, component, lines)
 		}
 		return []observation.Line{{Pod: "web-1", Message: "fatal: DATABASE_URL is not set"}}, nil
 	}

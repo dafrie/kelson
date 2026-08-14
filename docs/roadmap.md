@@ -57,7 +57,7 @@ mitigation is detection plus an explicit nudge at the point of use rather than a
 | Milestone | Scope |
 |---|---|
 | **M0 · Foundations** ✓ | Repo scaffolding, CI, release tooling, docs site, governance. Includes the CI rule enforcing renderer purity. |
-| **M1 · Model & renderer** ✓ | Project/Application/Environment schemas, pure renderer, golden-file harness, `kelson render` |
+| **M1 · Model & renderer** ✓ | Project/Component/Environment schemas, pure renderer, golden-file harness, `kelson render` |
 | **M2 · Delivery adapters** ✓ | `direct` / `flux`, provenance, status correlation, eject-to-git (the `argocd` adapter it also delivered is removed per ADR-0012) |
 | **M3 · Preview, diff & dry-run** | Rendered diff, server-side dry-run diff, structured diff output |
 | **M4 · Build & deploy — the spine** | Source to image, registry, **wiring delivery/observation into `kelson deploy`/`status`/`rollback` (#135)**, logs, rollback, Gateway-API-only cleanup (#140), honest-spec gating (#141) |

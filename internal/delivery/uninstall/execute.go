@@ -72,6 +72,11 @@ func (r *Report) Bystanders() []Result {
 //     not delete must not strand everything after it; the failures are
 //     collected, reported per object, and returned as one structured error at
 //     the end so the exit code is honest.
+//
+// The Namespace gets one check more than everything else, because it is the one
+// delete that reaches resources this scope never selected: its live occupants
+// are read back too, and another kelson deployment living there refuses the
+// delete however the plan read it (issue #215).
 func (u *Uninstaller) Execute(ctx context.Context, plan *Plan) (*Report, error) {
 	if plan == nil {
 		return nil, delivery.ApplyFailed("(plan)", "",
@@ -122,9 +127,20 @@ func (u *Uninstaller) deleteTarget(ctx context.Context, scope Scope, t Target) R
 		return Result{Ref: t.Ref, Outcome: OutcomeLeft,
 			Detail: "it no longer carries " + scope.Selector() + ", so kelson does not claim it"}
 	}
-	if t.Tier == TierNamespace && live.GetAnnotations()[delivery.AnnNamespaceOwnership] != delivery.NamespaceOwnershipCreated {
-		return Result{Ref: t.Ref, Outcome: OutcomeLeft,
-			Detail: "the namespace no longer records that kelson created it, and deleting one takes everything inside it"}
+	if t.Tier == TierNamespace {
+		if live.GetAnnotations()[delivery.AnnNamespaceOwnership] != delivery.NamespaceOwnershipCreated {
+			return Result{Ref: t.Ref, Outcome: OutcomeLeft,
+				Detail: "the namespace no longer records that kelson created it, and deleting one takes everything inside it"}
+		}
+		// Who created the namespace is a fact about the past; who is living in
+		// it is a fact about now, and the plan's answer to it is as much a
+		// snapshot as everything else here. The window between the preview and
+		// this delete is exactly when another project's first apply lands, so
+		// the one deletion that cascades gets the question asked twice (issue
+		// #215).
+		if tenants := u.namespaceTenants(ctx, scope, t.Ref.Name); !tenants.clear() {
+			return Result{Ref: t.Ref, Outcome: OutcomeLeft, Detail: tenants.refusal()}
+		}
 	}
 
 	opts := metav1.DeleteOptions{}

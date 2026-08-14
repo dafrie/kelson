@@ -260,7 +260,7 @@ func padPhase(p delivery.Phase) string { return fmt.Sprintf("%-11s", p) }
 // --- the delivery plane seam ------------------------------------------------
 
 // deliveryTarget is what a delivery command resolved from its spec files: which
-// application model, in which mode, against which cluster and history.
+// component model, in which mode, against which cluster and history.
 type deliveryTarget struct {
 	kubeconfig  string
 	history     string
@@ -466,7 +466,7 @@ func resolveDeliveryTarget(in specInput, history, mode string, warn io.Writer) (
 // setSpecHash is the set-level provenance hash carried on ManifestSet.SpecHash:
 // a digest of the rendered bytes, in render order.
 //
-// The renderer stamps a per-application kelson.dev/spec-hash on each resource
+// The renderer stamps a per-component kelson.dev/spec-hash on each resource
 // and that is what status correlation compares; this one identifies the whole
 // delivered set, which is what history entries and the state machine's
 // correlation fallback need. It is deterministic for the same reason the

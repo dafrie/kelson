@@ -68,7 +68,7 @@ func namespaceManifest(resolved *model.Resolved) (Manifest, error) {
 
 // namespaceHash is the Namespace's kelson.dev/spec-hash. It covers only the
 // inputs the Namespace document is built from, so unrelated spec edits — a new
-// application, a changed image, different routing — leave it untouched.
+// component, a changed image, different routing — leave it untouched.
 func namespaceHash(resolved *model.Resolved) (string, error) {
 	return hashJSON(struct {
 		Project     string `json:"project"`

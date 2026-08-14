@@ -23,14 +23,16 @@ func (s *Server) QueryLogs(ctx context.Context, req *connect.Request[kelsonv1alp
 	}
 	msg := req.Msg
 	query := observation.Query{
-		Namespace:   msg.GetSelector().GetNamespace(),
-		Application: msg.GetSelector().GetApplication(),
-		Containers:  msg.GetSelector().GetContainers(),
-		Tail:        int(msg.GetTail()),
-		Since:       unixMillis(msg.GetSinceUnixMs()),
-		Until:       unixMillis(msg.GetUntilUnixMs()),
-		Around:      wireAround(msg.GetAround()),
-		Match:       wireMatch(msg.GetMatch()),
+		Namespace: msg.GetSelector().GetNamespace(),
+		// LogSelector.application is the v1alpha1 wire name for the component
+		// (ADR-0027 renamed the vocabulary and the label, not the wire field).
+		Component:  msg.GetSelector().GetApplication(),
+		Containers: msg.GetSelector().GetContainers(),
+		Tail:       int(msg.GetTail()),
+		Since:      unixMillis(msg.GetSinceUnixMs()),
+		Until:      unixMillis(msg.GetUntilUnixMs()),
+		Around:     wireAround(msg.GetAround()),
+		Match:      wireMatch(msg.GetMatch()),
 	}
 	result, err := s.logs.Query(ctx, query)
 	if err != nil {
@@ -48,19 +50,21 @@ func (s *Server) QueryLogs(ctx context.Context, req *connect.Request[kelsonv1alp
 // Loss is reported, never hidden: the engine counts what it dropped under
 // backpressure, and a dropped event goes out whenever that counter has moved
 // since the last line, so a client reads a gap as a gap rather than believing
-// the application went quiet.
+// the workload went quiet.
 func (s *Server) FollowLogs(ctx context.Context, req *connect.Request[kelsonv1alpha1.FollowLogsRequest], stream *connect.ServerStream[kelsonv1alpha1.FollowLogsResponse]) error {
 	if s.logs == nil {
 		return unimplemented("log following")
 	}
 	msg := req.Msg
 	query := observation.Query{
-		Namespace:   msg.GetSelector().GetNamespace(),
-		Application: msg.GetSelector().GetApplication(),
-		Containers:  msg.GetSelector().GetContainers(),
-		Since:       unixMillis(msg.GetSinceUnixMs()),
-		Match:       wireMatch(msg.GetMatch()),
-		Backlog:     int(msg.GetBacklog()),
+		Namespace: msg.GetSelector().GetNamespace(),
+		// LogSelector.application is the v1alpha1 wire name for the component
+		// (ADR-0027 renamed the vocabulary and the label, not the wire field).
+		Component:  msg.GetSelector().GetApplication(),
+		Containers: msg.GetSelector().GetContainers(),
+		Since:      unixMillis(msg.GetSinceUnixMs()),
+		Match:      wireMatch(msg.GetMatch()),
+		Backlog:    int(msg.GetBacklog()),
 	}
 	lines, follow, err := s.logs.Follow(ctx, query)
 	if err != nil {

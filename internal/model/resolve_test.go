@@ -90,7 +90,7 @@ spec:
   components:
     - name: web
       env:
-        LOG_LEVEL: trace          # environment override beats application (P1)
+        LOG_LEVEL: trace          # environment override beats component (P1)
 `)
 	r := resolve(p, e)
 	web := r.Components[0]
@@ -118,7 +118,7 @@ spec:
     git: {repo: r}
   components:
     - name: web
-      replicas: {min: 5}          # replaces the application's {2,4} whole (P2)
+      replicas: {min: 5}          # replaces the component's {2,4} whole (P2)
 `)
 	r := resolve(p, e)
 	web := r.Components[0]
@@ -126,14 +126,14 @@ spec:
 		t.Errorf("replicas = %+v, want {Min:5} — environment replaces whole, no deep merge", web.Replicas)
 	}
 	if web.Resources == nil || web.Resources.Requests.CPU != "100m" {
-		t.Errorf("resources must survive from the application when the environment does not override them: %+v", web.Resources)
+		t.Errorf("resources must survive from the component when the environment does not override them: %+v", web.Resources)
 	}
 	if !slices.Equal(web.Domains, []string{"web.staging.example.com"}) {
 		t.Errorf("default host derived from domainSuffix, got %v", web.Domains)
 	}
 	worker := r.Components[1]
 	if worker.Image != "ghcr.io/acme/shop-worker:2" {
-		t.Errorf("worker image = %q, want application override (P3)", worker.Image)
+		t.Errorf("worker image = %q, want component override (P3)", worker.Image)
 	}
 	if worker.Replicas != (Replicas{Min: 1}) {
 		t.Errorf("default replicas = %+v, want {Min:1}", worker.Replicas)
@@ -473,6 +473,6 @@ spec:
     - {name: ghost, replicas: {min: 2}}
 `)
 	if _, errs := Resolve(p, e); !slices.Contains(errs.Codes(), ErrUnknownComponent) {
-		t.Errorf("resolving an invalid pair must fail with ref/unknown-application, got %v", errs)
+		t.Errorf("resolving an invalid pair must fail with ref/unknown-component, got %v", errs)
 	}
 }

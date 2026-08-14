@@ -131,7 +131,7 @@ func TestServiceAccountCarriesProvenance(t *testing.T) {
 		}
 		for _, want := range []string{
 			"app.kubernetes.io/managed-by: kelson",
-			"kelson.dev/application: worker",
+			"kelson.dev/component: worker",
 			"kelson.dev/environment: production",
 			"kelson.dev/project: checkout",
 			"kelson.dev/spec-hash:",

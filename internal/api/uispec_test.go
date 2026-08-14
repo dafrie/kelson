@@ -75,7 +75,7 @@ spec:
 
 // The UI's edit flow (#65) rewrites a stored spec from a form: environment
 // variables at both scopes, an image override, autoscaling bounds, a second
-// application. The same fixture convention applies — these bytes are
+// component. The same fixture convention applies — these bytes are
 // EDITED_PROJECT and EDITED_ENVIRONMENT in ui/src/spec/edit.test.ts, where the
 // TypeScript half asserts that reading them into the form and writing them back
 // out reproduces them exactly. Only Go can assert the other half: that this is

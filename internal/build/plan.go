@@ -115,12 +115,12 @@ func ResolveStrategy(spec *model.Build, tree fs.FS) (detect.Detection, error) {
 
 // DestinationTag names the human-readable tag pushed alongside the digest.
 //
-// registry.Tag's convention is <project>-<application>-<revision>, but a kelson
-// build is per-Project, not per-Application: the source is project-level and
-// model rule P3 gives every application without its own image: the Project's
-// image, so one build feeds all of them. There is no single application to
+// registry.Tag's convention is <project>-<component>-<revision>, but a kelson
+// build is per-Project, not per-Component: the source is project-level and
+// model rule P3 gives every component without its own image: the Project's
+// image, so one build feeds all of them. There is no single component to
 // name. The project name is passed for that slot — redundant with the first
-// component, but true; naming the first application instead would read as "this
+// component, but true; naming the first component instead would read as "this
 // image belongs to web", which is exactly what it does not mean.
 // Reproducibility comes from the digest either way; this tag is for humans
 // reading a registry listing.

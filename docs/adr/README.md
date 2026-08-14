@@ -12,13 +12,13 @@ wrong, open an issue — it is far cheaper to reverse a decision now than after 
 | [0005](0005-delegate-to-operators.md) | Managed service types delegate to operators | Accepted (revised) |
 | [0006](0006-project-application-environment.md) | Project, Application, Environment | Accepted (leaf amended by 0014) |
 | [0007](0007-data-services.md) | Data services — presets, delegation and branching | Accepted |
-| [0008](0008-mcp-surface.md) | MCP tools are task-shaped, not endpoint-shaped | Accepted |
+| [0008](0008-mcp-surface.md) | MCP tools are task-shaped, not endpoint-shaped | Accepted (tool names amended by 0027) |
 | [0009](0009-secrets.md) | Secrets are references; values never enter Git | Accepted |
 | [0010](0010-build-strategy.md) | Dockerfile when present, Cloud Native Buildpacks otherwise | Accepted |
 | [0011](0011-build-cache.md) | Build cache is a registry cache, scoped per application | Deferred |
 | [0012](0012-flux-only-gitops.md) | Flux is the only GitOps delivery mode; Argo CD deferred | Accepted |
 | [0013](0013-server-state-and-api-v0.md) | Server state lives in the cluster; API v0 shape | Proposed |
-| [0014](0014-components.md) | One `components` list, per-component identity (amends 0006) | Proposed |
+| [0014](0014-components.md) | One `components` list, per-component identity (amends 0006) | Proposed (carve-out reversed by 0027) |
 | [0015](0015-valkey-operator.md) | `kind: valkey` delegates to valkey-io/valkey-operator | Accepted |
 | [0016](0016-delivery-flows-v0.md) | The four M10 delivery flows, and what each one is in v0 | Accepted |
 | [0017](0017-pr-previews.md) | PR previews — `previews:`, the artifact tag, and what stage 1 does not do | Accepted |
@@ -31,6 +31,7 @@ wrong, open an issue — it is far cheaper to reverse a decision now than after 
 | [0024](0024-agent-identities.md) | Agent identities — scoped, expiring credentials that are principals (refines 0013 §3) | Accepted |
 | [0025](0025-agent-policy.md) | Per-environment agent policy — guardrails in the spec, enforced server-side (builds on 0024) | Accepted |
 | [0026](0026-agent-audit-trail.md) | The audit trail — one principal-typed record per mutation, in a bounded cluster ring | Accepted |
+| [0027](0027-finish-the-component-rename.md) | Finish the component rename — the label, the selector and the MCP tools (amends 0014, 0008) | Accepted |
 
 *Process note (2026-08-12):* ADR-0003 and ADR-0005 were revised in place before the immutability rule
 below hardened; their in-place revisions stand as recorded. From ADR-0012 on, changes supersede.

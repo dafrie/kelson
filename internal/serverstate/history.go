@@ -154,7 +154,7 @@ func (h *HistoryStore) Append(project, environment string, rec direct.Record, re
 	if len(blob) > maxRenderedBytes {
 		return delivery.Entry{}, TooLarge(historyRef(project, environment, rec.Revision),
 			fmt.Sprintf("the rendered output is %d bytes compressed, over the %d-byte ConfigMap budget", len(blob), maxRenderedBytes),
-			"split the environment into fewer applications so each deploy renders less; the etcd value limit binds the CRD store too, and kelson will not record a truncated revision")
+			"split the environment into fewer components so each deploy renders less; the etcd value limit binds the CRD store too, and kelson will not record a truncated revision")
 	}
 
 	cms := h.client.CoreV1().ConfigMaps(h.namespace)

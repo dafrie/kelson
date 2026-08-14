@@ -333,6 +333,14 @@ func TestPlanListsByProvenanceSelector(t *testing.T) {
 		if strings.Contains(sel, labelCNPGCluster) {
 			continue
 		}
+		// The tenancy query is the other exception, and it is deliberately
+		// unpinned in exactly one direction: its whole question is which OTHER
+		// (project, environment) is living in a namespace kelson is about to
+		// delete (issue #215). It still pins managed-by, so kelson never reads
+		// a resource that is not kelson's at all.
+		if sel == managedByKelson {
+			continue
+		}
 		for _, want := range []string{
 			delivery.LabelManagedBy + "=" + delivery.ManagedByKelson,
 			delivery.LabelProject + "=" + testProject,

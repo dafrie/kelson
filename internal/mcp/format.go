@@ -24,13 +24,13 @@ const (
 	maxFindings     = 15
 	maxSpecErrors   = 25
 	maxEvents       = 20
-	// maxSecrets bounds diagnose_application's SECRETS section. It is generous
+	// maxSecrets bounds diagnose_component's SECRETS section. It is generous
 	// relative to the others because each entry is one short line — a name and
 	// its key names — and an environment with more Secrets than this is one
 	// where the missing reference is exactly what the agent is hunting for.
 	maxSecrets = 25
 
-	// diagnoseLogLines is the log window diagnose_application embeds. It shares
+	// diagnoseLogLines is the log window diagnose_component embeds. It shares
 	// the answer with status, verdicts, history and a spec summary, so it is a
 	// fraction of what logs_window alone may return.
 	diagnoseLogLines = 80
@@ -162,7 +162,7 @@ func pad(s string, width int) string {
 
 // resourceName is the workload name inside an observation verdict's
 // "Deployment/namespace/name" resource string. kelson renders one workload per
-// application under the application's own name, which is what makes it the
+// component under the component's own name, which is what makes it the
 // selector LogService wants.
 func resourceName(resource string) string {
 	if i := strings.LastIndex(resource, "/"); i >= 0 {

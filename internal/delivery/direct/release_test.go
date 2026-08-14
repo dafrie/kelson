@@ -242,7 +242,7 @@ func TestReleaseWaitEndsWithTheContext(t *testing.T) {
 }
 
 // TestRollbackDoesNotRerunTheReleaseCommand pins the interaction the issue asks
-// to be stated plainly: rolling the application back does not roll a migration
+// to be stated plainly: rolling the workload back does not roll a migration
 // back, and re-running the old revision's release command would only repeat
 // work the database has already done.
 func TestRollbackDoesNotRerunTheReleaseCommand(t *testing.T) {
