@@ -215,12 +215,50 @@ name; and this reference schema for the workload side, so a component reads the 
 `{secret: <name>, key: password}`. **Nothing here implements it** — it needs a spec surface for the
 user, which is #98's work and a decision this ADR does not take.
 
+*(2026-08-14: the first of the three now exists — author the user Secret with `kelson secret set`.
+The valkey renderer is unchanged and wiring the operator's ACL user to that Secret's name remains
+#98's remaining work.)*
+
+### Successor note (2026-08-14): #116 landed, and the remediation changed
+
+[#116](https://github.com/dafrie/kelson/issues/116) shipped the `cluster` backend's authoring path —
+`kelson secret set|list|delete`, a `SecretService` on the API, and a `set_secret` MCP tool — over
+`internal/secret`. Nothing in this ADR's decision changed, which was the stated test of whether it was
+right: the spec text, the union, the merge rules and the renderer guarantee are untouched.
+
+What changed is the sentence this ADR predicted would: the `secret/literal` remediation and
+docs/model.md now lead with `kelson secret set` and keep `kubectl create secret generic` as the
+alternative rather than as the only answer. The `.env` migration path in the first positive
+consequence below reads the same way now.
+
+Three decisions inside #116 are worth recording here because they narrow this ADR's frame rather than
+following from it:
+
+- **kelson labels what it writes and touches nothing else.** Every Secret it authors carries
+  `kelson.dev/managed-secret: "true"`; listing is a label query over it, and deleting *or overwriting*
+  an unlabelled Secret is refused (`secret/not-managed`). A reference may still name any Secret in the
+  namespace — this ADR's §2 is unchanged — but the authoring path claims only its own. Adopting one is
+  a deliberate `kubectl label`, which the refusal spells out.
+- **`set` merges rather than replaces.** A server-side apply of only the keys given would prune the
+  rest, so one command would silently drop a credential written by an earlier one.
+- **No value is readable back through kelson.** There is no `get`, and no message in the schema has a
+  field a value could arrive in — the masked read-back of ADR-0009 as a type property rather than as a
+  handler's promise. Reading a value is `kubectl get secret`, with the cluster's own RBAC and audit
+  trail behind it.
+
+The third negative consequence below stands unchanged: `kelson secret delete` does **not** look for
+referrers, because nothing in kelson correlates a reference with the Secret it names. It says so when
+it deletes. What partly closes the gap is that `diagnose_application` now reports the environment's
+kelson-managed Secrets by name and key alongside the spec summary, so the comparison an agent (or a
+reader) has to make is at least in one answer.
+
 ## Consequences
 
 **Positive.**
 
-- Every credential has a spelling. The `.env` migration path is `kubectl create secret generic` plus
-  one mapping per variable, and the error an author hits on their first render tells them exactly that.
+- Every credential has a spelling. The `.env` migration path is `kelson secret set` (or
+  `kubectl create secret generic`) plus one mapping per variable, and the error an author hits on
+  their first render tells them exactly that.
 - One mechanism, one rendered shape. Bindings and references both become `secretKeyRef`, through the
   same code, so a reader who understands one understands both.
 - The backend is a one-field migration. A spec written today against `cluster` is the spec that runs

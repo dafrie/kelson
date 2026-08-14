@@ -24,6 +24,11 @@ const (
 	maxFindings     = 15
 	maxSpecErrors   = 25
 	maxEvents       = 20
+	// maxSecrets bounds diagnose_application's SECRETS section. It is generous
+	// relative to the others because each entry is one short line — a name and
+	// its key names — and an environment with more Secrets than this is one
+	// where the missing reference is exactly what the agent is hunting for.
+	maxSecrets = 25
 
 	// diagnoseLogLines is the log window diagnose_application embeds. It shares
 	// the answer with status, verdicts, history and a spec summary, so it is a

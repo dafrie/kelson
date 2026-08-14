@@ -48,6 +48,9 @@ type fakeServer struct {
 	rollback  func(*kelsonv1alpha1.RollbackRequest, *connect.ServerStream[kelsonv1alpha1.RollbackResponse]) error
 	promote   func(*kelsonv1alpha1.PromoteRequest) (*kelsonv1alpha1.PromoteResponse, error)
 	watch     func(*kelsonv1alpha1.WatchRequest, *connect.ServerStream[kelsonv1alpha1.WatchResponse]) error
+
+	setSecret   func(*kelsonv1alpha1.SetSecretRequest) (*kelsonv1alpha1.SetSecretResponse, error)
+	listSecrets func(*kelsonv1alpha1.ListSecretsRequest) (*kelsonv1alpha1.ListSecretsResponse, error)
 }
 
 var (
@@ -55,6 +58,7 @@ var (
 	_ kelsonv1alpha1connect.DeployServiceHandler = (*fakeServer)(nil)
 	_ kelsonv1alpha1connect.LogServiceHandler    = (*fakeServer)(nil)
 	_ kelsonv1alpha1connect.EventServiceHandler  = (*fakeServer)(nil)
+	_ kelsonv1alpha1connect.SecretServiceHandler = (*fakeServer)(nil)
 )
 
 func notWired(what string) error {
@@ -146,6 +150,30 @@ func (f *fakeServer) Watch(_ context.Context, req *connect.Request[kelsonv1alpha
 	return f.watch(req.Msg, stream)
 }
 
+func (f *fakeServer) SetSecret(_ context.Context, req *connect.Request[kelsonv1alpha1.SetSecretRequest]) (*connect.Response[kelsonv1alpha1.SetSecretResponse], error) {
+	if f.setSecret == nil {
+		return nil, notWired("SetSecret")
+	}
+	msg, err := f.setSecret(req.Msg)
+	return respond(msg, err)
+}
+
+func (f *fakeServer) ListSecrets(_ context.Context, req *connect.Request[kelsonv1alpha1.ListSecretsRequest]) (*connect.Response[kelsonv1alpha1.ListSecretsResponse], error) {
+	if f.listSecrets == nil {
+		return nil, notWired("ListSecrets")
+	}
+	msg, err := f.listSecrets(req.Msg)
+	return respond(msg, err)
+}
+
+func (f *fakeServer) DeleteSecret(context.Context, *connect.Request[kelsonv1alpha1.DeleteSecretRequest]) (*connect.Response[kelsonv1alpha1.DeleteSecretResponse], error) {
+	// Deliberately never wired: no tool composes DeleteSecret. Deleting a
+	// credential an agent cannot see and cannot restore is not a task that
+	// belongs on this surface (ADR-0008), and the assertion that no tool
+	// reaches it is [harness.assertComposed] on every call.
+	return nil, notWired("DeleteSecret")
+}
+
 func respond[T any](msg *T, err error) (*connect.Response[T], error) {
 	if err != nil {
 		return nil, err
@@ -179,6 +207,7 @@ func startWith(t *testing.T, fake *fakeServer, password string) *harness {
 	mux.Handle(kelsonv1alpha1connect.NewDeployServiceHandler(fake))
 	mux.Handle(kelsonv1alpha1connect.NewLogServiceHandler(fake))
 	mux.Handle(kelsonv1alpha1connect.NewEventServiceHandler(fake))
+	mux.Handle(kelsonv1alpha1connect.NewSecretServiceHandler(fake))
 	srv := httptest.NewServer(record(fake, mux))
 	t.Cleanup(srv.Close)
 

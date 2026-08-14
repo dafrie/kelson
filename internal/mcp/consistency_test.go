@@ -33,6 +33,7 @@ func schemaFiles() []protoreflect.FileDescriptor {
 		kelsonv1alpha1.File_kelson_v1alpha1_deploy_proto,
 		kelsonv1alpha1.File_kelson_v1alpha1_logs_proto,
 		kelsonv1alpha1.File_kelson_v1alpha1_events_proto,
+		kelsonv1alpha1.File_kelson_v1alpha1_secret_proto,
 	}
 }
 
@@ -92,8 +93,13 @@ func TestNoToolComposesAnUnboundedStream(t *testing.T) {
 // mutates, so the answer is in the prose and not only in the annotations.
 func TestSurfaceIsSmallAndDescribed(t *testing.T) {
 	tools := surface(&clients{})
-	if len(tools) != 8 {
-		t.Errorf("the surface has %d tools, want 8: adding one is a deliberate design change (ADR-0008), not a detail", len(tools))
+	// Nine since #116 added set_secret. The count moved deliberately: writing a
+	// credential is a task an agent has, so it earned a tool, while *listing*
+	// secrets did not — it is something an agent needs mid-diagnosis, so it
+	// extended diagnose_application instead of arriving as a tenth tool. That
+	// is the trade this number exists to make explicit (ADR-0008).
+	if len(tools) != 9 {
+		t.Errorf("the surface has %d tools, want 9: adding one is a deliberate design change (ADR-0008), not a detail", len(tools))
 	}
 
 	seen := map[string]bool{}

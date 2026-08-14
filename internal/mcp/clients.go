@@ -16,17 +16,18 @@ import (
 // address they point at — which the connection error text needs, because "the
 // server did not answer" is useless without saying which server.
 //
-// Only the four services the surface actually uses are here. RenderService and
+// Only the services the surface actually uses are here. RenderService and
 // ProfileService have no tool: rendering a spec to YAML and capturing a cluster
 // profile are not tasks an agent does — they are inputs to tasks the tools
 // already compose — and every tool that exists costs selection accuracy for the
 // ones that matter (ADR-0008).
 type clients struct {
-	addr   string
-	spec   kelsonv1alpha1connect.SpecServiceClient
-	deploy kelsonv1alpha1connect.DeployServiceClient
-	logs   kelsonv1alpha1connect.LogServiceClient
-	events kelsonv1alpha1connect.EventServiceClient
+	addr    string
+	spec    kelsonv1alpha1connect.SpecServiceClient
+	deploy  kelsonv1alpha1connect.DeployServiceClient
+	logs    kelsonv1alpha1connect.LogServiceClient
+	events  kelsonv1alpha1connect.EventServiceClient
+	secrets kelsonv1alpha1connect.SecretServiceClient
 }
 
 // fail renders a failed RPC as a tool error.

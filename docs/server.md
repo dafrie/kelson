@@ -136,8 +136,28 @@ is the operator* to *a caller must hold the shared secret*. Issue
 [#84](https://github.com/dafrie/kelson/issues/84) still owns the real answer — project-level team auth,
 OIDC, agent identities ([#74](https://github.com/dafrie/kelson/issues/74)) and TLS.
 
+## SecretService needs Secret permissions, and that is a real grant
+
+`SecretService` ([#116](https://github.com/dafrie/kelson/issues/116)) writes the Kubernetes Secrets a
+spec's `{secret: <name>, key: <key>}` references point at, so the server's service account needs
+`get`, `list`, `patch`, `create` and `delete` on `secrets` in the namespaces it serves. ADR-0009 names
+this as a cost rather than a detail: it is what makes masked read-back possible and it is a meaningful
+privilege, and today's single shared password does not scope it per project or per environment.
+
+Two things bound it, and neither is authorization:
+
+- kelson writes and deletes only Secrets carrying `kelson.dev/managed-secret: "true"`, and listing is
+  a label query over it, so a namespace's TLS material and service-account tokens are neither
+  enumerated nor removable through this API.
+- No RPC returns a secret value. The grant lets a caller *write* credentials into namespaces the
+  server can reach; it does not turn the API into a way to read them out.
+
+Least-privilege RBAC for this path belongs to #84 along with the rest of the threat model. Until it
+lands, run the server with a service account scoped to the namespaces it is meant to serve.
+
 ## Where the code lives
 
 - `cmd/kelson-server` — flags, the mux, the bind check.
 - `internal/api` — the ConnectRPC handlers (`api.go`) and the auth gate (`auth.go`).
 - `internal/serverstate` — the ConfigMap-backed spec and history stores.
+- `internal/secret` — the cluster secret backend behind `SecretService`.

@@ -52,6 +52,7 @@ import (
 	"github.com/dafrie/kelson/internal/diff"
 	"github.com/dafrie/kelson/internal/model"
 	"github.com/dafrie/kelson/internal/observation"
+	"github.com/dafrie/kelson/internal/secret"
 	"github.com/dafrie/kelson/internal/serverstate"
 )
 
@@ -195,6 +196,22 @@ type BuildTarget struct {
 	PushSecret string
 }
 
+// SecretStore is the secret-authoring seam of ADR-0009's cluster backend
+// (issue #116). *secret.Store implements it against a live clientset; the tests
+// here supply an in-memory one.
+//
+// It is the same shape as every other seam in this file and exists for the same
+// reason: writing a Kubernetes Secret needs a client this plane's depguard rule
+// forbids (.golangci.yml). Note what the interface cannot do — there is no
+// method that returns a value. The masked read-back of ADR-0009 is a property
+// of secret.Secret, which has no field a value could travel in, so no handler
+// here could send one even by mistake.
+type SecretStore interface {
+	Set(ctx context.Context, req secret.SetRequest) (secret.Secret, error)
+	List(ctx context.Context, t secret.Target) ([]secret.Secret, error)
+	Delete(ctx context.Context, req secret.DeleteRequest) error
+}
+
 // RevisionResolver answers "what commit does this ref name?" against a remote
 // repository. It is an interface for the same reason the CLI's is: the answer
 // needs the git libraries, which this plane's depguard rule forbids
@@ -244,6 +261,7 @@ type Options struct {
 	Preview  PreviewConnector
 	Logs     LogEngine
 	Build    BuildConnector
+	Secrets  SecretStore
 
 	// BuildDefaults is the destination configuration builds fall back to.
 	BuildDefaults BuildDefaults
@@ -259,7 +277,7 @@ type Options struct {
 	WatchInterval time.Duration
 }
 
-// Server implements all seven kelson.v1alpha1 services.
+// Server implements all eight kelson.v1alpha1 services.
 type Server struct {
 	specs    SpecStore
 	profile  ProfileCapture
@@ -267,6 +285,7 @@ type Server struct {
 	preview  PreviewConnector
 	logs     LogEngine
 	build    BuildConnector
+	secrets  SecretStore
 
 	buildDefaults BuildDefaults
 
@@ -287,6 +306,7 @@ var (
 	_ kelsonv1alpha1connect.LogServiceHandler     = (*Server)(nil)
 	_ kelsonv1alpha1connect.EventServiceHandler   = (*Server)(nil)
 	_ kelsonv1alpha1connect.BuildServiceHandler   = (*Server)(nil)
+	_ kelsonv1alpha1connect.SecretServiceHandler  = (*Server)(nil)
 )
 
 // New returns a Server over the given seams.
@@ -298,6 +318,7 @@ func New(opts Options) *Server {
 		preview:       opts.Preview,
 		logs:          opts.Logs,
 		build:         opts.Build,
+		secrets:       opts.Secrets,
 		buildDefaults: opts.BuildDefaults,
 		deployTimeout: opts.DeployTimeout,
 		pollInterval:  opts.PollInterval,
@@ -324,6 +345,7 @@ func (s *Server) Register(mux *http.ServeMux, opts ...connect.HandlerOption) {
 		func() (string, http.Handler) { return kelsonv1alpha1connect.NewLogServiceHandler(s, opts...) },
 		func() (string, http.Handler) { return kelsonv1alpha1connect.NewEventServiceHandler(s, opts...) },
 		func() (string, http.Handler) { return kelsonv1alpha1connect.NewBuildServiceHandler(s, opts...) },
+		func() (string, http.Handler) { return kelsonv1alpha1connect.NewSecretServiceHandler(s, opts...) },
 	}
 	for _, build := range handlers {
 		mux.Handle(build())

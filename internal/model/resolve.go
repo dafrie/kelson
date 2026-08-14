@@ -151,7 +151,7 @@ func resolve(p *Project, e *Environment) *Resolved {
 	// Environment identity and target.
 	ns := e.Spec.Namespace
 	if ns == "" {
-		ns = fmt.Sprintf("%s-%s", p.Metadata.Name, e.Metadata.Name)
+		ns = DefaultNamespace(p.Metadata.Name, e.Metadata.Name)
 	}
 	r.Environment.Name = e.Metadata.Name
 	r.Environment.Cluster = e.Spec.Cluster

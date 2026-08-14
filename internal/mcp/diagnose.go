@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"connectrpc.com/connect"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -13,9 +14,11 @@ import (
 
 const diagnoseApplicationDescription = `Answer "what is wrong with this environment, and why" in one call.
 
-Composes, for one (project, environment): the delivery phase, revision, namespace and cause; every workload's health verdict with the server's own remediation; a bounded window of the failing workload's logs (the lines before it terminated, when it is failing); the last 5 deployment revisions; and a compact summary of what the spec declares (components, images, kinds).
+Composes, for one (project, environment): the delivery phase, revision, namespace and cause; every workload's health verdict with the server's own remediation; a bounded window of the failing workload's logs (the lines before it terminated, when it is failing); the last 5 deployment revisions; a compact summary of what the spec declares (components, images, kinds); and the Secrets kelson manages in the namespace, by name and key.
 
-READ-ONLY. Changes nothing.
+The Secrets are there for one specific failure: a workload stuck in CreateContainerConfigError is usually a spec referencing { secret: <name>, key: <key> } that does not exist. Compare the SECRETS section against the references in the spec; set_secret writes a missing one.
+
+READ-ONLY. Changes nothing. Never reports a secret value — kelson does not store them and no API returns one.
 
 Preconditions: the project must be stored on the server (put_spec) and must declare the named environment.
 
@@ -32,7 +35,7 @@ func diagnoseApplicationTool(c *clients) tool {
 	def := readOnlyTool("diagnose_application", "Diagnose an application", diagnoseApplicationDescription)
 	return tool{
 		def:  def,
-		rpcs: []rpc{rpcStatus, rpcQueryLogs, rpcHistory, rpcGetSpec},
+		rpcs: []rpc{rpcStatus, rpcQueryLogs, rpcHistory, rpcGetSpec, rpcListSecrets},
 		add: func(srv *mcpsdk.Server) {
 			mcpsdk.AddTool(srv, def, func(ctx context.Context, _ *mcpsdk.CallToolRequest, in diagnoseApplicationInput) (*mcpsdk.CallToolResult, any, error) {
 				return c.diagnoseApplication(ctx, in)
@@ -78,6 +81,7 @@ func (c *clients) diagnoseApplication(ctx context.Context, in diagnoseApplicatio
 	c.reportLogs(ctx, &r, status, in)
 	c.reportHistory(ctx, &r, in)
 	c.reportSpec(ctx, &r, in)
+	c.reportSecrets(ctx, &r, in)
 	return text(&r)
 }
 
@@ -240,6 +244,42 @@ func (c *clients) reportSpec(ctx context.Context, r *report, in diagnoseApplicat
 		r.addf("  %s %s %s", pad(c.Name, 16), pad(componentImage(project, pins, c), 40), componentShape(c))
 	}
 	r.truncated(dropped, "components")
+}
+
+// reportSecrets lists the Secrets kelson manages in the environment's
+// namespace, by name and key (issue #116).
+//
+// It belongs in a diagnosis rather than in a read tool of its own because of
+// the failure it explains. A spec referencing `{secret: checkout-db, key: url}`
+// against a Secret nobody wrote renders cleanly, applies cleanly and fails at
+// pod start with CreateContainerConfigError; ADR-0018 records that nothing in
+// kelson correlates a reference with the Secret it names, so an agent holding
+// the SPEC section above and this section is the correlation. A key that is
+// missing here and referenced there is the answer.
+//
+// It is additive like every other section: a server without the secret backend,
+// or one whose credentials cannot list Secrets, degrades to a line rather than
+// taking the diagnosis with it. And it can only ever print names and keys —
+// ListSecrets has no field a value could arrive in.
+func (c *clients) reportSecrets(ctx context.Context, r *report, in diagnoseApplicationInput) {
+	r.section("SECRETS (kelson-managed, keys only — values are never readable)")
+	res, err := c.secrets.ListSecrets(ctx, connect.NewRequest(&kelsonv1alpha1.ListSecretsRequest{
+		Target: &kelsonv1alpha1.SecretTarget{Project: in.Project, Environment: in.Environment},
+	}))
+	if err != nil {
+		r.addf("  unavailable — %s", connectMessage(err))
+		return
+	}
+	secrets, dropped := limit(res.Msg.GetSecrets(), maxSecrets)
+	if len(secrets) == 0 {
+		r.addf("  none: kelson manages no Secrets in %s. A component referencing one will fail at pod start "+
+			"with CreateContainerConfigError; set_secret writes it.", orDash(res.Msg.GetNamespace()))
+		return
+	}
+	for _, s := range secrets {
+		r.addf("  %s %s", pad(s.GetName(), 20), strings.Join(s.GetKeys(), ", "))
+	}
+	r.truncated(dropped, "secrets")
 }
 
 // environmentImagePins reads the diagnosed Environment's per-component image
