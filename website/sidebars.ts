@@ -208,6 +208,11 @@ const sidebars: SidebarsConfig = {
           id: 'adr/0031-single-cluster-single-tenant',
           label: '0031 — Single cluster, single tenant',
         },
+        {
+          type: 'doc',
+          id: 'adr/0032-finish-the-component-rename',
+          label: '0032 — Finish the component rename',
+        },
       ],
     },
   ],

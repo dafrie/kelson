@@ -1,6 +1,6 @@
 // Package observation is the OBSERVATION plane (docs/architecture.md).
 //
-// It watches live resources, correlates them to the application model via
+// It watches live resources, correlates them to the component model via
 // kelson.dev provenance labels, and reports status, logs and metrics. This
 // package is the health gate that populates the deployment state machine's
 // "Applied -> Healthy" and "Applied -> Degraded" decisions with real signal
@@ -20,6 +20,6 @@
 //
 // The log query engine (LogQuery) is the transport-agnostic layer a later API
 // (#69) will wrap: a bounded, structured, deterministically-ordered query over
-// an application's replicas, or a live follow — the "last N lines around this
+// a component's replicas, or a live follow — the "last N lines around this
 // failure" the issue #54 design note asks for. It carries no transport types.
 package observation

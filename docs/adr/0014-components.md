@@ -2,7 +2,12 @@
 
 - **Status:** Accepted (2026-08-14: implemented — `spec.components` with the closed kind enum is the
   model's only leaf list and every component renders its own ServiceAccount. Decision B's Workspace
-  shape is carried forward, still unbuilt, by [ADR-0031](0031-single-cluster-single-tenant.md).)
+  shape is carried forward, still unbuilt, by [ADR-0031](0031-single-cluster-single-tenant.md).
+  Cluster-boundary carve-out reversed by
+  [ADR-0032](0032-finish-the-component-rename.md), 2026-08-14: the rendered label is
+  `kelson.dev/component`, Deployments select on it, and the three MCP tools are named for components.
+  The third negative consequence below stands as the record of what was decided here; it no longer
+  describes the code.)
 - **Date:** 2026-08-13
 
 > Amends [ADR-0006](0006-project-application-environment.md), which named the leaf *Application* and

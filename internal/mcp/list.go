@@ -10,38 +10,38 @@ import (
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
 )
 
-const listApplicationsDescription = `List every project kelson has stored and the live state of each of its environments: how many workloads are healthy, and the cause when one is not.
+const listComponentsDescription = `List every project kelson has stored and the live state of each of its environments: how many workloads are healthy, and the cause when one is not.
 
 READ-ONLY. Changes nothing.
 
 The delivery phase and the deployed revision are empty for now: the adapters that reported them were deleted with kelson's old delivery machinery and they return with issue #224. Workload health is real and is what the "unhappy environment" judgement below rests on.
 
-Use it to find out what exists and which environment is unhappy, when you do not already know. Once you know which environment is in trouble, prefer diagnose_application: it answers "why" in one call, and this tool deliberately answers only "what and where".
+Use it to find out what exists and which environment is unhappy, when you do not already know. Once you know which environment is in trouble, prefer diagnose_component: it answers "why" in one call, and this tool deliberately answers only "what and where".
 
 Returns no spec bodies, no manifests and no logs. Costs one status call per (project, environment) on the server, so it is the most expensive read on a large installation; the listing is capped at 25 projects and 10 environments per project and says so when it truncates.`
 
-type listApplicationsInput struct{}
+type listComponentsInput struct{}
 
-func listApplicationsTool(c *clients) tool {
-	def := readOnlyTool("list_applications", "List applications", listApplicationsDescription)
+func listComponentsTool(c *clients) tool {
+	def := readOnlyTool("list_components", "List components", listComponentsDescription)
 	return tool{
 		def:  def,
 		rpcs: []rpc{rpcListSpecs, rpcStatus},
 		add: func(srv *mcpsdk.Server) {
-			mcpsdk.AddTool(srv, def, func(ctx context.Context, _ *mcpsdk.CallToolRequest, _ listApplicationsInput) (*mcpsdk.CallToolResult, any, error) {
-				return c.listApplications(ctx)
+			mcpsdk.AddTool(srv, def, func(ctx context.Context, _ *mcpsdk.CallToolRequest, _ listComponentsInput) (*mcpsdk.CallToolResult, any, error) {
+				return c.listComponents(ctx)
 			})
 		},
 	}
 }
 
-// listApplications composes ListSpecs with one Status per environment.
+// listComponents composes ListSpecs with one Status per environment.
 //
 // A status that cannot be read is reported on its own line rather than failing
 // the call: one unreachable environment must not hide the other nine, and the
 // failure text carries the server's own code so an agent can tell "this
 // environment is broken" from "kelson could not look".
-func (c *clients) listApplications(ctx context.Context) (*mcpsdk.CallToolResult, any, error) {
+func (c *clients) listComponents(ctx context.Context) (*mcpsdk.CallToolResult, any, error) {
 	res, err := c.spec.ListSpecs(ctx, connect.NewRequest(&kelsonv1alpha1.ListSpecsRequest{}))
 	if err != nil {
 		return nil, nil, c.fail(rpcListSpecs, err)

@@ -163,7 +163,7 @@ answer the prompt.
 | `flux` | flux-operator's pinned install manifest, then one `FluxInstance` | full Flux, one Deployment per controller — and `ResourceSet`, which PR previews need |
 | `cert-manager` | cert-manager's pinned install manifest | TLS on routed services |
 | `cnpg` | CloudNativePG's pinned install manifest | every `kind: postgres` component |
-| `envoy-gateway` | *not yet* — refuses and says why | — |
+| `envoy-gateway` | Envoy Gateway's pinned install manifest: the Gateway API CRDs and the controller, **no `GatewayClass`** | HTTP routing: the `HTTPRoute` kelson renders for every service that declares domains |
 | `external-secrets` | *not yet* — refuses and says why | — |
 
 > **Transition ([#226](https://github.com/dafrie/kelson/issues/226)).** The `flux-aio` row, its release-
@@ -186,7 +186,25 @@ cluster, wrong for a large one, and never a migration for a cluster that already
 account or CA to trust is your decision, and kelson renders a `Certificate` only once detection reports
 an issuer. Flux arrives reconciling nothing: the sources it reconciles are the `OCIRepository` and
 `Kustomization` pairs `kelson-controller` writes when an `Environment` is applied. CloudNativePG arrives
-with no databases. The command says all of this on the way out.
+with no databases. Envoy Gateway arrives with no `GatewayClass` and carries no traffic: create a
+`GatewayClass` naming the controller `gateway.envoyproxy.io/gatewayclass-controller` and a `Gateway`
+with your listeners, and routes attach once detection reports the class. The command says all of this
+on the way out.
+
+**The web UI drives the same verbs.** The **Setup** screen (and the Cluster page's
+platform-components section) is `kelson install` served over the API: the same pins table, the same
+detection-first refusals, and the same preview — every object, the pinned version, the verified
+digest — shown before an explicit confirmation applies anything. Because installing writes
+cluster-scoped RBAC and CRDs, the `InstallService` RPCs are administrative: agent credentials are
+refused outright ([ADR-0024](adr/0024-agent-identities.md) §3), exactly as `kelson uninstall
+--component` refuses them.
+
+**One sweep exception.** On a cluster that already routes through an ingress stack,
+`kelson install --all-missing` declines `envoy-gateway` and says why: adding a second routing
+implementation next to the one carrying your traffic is a decision you make by name
+(`kelson install envoy-gateway`), never one a sweep makes for you. kelson renders Gateway API only
+([ADR-0003](adr/0003-install-model.md), as amended), so until then services that declare domains fail
+to render with `render/gateway-api-missing`.
 
 **It needs network access to the upstream release host.** Without it, the install refuses, names the URL
 it could not reach, and applies nothing — there is no half-installed state. On an air-gapped cluster,
@@ -246,12 +264,12 @@ There are **separate layers**, and removing one never removes another. That sepa
 
 | Layer | What removes it | What it leaves |
 |---|---|---|
-| An application environment kelson deployed | `kelson uninstall --project <p> --env <e>` | everything in the namespace that is not kelson's |
-| The kelson server | `helm uninstall kelson -n kelson-system` | every application kelson deployed, still running |
+| An environment kelson deployed | `kelson uninstall --project <p> --env <e>` | everything in the namespace that is not kelson's |
+| The kelson server | `helm uninstall kelson -n kelson-system` | every workload kelson deployed, still running |
 | A platform component **kelson installed** | `kelson uninstall --component <name>` | every part of it kelson adopted rather than created |
 | A platform component kelson did **not** install | your own tooling — never kelson's | — |
 
-### The applications: `kelson uninstall`
+### The deployed workloads: `kelson uninstall`
 
 ```sh
 kelson uninstall --project checkout --env production
@@ -287,19 +305,28 @@ answer the prompt.
 workloads, so nothing is left holding a connection to a database being deleted. Then configuration.
 Then data, last, because it is the only irreversible step. Then the namespace.
 
-**The namespace is deleted only when kelson created it.** A deploy records that fact in
-`kelson.dev/namespace-ownership` — `created` when the apply brought the namespace into existence,
-`adopted` when it was already there. Deleting a namespace cascades to everything inside it, so an
-adopted namespace stays, and so does everything in it that is not kelson's.
+**The namespace is deleted only when kelson created it, and only when nothing of anyone else's is
+left in it.** A deploy records the first half in `kelson.dev/namespace-ownership` — `created` when
+the apply brought the namespace into existence, `adopted` when it was already there. Deleting a
+namespace cascades to everything inside it, so an adopted namespace stays, and so does everything in
+it that is not kelson's.
+
+The second half is there because a namespace belongs to an environment but its *name* does not: an
+Environment can set `spec.namespace`, so two projects — or two environments of one project — can be
+pointed at the same namespace, and the one that created it has no claim on what moved in afterwards.
+Before deleting a namespace kelson lists it for resources carrying
+`app.kubernetes.io/managed-by=kelson` with a different `kelson.dev/project` / `kelson.dev/environment`
+pair. If any are there, the namespace stays and the preview says what stayed and whose it is
+(`left behind: 2 resource(s) of grocery/production live here`). The check runs again immediately
+before the delete, so a deployment that arrives after the preview is not evicted by a stale plan, and
+it fails in one direction only: if kelson cannot read some kind or API group in that namespace it
+cannot rule the other tenant out, so the namespace stays. A namespace left behind costs one
+`kubectl delete namespace`; a tenant's database costs the database.
 
 Two flags for the two things people want kept:
 
 - `--keep-data` leaves data services and their volumes alone. The namespace then stays too — deleting
   it would delete what was kept.
-- `--keep-history` keeps the local rendered history as an audit trail. By default it goes: a journal
-  describing a set that no longer exists would give the next deploy of the same name a revision
-  sequence and a prune baseline inherited from a deployment that is gone.
-
 `--all-environments` removes every environment of a project.
 
 ### What `kelson uninstall` deliberately does not remove
@@ -316,6 +343,7 @@ Two flags for the two things people want kept:
   PVCs to CloudNativePG's own garbage collection. They are named in the preview because they are
   about to be destroyed; kelson does not delete them itself.
 - **Anything without kelson's provenance labels**, including Secrets kelson did not write.
+- **A namespace another deployment shares**, even one kelson created — see above.
 - **The stored `Project` and `Environment` resources.** Removing them is an authorization decision that
   does not exist yet, so the API and UI uninstall stays future work gated on
   [#84](https://github.com/dafrie/kelson/issues/84)'s design — which is why there is no uninstall RPC or

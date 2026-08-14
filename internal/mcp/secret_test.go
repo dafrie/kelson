@@ -196,7 +196,7 @@ func TestDiagnoseReportsManagedSecretsByKey(t *testing.T) {
 	}
 	h := start(t, fake)
 
-	out := h.call(t, "diagnose_application", map[string]any{"project": "checkout", "environment": "production"})
+	out := h.call(t, "diagnose_component", map[string]any{"project": "checkout", "environment": "production"})
 	for _, want := range []string{"SECRETS", "checkout-db", "url", "payments", "api-key", "webhook"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the diagnosis should report %q:\n%s", want, out)
@@ -218,7 +218,7 @@ func TestDiagnoseSaysWhenTheNamespaceHoldsNoManagedSecrets(t *testing.T) {
 	}
 	h := start(t, fake)
 
-	out := h.call(t, "diagnose_application", map[string]any{"project": "checkout", "environment": "production"})
+	out := h.call(t, "diagnose_component", map[string]any{"project": "checkout", "environment": "production"})
 	if !strings.Contains(out, "CreateContainerConfigError") || !strings.Contains(out, "set_secret") {
 		t.Errorf("an empty listing should name the failure it causes and the tool that fixes it:\n%s", out)
 	}
@@ -234,7 +234,7 @@ func TestDiagnoseSurvivesAServerWithoutTheSecretBackend(t *testing.T) {
 	}
 	h := start(t, fake)
 
-	out := h.call(t, "diagnose_application", map[string]any{"project": "checkout", "environment": "production"})
+	out := h.call(t, "diagnose_component", map[string]any{"project": "checkout", "environment": "production"})
 	if !strings.Contains(out, "SECRETS") || !strings.Contains(out, "unavailable") {
 		t.Errorf("the section should report its own gap:\n%s", out)
 	}

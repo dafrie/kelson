@@ -16,7 +16,7 @@ kubectl -n kelson-system port-forward svc/kelson 8420:8420
 ```
 
 Open <http://127.0.0.1:8420> and log in with the password the script printed.
-That is the full product: create an application, deploy it, watch the rollout,
+That is the full product: create a project, deploy it, watch the rollout,
 read logs, roll back — all from the browser, all against the cluster on your
 machine.
 
@@ -32,9 +32,9 @@ redeploys it, so it doubles as the "see my change in the real UI" loop.
 - Go (builds `kelson-server`; the pinned `kind` binary installs itself into
   `hack/bin/`)
 
-## Your first application
+## Your first project
 
-The quickest win needs no build at all: **New application → From a container
+The quickest win needs no build at all: **New project → From a container
 image**, give it `docker.io/traefik/whoami:v1.12.0` and port 80, deploy, and
 watch it turn healthy.
 

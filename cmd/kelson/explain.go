@@ -7,7 +7,7 @@ import (
 )
 
 // newExplainCmd builds `kelson explain` (issue #77, ADR-0023): "why is this
-// application degraded?" answered with structured causes rather than three
+// component degraded?" answered with structured causes rather than three
 // commands and a guess.
 //
 // # What it is next to `kelson status`

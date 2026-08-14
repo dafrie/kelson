@@ -9,13 +9,13 @@ import (
 
 func srcReq() build.Request {
 	return build.Request{
-		Project:     "shop",
-		Application: "web",
-		SourceGit:   "https://github.com/acme/shop.git",
-		SourceRef:   "9f1c0de",
-		Revision:    "9f1c0de",
-		Image:       "ghcr.io/acme/web",
-		Tag:         "shop-web-9f1c0de",
+		Project:   "shop",
+		Component: "web",
+		SourceGit: "https://github.com/acme/shop.git",
+		SourceRef: "9f1c0de",
+		Revision:  "9f1c0de",
+		Image:     "ghcr.io/acme/web",
+		Tag:       "shop-web-9f1c0de",
 	}
 }
 

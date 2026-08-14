@@ -44,7 +44,7 @@ type Manifest struct {
 // possible for a plane that does not own the apply step (issues #36, #37) —
 // which, now that kustomize-controller owns it, is every plane kelson has.
 type ManifestSet struct {
-	// Project and Environment identify the application model this set renders.
+	// Project and Environment identify the component model this set renders.
 	Project     string
 	Environment string
 

@@ -32,6 +32,7 @@ const DOCS_URL = "https://github.com/dafrie/kelson/tree/main/docs";
 const NAV = [
   { to: "/projects", label: "Projects" },
   { to: "/cluster", label: "Cluster" },
+  { to: "/setup", label: "Setup" },
 ] as const;
 
 function SignedIn() {

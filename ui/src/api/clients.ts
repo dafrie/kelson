@@ -18,9 +18,11 @@ import { EventService } from "../gen/kelson/v1alpha1/events_pb";
 import { BuildService } from "../gen/kelson/v1alpha1/build_pb";
 import { SecretService } from "../gen/kelson/v1alpha1/secret_pb";
 import { PreviewService } from "../gen/kelson/v1alpha1/preview_pb";
+import { InstallService } from "../gen/kelson/v1alpha1/install_pb";
+import { NodeService } from "../gen/kelson/v1alpha1/nodes_pb";
 
 /**
- * Clients for the nine kelson services.
+ * Clients for the kelson services the UI talks to.
  *
  * Connect-ES v2 needs no per-service generated client: `createClient` takes the
  * service descriptor protoc-gen-es emits and produces the typed client from it.
@@ -83,6 +85,8 @@ export function createClients(transport: Transport) {
     build: createClient(BuildService, transport),
     secret: createClient(SecretService, transport),
     preview: createClient(PreviewService, transport),
+    install: createClient(InstallService, transport),
+    node: createClient(NodeService, transport),
   };
 }
 

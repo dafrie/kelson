@@ -156,19 +156,30 @@ var Components = []Component{
 			"database type, its presets, and the declarative capabilities internal/clusterprofile/postgres " +
 			"reports per version",
 	},
+	// envoy-gateway was a deferred row until 2026-08-14, on the ground that
+	// installing a Gateway API implementation claims a GatewayClass beside a
+	// cluster's existing routing. That premise does not hold for the pinned
+	// release: upstream's install.yaml creates the Gateway API CRDs, the
+	// controller and its namespace, and NO GatewayClass — Envoy Gateway acts
+	// only on classes naming gateway.envoyproxy.io/gatewayclass-controller, so
+	// the install carries no traffic and touches nobody's routing until the
+	// user creates one (the same installed-not-configured boundary as
+	// cert-manager's ClusterIssuer). What survives of the original concern is a
+	// footprint rule, enforced in refuse(): a --all-missing sweep declines this
+	// row when detection reports an ingress stack, because adding a second
+	// routing implementation is a decision the user must make by name.
 	{
 		Name:         "envoy-gateway",
 		Title:        "Envoy Gateway",
-		Status:       StatusDeferred,
+		Status:       StatusSupported,
+		Version:      "v1.8.3",
+		ManifestURL:  "https://github.com/envoyproxy/gateway/releases/download/v1.8.3/install.yaml",
+		SHA256:       "37a62afe9bb07d87e86c5c2cff32f046f17397cb4fca9f2a741165826212d781",
 		Namespace:    "envoy-gateway-system",
 		ProfileField: "gatewayAPI",
 		Provides: "all HTTP routing: the Gateway API CRDs and a controller that implements them, which every " +
-			"HTTPRoute kelson renders needs (issue #140)",
-		FollowUp: "installing a Gateway API implementation is a routing decision with a blast radius the " +
-			"other three do not have — it claims a GatewayClass, and a cluster that already routes traffic " +
-			"through anything else must not have a second implementation appear beside it. Detection reports " +
-			"the classes a cluster offers but not which of them carries production traffic, so kelson cannot " +
-			"yet make this offer honestly. Tracked as a follow-up on issue #60",
+			"HTTPRoute kelson renders needs (issue #140). It creates no GatewayClass — which class carries " +
+			"traffic is your decision, made after the install",
 	},
 	{
 		Name:         "external-secrets",

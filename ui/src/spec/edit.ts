@@ -1,6 +1,7 @@
 import type { Error as WireError } from "../gen/kelson/v1alpha1/common_pb";
 import {
   bindingEnv,
+  dnsLabelProblem,
   envValueText,
   errorTarget,
   namedEnv,
@@ -40,13 +41,23 @@ import {
  * for this module to silently drop something and still claim the document is
  * editable.
  *
- * That is why ADR-0014's wider kind set needs nothing here. The parser reads
- * exactly the fields the builder writes, which are the workload fields; a
- * `kind: postgres` component (or an agent, or a `preset:`) is a key the parser
- * captures nowhere, so the rebuild omits it, the bytes differ, and the document
- * goes to the YAML tab whole. Teaching the parser to *read* a data component
- * without teaching the form to edit one would break that symmetry and turn the
- * byte guard from a proof into a hope.
+ * What keeps step 3 a proof is that the parser reads *exactly* what the builder
+ * writes and never more. ADR-0014's wider kind set meets that rule at one point
+ * only: the `kind: postgres` / `kind: valkey` line of a data component, because
+ * the add-component flow (#214) writes one and a project that gained a database
+ * would otherwise stop being rebuildable the moment it did. Both halves learned
+ * the same one key. Everything else a data, agent or chart component can carry —
+ * `preset:`, `tools:`, `chart:`, `values:` — is read by neither, so a document
+ * holding any of them still fails the byte guard and goes to the YAML tab whole,
+ * and a `kind:` outside those two is not read at all.
+ *
+ * The form correspondingly does not *edit* a data component, it states it
+ * (EditSpecPage: DataComponentRow). A database has no image to roll and no
+ * replicas to scale; its whole configuration is a preset whose meaning lives in
+ * the data-services panel (ADR-0005, ADR-0007, #107). Reading a key the form
+ * cannot edit is safe precisely because the builder writes that same key back —
+ * what would turn the byte guard from a proof into a hope is reading a key
+ * nothing writes.
  *
  * The parser is deliberately small and deliberately strict. It reads the
  * restricted grammar the builders emit (2-space indentation, block mappings,
@@ -92,9 +103,23 @@ export interface SpecTextSet {
   environments: Record<string, string>;
 }
 
+/**
+ * A component's written `kind:`, for the kinds the shape cannot derive.
+ *
+ * Empty is the ordinary case: a workload's kind comes from its shape
+ * (docs/model.md — `port:` a service, `schedule:` a cron, neither a worker), so
+ * the document says nothing and neither does this. `postgres` and `valkey` have
+ * no shape to derive from, so they are written, and they are the only two this
+ * module reads back — see the module comment for why that boundary is exactly
+ * where the byte guard stays a proof.
+ */
+export type DataKind = "postgres" | "valkey";
+
 /** One component's editable fields. Every value is the raw text of an input. */
 export interface ComponentEdit {
   name: string;
+  /** "" for a workload, whose kind its shape derives. */
+  kind: DataKind | "";
   image: string;
   port: string;
   health: string;
@@ -199,6 +224,11 @@ export function componentWorkload(c: ComponentEdit): "service" | "worker" | "cro
   return "worker";
 }
 
+/** True for the kinds whose configuration is a preset rather than fields. */
+export function isDataComponent(c: ComponentEdit): boolean {
+  return c.kind !== "";
+}
+
 /* -------------------------------------------------------------- the builder */
 
 /**
@@ -238,6 +268,17 @@ export function buildProjectDocument(p: ProjectEdit): string {
 }
 
 function componentLines(component: ComponentEdit): string[] {
+  // A data component is a name and a kind. Every workload field is refused by
+  // the model on one (schema/mutually-exclusive) and its preset is not
+  // something this form models, so writing anything else here would either
+  // build a document the server rejects or claim to carry a field it dropped.
+  if (component.kind !== "") {
+    return [
+      `    - name: ${yamlScalar(component.name)}`,
+      `      kind: ${component.kind}`,
+    ];
+  }
+
   const kind = componentWorkload(component);
   const domains = component.domains.filter(set);
   const env = namedEnv(component.env);
@@ -412,16 +453,23 @@ export function parseProjectDocument(text: string): ProjectEdit | undefined {
 }
 
 /**
- * One component, in the workload vocabulary the form edits.
+ * One component, in the vocabulary the form knows: the workload fields, plus
+ * the `kind:` of a data component, which the builder writes back verbatim.
  *
- * `kind:`, `preset:` and `tools:` are deliberately absent: a component carrying
- * any of them is a component this form cannot edit, and the round-trip guard
- * turns that into a read-only document rather than a lossy one.
+ * `preset:`, `tools:` and `chart:` are deliberately absent, and a `kind:` this
+ * module does not write is deliberately not read: a component carrying any of
+ * them is one this form cannot reproduce, and the round-trip guard turns that
+ * into a read-only document rather than a lossy one.
  */
 function readComponent(node: YNode): ComponentEdit | undefined {
   if (!isMap(node)) return undefined;
   const name = node.get("name");
   if (typeof name !== "string") return undefined;
+
+  const written = node.get("kind") ?? "";
+  if (typeof written !== "string") return undefined;
+  const kind: DataKind | "" =
+    written === "postgres" || written === "valkey" ? written : "";
 
   const scalars: Record<string, string> = {};
   for (const key of ["image", "port", "health", "schedule"]) {
@@ -455,6 +503,7 @@ function readComponent(node: YNode): ComponentEdit | undefined {
 
   return {
     name,
+    kind,
     image: scalars.image ?? "",
     port: scalars.port ?? "",
     health: scalars.health ?? "",
@@ -671,6 +720,193 @@ export function sameText(a: SpecTextSet, b: SpecTextSet): boolean {
   const keys = Object.keys(a.environments);
   if (keys.length !== Object.keys(b.environments).length) return false;
   return keys.every((k) => a.environments[k] === b.environments[k]);
+}
+
+/* ------------------------------------------------- adding a component (#214) */
+
+/**
+ * A component being added, as the questions that decide its shape.
+ *
+ * The kind is asked as a kind here, unlike the create form, which derives it
+ * from a port that may or may not be filled in (src/spec/documents.ts). The
+ * difference is what the reader is doing: creating a project is "get something
+ * running", where a port is the question and the kind is a consequence; adding
+ * a component to a project that already exists is "add the worker", where the
+ * kind is the question and the port or schedule is the consequence. Both write
+ * the same shapes, and neither writes a `kind:` for a workload — docs/model.md
+ * derives those, and a document that states what it already says would be one
+ * more thing for a reader to keep in agreement with itself.
+ */
+export interface ComponentDraft {
+  name: string;
+  kind: "service" | "worker" | "cron" | DataKind;
+  port: string;
+  schedule: string;
+  /**
+   * Whether this component names its own image. False writes no `image:` at
+   * all, which is rule P3: the Project's `image:` (or the artifact its
+   * `source:`/`build:` produces) is what the component runs.
+   */
+  ownImage: boolean;
+  image: string;
+}
+
+export function emptyComponentDraft(): ComponentDraft {
+  return {
+    name: "",
+    kind: "service",
+    port: "",
+    schedule: "",
+    ownImage: false,
+    image: "",
+  };
+}
+
+/** True for the two kinds that are a name and a preset rather than a workload. */
+export function isDataDraft(
+  draft: ComponentDraft,
+): draft is ComponentDraft & { kind: DataKind } {
+  return draft.kind === "postgres" || draft.kind === "valkey";
+}
+
+/** The draft as the component it becomes, with every field its kind ignores dropped. */
+export function draftComponent(draft: ComponentDraft): ComponentEdit {
+  const data = isDataDraft(draft);
+  return {
+    name: draft.name.trim(),
+    kind: data ? draft.kind : "",
+    image: data || !draft.ownImage ? "" : draft.image.trim(),
+    port: draft.kind === "service" ? draft.port.trim() : "",
+    health: "",
+    schedule: draft.kind === "cron" ? draft.schedule.trim() : "",
+    domains: [],
+    replicasMin: "",
+    replicasMax: "",
+    env: [],
+  };
+}
+
+/**
+ * The entry itself, as the bytes that go into `spec.components`.
+ *
+ * This is what the append adds and, when the append cannot happen, what the
+ * reader is handed to paste into the YAML tab — one function, so the block
+ * somebody pastes is the block the form would have written.
+ */
+export function componentSnippet(draft: ComponentDraft): string {
+  return componentLines(draftComponent(draft)).join("\n") + "\n";
+}
+
+export type ComponentDraftField = "name" | "port" | "schedule" | "image";
+
+export interface ComponentDraftProblem {
+  field: ComponentDraftField;
+  message: string;
+}
+
+/**
+ * What the browser refuses to send, and nothing more (the #63 rule).
+ *
+ * The server owns validation and stays the authority — its findings come back
+ * through the edit form's own error mapping. What is checked here is what the
+ * builder must know before it writes: a name that becomes a component's
+ * `name:` (internal/model/validate.go holds it to a DNS-1123 label and to
+ * uniqueness within the list, and both are answerable while someone types), and
+ * the one field the chosen kind is *made of* — a service without a port is a
+ * worker, a cron without a schedule is a worker, and writing either would be
+ * silently making the choice on the reader's behalf.
+ */
+export function componentDraftProblems(
+  draft: ComponentDraft,
+  existing: readonly string[],
+): ComponentDraftProblem[] {
+  const out: ComponentDraftProblem[] = [];
+  const name = draft.name.trim();
+
+  const problem = dnsLabelProblem(name, "a component name");
+  if (problem !== undefined) {
+    out.push({ field: "name", message: problem });
+  } else if (existing.includes(name)) {
+    out.push({
+      field: "name",
+      message: `this project already has a component called "${name}" — names are unique within a Project, because they name one workload or database in one namespace`,
+    });
+  }
+
+  const port = draft.port.trim();
+  if (draft.kind === "service") {
+    if (port === "") {
+      out.push({
+        field: "port",
+        message:
+          "a service is a component with a port: the port the container listens on. Choose worker if it serves no traffic.",
+      });
+    } else if (!/^\d+$/.test(port)) {
+      out.push({ field: "port", message: `"${port}" is not a whole number` });
+    }
+  }
+
+  if (draft.kind === "cron" && draft.schedule.trim() === "") {
+    out.push({
+      field: "schedule",
+      message:
+        "a cron job is a component with a schedule: a five-field cron expression. Choose worker for something that runs continuously.",
+    });
+  }
+
+  if (!isDataDraft(draft) && draft.ownImage && draft.image.trim() === "") {
+    out.push({
+      field: "image",
+      message:
+        "an image reference is required — or let this component inherit the project's image (rule P3)",
+    });
+  }
+
+  return out;
+}
+
+/**
+ * The result of appending: the whole document set, or the block to paste.
+ *
+ * There is no third answer and deliberately no partial one. Either the stored
+ * documents are ones this module can rebuild — in which case the append is
+ * provably the stored bytes plus one entry — or they are not, and the honest
+ * move is the same one the edit form makes everywhere else: say so, and hand
+ * over the YAML rather than rewriting somebody's file (ADR-0013 §1).
+ */
+export type ComponentAppend =
+  | { ok: true; edit: SpecEdit; text: SpecTextSet; added: string }
+  | { ok: false; added: string };
+
+/**
+ * `spec.components` with one more entry, in the stored document's own bytes.
+ *
+ * The contract is checked rather than assumed: the rebuilt Project document
+ * must be the stored one followed by a blank line and the new entry, and
+ * nothing else. That equality is what "the original bytes are untouched except
+ * the new entry" means, and asserting it here is cheaper than trusting that the
+ * builder will keep writing components last forever.
+ */
+export function appendComponent(
+  text: SpecTextSet,
+  draft: ComponentDraft,
+): ComponentAppend {
+  const added = componentSnippet(draft);
+  const edit = readSpec(text);
+  if (edit === undefined || !sameText(writeSpec(edit), text)) {
+    return { ok: false, added };
+  }
+
+  const next: SpecEdit = {
+    ...edit,
+    project: {
+      ...edit.project,
+      components: [...edit.project.components, draftComponent(draft)],
+    },
+  };
+  const written = writeSpec(next);
+  if (written.project !== `${text.project}\n${added}`) return { ok: false, added };
+  return { ok: true, edit: next, text: written, added };
 }
 
 /* ------------------------------------------------------------- YAML-lite */

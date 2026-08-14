@@ -414,6 +414,50 @@
   color: var(--kelson-accent);
 }
 
+/* The project's components (#214). A list of what the Project contains, above
+   the environments it runs in — the same row shape as a verdict, because the
+   two are read the same way: an identity, a chip that says what it is, and the
+   one action that belongs to it. */
+.k-components {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.k-component {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--kelson-panel-dim);
+  border: 1px solid var(--kelson-hairline);
+  border-radius: 5px;
+}
+
+.k-component__ident {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.k-component__name {
+  font-size: 13.5px;
+  color: var(--kelson-text);
+  overflow-wrap: anywhere;
+}
+
+.k-component__fact {
+  font-size: 12.5px;
+  color: var(--kelson-muted);
+}
+
 .k-docs {
   display: flex;
   flex-direction: column;
@@ -843,6 +887,32 @@
   margin-top: 24px;
 }
 
+/* Adding a component (#214): a section of its own, because it writes a new
+   entry rather than changing an existing one, and because it must stay
+   reachable from the YAML tab — a document the form cannot rebuild is exactly
+   the one whose reader is standing there. */
+.k-edit__add {
+  gap: 14px;
+}
+
+/* The append this UI would not make. It is a notice with a payload: the block
+   the form would have written, so "we will not rewrite your file" comes with
+   the thing the reader needs instead of it. */
+.k-edit__handoff {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 18px;
+  background: var(--kelson-degraded-fill);
+  border: 1px solid var(--kelson-degraded-border);
+  border-radius: 6px;
+}
+
+.k-edit__handoff-title {
+  font-weight: 500;
+  color: var(--kelson-text);
+}
+
 /* The form for a document the UI cannot rebuild. It is a notice, not an error:
    nothing is wrong with the document — the form is what cannot hold it. */
 .k-edit__readonly {
@@ -1126,4 +1196,150 @@
 .k-history__actions {
   align-items: baseline;
   margin-bottom: 20px;
+}
+
+/* --- Cluster: nodes ------------------------------------------------------- */
+
+.k-nodes__summary {
+  margin: 0 0 10px;
+  color: var(--kelson-muted);
+}
+
+.k-nodes__list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.k-nodes__row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.k-nodes__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.k-nodes__name {
+  font-weight: 600;
+}
+
+.k-nodes__meta {
+  color: var(--kelson-muted);
+  font-size: 0.86rem;
+  flex: 1;
+}
+
+/* One capacity gauge: label, track, value. The track only draws a fill when
+   usage was actually read — an unread gauge at 0% would be a claim. */
+.k-gauge {
+  display: grid;
+  grid-template-columns: 60px 1fr max-content;
+  align-items: center;
+  gap: 10px;
+}
+
+.k-gauge__label {
+  color: var(--kelson-muted);
+  font-size: 0.86rem;
+}
+
+.k-gauge__track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--kelson-inset);
+  border: 1px solid var(--kelson-inset-border);
+  overflow: hidden;
+}
+
+.k-gauge__fill {
+  height: 100%;
+  background: var(--kelson-accent);
+}
+
+.k-gauge__fill--hot {
+  background: var(--kelson-failed);
+}
+
+.k-gauge__value {
+  color: var(--kelson-muted);
+  font-size: 0.86rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Cluster & setup: the platform-component checklist -------------------- */
+
+.k-components__list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.k-components__row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.k-components__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.k-components__name {
+  font-weight: 600;
+}
+
+.k-components__token {
+  color: var(--kelson-muted);
+  font-family: var(--kelson-font-mono);
+  font-size: 0.82rem;
+}
+
+.k-components__state {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.k-components__provides {
+  margin: 0;
+  color: var(--kelson-muted);
+  font-size: 0.9rem;
+}
+
+.k-components__detail {
+  margin: 0;
+  color: var(--kelson-muted-deep);
+  font-size: 0.86rem;
+}
+
+/* The install flow renders inside the component's own row: plan, confirm,
+   report — the preview stays visually attached to what it previews. */
+.k-components__flow {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid var(--kelson-hairline);
+  padding-top: 8px;
+  margin-top: 4px;
+}
+
+.k-components__objects {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 0.86rem;
 }

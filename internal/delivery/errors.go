@@ -53,6 +53,23 @@ const (
 	// than half-wired or silently skipped.
 	ErrNotImplemented Code = "delivery/not-implemented"
 
+	// ImmutableField is returned when the API server refuses an update because
+	// a field of the live object cannot change in place. It is a distinct code
+	// from ApplyFailed because the remedy is distinct and unusual: there is
+	// nothing to fix in the spec — the spec is what the object should be — and
+	// re-deploying will fail identically until the live object is deleted.
+	// The component rename's selector change
+	// ([ADR-0032](docs/adr/0032-finish-the-component-rename.md)) is the case
+	// that motivated it, and a caller that switches on the code should not have
+	// to parse a Kubernetes validation message to tell "your spec is wrong"
+	// from "delete this and deploy again".
+	//
+	// The direct adapter that raised it was deleted with the direct plane
+	// ([ADR-0028](docs/adr/0028-delivery-spine.md)); the code and its helpers
+	// stay because the failure belongs to any last mile that applies to a live
+	// API server, and the spine's reconcilers meet it too.
+	ErrImmutableField Code = "delivery/immutable-field"
+
 	// ReleaseFailed is returned when a component's release command — the
 	// migration hook of issue #104 — did not succeed. It is a distinct code
 	// from ApplyFailed because the situation it describes is distinct and the
@@ -147,6 +164,21 @@ func ApplyFailed(resource, field, msg, remediation string) Error {
 func AsApplyFailed(err error) bool {
 	var de Error
 	return errors.As(err, &de) && de.Code == ErrApplyFailed
+}
+
+// ImmutableField is a helper to construct the "this cannot be changed in
+// place" refusal. The field is named so the answer says what is stuck, and the
+// remediation must name the delete — a retry cannot help.
+func ImmutableField(resource, field, msg, remediation string) Error {
+	return newError(ErrImmutableField, resource, field, msg, remediation)
+}
+
+// AsImmutableField reports whether err is a delivery/immutable-field, so a
+// caller can say "delete this object and deploy again" rather than "the deploy
+// failed".
+func AsImmutableField(err error) bool {
+	var de Error
+	return errors.As(err, &de) && de.Code == ErrImmutableField
 }
 
 // ReleaseFailed is a helper to construct a failed release-command hook

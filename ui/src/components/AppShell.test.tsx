@@ -25,7 +25,7 @@ describe("AppShell", () => {
     const nav = screen.getByRole("navigation", { name: "Primary" });
     expect(
       Array.from(nav.querySelectorAll("a")).map((a) => a.textContent),
-    ).toEqual(["Projects", "Cluster"]);
+    ).toEqual(["Projects", "Cluster", "Setup"]);
   });
 
   it("marks the current destination active", () => {

@@ -105,7 +105,7 @@ func TestExplainAsksForTheCrashLoopLogWindow(t *testing.T) {
 	if engine.query.Around == nil || !engine.query.Around.AtTermination {
 		t.Fatalf("log query = %+v, want the at-termination window", engine.query)
 	}
-	if engine.query.Namespace != "hello-development" || engine.query.Application != "web" {
+	if engine.query.Namespace != "hello-development" || engine.query.Component != "web" {
 		t.Errorf("log query selector = %+v, want the failing workload in the resolved namespace", engine.query)
 	}
 	// The line the engine returned is what named the variable, so it reached

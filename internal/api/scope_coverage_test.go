@@ -140,7 +140,12 @@ func TestEveryScopeRowIsWellFormed(t *testing.T) {
 //   - AuditService: an agent that could read the audit trail could read what its
 //     reviewer will see, and the trail spans every project, so there is no
 //     scoped version of the answer that would be safe to serve (ADR-0026 §5).
-var adminServices = []string{"AgentService", "AuditService"}
+//   - InstallService: installing a platform component writes cluster-scoped
+//     RBAC, CRDs and webhook configurations — wider than any (project,
+//     environment) scope can bound, so there is no scoped version of the grant
+//     (ADR-0021; the CLI's confirmation gate makes the same argument).
+//     ListComponents stays a read; Plan and Install are the admin pair.
+var adminServices = []string{"AgentService", "AuditService", "InstallService"}
 
 func adminService(procedure string) bool {
 	for _, service := range adminServices {

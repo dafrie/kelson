@@ -337,7 +337,7 @@ and a **patch to the target `Environment`** on the other, with `dry_run` and `id
 standard ladder and optimistic concurrency on the resource's `version` (`resourceVersion`). It returns
 the pins it wrote, the source revision they came from, and the resulting diff with the same
 `exit_semantics` `Diff` reports, so a caller needs no second call to find out what the promotion
-changes. Agents reach the same operation through the `promote_application` MCP tool
+changes. Agents reach the same operation through the `promote_component` MCP tool
 ([docs/mcp.md](mcp.md)), which previews by default.
 
 **The byte-splice is gone, and so is the reason it existed.** ADR-0016 built the server-side promotion
@@ -365,11 +365,12 @@ that costs nothing to apply uniformly.
 Data components render none: CloudNativePG creates and owns the identity its clusters run under, which is
 what delegating topology to an operator means ([ADR-0005](adr/0005-delegate-to-operators.md)).
 
-The rendered identity labels are unchanged by the rename: pods still carry `kelson.dev/application` and
-Deployments still select on it. A selector is immutable in Kubernetes, so renaming that label would orphan
-every running workload — the spec's vocabulary changed, the cluster's did not. Finishing the rename to
-`kelson.dev/project` + `kelson.dev/component` is [#234](https://github.com/dafrie/kelson/issues/234),
-deliberately one behaviour-change PR with a migration rather than a docs sweep.
+The rendered identity labels carry the same vocabulary as the spec: pods carry `kelson.dev/component`
+and Deployments select on it. ADR-0014 originally held that label at the old spelling because a
+Deployment's selector is immutable and renaming it would orphan every running workload;
+[ADR-0032](adr/0032-finish-the-component-rename.md) finished the rename while nothing was deployed
+that could be orphaned. The consequence is real and has no migration path: a workload deployed before
+that change cannot be updated in place afterwards, and must be deleted and redeployed.
 
 ## Data components and bindings
 
@@ -545,7 +546,7 @@ worth using already tracks what it has applied.
 
 ### Rollback does not undo a migration
 
-Rolling the application back re-applies the previous revision's manifests and **deliberately does not
+Rolling the workload back re-applies the previous revision's manifests and **deliberately does not
 re-run its release command**. A schema change is not in the rendered output and kelson has no
 down-migration to run, so there is nothing to roll back to: the rolled-back workloads meet the newer
 schema. Plan for that — keep migrations backwards-compatible with the revision you might roll back to

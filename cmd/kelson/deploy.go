@@ -93,7 +93,7 @@ type deployOptions struct {
 // --- the observation plane seam ---------------------------------------------
 
 // observationTarget is what an observing command resolved from its spec files:
-// which application model, in which namespace, against which cluster.
+// which component model, in which namespace, against which cluster.
 //
 // It used to carry a delivery mode, a git target and a local history directory
 // as well, because it also chose an adapter. There is no adapter to choose
@@ -188,7 +188,7 @@ func resolveObservationTarget(in specInput, warn io.Writer) (observationTarget, 
 // setSpecHash is the set-level provenance hash carried on ManifestSet.SpecHash:
 // a digest of the rendered bytes, in render order.
 //
-// The renderer stamps a per-application kelson.dev/spec-hash on each resource
+// The renderer stamps a per-component kelson.dev/spec-hash on each resource
 // and that is what status correlation compares; this one identifies the whole
 // delivered set, which is what history entries and the state machine's
 // correlation fallback need. It is deterministic for the same reason the

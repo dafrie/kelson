@@ -9,7 +9,7 @@ It runs in CI on `kind` (`.github/workflows/e2e.yml`), and identically on a lapt
 
 ## What runs
 
-Four scenarios, all against `testdata/minimal.yaml` — one service component, one port, no routing,
+Five scenarios, all against `testdata/minimal.yaml` — one service component, one port, no routing,
 no build, no data services. Everything it needs exists on a stock single-node kind cluster. Each
 scenario uses its own environment and therefore its own namespace, so the ones that delete things
 can never race the ones that do not.
@@ -64,6 +64,14 @@ non-destructive claim. The test creates the namespace *before* the deploy, so ke
 `Active`, and the unlabelled bystander, the other project's labelled object and the namespace's own
 furniture are all still there. It also asserts the local rendered history for the environment was
 removed.
+
+**`TestUninstallLeavesACreatedNamespaceAnotherProjectMovedInto`**
+([#215](https://github.com/dafrie/kelson/issues/215)) — the namespace kelson *created*, shared. The
+deploy records `created`, and the test then plants a resource carrying kelson's full provenance for
+another `(project, environment)` — which an overridable `spec.namespace` makes possible. The
+uninstall must delete its own resources, leave the namespace `Active` with the other project's
+resource in it, and say whose resources it is standing for. It clears its namespace before deploying,
+because it is the one scenario that deliberately leaves one behind.
 
 ## Running it locally
 

@@ -143,6 +143,16 @@ function sourceSpecService(router: Router, requests: PutSpecRequest[]) {
 const BUILT = "ghcr.io/acme/hello@sha256:" + "a".repeat(64);
 
 describe("NewProjectPage", () => {
+  it("says a project is a container, and that this is its first component (#214)", () => {
+    renderNew(createRouterTransport(() => {}));
+
+    // The screen still asks three questions; what changed is that it no longer
+    // implies a project is one app. The rest are added from the project's page.
+    expect(
+      screen.getByText(/This creates the project and its first component/),
+    ).toBeTruthy();
+  });
+
   it("refuses a name that cannot be a metadata.name without asking the server", () => {
     let calls = 0;
     const transport = createRouterTransport((router) => {

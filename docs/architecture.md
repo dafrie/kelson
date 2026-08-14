@@ -54,7 +54,7 @@ future delegation kind ([#230](https://github.com/dafrie/kelson/issues/230)), no
 
 ## The model
 
-Three concepts ([ADR-0006](adr/0006-project-application-environment.md), leaf amended by
+Three concepts ([ADR-0006](adr/0006-project-application-environment.md), leaf renamed by
 [ADR-0014](adr/0014-components.md)), and no more without a strong argument. Deliberately not an
 OAM-style hierarchy: developers should deploy before learning vocabulary.
 
@@ -189,7 +189,8 @@ Every rendered resource is stamped:
 metadata:
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: checkout        # the component's project; renamed by #234
+    kelson.dev/project: checkout
+    kelson.dev/component: web
     kelson.dev/environment: production
   annotations:
     kelson.dev/spec-hash:        sha256:…   # normalized spec
@@ -197,10 +198,12 @@ metadata:
     kelson.dev/renderer-version: 0.4.1
 ```
 
-`kelson.dev/application` is still the label the renderer writes and Deployments select on, and it stays
-that way until [#234](https://github.com/dafrie/kelson/issues/234) does the rename in one
-behaviour-change PR: a selector is immutable in Kubernetes, so renaming it out of sequence orphans every
-running workload.
+`kelson.dev/project` and `kelson.dev/component` are the labels the renderer writes and Deployments
+select on, and the spec's vocabulary and the cluster's are the same words
+([ADR-0032](adr/0032-finish-the-component-rename.md)). The rename has no migration path and does not
+need one: a Deployment's selector is immutable, so a workload deployed before it is deleted and
+redeployed rather than updated in place — and the apply that refuses says exactly that
+(`delivery/immutable-field`, [docs/delivery.md](delivery.md)).
 
 This is what lets the observation plane answer "is my change live?" without owning the apply step. The UI
 shows a real state machine rather than a spinner:
@@ -331,7 +334,7 @@ kelson's agent story is an API design commitment, not a chatbot.
 capability the API lacks, which is what stops it becoming a privileged backdoor with its own logic. But its
 *shape* is deliberately different: tools are task-shaped rather than resource-shaped, because a
 sixty-endpoint API mapped one-to-one gives sixty tools and makes "why is checkout broken" cost eight round
-trips. One `diagnose_application` that composes status, events, a bounded log window and the recent
+trips. One `diagnose_component` that composes status, events, a bounded log window and the recent
 revision is the same capability in a form an agent can actually use. That surface ships as `kelson-mcp`
 — seven tools over stdio, unauthenticated like the server beneath it ([the MCP server](mcp.md)).
 
@@ -372,10 +375,10 @@ class of secret [ADR-0009](adr/0009-secrets.md) deliberately keeps out of the co
 removes the git writer that would otherwise have carried it.
 
 **Observation, not polling.** A watch/SSE event stream lets agents react to outcomes. Plus structured
-`explain` endpoints — "why is this application degraded?" returns causal, machine-readable data
+`explain` endpoints — "why is this component degraded?" returns causal, machine-readable data
 (failing probes, recent revision, events, resource pressure), not a log dump for an LLM to guess at.
 That one is built: `ExplainService.Explain`, `kelson explain` and the `WHY` section of
-`diagnose_application` are three surfaces over one capability in `internal/explain`, and every cause it
+`diagnose_component` are three surfaces over one capability in `internal/explain`, and every cause it
 returns carries a stable code, a confidence, the evidence behind it and — where the recorded history
 shows one — the revision that introduced the change being blamed
 ([ADR-0023](adr/0023-explain-structured-causes.md)).
@@ -415,7 +418,7 @@ than build arguments or image layers, and no secret value is ever written to a l
 
 Delegated to CloudNativePG for `kind: postgres` and to
 [valkey-io/valkey-operator](https://github.com/valkey-io/valkey-operator) for `kind: valkey`, with
-kelson owning only the application-facing abstraction. Full reasoning in
+kelson owning only the component-facing abstraction. Full reasoning in
 [ADR-0007](adr/0007-data-services.md) and, for the choice of Valkey operator and what it costs,
 [ADR-0015](adr/0015-valkey-operator.md). What each preset actually renders is
 [docs/data-services.md](data-services.md).
@@ -511,5 +514,5 @@ it — most visibly Kubero, whose vendored Bitnami charts broke working installa
 catalog was withdrawn.
 
 This constrains **what kelson promises**, not what you can run. Any workload or Helm chart is installable;
-kelson runs it, routes to it and binds applications to it. It just makes no durability claim about
+kelson runs it, routes to it and binds components to it. It just makes no durability claim about
 anything it did not provision as a managed type. See [ADR-0005](adr/0005-delegate-to-operators.md).

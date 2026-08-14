@@ -19,12 +19,12 @@ metadata:
   namespace: checkout-prod
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: web
+    kelson.dev/component: web
     kelson.dev/environment: production
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.2.0
-    kelson.dev/spec-hash: sha256:8a91b0c6f0fd0d74975904ee63990c32079c8477c00dafdde2c0904b302641c7
+    kelson.dev/spec-hash: sha256:0657abd5cf89dd56e566c29bb02fb5ead0d598f2c514cfee5677cf8b6f9298a7
 ---
 apiVersion: v1
 kind: Service
@@ -33,16 +33,16 @@ metadata:
   namespace: checkout-prod
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: web
+    kelson.dev/component: web
     kelson.dev/environment: production
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.2.0
-    kelson.dev/spec-hash: sha256:8a91b0c6f0fd0d74975904ee63990c32079c8477c00dafdde2c0904b302641c7
+    kelson.dev/spec-hash: sha256:0657abd5cf89dd56e566c29bb02fb5ead0d598f2c514cfee5677cf8b6f9298a7
 spec:
   selector:
     kelson.dev/project: checkout
-    kelson.dev/application: web
+    kelson.dev/component: web
   ports:
     - name: http
       port: 8080
@@ -55,22 +55,22 @@ metadata:
   namespace: checkout-prod
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: web
+    kelson.dev/component: web
     kelson.dev/environment: production
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.2.0
-    kelson.dev/spec-hash: sha256:8a91b0c6f0fd0d74975904ee63990c32079c8477c00dafdde2c0904b302641c7
+    kelson.dev/spec-hash: sha256:0657abd5cf89dd56e566c29bb02fb5ead0d598f2c514cfee5677cf8b6f9298a7
 spec:
   selector:
     matchLabels:
       kelson.dev/project: checkout
-      kelson.dev/application: web
+      kelson.dev/component: web
   template:
     metadata:
       labels:
         app.kubernetes.io/managed-by: kelson
-        kelson.dev/application: web
+        kelson.dev/component: web
         kelson.dev/environment: production
         kelson.dev/project: checkout
     spec:
@@ -106,12 +106,12 @@ metadata:
   namespace: checkout-prod
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: web
+    kelson.dev/component: web
     kelson.dev/environment: production
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.2.0
-    kelson.dev/spec-hash: sha256:8a91b0c6f0fd0d74975904ee63990c32079c8477c00dafdde2c0904b302641c7
+    kelson.dev/spec-hash: sha256:0657abd5cf89dd56e566c29bb02fb5ead0d598f2c514cfee5677cf8b6f9298a7
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
@@ -134,12 +134,12 @@ metadata:
   namespace: checkout-prod
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: web
+    kelson.dev/component: web
     kelson.dev/environment: production
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.2.0
-    kelson.dev/spec-hash: sha256:8a91b0c6f0fd0d74975904ee63990c32079c8477c00dafdde2c0904b302641c7
+    kelson.dev/spec-hash: sha256:0657abd5cf89dd56e566c29bb02fb5ead0d598f2c514cfee5677cf8b6f9298a7
 spec:
   parentRefs:
     - name: envoy
@@ -161,12 +161,12 @@ metadata:
   namespace: checkout-prod
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: web
+    kelson.dev/component: web
     kelson.dev/environment: production
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.2.0
-    kelson.dev/spec-hash: sha256:8a91b0c6f0fd0d74975904ee63990c32079c8477c00dafdde2c0904b302641c7
+    kelson.dev/spec-hash: sha256:0657abd5cf89dd56e566c29bb02fb5ead0d598f2c514cfee5677cf8b6f9298a7
 spec:
   secretName: web-tls
   issuerRef:
@@ -182,17 +182,17 @@ metadata:
   namespace: checkout-prod
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: web
+    kelson.dev/component: web
     kelson.dev/environment: production
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.2.0
-    kelson.dev/spec-hash: sha256:8a91b0c6f0fd0d74975904ee63990c32079c8477c00dafdde2c0904b302641c7
+    kelson.dev/spec-hash: sha256:0657abd5cf89dd56e566c29bb02fb5ead0d598f2c514cfee5677cf8b6f9298a7
 spec:
   selector:
     matchLabels:
       kelson.dev/project: checkout
-      kelson.dev/application: web
+      kelson.dev/component: web
   endpoints:
     - port: http
       path: /metrics
@@ -204,12 +204,12 @@ metadata:
   namespace: checkout-prod
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: worker
+    kelson.dev/component: worker
     kelson.dev/environment: production
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.2.0
-    kelson.dev/spec-hash: sha256:f280cf003479f4aa6effc6d649f61f60c1a8b4361bea53449f3fdd8e9a1907cb
+    kelson.dev/spec-hash: sha256:99413847faa486a5ad9d9d5f00a738001bab889afe0b191f7d5ebb3e9afdae0d
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -218,23 +218,23 @@ metadata:
   namespace: checkout-prod
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: worker
+    kelson.dev/component: worker
     kelson.dev/environment: production
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.2.0
-    kelson.dev/spec-hash: sha256:f280cf003479f4aa6effc6d649f61f60c1a8b4361bea53449f3fdd8e9a1907cb
+    kelson.dev/spec-hash: sha256:99413847faa486a5ad9d9d5f00a738001bab889afe0b191f7d5ebb3e9afdae0d
 spec:
   replicas: 2
   selector:
     matchLabels:
       kelson.dev/project: checkout
-      kelson.dev/application: worker
+      kelson.dev/component: worker
   template:
     metadata:
       labels:
         app.kubernetes.io/managed-by: kelson
-        kelson.dev/application: worker
+        kelson.dev/component: worker
         kelson.dev/environment: production
         kelson.dev/project: checkout
     spec:
@@ -257,12 +257,12 @@ metadata:
   namespace: checkout-prod
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: nightly-report
+    kelson.dev/component: nightly-report
     kelson.dev/environment: production
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.2.0
-    kelson.dev/spec-hash: sha256:ef54d298cf2320476019d466fa96de1c37320b3440a3bbaa898f3c0a1c409b40
+    kelson.dev/spec-hash: sha256:11a3263cca1424067f899adf8b51f120cd9f8edcec03b7647acf5c1f1f9619bf
 ---
 apiVersion: batch/v1
 kind: CronJob
@@ -271,12 +271,12 @@ metadata:
   namespace: checkout-prod
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: nightly-report
+    kelson.dev/component: nightly-report
     kelson.dev/environment: production
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.2.0
-    kelson.dev/spec-hash: sha256:ef54d298cf2320476019d466fa96de1c37320b3440a3bbaa898f3c0a1c409b40
+    kelson.dev/spec-hash: sha256:11a3263cca1424067f899adf8b51f120cd9f8edcec03b7647acf5c1f1f9619bf
 spec:
   schedule: 0 3 * * *
   jobTemplate:
@@ -285,7 +285,7 @@ spec:
         metadata:
           labels:
             app.kubernetes.io/managed-by: kelson
-            kelson.dev/application: nightly-report
+            kelson.dev/component: nightly-report
             kelson.dev/environment: production
             kelson.dev/project: checkout
         spec:

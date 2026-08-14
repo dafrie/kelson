@@ -22,8 +22,8 @@ PROJECT_FILE="$EXAMPLE_DIR/project.yaml"
 ENV_FILE="$EXAMPLE_DIR/e2e.yaml"
 ENV_NAME="e2e"
 PROJECT_NAME="hello-e2e"
-APP_NAME="web"
-SELECTOR="kelson.dev/project=${PROJECT_NAME},kelson.dev/application=${APP_NAME}"
+COMPONENT_NAME="web"
+SELECTOR="kelson.dev/project=${PROJECT_NAME},kelson.dev/component=${COMPONENT_NAME}"
 # NAMESPACE is derived from the rendered manifests once render has run (below)
 # rather than hardcoded, so it can't drift from what the renderer actually
 # targets.
@@ -95,10 +95,10 @@ kubectl apply -f "$WORKDIR/rendered.yaml" ||
 	die "kubectl could not apply the rendered set; a kelson render must be plain, applicable manifests"
 log "kubectl applied the rendered set"
 
-kubectl -n "$NAMESPACE" rollout status deployment/"$APP_NAME" --timeout=120s ||
+kubectl -n "$NAMESPACE" rollout status deployment/"$COMPONENT_NAME" --timeout=120s ||
 	die "kubectl does not agree the Deployment is rolled out after applying the rendered set"
-wait_for "a ready ${APP_NAME} pod" '{.items[*].status.containerStatuses[*].ready}' "true" 1 0
-log "kubectl confirms ${APP_NAME} is running and ready in ${NAMESPACE}"
+wait_for "a ready ${COMPONENT_NAME} pod" '{.items[*].status.containerStatuses[*].ready}' "true" 1 0
+log "kubectl confirms ${COMPONENT_NAME} is running and ready in ${NAMESPACE}"
 
 log "== stage: induce CrashLoopBackOff =="
 # whoami exits 2 on an unrecognised flag (verified locally: `docker run
@@ -148,10 +148,10 @@ log "== stage: restore the good revision =="
 # replayed are the bytes that were live. That assertion returns with #224.
 kubectl apply -f "$WORKDIR/rendered.yaml" || die "kubectl could not re-apply the good revision"
 
-kubectl -n "$NAMESPACE" rollout status deployment/"$APP_NAME" --timeout=120s ||
+kubectl -n "$NAMESPACE" rollout status deployment/"$COMPONENT_NAME" --timeout=120s ||
 	die "kubectl does not agree the Deployment rolled out after re-applying the good revision"
 
-command_after=$(kubectl -n "$NAMESPACE" get deployment "$APP_NAME" -o jsonpath='{.spec.template.spec.containers[0].command}')
+command_after=$(kubectl -n "$NAMESPACE" get deployment "$COMPONENT_NAME" -o jsonpath='{.spec.template.spec.containers[0].command}')
 if [[ -n "$command_after" && "$command_after" != "[]" ]]; then
 	die "the restore did not clear the broken container command (found: ${command_after})"
 fi
@@ -169,7 +169,7 @@ for _ in $(seq 1 12); do
 	sleep 5
 done
 [[ "$ready_after" == *"true"* && "$ready_after" != *"false"* ]] ||
-	die "not every surviving ${APP_NAME} pod is ready after the restore (found: ${ready_after:-none})"
+	die "not every surviving ${COMPONENT_NAME} pod is ready after the restore (found: ${ready_after:-none})"
 log "kubectl confirms the original workload is restored and healthy"
 
 elapsed=$(($(date +%s) - start_ts))

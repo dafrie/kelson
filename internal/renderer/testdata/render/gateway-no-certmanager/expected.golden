@@ -19,12 +19,12 @@ metadata:
   namespace: shopfront
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: web
+    kelson.dev/component: web
     kelson.dev/environment: production
     kelson.dev/project: shopfront
   annotations:
     kelson.dev/renderer-version: 0.2.0
-    kelson.dev/spec-hash: sha256:e0b7c9b9a4b79538fd3e67f01cf52f2f5fe71d32478cf73e0c475d983a70e556
+    kelson.dev/spec-hash: sha256:65a3a0be6f6813450a18d5459ba9df5b79a2d746f468ce617968381dba55d533
 ---
 apiVersion: v1
 kind: Service
@@ -33,16 +33,16 @@ metadata:
   namespace: shopfront
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: web
+    kelson.dev/component: web
     kelson.dev/environment: production
     kelson.dev/project: shopfront
   annotations:
     kelson.dev/renderer-version: 0.2.0
-    kelson.dev/spec-hash: sha256:e0b7c9b9a4b79538fd3e67f01cf52f2f5fe71d32478cf73e0c475d983a70e556
+    kelson.dev/spec-hash: sha256:65a3a0be6f6813450a18d5459ba9df5b79a2d746f468ce617968381dba55d533
 spec:
   selector:
     kelson.dev/project: shopfront
-    kelson.dev/application: web
+    kelson.dev/component: web
   ports:
     - name: http
       port: 3000
@@ -55,23 +55,23 @@ metadata:
   namespace: shopfront
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: web
+    kelson.dev/component: web
     kelson.dev/environment: production
     kelson.dev/project: shopfront
   annotations:
     kelson.dev/renderer-version: 0.2.0
-    kelson.dev/spec-hash: sha256:e0b7c9b9a4b79538fd3e67f01cf52f2f5fe71d32478cf73e0c475d983a70e556
+    kelson.dev/spec-hash: sha256:65a3a0be6f6813450a18d5459ba9df5b79a2d746f468ce617968381dba55d533
 spec:
   replicas: 3
   selector:
     matchLabels:
       kelson.dev/project: shopfront
-      kelson.dev/application: web
+      kelson.dev/component: web
   template:
     metadata:
       labels:
         app.kubernetes.io/managed-by: kelson
-        kelson.dev/application: web
+        kelson.dev/component: web
         kelson.dev/environment: production
         kelson.dev/project: shopfront
     spec:
@@ -105,12 +105,12 @@ metadata:
   namespace: shopfront
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: web
+    kelson.dev/component: web
     kelson.dev/environment: production
     kelson.dev/project: shopfront
   annotations:
     kelson.dev/renderer-version: 0.2.0
-    kelson.dev/spec-hash: sha256:e0b7c9b9a4b79538fd3e67f01cf52f2f5fe71d32478cf73e0c475d983a70e556
+    kelson.dev/spec-hash: sha256:65a3a0be6f6813450a18d5459ba9df5b79a2d746f468ce617968381dba55d533
 spec:
   parentRefs:
     - name: public
@@ -132,12 +132,12 @@ metadata:
   namespace: shopfront
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: images
+    kelson.dev/component: images
     kelson.dev/environment: production
     kelson.dev/project: shopfront
   annotations:
     kelson.dev/renderer-version: 0.2.0
-    kelson.dev/spec-hash: sha256:2a327dfc660d19af221be680f7c3b35bd7962b1d459c10c52362d07bb96019c6
+    kelson.dev/spec-hash: sha256:cfe5a5015ef9c5d26d38863e9d7cdb8bd99515518bcf29c9f758521c4bf08a5f
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -146,23 +146,23 @@ metadata:
   namespace: shopfront
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: images
+    kelson.dev/component: images
     kelson.dev/environment: production
     kelson.dev/project: shopfront
   annotations:
     kelson.dev/renderer-version: 0.2.0
-    kelson.dev/spec-hash: sha256:2a327dfc660d19af221be680f7c3b35bd7962b1d459c10c52362d07bb96019c6
+    kelson.dev/spec-hash: sha256:cfe5a5015ef9c5d26d38863e9d7cdb8bd99515518bcf29c9f758521c4bf08a5f
 spec:
   replicas: 1
   selector:
     matchLabels:
       kelson.dev/project: shopfront
-      kelson.dev/application: images
+      kelson.dev/component: images
   template:
     metadata:
       labels:
         app.kubernetes.io/managed-by: kelson
-        kelson.dev/application: images
+        kelson.dev/component: images
         kelson.dev/environment: production
         kelson.dev/project: shopfront
     spec:

@@ -123,7 +123,7 @@ func (c *clients) deployEnvironment(ctx context.Context, in deployInput) (*mcpsd
 	if settled == nil && dryRun == kelsonv1alpha1.DryRun_DRY_RUN_NONE {
 		r.section("OUTCOME")
 		r.addf("  the stream ended without a settled event; the deployment's outcome is unknown. " +
-			"Call diagnose_application to read the environment's current state.")
+			"Call diagnose_component to read the environment's current state.")
 	}
 	return text(&r)
 }

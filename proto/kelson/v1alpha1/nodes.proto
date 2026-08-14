@@ -1,0 +1,51 @@
+// NodeService: the cluster's node inventory, served for the Cluster screen.
+//
+// Capacity and allocatable come from the API server and are always present.
+// Usage comes from metrics.k8s.io, which a cluster may not serve — so usage is
+// optional per node and the response carries the reason it is missing, in the
+// tri-state discipline of issue #144: "no usage" and "we could not read usage"
+// must never collapse into "zero usage".
+syntax = "proto3";
+
+package kelson.v1alpha1;
+
+option go_package = "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1;kelsonv1alpha1";
+
+message GetNodesRequest {}
+
+// NodeInfo is one node: identity, readiness, capacity, and — when the cluster
+// serves metrics.k8s.io — live usage.
+message NodeInfo {
+  string name = 1;
+  // Roles from the node-role.kubernetes.io labels, e.g. "control-plane".
+  // Empty means the node carries no role label, which most workers do not.
+  repeated string roles = 2;
+  string kubelet_version = 3;
+  string architecture = 4;
+  string os_image = 5;
+  bool ready = 6;
+
+  // CPU in millicores, memory in bytes. Capacity is the machine; allocatable
+  // is what the kubelet offers pods after system reservations.
+  int64 cpu_capacity_milli = 7;
+  int64 cpu_allocatable_milli = 8;
+  int64 memory_capacity_bytes = 9;
+  int64 memory_allocatable_bytes = 10;
+
+  // Usage, from metrics.k8s.io. Absent (not zero) when the metrics API is not
+  // served or the node had no sample — GetNodesResponse.usage_gap says why.
+  optional int64 cpu_usage_milli = 11;
+  optional int64 memory_usage_bytes = 12;
+}
+
+message GetNodesResponse {
+  repeated NodeInfo nodes = 1;
+  // UsageGap is why usage fields are absent, when they are: the metrics API is
+  // not served (install metrics-server), or the read failed. Empty when every
+  // node carries usage.
+  string usage_gap = 2;
+}
+
+service NodeService {
+  rpc GetNodes(GetNodesRequest) returns (GetNodesResponse);
+}

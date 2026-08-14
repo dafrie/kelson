@@ -45,10 +45,11 @@ jobs:
           path: website/build
 
   deploy:
-    # Only deploy on manual dispatch. Auto-deploy was disabled because GitHub
-    # Pages is not available on this plan; enable Pages + run manually when
-    # ready. The `build` job still validates the site on every push/PR.
-    if: github.event_name == 'workflow_dispatch'
+    # Deploy on push to main and on manual dispatch. PR builds only validate
+    # the site (the `build` job) and never publish. Requires the repo's Pages
+    # source to be "GitHub Actions" (enabled 2026-08-14) — the workflow token
+    # cannot create the Pages site itself.
+    if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     environment:
@@ -56,4 +57,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5

@@ -19,12 +19,12 @@ metadata:
   namespace: checkout-staging
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: web
+    kelson.dev/component: web
     kelson.dev/environment: staging
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.2.0
-    kelson.dev/spec-hash: sha256:99797e9f15876def4ab62654f0a60c7fc836194019d2402efc1a1f85b69f2dbc
+    kelson.dev/spec-hash: sha256:bfc27404f3549cfb5a440ef69cd748efc503b65d2a8ea8e15ea8fd603bd2e417
 ---
 apiVersion: v1
 kind: Service
@@ -33,16 +33,16 @@ metadata:
   namespace: checkout-staging
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: web
+    kelson.dev/component: web
     kelson.dev/environment: staging
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.2.0
-    kelson.dev/spec-hash: sha256:99797e9f15876def4ab62654f0a60c7fc836194019d2402efc1a1f85b69f2dbc
+    kelson.dev/spec-hash: sha256:bfc27404f3549cfb5a440ef69cd748efc503b65d2a8ea8e15ea8fd603bd2e417
 spec:
   selector:
     kelson.dev/project: checkout
-    kelson.dev/application: web
+    kelson.dev/component: web
   ports:
     - name: http
       port: 8080
@@ -55,23 +55,23 @@ metadata:
   namespace: checkout-staging
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: web
+    kelson.dev/component: web
     kelson.dev/environment: staging
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.2.0
-    kelson.dev/spec-hash: sha256:99797e9f15876def4ab62654f0a60c7fc836194019d2402efc1a1f85b69f2dbc
+    kelson.dev/spec-hash: sha256:bfc27404f3549cfb5a440ef69cd748efc503b65d2a8ea8e15ea8fd603bd2e417
 spec:
   replicas: 1
   selector:
     matchLabels:
       kelson.dev/project: checkout
-      kelson.dev/application: web
+      kelson.dev/component: web
   template:
     metadata:
       labels:
         app.kubernetes.io/managed-by: kelson
-        kelson.dev/application: web
+        kelson.dev/component: web
         kelson.dev/environment: staging
         kelson.dev/project: checkout
     spec:
@@ -98,12 +98,12 @@ metadata:
   namespace: checkout-staging
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: web
+    kelson.dev/component: web
     kelson.dev/environment: staging
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.2.0
-    kelson.dev/spec-hash: sha256:99797e9f15876def4ab62654f0a60c7fc836194019d2402efc1a1f85b69f2dbc
+    kelson.dev/spec-hash: sha256:bfc27404f3549cfb5a440ef69cd748efc503b65d2a8ea8e15ea8fd603bd2e417
 spec:
   parentRefs:
     - name: envoy
@@ -125,12 +125,12 @@ metadata:
   namespace: checkout-staging
   labels:
     app.kubernetes.io/managed-by: kelson
-    kelson.dev/application: web
+    kelson.dev/component: web
     kelson.dev/environment: staging
     kelson.dev/project: checkout
   annotations:
     kelson.dev/renderer-version: 0.2.0
-    kelson.dev/spec-hash: sha256:99797e9f15876def4ab62654f0a60c7fc836194019d2402efc1a1f85b69f2dbc
+    kelson.dev/spec-hash: sha256:bfc27404f3549cfb5a440ef69cd748efc503b65d2a8ea8e15ea8fd603bd2e417
 spec:
   secretName: web-tls
   issuerRef:

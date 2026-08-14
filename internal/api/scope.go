@@ -380,6 +380,34 @@ var rpcScopes = map[string]methodScope{
 		Reach:     reachClusterWide,
 	},
 
+	// InstallService (issue #60, ADR-0021). ListComponents is a read of the
+	// cluster's platform layer, cluster-wide like GetProfile. PlanInstall and
+	// Install are administrative: an install writes cluster-scoped RBAC, CRDs
+	// and webhook configurations, and ADR-0024 §3's argument for AgentService
+	// applies unchanged — nothing that wide belongs to an agent credential.
+	// PlanInstall applies nothing, but it is the confirmation step's evidence,
+	// and a class of caller that may not perform the install has no business
+	// rehearsing it either.
+	kelsonv1alpha1connect.InstallServiceListComponentsProcedure: {
+		Operation: controlstore.OpRead,
+		Reach:     reachClusterWide,
+	},
+	kelsonv1alpha1connect.InstallServicePlanInstallProcedure: {
+		Operation: controlstore.OpAdmin,
+		Reach:     reachClusterWide,
+	},
+	kelsonv1alpha1connect.InstallServiceInstallProcedure: {
+		Operation: controlstore.OpAdmin,
+		Reach:     reachClusterWide,
+	},
+
+	// NodeService reports the cluster's machines. No project in the question,
+	// none in the answer — the same shape as GetProfile.
+	kelsonv1alpha1connect.NodeServiceGetNodesProcedure: {
+		Operation: controlstore.OpRead,
+		Reach:     reachClusterWide,
+	},
+
 	// AuditService is administrative for the same reason AgentService is, with
 	// a different argument (issue #78, ADR-0026 §5). An agent that could read
 	// the audit trail could read what the reviewer will see and plan around it,

@@ -30,7 +30,12 @@ export type LogSelector = Message<"kelson.v1alpha1.LogSelector"> & {
   namespace: string;
 
   /**
-   * required — pods are selected by kelson.dev/application
+   * The component whose pods to read. The field keeps its v1alpha1 name while
+   * the label it selects on does not (ADR-0032): renaming a wire field is a
+   * separate break from renaming a cluster label, and this one buys nothing
+   * the label rename did not already buy.
+   *
+   * required — pods are selected by kelson.dev/component
    *
    * @generated from field: string application = 2;
    */

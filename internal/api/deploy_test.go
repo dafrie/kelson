@@ -241,7 +241,7 @@ func TestStatusReportsVerdicts(t *testing.T) {
 // TestStatusVerdictsIncludeSecretSync is issue #80's acceptance criterion on
 // the wire: a failed ExternalSecret sync arrives as an ordinary degraded
 // verdict with the controller's cause named, ahead of the workloads it broke.
-// Nothing downstream — `kelson status`, the event stream, diagnose_application,
+// Nothing downstream — `kelson status`, the event stream, diagnose_component,
 // the UI — learns a new shape for it.
 func TestStatusVerdictsIncludeSecretSync(t *testing.T) {
 	set := delivery.ManifestSet{Manifests: []delivery.Manifest{

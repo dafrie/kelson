@@ -195,22 +195,22 @@ func (b *builder) logEvidence(ctx context.Context, v observation.Verdict) []Evid
 	}}
 }
 
-// logWindow fetches (once per application) the bounded tail the log seam
+// logWindow fetches (once per component) the bounded tail the log seam
 // offers. A failure is a Note: an explanation whose log engine is down is worth
 // less, never worthless.
-func (b *builder) logWindow(ctx context.Context, application string) []observation.Line {
-	if b.in.Logs == nil || application == "" {
+func (b *builder) logWindow(ctx context.Context, component string) []observation.Line {
+	if b.in.Logs == nil || component == "" {
 		return nil
 	}
-	if lines, ok := b.logs[application]; ok {
+	if lines, ok := b.logs[component]; ok {
 		return lines
 	}
-	lines, err := b.in.Logs(ctx, b.in.Namespace, application, MaxLogLines)
+	lines, err := b.in.Logs(ctx, b.in.Namespace, component, MaxLogLines)
 	if err != nil {
-		b.note("the log window for %s could not be read: %s", application, err)
+		b.note("the log window for %s could not be read: %s", component, err)
 		lines = nil
 	}
-	b.logs[application] = lines
+	b.logs[component] = lines
 	return lines
 }
 

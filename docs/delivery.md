@@ -128,11 +128,17 @@ edge instead of a pause in an apply loop — and it is possible only because kel
 `Kustomization` ([ADR-0028](adr/0028-delivery-spine.md) decision 3). ADR-0019's own "Revisit when"
 predicted exactly this, and said that when it happens ADR-0019 is superseded rather than amended.
 
-> **Transitional ([#224](https://github.com/dafrie/kelson/issues/224)).** Until R1 lands, the direct
-> adapter still stops at the release Job, polls it to a terminal state and only then applies the rest
-> of the set, bounded by the Job's `activeDeadlineSeconds` and the caller's context. A failure is
-> `delivery/release-failed`, naming the Job and carrying the tail of its pod's output, and no workload
-> of the new revision is applied. That behaviour is being deleted, not extended.
+What the barrier must still guarantee when it is built is what the deleted apply loop guaranteed, and
+these three claims carry forward from [ADR-0019](adr/0019-release-command-hook.md) unchanged:
+
+- **A failed migration fails the deploy before anything rolls.** No workload of the new revision is
+  applied and nothing is pruned, so the previous revision keeps serving. The error is
+  `delivery/release-failed`, naming the Job and carrying the tail of its pod's output.
+- **The wait is visible.** The Job is reported in the same `delivery.Status` shape the state machine
+  consumes: `Reconciling` while it runs, `Rejected` when it fails, with the Job in `Cause`. No new
+  phase — see the ADR.
+- **A rollback does not re-run it.** Rolling the workload back does not roll a migration back, so
+  re-running the old revision's release command would only repeat work the database has already done.
 
 ### History is the registry
 
@@ -268,3 +274,38 @@ so a controller status write cannot race a user's spec write at all.
   server-side apply that conflicts on a field owned by another manager. These
   are the "discard human intent invisibly" failures and always go to the user
   as a structured conflict error.
+
+## When a field cannot change in place (`delivery/immutable-field`)
+
+Some fields are immutable once an object exists — most consequentially a
+Deployment's `spec.selector`. An apply that changes one is rejected by the API
+server with a 422, and it will be rejected identically on every retry: there is
+no edit that reaches the new value, because the live object is what has to go.
+
+kelson classifies that rejection as `delivery/immutable-field` rather than the
+generic `delivery/apply-failed`, names the stuck field, carries the API server's
+own words in `cause`, and gives the only remediation that works:
+
+```
+Deployment/checkout-production/web [delivery/immutable-field] the API server
+refuses the update: spec.selector cannot change on an existing object: delete
+Deployment/checkout-production/web and deploy again — re-deploying without
+deleting fails the same way, and there is no in-place edit that reaches the new
+value
+```
+
+The code exists because the generic remediation ("fix the spec, then
+re-deploy") is actively wrong here: the spec is what the object *should* be.
+[ADR-0032](adr/0032-finish-the-component-rename.md) is the change that made this
+reachable — it renamed the selector label, so any workload deployed before it
+must be deleted and redeployed. Deleting the whole environment
+(`kelson uninstall --project <p> --env <e>`) and deploying again does the same
+job for more than one workload.
+
+The classifier that raised it lived in the direct adapter and went with it
+([ADR-0028](adr/0028-delivery-spine.md)); the code and its helpers stay in
+`internal/delivery` because the failure belongs to any last mile that applies to
+a live API server, and the spine's reconcilers meet it too
+([#224](https://github.com/dafrie/kelson/issues/224)). Today the rejection
+surfaces as Flux's own `Kustomization` failure condition, which reports the API
+server's message verbatim.

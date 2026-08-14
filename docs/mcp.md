@@ -1,7 +1,7 @@
 # The MCP server
 
 `kelson-mcp` is kelson's agent surface: a [Model Context Protocol](https://modelcontextprotocol.io)
-server that lets an agent deploy, diagnose and roll back applications through the same v1alpha1 API
+server that lets an agent deploy, diagnose and roll back workloads through the same v1alpha1 API
 the CLI and the UI use (issue [#73](https://github.com/dafrie/kelson/issues/73),
 [ADR-0008](adr/0008-mcp-surface.md)).
 
@@ -23,11 +23,11 @@ cluster, classifies a workload's health or decides what a delivery phase means �
 answers, including their structured errors, verbatim. Since [#77](https://github.com/dafrie/kelson/issues/77)
 that includes the causal answer itself: the structured causes behind "why is this degraded?" are
 `ExplainService`'s, computed in `internal/explain` ([ADR-0023](adr/0023-explain-structured-causes.md)),
-and `diagnose_application` is their task-shaped presentation rather than a second implementation.
+and `diagnose_component` is their task-shaped presentation rather than a second implementation.
 
 The *shape* is deliberately not the API's:
 
-- **Task-shaped.** `diagnose_application` is one call where a resource-shaped mapping would be six.
+- **Task-shaped.** `diagnose_component` is one call where a resource-shaped mapping would be six.
 - **Bounded.** The API streams; tools return windows. Every list is capped and says
   `… N more (truncated)` when it truncates. `LogService.FollowLogs` has no tool at all, and a test
   asserts it never gains one.
@@ -36,7 +36,7 @@ The *shape* is deliberately not the API's:
 - **Nine tools.** The count is a design decision: every tool added costs tool-selection accuracy for
   the ones already there. `set_secret` earned one because writing a credential is a task; *listing*
   secrets did not, because it is something an agent needs mid-diagnosis rather than as an errand of
-  its own, so it became a section of `diagnose_application`. Capturing a `ClusterProfile` went the same
+  its own, so it became a section of `diagnose_component`. Capturing a `ClusterProfile` went the same
   way: not a task, but the [version skew](detection.md#version-skew-and-explicit-degradation) in it
   explains failures that arrive long after the deploy that caused them, so it is a section too.
 
@@ -44,12 +44,12 @@ The *shape* is deliberately not the API's:
 
 | Tool | Mutates | What it does |
 |---|---|---|
-| `list_applications` | no | Every stored project with the live phase, revision and workload health of each environment. Start here when you do not know what exists. |
-| `diagnose_application` | no | The flagship composition: the server's structured causes with confidence, evidence and the revision that introduced the change each blames (the `WHY` section); phase, revision, namespace and cause; workload verdicts with remediation; a log window around the failure; the last 5 revisions; a compact spec summary; the kelson-managed Secrets by name and key; and the cluster's version skew against what kelson renders against — in one call. |
-| `logs_window` | no | A bounded log window (≤ 200 lines) for one application, optionally the lines before a container terminated, optionally filtered. Never follows. |
+| `list_components` | no | Every stored project with the live phase, revision and workload health of each environment. Start here when you do not know what exists. |
+| `diagnose_component` | no | The flagship composition: the server's structured causes with confidence, evidence and the revision that introduced the change each blames (the `WHY` section); phase, revision, namespace and cause; workload verdicts with remediation; a log window around the failure; the last 5 revisions; a compact spec summary; the kelson-managed Secrets by name and key; and the cluster's version skew against what kelson renders against — in one call. |
+| `logs_window` | no | A bounded log window (≤ 200 lines) for one component, optionally the lines before a container terminated, optionally filtered. Never follows. |
 | `deploy` | **yes**, unless `dry_run` (default `render`) | Renders, server-side dry-runs or deploys. With `dry_run="none"` it consumes the deploy stream to the settled outcome and returns that — never a stream. |
 | `rollback` | **yes**, when `execute=true` | Previews what a rollback cannot revert (unrecoverable findings flagged) plus the change counts; applies it on request. |
-| `promote_application` | **yes** (the *spec*, not the cluster), when `execute=true` | Pins one environment to the images another environment's latest deployed revision runs, and returns the resulting diff. Writes the target `Environment`'s image pins and stamps `kelson.dev/promoted-from`; deploys nothing. |
+| `promote_component` | **yes** (the *spec*, not the cluster), when `execute=true` | Pins one environment to the images another environment's latest deployed revision runs, and returns the resulting diff. Writes the target `Environment`'s image pins and stamps `kelson.dev/promoted-from`; deploys nothing. |
 | `put_spec` | **yes**, when `dry_run=false` | Validates a spec and returns structured errors (code, field, line, remediation); stores it on request, with optimistic concurrency on `version`. |
 | `set_secret` | **yes** (the *cluster*), when `execute=true` | Writes the Kubernetes Secret a spec's `{secret: <name>, key: <key>}` reference points at. Merges: keys it is not given are preserved. Values travel in only — the answer reports names and keys, and no kelson API returns a secret value. |
 | `wait_for_outcome` | no | Consumes the event stream and returns on the first terminal signal — Healthy, Rejected, a workload turning unhealthy, or the timeout. This is what makes "deploy, then react" cheap. |
@@ -65,7 +65,7 @@ The Protobuf schema is a consistency check here, never the design.
 |---|---|
 | Projects / environments per project in a listing | 25 / 10 |
 | Workload verdicts, components, findings | 12 / 20 / 15 |
-| Log lines — `diagnose_application` / `logs_window` | 80 / 200 |
+| Log lines — `diagnose_component` / `logs_window` | 80 / 200 |
 | Causes, evidence per cause, log lines per excerpt, total | 6 / 4 / 8 / 12 KiB — enforced by the server ([ADR-0023](adr/0023-explain-structured-causes.md)) |
 | History entries | 5 |
 | Deploy transitions, watch events | 20 |
@@ -220,7 +220,7 @@ replace. Two consequences worth stating plainly:
   credential out of a cluster — only to put one in.
 
 What does exist today is the guardrail that matters most for an agent: every mutating tool defaults
-to a preview (`deploy` to `dry_run="render"`, `rollback`, `promote_application` and `set_secret` to
+to a preview (`deploy` to `dry_run="render"`, `rollback`, `promote_component` and `set_secret` to
 `execute=false`, `put_spec` to `dry_run=true`), carries an idempotency key so a retry is not a second
 deployment — except `set_secret`, whose write is a server-side apply and therefore already convergent
 (`proto/kelson/v1alpha1/secret.proto` says so and why) — and reports failures as structured errors

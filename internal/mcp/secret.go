@@ -19,14 +19,14 @@ A kelson spec never contains a credential. An environment variable that needs on
 
 Keys not named in this call are preserved, so rotating one credential leaves the others alone. Keys use Kubernetes' Secret alphabet: letters, digits, '-', '_' and '.'.
 
-Values travel one way. Nothing in kelson's API returns a secret value, this tool included: the answer reports the Secret's name, its namespace and its key names. Use diagnose_application to see what an environment already holds.
+Values travel one way. Nothing in kelson's API returns a secret value, this tool included: the answer reports the Secret's name, its namespace and its key names. Use diagnose_component to see what an environment already holds.
 
 The Secret must be in an environment that has been deployed at least once, because that is what creates the namespace. kelson writes only Secrets it labels as its own and will not take over one created by kubectl or by an operator; that is reported as secret/not-managed rather than done.
 
 Cost: one server call.`
 
 type setSecretInput struct {
-	Project     string            `json:"project" jsonschema:"the stored project name, as reported by list_applications"`
+	Project     string            `json:"project" jsonschema:"the stored project name, as reported by list_components"`
 	Environment string            `json:"environment" jsonschema:"the environment whose namespace the Secret is written into, e.g. production"`
 	Name        string            `json:"name" jsonschema:"the Secret's name — the same string a {secret: <name>, key: <key>} reference carries; a DNS-1123 label such as checkout-db"`
 	Values      map[string]string `json:"values" jsonschema:"the keys to write, as key to value. Keys already in the Secret and not named here are preserved"`

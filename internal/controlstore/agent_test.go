@@ -124,11 +124,12 @@ func TestAuthenticateRefusesEveryWrongCredentialTheSameWay(t *testing.T) {
 // prefix and the identity name intact — the "right name, wrong secret" case.
 //
 // It mutates the FIRST character of the secret rather than the last, and that
-// is not arbitrary: the secret is unpadded base64, whose final character
-// carries fewer bits than a full sextet, so two different last characters can
-// decode to identical bytes. Flipping the last one therefore forges a token
-// that is sometimes still valid, which made this test fail about one run in
-// four.
+// is not arbitrary: the 32-byte secret encodes to 43 unpadded base64url
+// characters, so the final character carries only four significant bits and
+// 'A' through 'D' all decode to the same bytes. A "forgery" that differed only
+// there authenticated legitimately about one run in sixteen (issue #208).
+// Every bit of the first character survives decoding, so flipping it always
+// yields a different secret.
 func forgeSecret(token string) string {
 	i := strings.LastIndex(token, ".") + 1
 	if i <= 0 || i >= len(token) {

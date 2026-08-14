@@ -195,8 +195,8 @@ func buildImage(cmd *cobra.Command, opts *buildOptions) (build.Result, error) {
 	req := build.Request{
 		Project:     project.Metadata.Name,
 		Environment: environment.Metadata.Name,
-		// Application is deliberately empty: one build serves the whole
-		// Project (see destinationTag), so naming one of its applications here
+		// Component is deliberately empty: one build serves the whole
+		// Project (see destinationTag), so naming one of its components here
 		// would put a false label on the Job and on the image.
 		SourceGit:  source.Git,
 		SourceRef:  revision,

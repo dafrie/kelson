@@ -39,7 +39,7 @@ func TestQueryLogs(t *testing.T) {
 	}
 
 	q := engine.query
-	if q.Namespace != "hello-development" || q.Application != "web" {
+	if q.Namespace != "hello-development" || q.Component != "web" {
 		t.Errorf("selector did not reach the engine: %+v", q)
 	}
 	if q.Tail != 50 {
@@ -134,7 +134,7 @@ func TestFollowLogs(t *testing.T) {
 }
 
 // TestFollowLogsReportsDrops: loss is reported, never hidden. A client that
-// sees no dropped event must be entitled to read a gap as the application
+// sees no dropped event must be entitled to read a gap as the workload
 // having gone quiet, so the counter moving has to produce one.
 func TestFollowLogsReportsDrops(t *testing.T) {
 	engine := &fakeLogEngine{

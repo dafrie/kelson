@@ -6,7 +6,7 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      kelson.dev/application: transcoder
+      kelson.dev/component: transcoder
   policyTypes: [Ingress]
   ingress:
     - from:

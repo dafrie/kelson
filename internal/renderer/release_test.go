@@ -238,8 +238,8 @@ func TestReleaseRequiresDirectMode(t *testing.T) {
 			if errs[0].Code != ErrReleaseRequiresDirect {
 				t.Fatalf("first error is %s, want %s: %v", errs[0].Code, ErrReleaseRequiresDirect, errs)
 			}
-			if errs[0].Application != "web" {
-				t.Errorf("the refusal names application %q, want web", errs[0].Application)
+			if errs[0].Component != "web" {
+				t.Errorf("the refusal names component %q, want web", errs[0].Component)
 			}
 			if !strings.Contains(errs[0].Remediation, "delivery.mode: direct") {
 				t.Errorf("the remediation does not name the field that fixes it: %s", errs[0].Remediation)

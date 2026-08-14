@@ -70,7 +70,7 @@
 // Deliberately NOT stamped: app.kubernetes.io/managed-by=kelson. That label is
 // half of the project-scoped uninstall selector, and a platform component is not
 // a project deployment; claiming it there would put cert-manager's ClusterRoles
-// in the same query as an application's Deployments. Upstream sets that label
+// in the same query as a component's Deployments. Upstream sets that label
 // for its own purposes too, and taking the field from its owner is the silent
 // overwrite ADR-0001 forbids.
 package install

@@ -316,6 +316,37 @@ func TestInstallReportsAdoption(t *testing.T) {
 	}
 }
 
+// TestInstallEnvoyGatewayBoundary: "installed" is exactly the moment somebody
+// assumes it is configured, and an Envoy Gateway with no GatewayClass routes
+// nothing. The way out must say whose decision that is.
+func TestInstallEnvoyGatewayBoundary(t *testing.T) {
+	eg, ok := install.Lookup("envoy-gateway")
+	if !ok {
+		t.Fatal("the pins table has no envoy-gateway row")
+	}
+	engine := &fakeInstaller{
+		plan: &install.Plan{Items: []install.Item{{
+			Component: eg,
+			Objects:   []install.Object{objectRef("Namespace", "", "envoy-gateway-system")},
+			Digest:    eg.SHA256,
+		}}},
+		report: &install.Report{Components: []install.ComponentReport{{
+			Component: eg,
+			Results: []install.Result{{Ref: install.Ref{Kind: "Namespace", Name: "envoy-gateway-system"},
+				Outcome: install.OutcomeCreated}},
+			Created:   1,
+			Installed: true,
+		}}},
+	}
+	out, _, code, msg := runInstallCmd(t, engine, clusterprofile.ClusterProfile{}, "", "install", "envoy-gateway", "--yes")
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, msg)
+	}
+	if !strings.Contains(out, "GatewayClass") || !strings.Contains(out, "gateway.envoyproxy.io/gatewayclass-controller") {
+		t.Fatalf("the boundary does not say a GatewayClass is still the user's to create:\n%s", out)
+	}
+}
+
 // TestInstallAddressing covers the two ways the request addresses nothing.
 func TestInstallAddressing(t *testing.T) {
 	cases := []struct {

@@ -45,6 +45,8 @@ type clients struct {
 	secrets  kelsonv1alpha1connect.SecretServiceClient
 	previews kelsonv1alpha1connect.PreviewServiceClient
 	explain  kelsonv1alpha1connect.ExplainServiceClient
+	installs kelsonv1alpha1connect.InstallServiceClient
+	nodes    kelsonv1alpha1connect.NodeServiceClient
 }
 
 func serve(t *testing.T, opts Options) clients {
@@ -74,6 +76,8 @@ func serveServer(t *testing.T, server *Server) clients {
 		secrets:  kelsonv1alpha1connect.NewSecretServiceClient(hc, srv.URL),
 		previews: kelsonv1alpha1connect.NewPreviewServiceClient(hc, srv.URL),
 		explain:  kelsonv1alpha1connect.NewExplainServiceClient(hc, srv.URL),
+		installs: kelsonv1alpha1connect.NewInstallServiceClient(hc, srv.URL),
+		nodes:    kelsonv1alpha1connect.NewNodeServiceClient(hc, srv.URL),
 	}
 }
 

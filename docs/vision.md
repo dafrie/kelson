@@ -74,7 +74,7 @@ list.
 - **Not a general-purpose dashboard.** Headlamp and k9s exist. kelson shows applications, not every resource in the cluster.
 - **Not a CI system.** kelson builds images and deploys them. It doesn't replace GitHub Actions or run your test matrix.
 - **Not a replacement for Flux.** Flux does the reconciling, always and only ([ADR-0028](adr/0028-delivery-spine.md)) — composing with an existing installation is the design point, and a cluster with none is offered flux-aio: every Flux controller in one pod, sized for a small cluster ([ADR-0030](adr/0030-flux-aio-install.md)). There is no second delivery path and no adapter seam; a second reconciler would be a new decision, argued on evidence.
-- **Not a monitoring stack.** kelson adopts your Prometheus, Loki and Grafana and renders per-application views. It doesn't ship a TSDB.
+- **Not a monitoring stack.** kelson adopts your Prometheus, Loki and Grafana and renders per-component views. It doesn't ship a TSDB.
 - **Not cloud infrastructure provisioning.** No Crossplane-style resource graph. If you need an RDS instance, provision it with Crossplane or Terraform and reference the result.
 - **Not multi-cluster, and not multi-tenant.** One cluster, one tenant, for now and on the record ([ADR-0031](adr/0031-single-cluster-single-tenant.md)). Teams with a cluster per environment can run one kelson per cluster, which means no cross-cluster promotion and no single view — a real limitation, recorded with the prior art the design will start from rather than pretended away with a spec field.
 

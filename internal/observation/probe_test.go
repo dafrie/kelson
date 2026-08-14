@@ -69,7 +69,7 @@ func TestProbeEvaluatesLiveDeployment(t *testing.T) {
 func TestProbeFiltersPodsBySelector(t *testing.T) {
 	dep := deployment(testNS, testApp, nil)
 	unrelated := pod(testNS, "other-0", func(m map[string]any) {
-		m["metadata"].(map[string]any)["labels"].(map[string]any)["kelson.dev/application"] = "other"
+		m["metadata"].(map[string]any)["labels"].(map[string]any)["kelson.dev/component"] = "other"
 		podCrashLoop(m)
 	})
 

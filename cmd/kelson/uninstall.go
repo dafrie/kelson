@@ -130,6 +130,8 @@ func newUninstallCmdFactory(connect uninstallConnector, removers removerConnecto
 			"                            project uninstall — other tenants depend on them\n" +
 			"  adopted namespaces        a namespace kelson did not create stays, because deleting one\n" +
 			"                            deletes everything inside it\n" +
+			"  shared namespaces         one kelson did create stays too while another project or\n" +
+			"                            environment still has resources in it; the preview says whose\n" +
 			"  anything unlabelled       Secrets kelson did not write, and every resource that does not\n" +
 			"                            carry kelson's provenance labels for this environment",
 		Example: "  kelson uninstall --project checkout --env production\n" +
@@ -210,7 +212,7 @@ func runUninstall(cmd *cobra.Command, opts *uninstallOptions) error {
 	if execErr != nil {
 		return execErr
 	}
-	printUninstallBoundary(out, plan)
+	printUninstallBoundary(out, plan, report)
 	return out.err
 }
 
@@ -430,7 +432,7 @@ func printRemovalReport(out *printer, report *install.RemovalReport) {
 func printRemovalBoundary(out *printer, removal *install.Removal) {
 	out.printf("\nStill installed, and not this command's to remove:\n")
 	out.printf("  everything kelson adopted rather than created when it installed %s\n", removal.Component.Name)
-	out.printf("  every application kelson deployed against it — `kelson uninstall --project <p> --env <e>`\n")
+	out.printf("  every component kelson deployed against it — `kelson uninstall --project <p> --env <e>`\n")
 	out.printf("  every other platform component; each one is removed by name\n")
 }
 
@@ -565,7 +567,12 @@ func printUninstallReport(out *printer, report *uninstall.Report) {
 // printUninstallBoundary restates what is still installed, because "uninstall
 // finished" is exactly the moment somebody assumes everything kelson-shaped is
 // gone.
-func printUninstallBoundary(out *printer, plan *uninstall.Plan) {
+//
+// It reads the report as well as the plan, because a namespace the plan meant
+// to delete can still be standing: another deployment moving in between the
+// preview and the delete refuses it (issue #215), and a survivor named in the
+// per-object results but missing from this list would read as an oversight.
+func printUninstallBoundary(out *printer, plan *uninstall.Plan, report *uninstall.Report) {
 	out.printf("\nStill installed, and not this command's to remove:\n")
 	out.printf("  the kelson server, if you run one — `helm uninstall kelson` (docs/install.md)\n")
 	out.printf("  the operators kelson delegates to (CloudNativePG, Valkey, Flux, cert-manager); one kelson\n")
@@ -573,6 +580,14 @@ func printUninstallBoundary(out *printer, plan *uninstall.Plan) {
 	for _, ns := range plan.Namespaces {
 		if !ns.Delete {
 			out.printf("  namespace %s and everything else in it\n", ns.Name)
+		}
+	}
+	if report == nil {
+		return
+	}
+	for _, res := range report.Bystanders() {
+		if res.Ref.Kind == "Namespace" {
+			out.printf("  namespace %s and everything else in it — %s\n", res.Ref.Name, res.Detail)
 		}
 	}
 }

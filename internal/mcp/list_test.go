@@ -9,10 +9,10 @@ import (
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
 )
 
-// TestListApplicationsComposition: the listing is ListSpecs plus one Status per
+// TestListComponentsComposition: the listing is ListSpecs plus one Status per
 // environment, reduced to what an agent needs to decide where to look — and
 // never a spec body.
-func TestListApplicationsComposition(t *testing.T) {
+func TestListComponentsComposition(t *testing.T) {
 	h := start(t, &fakeServer{
 		listSpecs: func(*kelsonv1alpha1.ListSpecsRequest) (*kelsonv1alpha1.ListSpecsResponse, error) {
 			return &kelsonv1alpha1.ListSpecsResponse{Specs: []*kelsonv1alpha1.Spec{
@@ -27,7 +27,7 @@ func TestListApplicationsComposition(t *testing.T) {
 		},
 	})
 
-	out := h.call(t, "list_applications", map[string]any{})
+	out := h.call(t, "list_components", map[string]any{})
 	mustContain(t, out,
 		"hello",
 		"development",
@@ -43,10 +43,10 @@ func TestListApplicationsComposition(t *testing.T) {
 	mustNotContain(t, out, "apiVersion")
 }
 
-// TestListApplicationsStatusFailureIsALine: one unreadable environment must not
+// TestListComponentsStatusFailureIsALine: one unreadable environment must not
 // hide the others, and the failure keeps the server's own words so an agent can
 // tell "broken" from "could not look".
-func TestListApplicationsStatusFailureIsALine(t *testing.T) {
+func TestListComponentsStatusFailureIsALine(t *testing.T) {
 	h := start(t, &fakeServer{
 		listSpecs: func(*kelsonv1alpha1.ListSpecsRequest) (*kelsonv1alpha1.ListSpecsResponse, error) {
 			return &kelsonv1alpha1.ListSpecsResponse{Specs: []*kelsonv1alpha1.Spec{
@@ -61,14 +61,14 @@ func TestListApplicationsStatusFailureIsALine(t *testing.T) {
 		},
 	})
 
-	out := h.call(t, "list_applications", map[string]any{})
+	out := h.call(t, "list_components", map[string]any{})
 	mustContain(t, out, "status unavailable", "no cluster", "production", "Healthy")
 }
 
-// TestListApplicationsTruncates: every list this package renders is capped and
+// TestListComponentsTruncates: every list this package renders is capped and
 // says so. An agent that read a truncated list as the whole list would draw a
 // wrong conclusion from a correct answer.
-func TestListApplicationsTruncates(t *testing.T) {
+func TestListComponentsTruncates(t *testing.T) {
 	var specs []*kelsonv1alpha1.Spec
 	for i := range maxProjects + 3 {
 		environments := []string{"development"}
@@ -88,7 +88,7 @@ func TestListApplicationsTruncates(t *testing.T) {
 		},
 	})
 
-	out := h.call(t, "list_applications", map[string]any{})
+	out := h.call(t, "list_components", map[string]any{})
 	mustContain(t, out,
 		"… 3 more projects (truncated)",
 		"… 3 more environments (truncated)",
@@ -96,13 +96,13 @@ func TestListApplicationsTruncates(t *testing.T) {
 	mustNotContain(t, out, "project-27")
 }
 
-// TestListApplicationsEmpty: nothing stored is an answer with the next step in
+// TestListComponentsEmpty: nothing stored is an answer with the next step in
 // it, not an empty page.
-func TestListApplicationsEmpty(t *testing.T) {
+func TestListComponentsEmpty(t *testing.T) {
 	h := start(t, &fakeServer{
 		listSpecs: func(*kelsonv1alpha1.ListSpecsRequest) (*kelsonv1alpha1.ListSpecsResponse, error) {
 			return &kelsonv1alpha1.ListSpecsResponse{}, nil
 		},
 	})
-	mustContain(t, h.call(t, "list_applications", map[string]any{}), "No projects are stored", "put_spec")
+	mustContain(t, h.call(t, "list_components", map[string]any{}), "No projects are stored", "put_spec")
 }

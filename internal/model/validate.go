@@ -1590,7 +1590,7 @@ func dataComponents(comps []Component) map[string]Component {
 }
 
 // ValidateEnvironment validates an Environment against its Project: shape,
-// plus every cross-document reference (application overrides, service
+// plus every cross-document reference (component overrides, service
 // overrides, binding targets). The Environment's spec.project must equal the
 // Project's name.
 func ValidateEnvironment(e *Environment, p *Project) Errors {

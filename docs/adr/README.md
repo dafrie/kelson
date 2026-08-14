@@ -12,13 +12,13 @@ wrong, open an issue — it is far cheaper to reverse a decision now than after 
 | [0005](0005-delegate-to-operators.md) | Managed service types delegate to operators | Accepted (revised) |
 | [0006](0006-project-application-environment.md) | Project, Application, Environment | Accepted (leaf amended by 0014) |
 | [0007](0007-data-services.md) | Data services — presets, delegation and branching | Accepted |
-| [0008](0008-mcp-surface.md) | MCP tools are task-shaped, not endpoint-shaped | Accepted |
+| [0008](0008-mcp-surface.md) | MCP tools are task-shaped, not endpoint-shaped | Accepted (tool names amended by 0032) |
 | [0009](0009-secrets.md) | Secrets are references; values never enter Git | Accepted |
 | [0010](0010-build-strategy.md) | Dockerfile when present, Cloud Native Buildpacks otherwise | Accepted |
 | [0011](0011-build-cache.md) | Build cache is a registry cache, scoped per application | Deferred |
 | [0012](0012-flux-only-gitops.md) | Flux is the only GitOps delivery mode; Argo CD deferred | Accepted (conclusion carried into 0028) |
 | [0013](0013-server-state-and-api-v0.md) | Server state lives in the cluster; API v0 shape | Superseded by 0027/0028 (§2–§4 live on) |
-| [0014](0014-components.md) | One `components` list, per-component identity (amends 0006) | Accepted |
+| [0014](0014-components.md) | One `components` list, per-component identity (amends 0006) | Accepted (carve-out reversed by 0032) |
 | [0015](0015-valkey-operator.md) | `kind: valkey` delegates to valkey-io/valkey-operator | Accepted |
 | [0016](0016-delivery-flows-v0.md) | The four M10 delivery flows, and what each one is in v0 | Accepted (mode gates superseded by 0028) |
 | [0017](0017-pr-previews.md) | PR previews — `previews:`, the artifact tag, and what stage 1 does not do | Accepted (publisher adopted by 0028) |
@@ -36,10 +36,11 @@ wrong, open an issue — it is far cheaper to reverse a decision now than after 
 | [0029](0029-renderer-stays-go.md) | The renderer stays pure Go; CUE and timoni rejected as the rendering engine | Accepted |
 | [0030](0030-flux-aio-install.md) | Install substrate — flux-aio, pre-rendered at release time and pinned | Accepted |
 | [0031](0031-single-cluster-single-tenant.md) | One cluster, one tenant — for now, and recorded as such | Accepted |
+| [0032](0032-finish-the-component-rename.md) | Finish the component rename — the label, the selector and the MCP tools (amends 0014, 0008) | Accepted |
 
 *Rebuild note (2026-08-14):* ADRs 0027–0031 are the pre-release rebuild taken as one decision. Read in
 order they are: where state lives, how it is delivered, what renders it, what runs it, and how far it
-reaches.
+reaches. ADR-0032 is not part of it: it landed on main in parallel and finishes the ADR-0014 rename.
 
 *Process note (2026-08-12):* ADR-0003 and ADR-0005 were revised in place before the immutability rule
 below hardened; their in-place revisions stand as recorded. From ADR-0012 on, changes supersede.
