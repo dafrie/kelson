@@ -76,23 +76,95 @@ not colonise one.
   external-secrets, no Flux, no CloudNativePG, no Prometheus objects. "Never install what is
   already there" is the rule ADR-0003 states, and detection is how kelson finds out
   ([cluster detection](detection.md)). Installing components that are genuinely *missing* is a
-  separate, opt-in story: [#60](https://github.com/dafrie/kelson/issues/60).
+  separate, opt-in verb you run yourself: [`kelson install`](#platform-components-kelson-install)
+  below.
 - **No write access to your workloads.** The chart grants the server its own state ConfigMaps,
   the managed Secrets ADR-0009 defines, build Jobs, and the reads behind status and logs. The
   grant that applies a rendered spec into your namespaces is as wide as the renderer's output and
   belongs to those namespaces rather than to the installer; it is bound per namespace by you, and
   least-privilege for it is #84's work. The chart's README has the full table.
 
+## Platform components: `kelson install`
+
+kelson delegates TLS to cert-manager, managed Postgres to CloudNativePG, and GitOps to Flux
+([ADR-0005](adr/0005-delegate-to-operators.md)). It detects those and adapts to whatever it finds. When
+detection reports one **absent**, `kelson install` offers to add it — never assumes, never upgrades one
+you already run. The full design is [ADR-0021](adr/0021-installing-missing-components.md).
+
+```sh
+kelson install cert-manager           # preview, then ask
+kelson install flux cnpg --yes        # non-interactive
+kelson install --all-missing --dry-run
+```
+
+### It refuses more often than it installs, and that is the point
+
+| What detection says | What `kelson install` does |
+|---|---|
+| The component is **present** | Refuses, naming the version it found. kelson never modifies or upgrades a component it did not install. |
+| It looked and the component is **absent** | Installs it. |
+| It **could not look** — the probe lacked RBAC | Refuses, naming the permission that would settle it. |
+
+The third row is the one worth knowing about. "Absent" and "we could not check" are different answers
+([cluster detection](detection.md)), and installing on the second one is how a cluster ends up with two
+CloudNativePG operators whose cluster-scoped CRDs fight each other.
+
+### What it installs, and from where
+
+kelson vendors nothing. Each component is installed from the manifest **its own project publishes**, at
+a version pinned in `internal/delivery/install/pins.go` and verified against a recorded SHA-256 before
+anything is applied. The preview prints the URL and the digest, so what is about to reach your cluster
+is checkable with `curl` and `sha256sum` before you answer the prompt.
+
+| Component | What it installs | What it unlocks |
+|---|---|---|
+| `flux` | flux-operator's pinned install manifest, then one `FluxInstance` | the GitOps delivery mode, and the helm-controller `kind: helm` needs |
+| `cert-manager` | cert-manager's pinned install manifest | TLS on routed services |
+| `cnpg` | CloudNativePG's pinned install manifest | every `kind: postgres` component |
+| `envoy-gateway` | *not yet* — refuses and says why | — |
+| `external-secrets` | *not yet* — refuses and says why | — |
+
+Installing Flux means installing flux-operator and creating a `FluxInstance`. kelson does not vendor
+Flux's manifests and does not reimplement the install or upgrade lifecycle flux-operator already owns;
+the FluxInstance names a minor-pinned distribution version and the operator does the rest.
+
+**It installs, it does not configure.** cert-manager arrives with no `ClusterIssuer` — which ACME
+account or CA to trust is your decision, and kelson renders a `Certificate` only once detection reports
+an issuer. The `FluxInstance` sets no sync source, so Flux runs and reconciles nothing until
+`kelson deploy --mode flux` points it somewhere. CloudNativePG arrives with no databases. The command
+says all of this on the way out.
+
+**It needs network access to the upstream release host.** Without it, the install refuses, names the URL
+it could not reach, and applies nothing — there is no half-installed state. On an air-gapped cluster,
+mirror the manifest and apply it yourself; detection then finds the component and kelson adopts it,
+which is the ordinary [ADR-0003](adr/0003-install-model.md) path.
+
+### What kelson installed, and what it merely applied over
+
+Every object kelson applies carries `kelson.dev/installed-component: <name>` plus the pinned version,
+and an annotation recording whether *this apply* is what created it:
+
+```sh
+kubectl get all,crd,clusterrole,clusterrolebinding,validatingwebhookconfiguration -A \
+  -l kelson.dev/installed-component=cert-manager
+```
+
+If a `cert-manager` namespace or a leftover ClusterRole was already there, kelson applies over it and
+stamps it `adopted` rather than `created`. The install report says which objects those were, because
+"kelson installed cert-manager" and "kelson created all of cert-manager" are different claims and the
+second one is often false.
+
 ## Uninstalling
 
-There are **three layers**, and removing one never removes another. That separation is
+There are **separate layers**, and removing one never removes another. That separation is
 [ADR-0003](adr/0003-install-model.md)'s additive doctrine seen from the exit:
 
 | Layer | What removes it | What it leaves |
 |---|---|---|
 | An application environment kelson deployed | `kelson uninstall --project <p> --env <e>` | everything in the namespace that is not kelson's |
 | The kelson server | `helm uninstall kelson -n kelson-system` | every application kelson deployed, still running |
-| The operators kelson delegates to | your own tooling — never kelson's | — |
+| A platform component **kelson installed** | `kelson uninstall --component <name>` | every part of it kelson adopted rather than created |
+| A platform component kelson did **not** install | your own tooling — never kelson's | — |
 
 ### The applications: `kelson uninstall`
 
@@ -148,11 +220,12 @@ Two flags for the two things people want kept:
 ### What `kelson uninstall` deliberately does not remove
 
 - **The server.** That is Helm's, below.
-- **CRDs.** kelson installs none — its state is ConfigMaps
-  ([ADR-0013](adr/0013-server-state-and-api-v0.md) §1) — so there are none of its to remove.
-- **Operators.** CloudNativePG, the Valkey operator, Flux, cert-manager. kelson delegates to them
-  and never installs them ([ADR-0005](adr/0005-delegate-to-operators.md)); removing one would break every
-  other tenant of the cluster.
+- **CRDs.** kelson's own state is ConfigMaps ([ADR-0013](adr/0013-server-state-and-api-v0.md) §1), so
+  it has none of its own here. The CRDs a platform component brought belong to
+  `kelson uninstall --component`, below.
+- **Operators.** CloudNativePG, the Valkey operator, Flux, cert-manager. A project uninstall never
+  touches them ([ADR-0005](adr/0005-delegate-to-operators.md)); removing one would break every other
+  tenant of the cluster. One kelson installed itself is removed by name, below.
 - **PersistentVolumes, and volumes an operator owns.** Deleting a CloudNativePG `Cluster` hands its
   PVCs to CloudNativePG's own garbage collection. They are named in the preview because they are
   about to be destroyed; kelson does not delete them itself.
@@ -163,6 +236,39 @@ Two flags for the two things people want kept:
   gated on [#84](https://github.com/dafrie/kelson/issues/84)'s authorization design, which is why
   there is no uninstall RPC or MCP tool. The verb belongs to whoever holds the kube context, and
   the cluster's RBAC is the access control.
+
+### The components: `kelson uninstall --component`
+
+```sh
+kelson uninstall --component cert-manager
+```
+
+It removes the parts of a platform component that **kelson's own `kelson install` created**, and
+nothing else. The handle is one label plus one annotation, and the command prints the selector:
+
+```sh
+kubectl get all,crd,clusterrole,clusterrolebinding,validatingwebhookconfiguration -A \
+  -l kelson.dev/installed-component=cert-manager
+```
+
+Of that set, kelson deletes only the objects annotated `kelson.dev/component-ownership: created`. An
+object it adopted, or one labelled by an install that predates the annotation, is listed under **Left
+alone** with the reason and stays. Each candidate is re-read and re-checked against its live label and
+annotation immediately before its delete, with a UID precondition, so anything that stopped being
+kelson's in between is reported and left standing.
+
+**Order.** The component's own custom resources first, so the operator that owns them is still running
+to finalize them. Then workloads, then configuration and RBAC. Then the
+`CustomResourceDefinition`s — and **the preview names every live custom resource each one takes with
+it**, because deleting CloudNativePG's CRDs deletes every `Cluster` in the cluster, including databases
+kelson never rendered. Then the namespace, and only when kelson created it.
+
+`--component` takes none of the project flags: a component has no environment, no namespace to sweep
+and no local history, so `--project`, `--env`, `--keep-data` and the rest are refused rather than
+silently ignored.
+
+A component kelson did not install has nothing carrying these labels, so this command finds nothing and
+says so. Removing it is your own tooling's job, exactly as before.
 
 ### The server: `helm uninstall`
 
