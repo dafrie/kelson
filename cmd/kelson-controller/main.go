@@ -36,12 +36,18 @@
 // environments converge on the requeue timer. Live refresh of the profile is
 // tracked separately.
 //
-// # Leader election is off by default
+// # Leader election is on by default
 //
-// This is now a controller that publishes artifacts and applies Flux objects,
-// so two replicas racing is real. The flag exists, its default is still off
-// because a single-replica Deployment is what the chart ships, and an operator
-// who scales to two is told on stdout which posture they started in.
+// This is a controller that publishes artifacts and applies Flux objects, so
+// two replicas racing is real — and unlike a controller that only writes
+// statuses, there is no version of "safe with two" that does not cost a Lease.
+// The default was off while delivery did not exist yet; now that it does, a
+// single-replica Deployment (still the chart's default) wins its own Lease
+// immediately and pays nothing for it, which is what makes "on" the default
+// that costs a scaled-down operator nothing and a scaled-up one everything.
+// The flag still exists — --leader-elect=false is for a single hand-run
+// instance with no Lease RBAC at all — and an operator who flips it is told on
+// stdout which posture they started in.
 //
 // # Logging
 //
@@ -105,7 +111,7 @@ type config struct {
 	probeAddr   string
 
 	// leaderElect and leaderElectionNamespace decide whether two replicas may
-	// both reconcile. See the package doc for why the default is off.
+	// both reconcile. See the package doc for why the default is on.
 	leaderElect             bool
 	leaderElectionNamespace string
 
@@ -287,7 +293,7 @@ func parseFlags(args []string, stderr io.Writer) (config, error) {
 		"address the metrics endpoint binds to; 0 disables it")
 	fs.StringVar(&cfg.probeAddr, "health-probe-bind-address", ":8081",
 		"address the liveness and readiness endpoints bind to")
-	fs.BoolVar(&cfg.leaderElect, "leader-elect", false,
+	fs.BoolVar(&cfg.leaderElect, "leader-elect", true,
 		"contend for leadership so only one replica publishes and applies")
 	fs.StringVar(&cfg.leaderElectionNamespace, "leader-election-namespace", defaultNamespace,
 		"namespace holding the leader-election Lease")

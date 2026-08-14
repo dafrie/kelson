@@ -1,18 +1,26 @@
 {{- include "kelson.authGate" . -}}
 {{- if and .Values.controller.enabled .Values.controller.rbac.create }}
-# The controller's grant, and it is deliberately the smallest one that lets it
-# do what ADR-0028 steps 1–3 need: read the two kelson kinds anywhere in the
-# cluster, and write their status.
+# The controller's cluster-scoped grant: read the two kelson kinds and write
+# their status and finalizer anywhere in the cluster (ADR-0028 steps 1–6). The
+# Flux objects the delivery spine writes are a *namespaced* grant instead —
+# templates/controller-flux-role.yaml, in .Values.controller.fluxNamespace —
+# because kelson owns exactly one OCIRepository/Kustomization pair per
+# environment, always in that one namespace, and a namespaced Role is the
+# smaller grant for that shape.
 #
 # Cluster-scoped rather than namespaced because a Project and its Environments
 # live wherever their team's namespace is, and a controller that watched only
-# the release namespace would silently ignore every other one. It grants no
-# access to workloads, no access to Secrets and no access to Flux objects: the
-# controller renders and stops (issue #224). The wider grant delivery needs —
-# applying an OCIRepository and a Kustomization in kelson-system, and whatever
-# reads the observation step turns out to want — arrives with the code that
-# uses it, not before, because an unused write grant is a grant nobody can
-# audit the use of.
+# the release namespace would silently ignore every other one.
+#
+# Deliberately, still, no access to workloads (Pods, Deployments) or Secrets.
+# R1's exit gate delegates health to Flux's own kustomize-controller instead:
+# the Kustomization this controller writes carries `wait: true`
+# (internal/controller/fluxobjects.go), so `Ready` already means *healthy* by
+# the time this controller reads it back, and it never has to hold RBAC over
+# what it did not apply. Wiring internal/observation's finer-grained
+# classification (which Pod, which container, which probe) into the reconcile
+# loop — and the read-only workload RBAC that would need — is deferred and
+# tracked in issue #240, not forgotten.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -34,6 +42,18 @@ rules:
   - apiGroups: ["kelson.dev"]
     resources: ["projects/status", "environments/status"]
     verbs: ["get", "patch", "update"]
+
+  # The deletion blocker (internal/controller/environment.go's Finalizer,
+  # `kelson.dev/environment`): added on the first successful Ensure, removed
+  # only after Teardown has deleted both Flux objects. It is a patch against
+  # metadata.finalizers on the main resource, not against a real `/finalizers`
+  # subresource a CRD serves — CRDs have no such endpoint — but naming it here
+  # is the kubebuilder/controller-runtime convention for exactly this pattern,
+  # and some admission paths do check it even where the API server's own
+  # subresource routing does not.
+  - apiGroups: ["kelson.dev"]
+    resources: ["environments/finalizers"]
+    verbs: ["update"]
 {{- if .Values.controller.leaderElection.enabled }}
 
   # Leader election, and only when it is on. The Lease is namespaced, so this

@@ -21,9 +21,14 @@ committed under `deploy/crds/`, drift-tested, and applied as an ordinary pinned 
 therefore embedded rather than fetched.
 
 > **Transition (R1/R3, [#224](https://github.com/dafrie/kelson/issues/224) /
-> [#226](https://github.com/dafrie/kelson/issues/226)).** The CRDs, the controller and the chart changes
-> that ship them are being built now. Today's chart installs the server and no CRDs, and today's server
-> keeps specs and history in ConfigMaps.
+> [#226](https://github.com/dafrie/kelson/issues/226)).** The chart now installs kelson's two CRDs
+> unconditionally and the server stores `Project`/`Environment` specs as custom resources rather than
+> ConfigMaps (`internal/controlstore`, ADR-0027 decision 6). `kelson-controller` — the reconciler that
+> runs the delivery spine ([ADR-0028](adr/0028-delivery-spine.md)) — is a second workload the same
+> chart ships, still off by default ([Configuring the controller](#configuring-the-controller)
+> below): turning it on is what makes an applied `Environment` actually deploy. `flux-aio`'s catalog
+> row is R3 work and not yet built; a cluster with no Flux at all still gets `kelson install flux`
+> today.
 
 Just want to try it on your machine? `make kind-up` stands up all of it — cluster, registry,
 server, UI — in one command ([local](local.md)).
@@ -84,6 +89,50 @@ Not `latest` — a mutable tag makes a Deployment's identity unknowable. Not the
 `appVersion` either, which tracks `internal/version` and is a development placeholder until a
 release is cut. Pass the tag you mean. Publishing the images is release work
 ([release policy](release-policy.md)), not the chart's.
+
+### Configuring the controller
+
+`kelson-controller` — the reconciler behind the delivery spine ([the delivery plane](delivery.md),
+[ADR-0028](adr/0028-delivery-spine.md)) — is a second workload the same chart ships, off by default:
+
+```sh
+helm upgrade kelson ./deploy/chart/kelson --namespace kelson-system --reuse-values \
+  --set controller.enabled=true \
+  --set controller.registry=ghcr.io/acme
+```
+
+**A registry is required for delivery, not only for building.** Without `controller.registry` the
+controller reports `RegistryNotConfigured` on every `Environment` and publishes nothing — a status,
+not a crash loop, because a controller with no registry configured cannot say anything else useful.
+Have no registry of your own? Point it at the in-cluster one
+([above](#providing-a-registry-if-you-dont-have-one)):
+
+```sh
+--set controller.registry=kelson-registry.kelson-system.svc.cluster.local:5000
+--set 'controller.insecureRegistries={kelson-registry.kelson-system.svc.cluster.local:5000}'
+```
+
+The rest of the delivery spine's configuration is chart values that map onto
+`kelson-controller`'s own flags one for one: `controller.pushSecret` (an existing
+`dockerconfigjson` Secret, mounted into the pod and passed as `--registry-config` — the controller
+reads a file, the same shape a CI `docker login` writes), `controller.pullSecret` (a *different*
+credential, named on the `OCIRepository` so source-controller can pull — the controller pushes,
+source-controller pulls, and they are different processes), `controller.fluxNamespace` (where the
+`OCIRepository`/`Kustomization` pair lives; empty means the release namespace, and the chart's
+namespaced Role granting those two kinds is created in that same place so the two cannot disagree),
+and `controller.reconcileInterval` (drift correction, not deploy latency). The chart's own README
+(`deploy/chart/kelson/README.md`, "Configuring kelson-controller") has the full table and the
+per-rule RBAC reasoning.
+
+**Leader election defaults on.** The controller now pushes artifacts and applies Flux objects, so
+two replicas racing to do either is a real hazard; `controller.leaderElection.enabled=true` is what
+makes `controller.replicaCount: 2` a safe value change instead of a two-step migration.
+
+**The controller holds no RBAC over workloads**, by design and not yet: the `Kustomization` it
+writes carries `wait: true`, so kustomize-controller's own health assessment is what `Ready` means,
+and R1's exit gate needs nothing more from the controller itself. Reading Pod- and container-level
+detail back into `Environment.status` is tracked separately
+([#240](https://github.com/dafrie/kelson/issues/240)).
 
 ## What the chart deliberately does not do
 

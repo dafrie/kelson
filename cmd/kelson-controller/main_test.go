@@ -23,8 +23,8 @@ func TestParseFlagsDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}
-	if cfg.leaderElect {
-		t.Error("leader election must be off by default while the controller only writes statuses")
+	if !cfg.leaderElect {
+		t.Error("leader election must be on by default: the controller publishes artifacts and applies Flux objects, and two replicas racing to do either is a real hazard")
 	}
 	if cfg.metricsAddr != "0" {
 		t.Errorf("metrics bind address is %q, want \"0\" (disabled): an unscraped port is exposure for no benefit", cfg.metricsAddr)

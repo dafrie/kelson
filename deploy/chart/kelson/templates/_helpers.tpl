@@ -98,6 +98,17 @@ controller and a server from different builds without noticing.
 {{- end }}
 {{- end }}
 
+{{/*
+The namespace kelson's OCIRepository and Kustomization pair lives in
+(controller.fluxNamespace / --flux-namespace). It is also the namespace the
+namespaced Role granting those two kinds is created in
+(templates/controller-flux-role.yaml), so the flag and the Role read this one
+value and cannot drift apart.
+*/}}
+{{- define "kelson.controller.fluxNamespace" -}}
+{{- default .Release.Namespace .Values.controller.fluxNamespace -}}
+{{- end }}
+
 {{- define "kelson.controller.image" -}}
 {{- $tag := default .Values.image.tag .Values.controller.image.tag -}}
 {{- $tag = required "controller.image.tag (or image.tag) is required: the chart does not default to `latest`, because a mutable tag makes a Deployment's identity unknowable. Pass the release you mean, e.g. --set image.tag=v0.1.0" $tag -}}
