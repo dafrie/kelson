@@ -1,0 +1,9 @@
+# Flux under flux-operator and nothing else detected — no Gateway API, no
+# cert-manager. The api component declares a port and no domains, so nothing
+# routable is rendered for it and the fixture stays about the previews pair.
+flux:
+  version: 2.6.4
+  namespace: flux-system
+fluxOperator:
+  version: 0.58.0
+  namespace: flux-system

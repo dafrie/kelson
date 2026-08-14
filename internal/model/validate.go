@@ -407,6 +407,144 @@ func (v *validator) secrets(field string, s *SecretBackend) {
 	}
 }
 
+// previews validates the per-pull-request child-environment declaration
+// (ADR-0017).
+//
+// What is *not* checked here is the delivery mode. Previews render only in
+// Flux mode, and that gate lives in the pure renderer for the reason the Helm
+// gate does: the mode is spec data, so an Environment document stays valid on
+// its own terms and the refusal is a render error naming the mode. See
+// internal/renderer/previews.go.
+func (v *validator) previews(field string, p *Previews) {
+	if p == nil {
+		return
+	}
+	switch p.Provider {
+	case PreviewGitHub, PreviewGitLab:
+	case "":
+		v.err(ErrMissingRequired, field+".provider",
+			"previews.provider is required when previews is set",
+			"set provider to github or gitlab — it selects which forge API flux-operator polls for change requests")
+	default:
+		v.err(ErrInvalidEnum, field+".provider",
+			fmt.Sprintf("unknown previews provider %q", p.Provider),
+			"valid providers: github, gitlab")
+	}
+
+	if p.Repo == "" {
+		v.err(ErrMissingRequired, field+".repo",
+			"previews.repo is required when previews is set",
+			"set repo to the HTTP(S) URL of the repository whose pull requests become previews, "+
+				"e.g. https://github.com/acme/checkout. It is the source repository, not delivery.git.repo")
+	} else {
+		v.remoteURL(field+".repo", p.Repo, []string{"https", "http"},
+			"use the HTTP(S) URL of the source repository, e.g. https://github.com/acme/checkout. "+
+				"It is reached over the forge's HTTP API, so an SSH remote — the shape delivery.git.repo "+
+				"takes — is the wrong string in the right-looking field")
+	}
+
+	if p.SecretRef == "" {
+		v.err(ErrMissingRequired, field+".secretRef",
+			"previews.secretRef is required when previews is set",
+			"set secretRef to the name of a Secret holding forge credentials (ADR-0009: the spec carries the "+
+				"name, never the token). flux-operator reads username/password, or the githubApp* keys")
+	} else {
+		v.name(field+".secretRef", p.SecretRef, "secret")
+	}
+
+	if p.Interval != "" {
+		v.duration(field+".interval", p.Interval)
+	}
+
+	if f := p.Filter; f != nil {
+		v.previewLabels(field+".filter.labels", f.Labels, false)
+		v.pattern(field+".filter.includeBranch", f.IncludeBranch)
+		v.pattern(field+".filter.excludeBranch", f.ExcludeBranch)
+		if f.Limit != nil && (*f.Limit < 1 || *f.Limit > previewMaxLimit) {
+			v.err(ErrOutOfRange, field+".filter.limit",
+				fmt.Sprintf("limit %d is outside 1..%d", *f.Limit, previewMaxLimit),
+				fmt.Sprintf("set limit between 1 and %d, or remove it for kelson's default of %d "+
+					"(deliberately below flux-operator's own 100 — the ceiling is a cost control, ADR-0017)",
+					previewMaxLimit, PreviewDefaultLimit))
+		}
+	}
+	if s := p.Skip; s != nil {
+		v.previewLabels(field+".skip.labels", s.Labels, true)
+	}
+
+	if p.Artifacts.Repository == "" {
+		v.err(ErrMissingRequired, field+".artifacts.repository",
+			"previews.artifacts.repository is required when previews is set",
+			"set artifacts.repository to the oci:// repository the per-pull-request manifests are published to, "+
+				"e.g. oci://ghcr.io/acme/checkout-previews. The tag is the pull request's head commit and kelson "+
+				"chooses it (ADR-0017)")
+	} else {
+		v.remoteURL(field+".artifacts.repository", p.Artifacts.Repository, []string{"oci"},
+			"use an oci:// repository URL without a tag, e.g. oci://ghcr.io/acme/checkout-previews")
+		if strings.Contains(p.Artifacts.Repository, "@") || strings.Contains(strings.TrimPrefix(p.Artifacts.Repository, "oci://"), ":") {
+			v.err(ErrInvalidFormat, field+".artifacts.repository",
+				fmt.Sprintf("%q carries a tag or a digest", p.Artifacts.Repository),
+				"drop the tag: each preview is pulled at its pull request's head commit SHA, so a tag here would "+
+					"either be ignored or pin every preview to the same manifests (ADR-0017)")
+		}
+	}
+	if p.Artifacts.SecretRef != "" {
+		v.name(field+".artifacts.secretRef", p.Artifacts.SecretRef, "secret")
+	}
+}
+
+// previewMaxLimit is flux-operator's own documented ceiling for
+// `filter.limit`. kelson refuses above it rather than letting the operator
+// reject the object after it is applied.
+const previewMaxLimit = 10000
+
+// previewLabels checks a forge label list. Skip lists allow a leading `!`,
+// which flux-operator reads as "skip while this label is absent" — the shape a
+// "tests passed" gate takes — and filter lists do not.
+func (v *validator) previewLabels(field string, labels []string, allowNegation bool) {
+	for i, l := range labels {
+		f := fmt.Sprintf("%s[%d]", field, i)
+		if strings.TrimSpace(l) == "" {
+			v.err(ErrInvalidFormat, f, "a label must not be empty",
+				"remove the entry, or name a label the forge carries, e.g. deploy/preview")
+			continue
+		}
+		if !allowNegation && strings.HasPrefix(l, "!") {
+			v.err(ErrInvalidFormat, f,
+				fmt.Sprintf("label %q is negated, which only skip.labels understands", l),
+				"remove the leading !, or move the entry to previews.skip.labels — a filter selects change "+
+					"requests, a skip pauses updates to the ones already selected")
+		}
+	}
+}
+
+// pattern checks that a filter regular expression compiles. flux-operator
+// evaluates it with Go's own regexp engine, so compiling it here is the same
+// judgement the operator will make, taken while the author is still looking at
+// the field.
+func (v *validator) pattern(field, expr string) {
+	if expr == "" {
+		return
+	}
+	if _, err := regexp.Compile(expr); err != nil {
+		v.err(ErrInvalidFormat, field,
+			fmt.Sprintf("%q is not a valid regular expression: %v", expr, err),
+			`use a Go regular expression matched against the branch name, e.g. "^feat/.*"`)
+	}
+}
+
+// durationRE is Kubernetes' and Flux's duration shape: one or more
+// number+unit pairs, no fractions, no days.
+var durationRE = regexp.MustCompile(`^([0-9]+(ms|s|m|h))+$`)
+
+func (v *validator) duration(field, s string) {
+	if !durationRE.MatchString(s) {
+		v.err(ErrInvalidFormat, field,
+			fmt.Sprintf("%q is not a duration", s),
+			"use a Go duration of whole units, e.g. 30s, 10m, 1h")
+	}
+}
+
 func (v *validator) delivery(field string, d *Delivery) {
 	if d == nil {
 		return
@@ -612,19 +750,24 @@ func (v *validator) chartSource(field string, c Component) {
 		return
 	}
 	if repo != "" {
-		v.chartURL(field+".source.repository", repo, []string{"https", "http"},
+		v.remoteURL(field+".source.repository", repo, []string{"https", "http"},
 			"use an https URL to the repository that serves index.yaml, e.g. https://kubernetes.github.io/ingress-nginx")
 		return
 	}
-	v.chartURL(field+".source.oci", oci, []string{"oci"},
+	v.remoteURL(field+".source.oci", oci, []string{"oci"},
 		"use an oci:// URL to the registry path holding the chart, without the chart name, "+
 			"e.g. oci://ghcr.io/acme/charts")
 }
 
-// chartURL checks a chart source URL for the one thing kelson can judge without
-// a network: that it is a URL at all, with a scheme this source kind uses.
-// Whether the registry answers is the registry's to say.
-func (v *validator) chartURL(field, raw string, schemes []string, remediation string) {
+// remoteURL checks a URL for the one thing kelson can judge without a network:
+// that it is a URL at all, with a host and a scheme this field accepts.
+// Whether the other end answers is the other end's to say.
+//
+// It is shared by every remote address in the spec — chart sources, the
+// previews source repository, the previews artifact repository — because the
+// judgement is the same one and a second copy would drift on which of the
+// three parts it checks.
+func (v *validator) remoteURL(field, raw string, schemes []string, remediation string) {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" || !slices.Contains(schemes, u.Scheme) {
 		v.err(ErrInvalidFormat, field,
@@ -939,6 +1082,7 @@ func validateEnvironmentShape(e *Environment, v *validator) {
 	}
 	v.policy("$.spec.policy", s.Policy)
 	v.secrets("$.spec.secrets", s.Secrets)
+	v.previews("$.spec.previews", s.Previews)
 
 	seen := map[string]int{}
 	for i, ov := range s.Components {

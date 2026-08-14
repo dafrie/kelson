@@ -27,6 +27,7 @@ This reference is **generated** from the committed JSON Schema [`schema/environm
 | `namespace` | string | no |  |  |
 | `overlays` | array of object | no |  |  |
 | `policy` | object | no |  |  |
+| `previews` | object | no |  |  |
 | `project` | string | yes |  |  |
 | `routing` | object | no |  |  |
 | `secrets` | object | no |  |  |
@@ -99,6 +100,40 @@ This reference is **generated** from the committed JSON Schema [`schema/environm
 | `agents` | string enum `"allow"`, `"propose-only"` | no | `"propose-only"` |  |
 | `deployers` | array of string | no |  |  |
 | `require` | array of string | no |  | guards that must hold before deploy; only dry-run is defined |
+
+#### `spec.previews`
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `artifacts` | object | yes |  |  |
+| `filter` | object | no |  |  |
+| `interval` | string | no | `"10m"` | how often the forge is polled for change requests |
+| `provider` | string enum `"github"`, `"gitlab"` | yes |  | the forge whose change requests become previews |
+| `repo` | string | yes |  | HTTP(S) URL of the source repository whose change requests become previews; not delivery.git.repo |
+| `secretRef` | string | yes |  | name of the Secret holding forge credentials; never a token |
+| `skip` | object | no |  |  |
+
+##### `spec.previews.artifacts`
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `repository` | string | yes |  | oci:// URL of the repository holding per-pull-request manifests; no tag |
+| `secretRef` | string | no |  | name of a docker-registry Secret for a private artifact repository |
+
+##### `spec.previews.filter`
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `excludeBranch` | string | no |  | regular expression; matching branches are excluded |
+| `includeBranch` | string | no |  | regular expression; only matching branches become previews |
+| `labels` | array of string | no |  | only change requests carrying one of these labels become previews |
+| `limit` | integer min 1, max 10000 | no | `10` | maximum number of simultaneous previews |
+
+##### `spec.previews.skip`
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `labels` | array of string | no |  | pause preview updates while one of these labels is present; a ! prefix inverts the test |
 
 #### `spec.routing`
 

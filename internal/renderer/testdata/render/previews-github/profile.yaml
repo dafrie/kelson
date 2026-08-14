@@ -1,0 +1,16 @@
+# A cluster running Flux under flux-operator, which is what previews need at
+# reconcile time. None of it is read to decide whether the previews block
+# renders — that gate is the environment's delivery mode, which is spec data
+# (ADR-0017, previews.go). The profile is here so the fixture is not a picture
+# of a cluster that could never run what it shows.
+gatewayAPI:
+  version: v1.6.0
+  classes: [envoy]
+certManager:
+  clusterIssuers: [letsencrypt-prod]
+flux:
+  version: 2.6.4
+  namespace: flux-system
+fluxOperator:
+  version: 0.58.0
+  namespace: flux-system

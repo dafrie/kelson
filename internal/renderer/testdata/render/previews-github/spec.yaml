@@ -1,0 +1,65 @@
+# Fixture: an environment that spawns a preview per GitHub pull request
+# (ADR-0017), with every optional field set.
+#
+# What to read in the golden: the ResourceSetInputProvider carries the polling
+# interval as an annotation and the ceiling as a filter, and the ResourceSet's
+# resourcesTemplate contains an OCIRepository and a Kustomization and NOTHING
+# ELSE. The application manifests for a preview are not here — they are rendered
+# concretely per pull request and published as an OCI artifact, which is the
+# whole of ADR-0016 decision 5. The four templated holes are addresses
+# (`<< inputs.id >>` in the names, `<< inputs.sha >>` in the tag), never
+# descriptions of a workload.
+#
+# The web component and the database are in the set for contrast: they are what
+# the *parent* environment runs, and a preview of this project renders the same
+# two into its artifact — including the database, which is why teardown cannot
+# leak one (#103).
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: checkout
+spec:
+  image: ghcr.io/acme/checkout:1.4.2
+
+  components:
+    - name: web
+      port: 8080
+      health: /healthz
+---
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: staging
+spec:
+  project: checkout
+  namespace: checkout-staging
+  routing:
+    domainSuffix: staging.acme.run
+    gatewayClass: envoy
+  delivery:
+    mode: flux
+    git:
+      repo: git@github.com:acme/deploy.git
+      path: checkout/staging
+  previews:
+    provider: github
+    # The SOURCE repository — where the pull requests are. It is deliberately
+    # not delivery.git.repo above, and kelson defaults neither from the other.
+    repo: https://github.com/acme/checkout
+    secretRef: github-auth
+    interval: 5m
+    filter:
+      labels:
+        - deploy/preview
+      includeBranch: "^feat/.*"
+      excludeBranch: "^wip/.*"
+      limit: 5
+    skip:
+      # The first pauses updates while CI builds; the second, negated, pauses
+      # until the tests have passed.
+      labels:
+        - deploy/preview-pause
+        - "!ci/passed"
+    artifacts:
+      repository: oci://ghcr.io/acme/checkout-previews
+      secretRef: ghcr-auth

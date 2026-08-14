@@ -138,6 +138,97 @@
             "backend"
           ]
         },
+        "previews": {
+          "properties": {
+            "provider": {
+              "type": "string",
+              "enum": [
+                "github",
+                "gitlab"
+              ],
+              "description": "the forge whose change requests become previews"
+            },
+            "repo": {
+              "type": "string",
+              "description": "HTTP(S) URL of the source repository whose change requests become previews; not delivery.git.repo"
+            },
+            "secretRef": {
+              "type": "string",
+              "description": "name of the Secret holding forge credentials; never a token"
+            },
+            "interval": {
+              "type": "string",
+              "description": "how often the forge is polled for change requests",
+              "default": "10m"
+            },
+            "filter": {
+              "properties": {
+                "labels": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array",
+                  "description": "only change requests carrying one of these labels become previews"
+                },
+                "includeBranch": {
+                  "type": "string",
+                  "description": "regular expression; only matching branches become previews"
+                },
+                "excludeBranch": {
+                  "type": "string",
+                  "description": "regular expression; matching branches are excluded"
+                },
+                "limit": {
+                  "type": "integer",
+                  "maximum": 10000,
+                  "minimum": 1,
+                  "description": "maximum number of simultaneous previews",
+                  "default": 10
+                }
+              },
+              "additionalProperties": false,
+              "type": "object"
+            },
+            "skip": {
+              "properties": {
+                "labels": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array",
+                  "description": "pause preview updates while one of these labels is present; a ! prefix inverts the test"
+                }
+              },
+              "additionalProperties": false,
+              "type": "object"
+            },
+            "artifacts": {
+              "properties": {
+                "repository": {
+                  "type": "string",
+                  "description": "oci:// URL of the repository holding per-pull-request manifests; no tag"
+                },
+                "secretRef": {
+                  "type": "string",
+                  "description": "name of a docker-registry Secret for a private artifact repository"
+                }
+              },
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "repository"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "provider",
+            "repo",
+            "secretRef",
+            "artifacts"
+          ]
+        },
         "components": {
           "items": {
             "properties": {

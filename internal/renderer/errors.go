@@ -57,6 +57,17 @@ const (
 	// ErrChartName: <project>-<environment>-<component> is too long for the
 	// Helm release name derived from it.
 	ErrChartName = "render/chart-name-too-long"
+	// ErrPreviewsRequireFlux: the environment declares previews and its
+	// delivery mode is not flux. Previews render a flux-operator ResourceSet
+	// and ResourceSetInputProvider, and outside Flux mode there is nothing to
+	// reconcile them — usually not even a served CRD. ADR-0017 takes the same
+	// delivery-mode gate ADR-0016 decision 4 took for charts, citing it
+	// deliberately as that decision requires.
+	ErrPreviewsRequireFlux = "render/previews-require-flux"
+	// ErrPreviewName: <project>-<environment> leaves no room for the
+	// per-preview namespace derived from it (<project>-<environment>-pr<id>,
+	// a DNS-1123 label).
+	ErrPreviewName = "render/preview-name-too-long"
 	// ErrBindingUnknownService: an env binding names a service the resolved
 	// spec does not declare. Model validation catches this for authored specs;
 	// the renderer is also fed a Resolved directly by the API plane.

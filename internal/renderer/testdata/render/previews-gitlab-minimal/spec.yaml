@@ -1,0 +1,43 @@
+# Fixture: the smallest previews block there is, against GitLab.
+#
+# It pins the two things the full github fixture cannot show. First the provider
+# mapping: `gitlab` becomes GitLabMergeRequest, not GitHubPullRequest — a merge
+# request and a pull request are the same input to flux-operator and a different
+# API to reach it through. Second the defaults kelson applies rather than
+# inherits: `interval` is absent here and the annotation still says 10m, and
+# `filter` is absent entirely and the rendered filter still carries limit 10,
+# because a ceiling nobody can read off the manifest is one nobody checks
+# (ADR-0017). flux-operator's own default is 100 and kelson deliberately does
+# not inherit it.
+#
+# There is also no artifacts.secretRef, so the templated OCIRepository carries
+# no secretRef at all: a public artifact repository needs no credential and an
+# empty one would be an object reference to a Secret that does not exist.
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: shop
+spec:
+  image: registry.gitlab.com/acme/shop:2.0.0
+  components:
+    - name: api
+      port: 3000
+---
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: review
+spec:
+  project: shop
+  namespace: shop-review
+  delivery:
+    mode: flux
+    git:
+      repo: git@gitlab.com:acme/deploy.git
+      path: shop/review
+  previews:
+    provider: gitlab
+    repo: https://gitlab.com/acme/shop
+    secretRef: gitlab-auth
+    artifacts:
+      repository: oci://registry.gitlab.com/acme/shop-previews
