@@ -71,25 +71,43 @@ func TestResolveStrategyPrecedence(t *testing.T) {
 		}
 	})
 
-	t.Run("buildpacks is deferred, however it was reached", func(t *testing.T) {
+	// buildpacks is no longer a refusal (#49): it is the zero-config default
+	// ADR-0010 always said it was, and it resolves however it was reached —
+	// named in the spec, or chosen because a tree has a language signal and no
+	// Dockerfile.
+	t.Run("buildpacks resolves, however it was reached", func(t *testing.T) {
 		cases := map[string]struct {
-			spec *model.Build
-			tree fs.FS
+			spec   *model.Build
+			tree   fs.FS
+			reason detect.Reason
 		}{
-			"explicit":  {spec: &model.Build{Strategy: model.BuildBuildpacks}},
-			"by signal": {tree: treeWithGoMod},
+			"explicit":  {spec: &model.Build{Strategy: model.BuildBuildpacks}, reason: detect.ReasonExplicit},
+			"by signal": {tree: treeWithGoMod, reason: detect.ReasonLanguageSignal},
 		}
 		for name, tc := range cases {
 			t.Run(name, func(t *testing.T) {
-				_, err := build.ResolveStrategy(tc.spec, tc.tree)
-				berr := reasonOf(t, err)
-				if berr.Reason != build.ReasonStrategyNotImplemented {
-					t.Errorf("reason = %q, want %q", berr.Reason, build.ReasonStrategyNotImplemented)
+				got, err := build.ResolveStrategy(tc.spec, tc.tree)
+				if err != nil {
+					t.Fatalf("ResolveStrategy: %v", err)
 				}
-				if !strings.Contains(berr.Remediation, "#49") {
-					t.Errorf("the deferral should name its issue: %s", berr.Remediation)
+				if got.Strategy != detect.StrategyBuildpacks || got.Reason != tc.reason {
+					t.Errorf("got %q/%q, want buildpacks/%s", got.Strategy, got.Reason, tc.reason)
 				}
 			})
+		}
+	})
+
+	// A tree with neither a Dockerfile nor a language signal is still
+	// buildpacks — ADR-0010's rule 3 has no "and only if" — and the reason
+	// says the choice was made on no signal rather than pretending to evidence
+	// it does not have.
+	t.Run("no signal at all still resolves to buildpacks", func(t *testing.T) {
+		got, err := build.ResolveStrategy(nil, fstest.MapFS{"README.md": {}})
+		if err != nil {
+			t.Fatalf("ResolveStrategy: %v", err)
+		}
+		if got.Strategy != detect.StrategyBuildpacks || got.Reason != detect.ReasonNoSignal {
+			t.Errorf("got %q/%q, want buildpacks/no-signal", got.Strategy, got.Reason)
 		}
 	})
 

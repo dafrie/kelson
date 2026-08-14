@@ -9,6 +9,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/dafrie/kelson/internal/build"
+	"github.com/dafrie/kelson/internal/build/registry"
 	"github.com/dafrie/kelson/internal/model"
 )
 
@@ -55,7 +56,6 @@ const (
 	labelProject     = "kelson.dev/project"
 	labelEnvironment = "kelson.dev/environment"
 	labelApplication = "kelson.dev/application"
-	annRevision      = "kelson.dev/revision"
 )
 
 // withDefaults fills unset parts of the config: the buildkit image and a zero
@@ -84,12 +84,18 @@ func (c Config) Workload(req build.Request) ([]byte, error) {
 		labelProject:     req.Project,
 		labelEnvironment: req.Environment,
 	}
-	annotations := map[string]string{}
+	// The destination is annotated rather than left to be read back out of the
+	// buildctl command line: it is what the executor turns into
+	// Result.Reference (build.AnnotationImage).
+	annotations := map[string]string{build.AnnotationImage: req.Image}
 	if req.Application != "" {
 		labels[labelApplication] = req.Application
 	}
+	if req.Tag != "" {
+		annotations[build.AnnotationTag] = req.Tag
+	}
 	if req.Revision != "" {
-		annotations[annRevision] = req.Revision
+		annotations[build.AnnotationRevision] = req.Revision
 	}
 
 	name := jobName(req)
@@ -139,6 +145,9 @@ func validate(req build.Request, c Config) error {
 		return fmt.Errorf("buildkit: negative build timeout %s", time.Duration(c.Timeout))
 	}
 	if err := validateSecrets(c.Secrets); err != nil {
+		return err
+	}
+	if err := registry.ValidateInsecure(c.InsecureRegistries); err != nil {
 		return err
 	}
 	return validateArgs(req.Args)
@@ -260,14 +269,17 @@ func buildCommand(req build.Request, cfg Config) string {
 	const sock = "/run/user/1000/buildkit/buildkitd.sock"
 
 	var b strings.Builder
-	b.WriteString("set -euo pipefail\n")
-	fmt.Fprintf(&b, "buildkitd --oci-worker-no-process-sandbox --oci-worker-snapshotter=native --addr unix://%s &\n", sock)
+	// Not `set -o pipefail`: this script is run by the image's /bin/sh, and
+	// the shells that stand behind it are not all bash.
+	b.WriteString("set -eu\n")
+	daemonFlags := insecureRegistryConfig(&b, cfg.InsecureRegistries)
+	fmt.Fprintf(&b, "buildkitd --oci-worker-no-process-sandbox --oci-worker-snapshotter=native%s --addr unix://%s &\n", daemonFlags, sock)
 	fmt.Fprintf(&b, "until buildctl --addr unix://%s debug workers >/dev/null 2>&1; do sleep 1; done\n", sock)
 
 	b.WriteString("exec buildctl --addr unix://")
 	b.WriteString(sock)
 	b.WriteString(" build --frontend dockerfile.v0")
-	ctxPath := contextPath(req)
+	ctxPath := build.ContextPath(req)
 	fmt.Fprintf(&b, " --local context=%s", ctxPath)
 	if req.Dockerfile != "" && req.Dockerfile != "Dockerfile" {
 		fmt.Fprintf(&b, " --local dockerfile=%s --opt filename=%s", ctxPath, req.Dockerfile)
@@ -295,12 +307,51 @@ func buildCommand(req build.Request, cfg Config) string {
 			fmt.Fprintf(&b, " --build-arg %s=%s", k, req.Args[k])
 		}
 	}
-	if req.Tag == "" {
-		fmt.Fprintf(&b, " --output type=image,image-format=oci,name=%s,push=true", req.Image)
-	} else {
-		fmt.Fprintf(&b, " --output type=image,image-format=oci,name=%s:%s,push=true", req.Image, req.Tag)
+	dest := req.Image
+	if req.Tag != "" {
+		dest += ":" + req.Tag
+	}
+	fmt.Fprintf(&b, " --output type=image,image-format=oci,name=%s,push=true", dest)
+	if registry.IsInsecure(cfg.InsecureRegistries, req.Image) {
+		// The exporter's own knob, which covers a registry serving TLS the
+		// build cannot verify. It does not by itself make the push plain HTTP
+		// — the resolver decides the scheme, and that is what the buildkitd
+		// config above is for — so the two are set together, and only for a
+		// destination the operator listed.
+		b.WriteString(",registry.insecure=true")
 	}
 	return b.String()
+}
+
+// buildkitConfigPath is where the generated buildkitd registry configuration
+// is written. It is under the tmp emptyDir because the rootless image's
+// filesystem is not writable elsewhere.
+const buildkitConfigPath = "/tmp/buildkitd.toml"
+
+// insecureRegistryConfig writes a buildkitd configuration marking exactly the
+// listed registries as plain HTTP, and returns the daemon flag that loads it
+// (or "" when nothing is listed).
+//
+// `http = true` is the key that matters, and it is deliberately not paired
+// with `insecure = true` in the same stanza: buildkit's resolver forces HTTPS
+// when a registry is marked insecure, with no fallback to HTTP, so writing
+// both would break the plain-HTTP registry this exists to reach
+// (moby/buildkit#5872). `registry.insecure=true` on the exporter, above, is
+// the separate knob for a registry that speaks TLS the build cannot verify.
+//
+// Hosts are validated before rendering (registry.ValidateInsecure), so nothing
+// user-controlled reaches the heredoc as anything but a bare host; the
+// delimiter is quoted so the shell performs no expansion inside it either.
+func insecureRegistryConfig(b *strings.Builder, hosts []string) string {
+	if len(hosts) == 0 {
+		return ""
+	}
+	fmt.Fprintf(b, "cat > %s <<'KELSON_BUILDKITD_CONFIG'\n", buildkitConfigPath)
+	for _, h := range hosts {
+		fmt.Fprintf(b, "[registry.%q]\n  http = true\n", h)
+	}
+	b.WriteString("KELSON_BUILDKITD_CONFIG\n")
+	return " --config " + buildkitConfigPath
 }
 
 // --- typed manifest shapes -------------------------------------------------
@@ -483,8 +534,8 @@ func sourceInitContainers(req build.Request, cfg Config) []container {
 	return []container{{
 		Name:         "clone",
 		Image:        cfg.GitImage,
-		Command:      []string{"sh", "-c", cloneCommand(req)},
-		VolumeMounts: []volumeMount{{Name: "workspace", MountPath: "/workspace"}},
+		Command:      []string{"sh", "-c", build.CloneScript(req)},
+		VolumeMounts: []volumeMount{{Name: "workspace", MountPath: build.Workspace}},
 		SecurityContext: &securityContext{
 			RunAsNonRoot:             boolPtr(true),
 			RunAsUser:                int64Ptr(defaultRunAsUser),
@@ -496,42 +547,6 @@ func sourceInitContainers(req build.Request, cfg Config) []container {
 	}}
 }
 
-// cloneCommand fetches exactly one commit where it can.
-//
-// A ref that names a commit is fetched directly at depth 1, which is both the
-// fastest path and the only one that guarantees the build matches Revision. A
-// branch or tag is cloned at depth 1 instead; that is a moving target, and the
-// comment says so rather than pretending the result is pinned.
-func cloneCommand(req build.Request) string {
-	var b strings.Builder
-	b.WriteString("set -euo pipefail\n")
-	b.WriteString("git init -q /workspace\n")
-	b.WriteString("cd /workspace\n")
-	fmt.Fprintf(&b, "git remote add origin %s\n", shellQuote(req.SourceGit))
-	ref := req.SourceRef
-	if ref == "" {
-		ref = "HEAD"
-	}
-	fmt.Fprintf(&b, "git fetch --depth 1 origin %s\n", shellQuote(ref))
-	b.WriteString("git checkout -q FETCH_HEAD\n")
-	return b.String()
-}
-
-// shellQuote wraps a value in single quotes for the generated shell command.
-// The values here come from the spec, not from a build's own output, but a
-// repository URL is still user input reaching a shell — quoting it is the
-// difference between a config error and a command injection.
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
-}
-
-// contextPath is the build context inside the cloned workspace. A monorepo
-// clones whole and builds one subdirectory, so ContextDir selects the subtree
-// rather than changing what is fetched.
-func contextPath(req build.Request) string {
-	dir := strings.Trim(req.ContextDir, "/")
-	if dir == "" || dir == "." {
-		return "/workspace"
-	}
-	return "/workspace/" + dir
-}
+// The clone script, the workspace path and the context path are
+// build.CloneScript, build.Workspace and build.ContextPath: both drivers
+// render the same clone, so it lives in the plane rather than once per driver.

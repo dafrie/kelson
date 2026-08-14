@@ -108,6 +108,21 @@ server:
   # environment's own namespace, as in the CLI.
   buildNamespace: ""
 
+  # -- Registry hosts served over plain HTTP, as a list of `host[:port]`
+  # (`--insecure-registries`). The build marks exactly these and nothing else:
+  # neither BuildKit nor the CNB lifecycle will talk plain HTTP to a host it was
+  # not told about, and neither should — a push that silently downgrades is a
+  # credential on the wire in clear.
+  #
+  # This is what a local cluster needs, where the registry has no certificate:
+  #
+  #   --set 'server.insecureRegistries={localhost:5000}'
+  #
+  # It is deliberately an install-time value and not a request field: a caller
+  # who could name a registry insecure could make the server push a credential
+  # in clear to a host of their choosing.
+  insecureRegistries: []
+
   # -- Delivery credential for Git-backed environments, read from
   # $KELSON_GIT_TOKEN. Reference an existing Secret; there is no literal knob
   # for the same reason `auth.password` is the lesser option.

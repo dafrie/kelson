@@ -210,12 +210,24 @@ func (e LogQueryEngine) Follow(ctx context.Context, q observation.Query) (<-chan
 }
 
 // BuildTarget is what a Build RPC resolved from its request and spec: which
-// project, in which namespace, pushing with which credential. It is the build
-// plane's counterpart to [Target] and mirrors cmd/kelson's buildTarget minus
-// the CLI-only kubeconfig.
+// strategy, for which project, in which namespace, pushing with which
+// credential. It is the build plane's counterpart to [Target] and mirrors
+// cmd/kelson's buildTarget minus the CLI-only kubeconfig.
 type BuildTarget struct {
 	Project     string
 	Environment string
+	// Strategy is what build.ResolveStrategy decided, and it selects the
+	// driver the connector builds: `dockerfile` builds with BuildKit,
+	// `buildpacks` with the CNB lifecycle (ADR-0010).
+	//
+	// It travels on the target rather than being re-derived by the connector
+	// because the decision belongs to the shared plan (internal/build/plan.go)
+	// that this handler and `kelson build` both run — a connector deciding it
+	// again is a second answer to a question with one right one. It is also
+	// why this stays a string: the concrete drivers are constructed in
+	// cmd/kelson-server, and this plane may not import client-go to reach
+	// them.
+	Strategy string
 	// Namespace is where the build Job runs. It defaults to the environment's
 	// resolved namespace, exactly like the CLI's --namespace.
 	Namespace string

@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dafrie/kelson/internal/build"
+	"github.com/dafrie/kelson/internal/build/detect"
 )
 
 // `kelson build` is assembly (issues #48, #51): load the spec, resolve the
@@ -374,48 +375,147 @@ func TestBuildAutoWithoutACheckoutIsAClearRefusal(t *testing.T) {
 	}
 }
 
-// Buildpacks is deferred out of the v0.1 cut. Resolving to it — explicitly or
-// by detection — must name the deferral and the issue rather than failing
-// somewhere deep in the plane.
-func TestBuildBuildpacksIsDeferred(t *testing.T) {
+// The resolved strategy selects the driver (#49, ADR-0010), so it has to reach
+// the connector: a Dockerfile-less repository resolves to buildpacks and the
+// plane is asked for the buildpacks driver, explicitly or by detection. Which
+// driver the connector then builds is buildDriver's, tested below without a
+// cluster.
+func TestBuildStrategyReachesTheConnector(t *testing.T) {
 	cases := []struct {
 		name string
 		spec buildSpecOptions
-		args []string
+		// checkout, when set, is a file that makes a local tree detectable.
+		checkout string
+		want     detect.Strategy
 	}{
 		{
-			name: "explicit strategy needs no checkout to be refused",
+			name: "explicit buildpacks needs no checkout",
 			spec: buildSpecOptions{strategy: "buildpacks"},
+			want: detect.StrategyBuildpacks,
 		},
 		{
-			name: "detected from a language signal with no Dockerfile",
-			spec: buildSpecOptions{},
-			args: []string{"-C", ""},
+			name:     "a language signal with no Dockerfile detects buildpacks",
+			spec:     buildSpecOptions{},
+			checkout: "go.mod",
+			want:     detect.StrategyBuildpacks,
+		},
+		{
+			name:     "a Dockerfile still takes precedence",
+			spec:     buildSpecOptions{},
+			checkout: "Dockerfile",
+			want:     detect.StrategyDockerfile,
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			builder := &fakeBuilder{}
+			var target buildTarget
 			spec := writeBuildSpec(t, tc.spec)
 			args := []string{"build", "-f", spec, "--registry", "ghcr.io/acme"}
-			if len(tc.args) == 2 {
-				args = append(args, tc.args[0], checkoutWith(t, "go.mod"))
+			if tc.checkout != "" {
+				args = append(args, "-C", checkoutWith(t, tc.checkout))
 			}
 
-			_, _, code, msg := runBuildCmd(t, buildPlaneFor(builder, &fakeResolver{}, nil), args...)
-			if code != exitErr {
-				t.Fatalf("exit %d, want %d", code, exitErr)
+			_, stderr, code, msg := runBuildCmd(t, buildPlaneFor(builder, &fakeResolver{}, &target), args...)
+			if code != exitOK {
+				t.Fatalf("exit %d: %s", code, msg)
 			}
-			for _, want := range []string{build.ReasonStrategyNotImplemented, "buildpacks", "#49", "Dockerfile"} {
-				if !strings.Contains(msg, want) {
-					t.Errorf("the refusal should mention %q, got: %s", want, msg)
-				}
+			if target.strategy != tc.want {
+				t.Errorf("the connector was asked for %q, want %q", target.strategy, tc.want)
 			}
-			if builder.calls() != 0 {
-				t.Error("a deferred strategy must not reach the build plane")
+			if !strings.Contains(stderr, "strategy    strategy "+string(tc.want)) {
+				t.Errorf("the plan must name the chosen strategy, got:\n%s", stderr)
+			}
+			if builder.calls() != 1 {
+				t.Errorf("the build ran %d times, want 1", builder.calls())
 			}
 		})
 	}
+}
+
+// buildDriver is the whole of the strategy → driver mapping, and it is where a
+// wrong answer would be worst: building a Dockerfile-less repository with
+// BuildKit fails deep in buildctl with a message about a missing file, which
+// says nothing about the strategy that was chosen.
+func TestBuildDriverForStrategy(t *testing.T) {
+	cases := map[detect.Strategy]string{
+		detect.StrategyDockerfile: "dockerfile",
+		detect.StrategyBuildpacks: "buildpacks",
+	}
+	for strategy, want := range cases {
+		driver, err := buildDriver(buildTarget{strategy: strategy, namespace: "shop-production"}, nopExecutor{})
+		if err != nil {
+			t.Fatalf("buildDriver(%q): %v", strategy, err)
+		}
+		if driver.Name() != want {
+			t.Errorf("buildDriver(%q) built the %q driver", strategy, driver.Name())
+		}
+	}
+	if _, err := buildDriver(buildTarget{strategy: "railpack"}, nopExecutor{}); err == nil {
+		t.Error("a strategy with no driver must be refused, not silently built with another")
+	}
+	if _, err := buildDriver(buildTarget{strategy: detect.StrategyNone}, nopExecutor{}); err == nil {
+		t.Error("`none` means build nothing and must not produce a driver")
+	}
+}
+
+// A local registry has no TLS, so the hosts that may be reached over plain
+// HTTP are named — by flag or by the same environment variable kelson-server
+// reads — and reach the driver through the target. Nothing else is affected,
+// and a malformed entry is refused before a build Job exists.
+func TestInsecureRegistriesReachTheTarget(t *testing.T) {
+	spec := writeBuildSpec(t, buildSpecOptions{strategy: "dockerfile"})
+
+	var target buildTarget
+	_, _, code, msg := runBuildCmd(t, buildPlaneFor(&fakeBuilder{}, &fakeResolver{}, &target),
+		"build", "-f", spec, "--registry", "localhost:5000",
+		"--insecure-registries", "localhost:5000, registry.internal:5000")
+	if code != exitOK {
+		t.Fatalf("exit %d: %s", code, msg)
+	}
+	if strings.Join(target.insecureRegistries, "|") != "localhost:5000|registry.internal:5000" {
+		t.Errorf("insecureRegistries = %v", target.insecureRegistries)
+	}
+
+	// Nothing named, nothing insecure.
+	target = buildTarget{}
+	if _, _, code, msg = runBuildCmd(t, buildPlaneFor(&fakeBuilder{}, &fakeResolver{}, &target),
+		"build", "-f", spec, "--registry", "ghcr.io/acme"); code != exitOK {
+		t.Fatalf("exit %d: %s", code, msg)
+	}
+	if target.insecureRegistries != nil {
+		t.Errorf("no registry was named insecure, got %v", target.insecureRegistries)
+	}
+
+	// The environment supplies the default, as $KELSON_REGISTRY does.
+	t.Setenv(insecureRegistriesEnv, "localhost:5000")
+	target = buildTarget{}
+	if _, _, code, msg = runBuildCmd(t, buildPlaneFor(&fakeBuilder{}, &fakeResolver{}, &target),
+		"build", "-f", spec, "--registry", "localhost:5000"); code != exitOK {
+		t.Fatalf("exit %d: %s", code, msg)
+	}
+	if len(target.insecureRegistries) != 1 || target.insecureRegistries[0] != "localhost:5000" {
+		t.Errorf("the environment variable must supply the default, got %v", target.insecureRegistries)
+	}
+
+	// A malformed entry is a typo, and the message names the flag.
+	if _, _, code, msg = runBuildCmd(t, buildPlaneFor(&fakeBuilder{}, &fakeResolver{}, nil),
+		"build", "-f", spec, "--registry", "ghcr.io/acme",
+		"--insecure-registries", "http://localhost:5000"); code != exitErr {
+		t.Fatalf("exit %d, want %d", code, exitErr)
+	}
+	if !strings.Contains(msg, "--insecure-registries") {
+		t.Errorf("the refusal should name the flag: %s", msg)
+	}
+}
+
+// nopExecutor satisfies the cluster seam both drivers take. buildDriver only
+// constructs them, so it never runs.
+type nopExecutor struct{}
+
+func (nopExecutor) Submit(context.Context, []byte) (string, error) { return "", nil }
+func (nopExecutor) Wait(context.Context, string, io.Writer) (build.Result, error) {
+	return build.Result{}, nil
 }
 
 func TestBuildStrategyNoneIsNothingToBuild(t *testing.T) {

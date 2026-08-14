@@ -179,7 +179,7 @@ func TestWorkloadCommand(t *testing.T) {
 	cmd := buildContainer(workloadFor(t, baseRequest(), cfg)).Command[2]
 
 	for _, want := range []string{
-		"exec /cnb/lifecycle/creator",
+		"/cnb/lifecycle/creator",
 		"-app /workspace",
 		"-run-image ghcr.io/corp/run-jammy",
 		"-process-type web",

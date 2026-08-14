@@ -116,6 +116,7 @@ func (s *Server) Build(ctx context.Context, req *connect.Request[kelsonv1alpha1.
 	plane, err := s.build(ctx, BuildTarget{
 		Project:     project.Metadata.Name,
 		Environment: environment.Metadata.Name,
+		Strategy:    string(detection.Strategy),
 		Namespace:   namespace,
 		PushSecret:  pushSecret,
 	})

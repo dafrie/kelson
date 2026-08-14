@@ -1,0 +1,10 @@
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: development
+
+spec:
+  project: greeter
+  # No routing: a stock kind cluster has no Gateway API, and kelson renders
+  # Gateway API only (#140), so declaring a domain here would be a capability
+  # gap rather than an Ingress. `kubectl port-forward` reaches the Service.

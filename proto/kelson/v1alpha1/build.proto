@@ -1,7 +1,8 @@
-// BuildService: the build plane over the API (issues #48, #54, ADR-0010).
+// BuildService: the build plane over the API (issues #48, #49, #54, ADR-0010).
 //
 // `kelson build` already turns a Project's source into a digest-pinned image
-// with an in-cluster BuildKit Job (docs/build.md). This service is that same
+// with an in-cluster Job — BuildKit for a Dockerfile, the Cloud Native
+// Buildpacks lifecycle without one (docs/build.md). This service is that same
 // pipeline reached over the schema, so a UI or an agent can build without a
 // kubeconfig and without the CLI — which is what the browser create-from-git
 // path (#63) needs, since a browser has neither.
@@ -45,8 +46,9 @@ message BuildRequest {
   string ref = 5;
 
   // There is no strategy override: ADR-0010 makes the strategy the spec's
-  // (an explicit spec.build.strategy wins, else a Dockerfile decides), and a
-  // per-request override would move build configuration into the caller.
+  // (an explicit spec.build.strategy wins, else a Dockerfile decides and its
+  // absence selects buildpacks), and a per-request override would move build
+  // configuration into the caller.
   //
   // There is no idempotency_key either, and that is not an oversight. The
   // other mutating RPCs carry one because they write state a replay would
@@ -64,9 +66,9 @@ message BuildRequest {
 // Failures are ConnectRPC errors carrying kelson.v1alpha1.Error details, not
 // events — a build that fails produced no image, so there is no result message
 // that could honestly describe it. The build plane's codes (build/no-source,
-// build/nothing-to-build, build/strategy-not-implemented,
-// build/detection-needs-source) pass through verbatim, like every other plane's
-// (ADR-0013 §2).
+// build/nothing-to-build, build/detection-needs-source, and
+// build/strategy-not-implemented, which no strategy returns today) pass through
+// verbatim, like every other plane's (ADR-0013 §2).
 message BuildResponse {
   oneof event {
     Started started = 1;  // first event, exactly one: what is about to be built
@@ -77,13 +79,13 @@ message BuildResponse {
   // Started is sent after the strategy is resolved and the ref is resolved to
   // a commit, so everything it carries is settled fact rather than intent.
   message Started {
-    string strategy = 1;         // "dockerfile"; the resolved ADR-0010 strategy
+    string strategy = 1;         // "dockerfile" or "buildpacks": the resolved ADR-0010 strategy
     string image_repository = 2; // <registry>/<project>, no tag, no digest
     string tag = 3;              // the human-readable tag pushed alongside the digest
     string revision = 4;         // the 40-hex commit the build clones
   }
 
-  // Log is raw build output — the bytes BuildKit and the clone container wrote,
+  // Log is raw build output — the bytes the builder and the clone container wrote,
   // not lines. The stream chunks them for transport and preserves nothing else:
   // a chunk boundary is not a line boundary, so a client that wants lines
   // splits the concatenation itself.

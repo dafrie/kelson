@@ -1,7 +1,8 @@
-// BuildService: the build plane over the API (issues #48, #54, ADR-0010).
+// BuildService: the build plane over the API (issues #48, #49, #54, ADR-0010).
 //
 // `kelson build` already turns a Project's source into a digest-pinned image
-// with an in-cluster BuildKit Job (docs/build.md). This service is that same
+// with an in-cluster Job — BuildKit for a Dockerfile, the Cloud Native
+// Buildpacks lifecycle without one (docs/build.md). This service is that same
 // pipeline reached over the schema, so a UI or an agent can build without a
 // kubeconfig and without the CLI — which is what the browser create-from-git
 // path (#63) needs, since a browser has neither.
@@ -94,9 +95,9 @@ export const BuildRequestSchema: GenMessage<BuildRequest> = /*@__PURE__*/
  * Failures are ConnectRPC errors carrying kelson.v1alpha1.Error details, not
  * events — a build that fails produced no image, so there is no result message
  * that could honestly describe it. The build plane's codes (build/no-source,
- * build/nothing-to-build, build/strategy-not-implemented,
- * build/detection-needs-source) pass through verbatim, like every other plane's
- * (ADR-0013 §2).
+ * build/nothing-to-build, build/detection-needs-source, and
+ * build/strategy-not-implemented, which no strategy returns today) pass through
+ * verbatim, like every other plane's (ADR-0013 §2).
  *
  * @generated from message kelson.v1alpha1.BuildResponse
  */
@@ -146,7 +147,7 @@ export const BuildResponseSchema: GenMessage<BuildResponse> = /*@__PURE__*/
  */
 export type BuildResponse_Started = Message<"kelson.v1alpha1.BuildResponse.Started"> & {
   /**
-   * "dockerfile"; the resolved ADR-0010 strategy
+   * "dockerfile" or "buildpacks": the resolved ADR-0010 strategy
    *
    * @generated from field: string strategy = 1;
    */
@@ -182,7 +183,7 @@ export const BuildResponse_StartedSchema: GenMessage<BuildResponse_Started> = /*
   messageDesc(file_kelson_v1alpha1_build, 1, 0);
 
 /**
- * Log is raw build output — the bytes BuildKit and the clone container wrote,
+ * Log is raw build output — the bytes the builder and the clone container wrote,
  * not lines. The stream chunks them for transport and preserves nothing else:
  * a chunk boundary is not a line boundary, so a client that wants lines
  * splits the concatenation itself.

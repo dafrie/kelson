@@ -25,7 +25,7 @@ It spans M0–M8, the v0.1 half of M9, and the minimal bootstrap. Deliberately t
 |---|---|
 | Database branching, Valkey (M9b) | Branching is the flagship — which is exactly why it does not ship on top of an unproven deploy path. Basic Postgres (shared/small presets, backups, verified restore) stays. |
 | Argo CD adapter | Removed entirely, not deferred ([ADR-0012](adr/0012-flux-only-gitops.md)): Flux is the only GitOps mode; the adapter seam stays pluggable for a possible return. |
-| Buildpacks (#49) | Dockerfile covers most repos. [ADR-0010](adr/0010-build-strategy.md) makes Buildpacks the eventual *default*, so this defers the default, not the decision. |
+| ~~Buildpacks (#49)~~ | *Reversed by shipping early:* the driver was written, tested and unused, so the deferral was of the wiring rather than of the work. Both strategies now build; what stays deferred is in-cluster detection (#50), which is why `auto` still needs a local checkout. |
 | Release history UI (#67) | The API has it; the UI can wait. |
 | ~~external-secrets (#80)~~ | *Reversed by shipping early:* it turned out to need no per-backend code at all — kelson renders an `ExternalSecret` and delegates every provider to the operator's own SecretStore ([ADR-0020](adr/0020-external-secrets.md)). |
 | ~~SOPS + age (#81)~~ | *Reversed by shipping early:* it closes the one gap ADR-0009 documented against the `cluster` backend — a cluster rebuilt from Git alone now comes back with its secrets. kelson encrypts in memory and holds no private key ([ADR-0022](adr/0022-sops-age.md)). |

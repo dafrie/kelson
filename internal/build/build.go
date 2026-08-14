@@ -60,6 +60,26 @@ type Request struct {
 	Revision string
 }
 
+// Annotations every driver writes onto the build workload it renders. They are
+// how the executor learns what the build pushes without reading the builder's
+// command line: buildctl spells the destination `--output name=<ref>` and the
+// CNB lifecycle spells it as a positional `-image <ref>`, and an executor that
+// scraped either would be coupled to one strategy's argv.
+//
+// They live here, in the contract package, because they are read by a plane
+// that may not import a driver (internal/delivery/kube) and written by drivers
+// that may not import it back.
+const (
+	// AnnotationImage is the destination repository, with no tag and no
+	// digest — build.Request.Image as rendered.
+	AnnotationImage = "kelson.dev/image"
+	// AnnotationTag is the human-readable tag pushed alongside the digest,
+	// absent when the build pushed untagged.
+	AnnotationTag = "kelson.dev/tag"
+	// AnnotationRevision is the source commit the build came from.
+	AnnotationRevision = "kelson.dev/revision"
+)
+
 // Result is what a build produced. Reference is the field callers should use:
 // deploying by digest is what makes a revision reproducible (#51).
 type Result struct {

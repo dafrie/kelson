@@ -130,6 +130,7 @@ func TestTemplateServerFlags(t *testing.T) {
 		"--set", "server.pushSecret=ghcr-push",
 		"--set", "server.buildNamespace=kelson-builds",
 		"--set", "server.keep=5",
+		"--set", "server.insecureRegistries={localhost:5000,registry.internal:5000}",
 	)...)
 	container := serverContainer(t, decodeDocs(t, out))
 
@@ -141,6 +142,9 @@ func TestTemplateServerFlags(t *testing.T) {
 		"--registry=ghcr.io/acme",
 		"--push-secret=ghcr-push",
 		"--build-namespace=kelson-builds",
+		// A list value, one flag: the server splits on commas, and a host that
+		// was not listed is never reached over plain HTTP.
+		"--insecure-registries=localhost:5000,registry.internal:5000",
 	} {
 		if !contains(args, want) {
 			t.Errorf("rendered args %v are missing %q", args, want)

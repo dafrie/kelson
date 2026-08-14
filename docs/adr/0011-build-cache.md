@@ -11,6 +11,13 @@
     measure yet. The cache code has been removed from the buildpacks driver and every build
     is cold; see [#52](https://github.com/dafrie/kelson/issues/52).
 
+    Still deferred now that the buildpacks driver actually runs
+    ([#49](https://github.com/dafrie/kelson/issues/49)). What changed is only that the cost
+    is now paid rather than hypothetical: a cold lifecycle build pulls a builder image and
+    every dependency layer on every run, and the `-launch-cache` the driver mounts is an
+    `emptyDir` that dies with the pod, which is the lifecycle's scratch space and not a
+    cache that survives anything.
+
     This ADR also needs correcting before it can be accepted. It argues its decision almost
     entirely in BuildKit's vocabulary, and [ADR-0010](0010-build-strategy.md) makes Cloud
     Native Buildpacks the eventual *default*. The two have different caching mechanisms:

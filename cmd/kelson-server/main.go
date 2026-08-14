@@ -63,7 +63,10 @@ import (
 	"time"
 
 	"github.com/dafrie/kelson/internal/api"
+	"github.com/dafrie/kelson/internal/build"
 	"github.com/dafrie/kelson/internal/build/buildkit"
+	"github.com/dafrie/kelson/internal/build/buildpacks"
+	"github.com/dafrie/kelson/internal/build/registry"
 	"github.com/dafrie/kelson/internal/clusterprofile"
 	"github.com/dafrie/kelson/internal/clusterprofile/detect"
 	"github.com/dafrie/kelson/internal/delivery"
@@ -118,12 +121,22 @@ type config struct {
 	registry       string
 	pushSecret     string
 	buildNamespace string
+	// insecureRegistries are registry hosts served over plain HTTP. It is an
+	// operator knob and never a request field: a caller that could name a
+	// registry insecure could make this server push a credential in clear to
+	// any host it chose.
+	insecureRegistries []string
 }
 
 // registryEnv supplies --registry, so an operator sets the destination once in
 // the deployment rather than in every request. It is the same variable
 // `kelson build` reads.
 const registryEnv = "KELSON_REGISTRY"
+
+// insecureRegistriesEnv supplies --insecure-registries, and is the same
+// variable `kelson build` reads for the same reason: which registries have no
+// TLS is a property of the cluster this server serves.
+const insecureRegistriesEnv = "KELSON_INSECURE_REGISTRIES"
 
 // passwordEnv supplies --password. It is the preferred way to set it: a flag
 // value is visible in `ps` and in shell history, an environment variable is at
@@ -238,9 +251,19 @@ func parseFlags(args []string, stderr io.Writer) (config, error) {
 	fs.StringVar(&cfg.registry, "registry", os.Getenv(registryEnv), "destination registry and namespace for builds, e.g. ghcr.io/acme (default: $"+registryEnv+"); a Build request may override it")
 	fs.StringVar(&cfg.pushSecret, "push-secret", "", "name of an existing kubernetes.io/dockerconfigjson Secret in the build namespace that authenticates the push")
 	fs.StringVar(&cfg.buildNamespace, "build-namespace", "", "namespace build Jobs run in (default: the environment's own namespace, as in the CLI)")
+	insecure := fs.String("insecure-registries", os.Getenv(insecureRegistriesEnv),
+		"comma-separated registry hosts served over plain HTTP, e.g. localhost:5000 (default: $"+insecureRegistriesEnv+"); only the listed hosts are affected")
 	if err := fs.Parse(args); err != nil {
 		return config{}, err
 	}
+	// Parsed at startup rather than per build: a typo here would otherwise
+	// surface as a TLS error on the first push, pointing at the registry
+	// instead of at the flag.
+	hosts, err := registry.ParseInsecure(*insecure)
+	if err != nil {
+		return config{}, fmt.Errorf("--insecure-registries: %w", err)
+	}
+	cfg.insecureRegistries = hosts
 	if fs.NArg() > 0 {
 		return config{}, fmt.Errorf("unexpected argument %q: kelson-server takes flags only", fs.Arg(0))
 	}
@@ -539,10 +562,10 @@ func deliveryConnector(cfg config, history *serverstate.HistoryStore) api.Delive
 }
 
 // buildConnector is the server's connectBuild: one cluster connection per
-// build, the BuildKit driver over the Kubernetes build executor, and a remote
-// ref resolver sharing the delivery credential. It is cmd/kelson/build.go's
-// connectBuild with the CLI's kubeconfig flag replaced by the server's
-// (issues #48, #54).
+// build, the driver the resolved strategy selects over the Kubernetes build
+// executor, and a remote ref resolver sharing the delivery credential. It is
+// cmd/kelson/build.go's connectBuild with the CLI's kubeconfig flag replaced
+// by the server's (issues #48, #49, #54).
 //
 // The Job's deadline and the RPC's budget are the same constant deliberately.
 // If the Job outlived the watch, a cancelled stream would leave a build running
@@ -554,14 +577,7 @@ func buildConnector(cfg config) api.BuildConnector {
 		if err != nil {
 			return nil, err
 		}
-		driver, err := buildkit.New(buildkit.Options{
-			Cluster: kube.NewBuildExecutor(cluster.Typed),
-			Config: buildkit.Config{
-				Namespace:  t.Namespace,
-				PushSecret: t.PushSecret,
-				Timeout:    buildkit.Duration(api.DefaultBuildTimeout),
-			},
-		})
+		driver, err := buildDriver(cfg, t, kube.NewBuildExecutor(cluster.Typed))
 		if err != nil {
 			return nil, err
 		}
@@ -572,6 +588,53 @@ func buildConnector(cfg config) api.BuildConnector {
 			// rather than inventing a second one — the CLI's choice, unchanged.
 			Revisions: git.RemoteResolver{Auth: gitAuth()},
 		}, nil
+	}
+}
+
+// buildExecutor is what both drivers need from the cluster: submit a rendered
+// build Job and stream it to completion. kube.BuildExecutor satisfies
+// buildkit.Cluster and buildpacks.Cluster structurally, and one executor
+// serves both because it reads what a build pushed off the Job's annotations
+// rather than out of a builder's argv.
+type buildExecutor interface {
+	Submit(ctx context.Context, manifest []byte) (string, error)
+	Wait(ctx context.Context, name string, w io.Writer) (build.Result, error)
+}
+
+// buildDriver constructs the driver the resolved strategy selects (ADR-0010),
+// mirroring cmd/kelson's function of the same name. The strategy arrives on
+// the target because it was decided by the plan both callers share; this only
+// maps it to a driver, and refuses a strategy it has none for rather than
+// falling back to one that would fail obscurely.
+//
+// The insecure-registry list comes from cfg rather than the target: it is what
+// the operator started this server with, and no request may extend it.
+func buildDriver(cfg config, t api.BuildTarget, cluster buildExecutor) (build.Builder, error) {
+	switch t.Strategy {
+	case buildkit.StrategyName:
+		return buildkit.New(buildkit.Options{
+			Cluster: cluster,
+			Config: buildkit.Config{
+				Namespace:          t.Namespace,
+				PushSecret:         t.PushSecret,
+				InsecureRegistries: cfg.insecureRegistries,
+				Timeout:            buildkit.Duration(api.DefaultBuildTimeout),
+			},
+		})
+	case buildpacks.StrategyName:
+		// No Rebaser: the server exposes no rebase RPC, and Driver.Rebase
+		// fails closed without one rather than pretending to patch a run image.
+		return buildpacks.New(buildpacks.Options{
+			Cluster: cluster,
+			Config: buildpacks.Config{
+				Namespace:          t.Namespace,
+				PushSecret:         t.PushSecret,
+				InsecureRegistries: cfg.insecureRegistries,
+				Timeout:            buildpacks.Duration(api.DefaultBuildTimeout),
+			},
+		})
+	default:
+		return nil, fmt.Errorf("no build driver for strategy %q", t.Strategy)
 	}
 }
 

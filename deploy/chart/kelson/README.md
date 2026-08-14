@@ -145,6 +145,7 @@ not delete them.
 | `server.registry` | `""` | `--registry`: destination registry for builds. |
 | `server.pushSecret` | `""` | `--push-secret`: existing `dockerconfigjson` Secret. Not created here. |
 | `server.buildNamespace` | `""` | `--build-namespace`: where build Jobs run. |
+| `server.insecureRegistries` | `[]` | `--insecure-registries`: registry hosts served over plain HTTP, e.g. `{localhost:5000}`. Exactly these, never a request's. |
 | `server.gitTokenSecret.name` / `.key` | `""` / `token` | Secret supplying `$KELSON_GIT_TOKEN` for Git-backed environments. |
 | `server.extraArgs` | `[]` | Appended verbatim. |
 | `server.extraEnv` | `[]` | Extra `EnvVar` entries. |

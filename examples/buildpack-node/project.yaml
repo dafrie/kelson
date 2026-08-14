@@ -1,0 +1,30 @@
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: greeter
+
+# A repository with no Dockerfile. That is the whole point of the example:
+# `strategy: buildpacks` builds it with the Cloud Native Buildpacks lifecycle,
+# which reads package.json, picks the Node.js buildpacks and produces an image
+# — no build file to write and none to maintain (ADR-0010, issue #49).
+#
+# `strategy: auto` would reach the same answer from the same tree, but only
+# where kelson can see the tree: from the CLI with -C, never from the server
+# (in-cluster detection is issue #50). Naming the strategy makes this spec
+# buildable from either.
+spec:
+  source:
+    git: https://github.com/acme/greeter
+    ref: main
+  build:
+    strategy: buildpacks
+
+  env:
+    LOG_LEVEL: info
+
+  components:
+    # The lifecycle's `web` process type is what the image starts by default,
+    # and this is the port server.js listens on.
+    - name: web
+      port: 3000
+      health: /healthz

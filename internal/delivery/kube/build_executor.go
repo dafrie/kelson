@@ -1,8 +1,15 @@
 // Package kube's build executor: a Kubernetes-backed implementation of the
-// buildkit.Cluster seam (internal/build/buildkit), living here because this
-// plane is allowed the client-go libraries and internal/build deliberately is
-// not (.golangci.yml). It satisfies the Cluster interface structurally, so it
-// imports nothing from buildkit.
+// Cluster seam both build drivers declare (internal/build/buildkit and
+// internal/build/buildpacks), living here because this plane is allowed the
+// client-go libraries and internal/build deliberately is not (.golangci.yml).
+// It satisfies both interfaces structurally, so it imports neither driver.
+//
+// One executor serves both strategies because nothing in it is
+// strategy-specific: it submits a Job, streams the one container the Job
+// declares, and reads what was pushed off the Job's own annotations
+// (build.AnnotationImage) rather than out of a builder's command line. Teaching
+// it to recognise buildctl's `--output name=` and the lifecycle's `-image`
+// would have made a second strategy a second parser here.
 package kube
 
 import (
@@ -13,7 +20,6 @@ import (
 	"fmt"
 	"io"
 	"regexp"
-	"strings"
 	"sync"
 	"time"
 
@@ -28,11 +34,6 @@ import (
 )
 
 const (
-	// buildContainer mirrors the container the buildkit workload names its
-	// build container (internal/build/buildkit/workload.go), so this executor
-	// streams the right one without coupling to that package's unexported
-	// constant.
-	buildContainer = "buildkit"
 	// maxBuildLogBytes caps how much build output this executor buffers and
 	// forwards. Log streaming itself is unbounded (it is copied straight to
 	// the caller's writer); the cap only bounds what we hold for error
@@ -72,13 +73,18 @@ type BuildExecutor struct {
 }
 
 // jobMeta is what Submit needs to retain so Wait can act without re-parsing
-// the manifest: the namespace the Job lives in and the output image name.
+// the manifest: the namespace the Job lives in, what it pushes, and which
+// container produces the build's output.
 type jobMeta struct {
 	namespace string
 	// image is the repository with no tag/digest, e.g. ghcr.io/acme/web.
 	image string
 	// tag is the mutable tag also pushed, "" when the build pushed untagged.
 	tag string
+	// container is the build container's name, taken from the manifest rather
+	// than assumed: "buildkit" for a Dockerfile build, "buildpack" for a
+	// lifecycle build.
+	container string
 }
 
 // Submit decodes the rendered Job manifest, creates the Job, and returns its
@@ -92,6 +98,12 @@ func (e *BuildExecutor) Submit(ctx context.Context, manifest []byte) (string, er
 	}
 	if job.Name == "" || meta.namespace == "" {
 		return "", errors.New("kube: build manifest has no name and namespace")
+	}
+	if meta.image == "" {
+		// Without it Wait could only return a digest with nothing to hang it
+		// on, and a Result with no Reference is what every caller checks for
+		// last. Refuse before the Job runs rather than after it pushed.
+		return "", fmt.Errorf("kube: build manifest %s carries no %s annotation, so its result could not be named", job.Name, build.AnnotationImage)
 	}
 	if _, err := e.clientset.BatchV1().Jobs(meta.namespace).Create(ctx, job, metav1.CreateOptions{}); err != nil {
 		if !apierrors.IsAlreadyExists(err) {
@@ -127,7 +139,7 @@ func (e *BuildExecutor) Wait(ctx context.Context, name string, w io.Writer) (bui
 	if w != nil {
 		dst = io.MultiWriter(&buildOut, w)
 	}
-	if err := streamPodLogs(ctx, e.clientset, meta.namespace, name, dst); err != nil {
+	if err := streamPodLogs(ctx, e.clientset, meta, name, dst); err != nil {
 		// Log streaming is best-effort next to the definitive job state; a
 		// stream error is recorded, not fatal on its own.
 		buildOut.WriteString("\n[kube] log stream interrupted: " + err.Error() + "\n")
@@ -207,38 +219,15 @@ func decodeBuildJob(manifest []byte) (*batchv1.Job, jobMeta, error) {
 	if err := json.Unmarshal(js, job); err != nil {
 		return nil, jobMeta{}, fmt.Errorf("kube: decoding build manifest as a Job: %w", err)
 	}
-	repo, tag := outputImage(job)
-	return job, jobMeta{namespace: job.Namespace, image: repo, tag: tag}, nil
-}
-
-// outputImage recovers the push destination from the Job's build command, the
-// only place the workload embeds it (internal/build/buildkit/workload.go
-// renders --output ...name=<repo>[:<tag>]). A repo is required for a usable
-// Result.Reference; not finding one is an error rather than an empty image.
-func outputImage(job *batchv1.Job) (repo, tag string) {
-	if len(job.Spec.Template.Spec.Containers) == 0 {
-		return "", ""
+	meta := jobMeta{
+		namespace: job.Namespace,
+		image:     job.Annotations[build.AnnotationImage],
+		tag:       job.Annotations[build.AnnotationTag],
 	}
-	script := strings.Join(job.Spec.Template.Spec.Containers[0].Command, " ")
-	m := outputNameRe.FindStringSubmatch(script)
-	if m == nil {
-		return "", ""
+	if len(job.Spec.Template.Spec.Containers) > 0 {
+		meta.container = job.Spec.Template.Spec.Containers[0].Name
 	}
-	return splitOutputName(m[1])
-}
-
-// outputNameRe matches the --output name=<value> in a buildctl command. The
-// value runs to the next ',' or whitespace.
-var outputNameRe = regexp.MustCompile(`name=([^,\s]+)`)
-
-// splitOutputName splits "repo[:tag]" into repo and tag. It only treats a ':'
-// after the last '/' as a tag separator, so a host port (localhost:5000/app)
-// is left intact.
-func splitOutputName(n string) (repo, tag string) {
-	if i := strings.LastIndex(n, ":"); i >= 0 && !strings.Contains(n[i+1:], "/") {
-		return n[:i], n[i+1:]
-	}
-	return n, ""
+	return job, meta, nil
 }
 
 // --- log streaming ----------------------------------------------------------
@@ -246,8 +235,8 @@ func splitOutputName(n string) (repo, tag string) {
 // streamPodLogs follows the single build pod's logs into w, closing when the
 // pod's container exits. A Job with BackoffLimit 0 has one pod, so the first
 // pod marked with the Job's controller label is the build.
-func streamPodLogs(ctx context.Context, client kubernetes.Interface, namespace, jobName string, w io.Writer) error {
-	pods, err := client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+func streamPodLogs(ctx context.Context, client kubernetes.Interface, meta jobMeta, jobName string, w io.Writer) error {
+	pods, err := client.CoreV1().Pods(meta.namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: "job-name=" + jobName,
 	})
 	if err != nil {
@@ -258,9 +247,12 @@ func streamPodLogs(ctx context.Context, client kubernetes.Interface, namespace, 
 		// still surface the Job's terminal state.
 		return nil
 	}
-	req := client.CoreV1().Pods(namespace).GetLogs(pods.Items[0].Name, &corev1.PodLogOptions{
-		Follow:    true,
-		Container: buildContainer,
+	req := client.CoreV1().Pods(meta.namespace).GetLogs(pods.Items[0].Name, &corev1.PodLogOptions{
+		Follow: true,
+		// The build container's name is the Job's, not this package's: a
+		// Dockerfile build calls it "buildkit" and a lifecycle build calls it
+		// "buildpack", and streaming the wrong one is streaming nothing.
+		Container: meta.container,
 	})
 	rc, err := req.Stream(ctx)
 	if err != nil {
