@@ -3,11 +3,15 @@ import { create } from "@bufbuild/protobuf";
 
 import { ErrorSchema } from "../gen/kelson/v1alpha1/common_pb";
 import {
+  bindingEnv,
   buildDocuments,
   EMPTY_FORM,
   fieldForError,
   formProblems,
   IMAGE_UNRESOLVED,
+  plainEnv,
+  secretEnv,
+  secretReference,
   splitFindings,
   workloadKind,
   yamlScalar,
@@ -139,7 +143,10 @@ spec:
       },
       {
         name: "env",
-        form: form({ ...THREE_FIELDS, env: [{ key: "LOG_LEVEL", value: "info" }] }),
+        form: form({
+          ...THREE_FIELDS,
+          env: [{ key: "LOG_LEVEL", value: plainEnv("info") }],
+        }),
         added: ["  env:", "    LOG_LEVEL: info"],
       },
     ];
@@ -164,7 +171,7 @@ spec:
           health: "  ",
           domains: ["", "   "],
           replicas: "",
-          env: [{ key: "", value: "ignored" }],
+          env: [{ key: "", value: plainEnv("ignored") }],
           namespace: "",
         }),
       ),
@@ -375,9 +382,9 @@ describe("yamlScalar", () => {
         image: "acme/on:1",
         port: "8080",
         env: [
-          { key: "PORT", value: "3000" },
-          { key: "GREETING", value: "hello: world" },
-          { key: "EMPTY", value: "" },
+          { key: "PORT", value: plainEnv("3000") },
+          { key: "GREETING", value: plainEnv("hello: world") },
+          { key: "EMPTY", value: plainEnv("") },
         ],
       }),
     );
@@ -387,6 +394,73 @@ describe("yamlScalar", () => {
     expect(built.project).toContain('    GREETING: "hello: world"\n');
     expect(built.project).toContain('    EMPTY: ""\n');
     expect(built.environment).toContain('  project: "on"\n');
+  });
+});
+
+describe("env values are one of three things (ADR-0018)", () => {
+  it("writes a secret reference as the mapping the model reads", () => {
+    const built = buildDocuments(
+      form({
+        ...THREE_FIELDS,
+        env: [
+          { key: "LOG_LEVEL", value: plainEnv("info") },
+          { key: "DATABASE_URL", value: secretEnv("checkout-db", "url") },
+        ],
+      }),
+    );
+
+    expect(built.project).toContain(
+      "  env:\n    LOG_LEVEL: info\n    DATABASE_URL: { secret: checkout-db, key: url }\n",
+    );
+    // The spelling is the one `kelson secret set` prints and the one the
+    // Secrets panel offers to copy, byte for byte.
+    expect(secretReference("checkout-db", "url")).toBe(
+      "{ secret: checkout-db, key: url }",
+    );
+  });
+
+  it("writes a service binding nested under `from`, as docs/model.md shows", () => {
+    const built = buildDocuments(
+      form({ ...THREE_FIELDS, env: [{ key: "CACHE_URL", value: bindingEnv("cache", "uri") }] }),
+    );
+
+    expect(built.project).toContain(
+      "    CACHE_URL: { from: { service: cache, key: uri } }\n",
+    );
+  });
+
+  it("trims a reference's names and leaves a plain value exactly as typed", () => {
+    const built = buildDocuments(
+      form({
+        ...THREE_FIELDS,
+        env: [
+          { key: " DATABASE_URL ", value: secretEnv(" checkout-db ", " url ") },
+          { key: "MOTD", value: plainEnv("hello ") },
+        ],
+      }),
+    );
+
+    expect(built.project).toContain("    DATABASE_URL: { secret: checkout-db, key: url }\n");
+    expect(built.project).toContain('    MOTD: "hello "\n');
+  });
+
+  it("refuses half a reference rather than writing an empty one", () => {
+    const problems = formProblems(
+      form({
+        ...THREE_FIELDS,
+        env: [
+          { key: "DATABASE_URL", value: secretEnv("checkout-db", "") },
+          { key: "CACHE_URL", value: bindingEnv("", "uri") },
+          { key: "LOG_LEVEL", value: plainEnv("") },
+        ],
+      }),
+    );
+
+    expect(problems.map((p) => p.field)).toEqual([
+      "env:DATABASE_URL",
+      "env:CACHE_URL",
+    ]);
+    expect(problems[0]?.message).toContain("{ secret: <name>, key: <key> }");
   });
 });
 

@@ -14,6 +14,7 @@ import { Copyable } from "../components/Copyable";
 import { ErrorPanel } from "../components/ErrorPanel";
 import { StatusPill } from "../components/StatusPill";
 import { EmptyState, LoadingState } from "../components/States";
+import { EnvValueFields, envValueNote } from "../components/EnvValueFields";
 import { DiffView } from "../diff/DiffView";
 import { decodeDiff, type Diff } from "../diff/parse";
 import {
@@ -29,7 +30,7 @@ import {
   type SpecEdit,
   type SpecTextSet,
 } from "../spec/edit";
-import type { EnvVar } from "../spec/documents";
+import { plainEnv, type EnvVar } from "../spec/documents";
 
 /**
  * Editing a stored spec: environment variables and configuration (#65).
@@ -501,10 +502,11 @@ function SpecForm({
           <EnvRows
             label="Environment variables"
             env={edit.project.env}
+            project={edit.project.name}
             readOnly={readOnly}
             onChange={(env) => setProject({ env })}
             errorsFor={(name) => errorsFor(`project.env.${name}`)}
-            note="shared by every component (rule P1); plain values only — the spec carries references, never credentials (ADR-0009)"
+            note="shared by every component (rule P1); a value is a plain string, a reference is a mapping — never a credential (ADR-0009, ADR-0018)"
           />
         </div>
       </section>
@@ -514,6 +516,7 @@ function SpecForm({
           key={`${i}:${component.name}`}
           component={component}
           index={i}
+          project={edit.project.name}
           readOnly={readOnly}
           onChange={(patch) => setComponent(i, patch)}
           errorsFor={errorsFor}
@@ -547,12 +550,14 @@ function SpecForm({
 function ComponentForm({
   component: app,
   index,
+  project,
   readOnly,
   onChange,
   errorsFor,
 }: {
   component: ComponentEdit;
   index: number;
+  project: string;
   readOnly: boolean;
   onChange: (patch: Partial<ComponentEdit>) => void;
   errorsFor: (field: EditFieldKey) => WireError[];
@@ -653,6 +658,7 @@ function ComponentForm({
         <EnvRows
           label="Environment variables"
           env={app.env}
+          project={project}
           readOnly={readOnly}
           onChange={(env) => onChange({ env })}
           errorsFor={(name) => errorsFor(`component.${index}.env.${name}`)}
@@ -731,6 +737,7 @@ function FieldErrors({ errors }: { errors: WireError[] }) {
 function EnvRows({
   label,
   env,
+  project,
   readOnly,
   onChange,
   errorsFor,
@@ -738,6 +745,8 @@ function EnvRows({
 }: {
   label: string;
   env: EnvVar[];
+  /** The project these variables belong to, for the Secrets panel link. */
+  project: string;
   readOnly: boolean;
   onChange: (env: EnvVar[]) => void;
   errorsFor: (name: string) => WireError[];
@@ -750,37 +759,38 @@ function EnvRows({
         <span className="k-field__note k-mono">none</span>
       ) : null}
       {env.map((row, i) => (
-        <div className="k-new__pair" key={i}>
-          <input
-            className="k-input k-mono"
-            aria-label={`${label} ${i + 1} name`}
-            value={row.key}
-            readOnly={readOnly}
-            placeholder="LOG_LEVEL"
-            onChange={(e) =>
-              onChange(env.map((r, j) => (j === i ? { ...r, key: e.target.value } : r)))
-            }
-          />
-          <input
-            className="k-input k-mono"
-            aria-label={`${label} ${i + 1} value`}
-            value={row.value}
-            readOnly={readOnly}
-            placeholder="info"
-            onChange={(e) =>
-              onChange(
-                env.map((r, j) => (j === i ? { ...r, value: e.target.value } : r)),
-              )
-            }
-          />
-          {readOnly ? null : (
-            <button
-              type="button"
-              className="k-button"
-              onClick={() => onChange(env.filter((_, j) => j !== i))}
-            >
-              Remove
-            </button>
+        <div key={i}>
+          <div className="k-new__pair">
+            <input
+              className="k-input k-mono"
+              aria-label={`${label} ${i + 1} name`}
+              value={row.key}
+              readOnly={readOnly}
+              placeholder="LOG_LEVEL"
+              onChange={(e) =>
+                onChange(env.map((r, j) => (j === i ? { ...r, key: e.target.value } : r)))
+              }
+            />
+            <EnvValueFields
+              name={`${label} ${i + 1}`}
+              value={row.value}
+              readOnly={readOnly}
+              onChange={(value) =>
+                onChange(env.map((r, j) => (j === i ? { ...r, value } : r)))
+              }
+            />
+            {readOnly ? null : (
+              <button
+                type="button"
+                className="k-button"
+                onClick={() => onChange(env.filter((_, j) => j !== i))}
+              >
+                Remove
+              </button>
+            )}
+          </div>
+          {row.value.kind === "plain" ? null : (
+            <span className="k-field__note k-mono">{envValueNote(row.value)}</span>
           )}
         </div>
       ))}
@@ -794,13 +804,21 @@ function EnvRows({
           <button
             type="button"
             className="k-button"
-            onClick={() => onChange([...env, { key: "", value: "" }])}
+            onClick={() => onChange([...env, { key: "", value: plainEnv("") }])}
           >
             Add variable
           </button>
         </div>
       )}
       <span className="k-field__note k-mono">{note}</span>
+      {/* Where a credential actually goes, one link away. A reference names a
+          Secret in this environment's namespace and the panel that writes it is
+          on the app page (#116). */}
+      <span className="k-field__note k-mono">
+        a reference carries no value — write the Secret itself in the{" "}
+        <Link to={`/apps/${encodeURIComponent(project)}`}>Secrets panel</Link> on
+        this app's page, or with `kelson secret set`
+      </span>
     </div>
   );
 }

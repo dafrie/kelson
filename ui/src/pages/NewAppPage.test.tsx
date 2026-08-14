@@ -243,6 +243,66 @@ describe("NewAppPage", () => {
     expect(screen.queryByText("What will be stored")).toBeNull();
   });
 
+  it("writes a secret reference for a credential instead of refusing one", async () => {
+    const requests: PutSpecRequest[] = [];
+    const transport = createRouterTransport((router) => {
+      router.service(SpecService, {
+        putSpec: (req) => {
+          requests.push(req);
+          return { spec: { project: "hello", version: "1", environments: ["development"] } };
+        },
+      });
+    });
+    renderNew(transport);
+
+    threeFields();
+    openMore();
+    fireEvent.click(screen.getByRole("button", { name: "Add variable" }));
+    type("Variable 1 name", "STRIPE_API_KEY");
+    // The variable that used to be a dead end: a plain value here is
+    // `secret/literal`, and before ADR-0018 there was no other spelling.
+    type("Variable 1 form", "secret");
+    type("Variable 1 secret name", "payments");
+    type("Variable 1 secret key", "api-key");
+    submit();
+
+    await waitFor(() => expect(requests).toHaveLength(1));
+    const doc = decoder.decode(requests[0]?.documents?.project);
+    expect(doc).toContain("  env:\n    STRIPE_API_KEY: { secret: payments, key: api-key }\n");
+    // No value input exists for a reference, so there is nothing on this screen
+    // that could put a credential into the document.
+    expect(screen.queryByLabelText("Variable 1 value")).toBeNull();
+    expect(field("Variable 1 name")).toContain("valueFrom.secretKeyRef");
+  });
+
+  it("refuses to write half a reference", async () => {
+    const requests: PutSpecRequest[] = [];
+    const transport = createRouterTransport((router) => {
+      router.service(SpecService, {
+        putSpec: (req) => {
+          requests.push(req);
+          return { spec: { project: "hello", version: "1", environments: ["development"] } };
+        },
+      });
+    });
+    renderNew(transport);
+
+    threeFields();
+    openMore();
+    fireEvent.click(screen.getByRole("button", { name: "Add variable" }));
+    type("Variable 1 name", "STRIPE_API_KEY");
+    type("Variable 1 form", "secret");
+    type("Variable 1 secret name", "payments");
+    submit();
+
+    // Nothing was sent: `{ secret: payments, key: "" }` is a mapping of the
+    // right shape carrying no answer.
+    expect(requests).toHaveLength(0);
+    expect(
+      screen.getByText(/a secret reference needs both a Secret name and a key/),
+    ).toBeTruthy();
+  });
+
   it("previews the exact documents, stores them, and offers the deploy", async () => {
     const requests: PutSpecRequest[] = [];
     const transport = createRouterTransport((router) => {

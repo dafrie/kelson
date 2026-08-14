@@ -341,10 +341,28 @@ claims the document is editable. The reader is never asked to trust the parser;
 they are shown its output compared against their own bytes.
 
 The parser is small and strict on purpose. It reads the grammar the builders
-emit — two-space indentation, block mappings and sequences, one flow mapping for
-`replicas`, plain and double-quoted scalars — and gives up on everything else. It
-is not a YAML implementation and must not become one: a document it cannot read
-costs the reader the form tab, which is the right outcome.
+emit — two-space indentation, block mappings and sequences, flow mappings for
+`replicas` and the env reference forms, plain and double-quoted scalars — and
+gives up on everything else. It is not a YAML implementation and must not become
+one: a document it cannot read costs the reader the form tab, which is the right
+outcome.
+
+**Env values are a union of three, and the guard is what makes that safe.** A
+scalar is a value, `{secret, key}` is a reference to a Secret in the
+environment's namespace, and `{from: {service, key}}` is a binding to a data
+component ([ADR-0018](../docs/adr/0018-secret-references.md)). The form shows all
+three as themselves — a form picker plus the right sub-fields, and no value input
+on either reference, because the spec carries references and never credentials.
+What it *writes* is the single-line flow styling this builder emits
+(`DATABASE_URL: { secret: checkout-db, key: url }`), which is what ADR-0018,
+docs/model.md and `kelson secret set` all show. A reference authored as a block
+mapping, or with its keys the other way round, parses and displays correctly and
+then fails the byte guard, so it opens on the YAML tab with its formatting
+intact. A flow mapping with different spacing, a quoted inner scalar, or a
+mapping that is neither reference form is refused outright — including a plain
+value whose text begins with `{`, which is the one deliberate refusal in the
+reader: a mapping it could not decode must never reach the form as a *string*
+that looks like one.
 
 Two more things the flow is deliberate about:
 

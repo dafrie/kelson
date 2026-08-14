@@ -20,6 +20,7 @@ import type {
 } from "../gen/kelson/v1alpha1/build_pb";
 import { Copyable } from "../components/Copyable";
 import { Disclosure, YamlBlock } from "../components/Disclosure";
+import { EnvValueFields, envValueNote } from "../components/EnvValueFields";
 import { ErrorPanel } from "../components/ErrorPanel";
 import { StatusPill } from "../components/StatusPill";
 import {
@@ -28,8 +29,10 @@ import {
   EMPTY_FORM,
   formProblems,
   mapErrors,
+  plainEnv,
   splitFindings,
   workloadKind,
+  type EnvVar,
   type FieldKey,
   type NewAppForm,
   type SourceMode,
@@ -387,6 +390,7 @@ export function NewAppPage() {
             <EnvRows
               env={form.env}
               onChange={(next) => update("env", next)}
+              problemFor={problemFor}
               errorsFor={errorsFor}
             />
 
@@ -602,64 +606,93 @@ function Rows({
   );
 }
 
+/**
+ * The env rows, with the reference forms ADR-0018 gave an author a spelling for.
+ *
+ * "secret ref" is offered here rather than left to the YAML tab because the
+ * variable that sends someone looking for one — a Stripe key, an SMTP password
+ * — is exactly the variable this form used to reject with `secret/literal` and
+ * no next step. Picking it emits `{ secret: <name>, key: <key> }`, which is a
+ * pointer; the credential itself is written in the Secrets panel on the app's
+ * page, or with `kelson secret set`, and the note below says so because the
+ * Secret does not exist yet at create time.
+ */
 function EnvRows({
   env,
   onChange,
+  problemFor,
   errorsFor,
 }: {
-  env: { key: string; value: string }[];
-  onChange: (env: { key: string; value: string }[]) => void;
+  env: EnvVar[];
+  onChange: (env: EnvVar[]) => void;
+  problemFor: (field: FieldKey) => string | undefined;
   errorsFor: (field: FieldKey) => WireError[];
 }) {
   return (
     <div className="k-field">
       <span className="k-eyebrow">Environment variables</span>
       {env.map((row, i) => (
-        <div className="k-new__pair" key={i}>
-          <input
-            className="k-input k-mono"
-            aria-label={`Variable ${i + 1} name`}
-            value={row.key}
-            placeholder="LOG_LEVEL"
-            onChange={(e) =>
-              onChange(env.map((r, j) => (j === i ? { ...r, key: e.target.value } : r)))
-            }
-          />
-          <input
-            className="k-input k-mono"
-            aria-label={`Variable ${i + 1} value`}
-            value={row.value}
-            placeholder="info"
-            onChange={(e) =>
-              onChange(env.map((r, j) => (j === i ? { ...r, value: e.target.value } : r)))
-            }
-          />
-          <button
-            type="button"
-            className="k-button"
-            onClick={() => onChange(env.filter((_, j) => j !== i))}
-          >
-            Remove
-          </button>
+        <div key={i}>
+          <div className="k-new__pair">
+            <input
+              className="k-input k-mono"
+              aria-label={`Variable ${i + 1} name`}
+              value={row.key}
+              placeholder="LOG_LEVEL"
+              onChange={(e) =>
+                onChange(env.map((r, j) => (j === i ? { ...r, key: e.target.value } : r)))
+              }
+            />
+            <EnvValueFields
+              name={`Variable ${i + 1}`}
+              value={row.value}
+              onChange={(value) =>
+                onChange(env.map((r, j) => (j === i ? { ...r, value } : r)))
+              }
+            />
+            <button
+              type="button"
+              className="k-button"
+              onClick={() => onChange(env.filter((_, j) => j !== i))}
+            >
+              Remove
+            </button>
+          </div>
+          {row.value.kind === "plain" ? null : (
+            <span className="k-field__note k-mono">{envValueNote(row.value)}</span>
+          )}
         </div>
       ))}
-      {env.map((row, i) =>
-        row.key.trim() === "" ? null : (
-          <FieldErrors key={i} errors={errorsFor(`env:${row.key.trim()}`)} />
-        ),
-      )}
+      {env.map((row, i) => {
+        const name = row.key.trim();
+        if (name === "") return null;
+        const problem = problemFor(`env:${name}`);
+        return (
+          <span key={i}>
+            {problem !== undefined ? (
+              <span className="k-field__problem k-mono" role="alert">
+                {problem}
+              </span>
+            ) : null}
+            <FieldErrors errors={errorsFor(`env:${name}`)} />
+          </span>
+        );
+      })}
       <div className="k-actions">
         <button
           type="button"
           className="k-button"
-          onClick={() => onChange([...env, { key: "", value: "" }])}
+          onClick={() => onChange([...env, { key: "", value: plainEnv("") }])}
         >
           Add variable
         </button>
       </div>
       <span className="k-field__note k-mono">
-        plain values only — the spec carries references, never credentials
-        (ADR-0009), and a secret-shaped name is rejected
+        a plain value is stored in the spec as written, so it is never a
+        credential (ADR-0009) — a secret-shaped name is rejected. Choose “secret
+        ref” for a credential: it writes {"{ secret: <name>, key: <key> }"} and
+        the value goes into the Secret itself, in the app's Secrets panel or with
+        `kelson secret set`.
       </span>
     </div>
   );

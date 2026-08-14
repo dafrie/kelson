@@ -40,6 +40,25 @@ spec:
   project: hello
 `;
 
+/** The same document carrying an ADR-0018 secret reference in its env. */
+const REFERENCED_PROJECT = `apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: hello
+
+spec:
+  image: ghcr.io/acme/hello:1.4.2
+
+  env:
+    DATABASE_URL: { secret: checkout-db, key: url }
+
+  components:
+    - name: web
+      port: 8080
+
+    - name: worker
+`;
+
 const HAND_WRITTEN = `apiVersion: kelson.dev/v1alpha1
 kind: Project
 metadata:
@@ -209,6 +228,81 @@ describe("EditSpecPage", () => {
     expect(screen.getAllByText("web").length).toBeGreaterThan(0);
     expect(screen.getAllByText("worker").length).toBeGreaterThan(0);
     expect(screen.getAllByLabelText("Replicas (min)")).toHaveLength(2);
+  });
+
+  it("shows a stored secret reference as a reference, and writes it back unchanged", async () => {
+    const { recorder } = renderEditor({ project: REFERENCED_PROJECT });
+    await openedOnForm();
+
+    // Displayed as what it is: the form picker on the reference, the Secret's
+    // name and key in their own inputs, and no value input anywhere.
+    expect(
+      (screen.getByLabelText("Environment variables 1 form") as HTMLSelectElement).value,
+    ).toBe("secret");
+    expect(
+      (screen.getByLabelText("Environment variables 1 secret name") as HTMLInputElement)
+        .value,
+    ).toBe("checkout-db");
+    expect(
+      (screen.getByLabelText("Environment variables 1 secret key") as HTMLInputElement)
+        .value,
+    ).toBe("url");
+    expect(screen.queryByLabelText("Environment variables 1 value")).toBeNull();
+    // The document round-trips, so the form is live rather than read-only.
+    expect(screen.queryByText(/was hand-edited/)).toBeNull();
+
+    // Turning a second variable into a reference writes the same spelling the
+    // Secrets panel offers to copy.
+    const adds = screen.getAllByRole("button", { name: "Add variable" });
+    fireEvent.click(adds[0]!);
+    fireEvent.change(screen.getByLabelText("Environment variables 2 name"), {
+      target: { value: "STRIPE_API_KEY" },
+    });
+    fireEvent.change(screen.getByLabelText("Environment variables 2 form"), {
+      target: { value: "secret" },
+    });
+    fireEvent.change(screen.getByLabelText("Environment variables 2 secret name"), {
+      target: { value: "payments" },
+    });
+    fireEvent.change(screen.getByLabelText("Environment variables 2 secret key"), {
+      target: { value: "api-key" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Check and preview the diff" }));
+    await waitFor(() => expect(recorder.writes).toHaveLength(1));
+
+    expect(writtenProject(recorder)).toBe(
+      REFERENCED_PROJECT.replace(
+        "    DATABASE_URL: { secret: checkout-db, key: url }\n",
+        "    DATABASE_URL: { secret: checkout-db, key: url }\n" +
+          "    STRIPE_API_KEY: { secret: payments, key: api-key }\n",
+      ),
+    );
+  });
+
+  it("sends a block-styled reference to the YAML tab rather than restyling it", async () => {
+    // The same reference, authored as a block mapping. It parses — the form
+    // shows it — but rebuilding it would rewrite the file into the flow styling
+    // this builder emits, so the byte guard refuses the write.
+    renderEditor({
+      project: REFERENCED_PROJECT.replace(
+        "    DATABASE_URL: { secret: checkout-db, key: url }\n",
+        "    DATABASE_URL:\n      secret: checkout-db\n      key: url\n",
+      ),
+    });
+
+    const textarea = (await screen.findByRole("textbox", {
+      name: "Project document",
+    })) as HTMLTextAreaElement;
+    expect(textarea.value).toContain("    DATABASE_URL:\n      secret: checkout-db\n");
+
+    fireEvent.click(screen.getByRole("button", { name: "Form" }));
+    expect(screen.getByText(/was hand-edited — use the YAML tab/)).toBeTruthy();
+    // Still shown correctly, just not editable here.
+    expect(
+      (screen.getByLabelText("Environment variables 1 secret name") as HTMLInputElement)
+        .value,
+    ).toBe("checkout-db");
   });
 
   it("makes the YAML tab primary and the form read-only for a hand-edited document", async () => {

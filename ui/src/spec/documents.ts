@@ -23,10 +23,128 @@ import type { Error as WireError } from "../gen/kelson/v1alpha1/common_pb";
  * there.
  */
 
+/**
+ * What an environment value is: one of exactly three things (ADR-0018).
+ *
+ * A scalar is a value; a mapping is a reference, and which reference is decided
+ * by its own key. `{secret: <name>, key: <key>}` names a Secret in the
+ * environment's namespace directly; `{from: {service, key}}` names a data
+ * component this Project declares and lets kelson derive the Secret its
+ * operator generates. Both render into the same `valueFrom.secretKeyRef` and
+ * neither can carry a value, which is the whole point: the spec carries
+ * references, never credentials (ADR-0009).
+ *
+ * The union is modelled here rather than as "a string that might look like a
+ * mapping" so that the form can display a reference *as* a reference. A reader
+ * who sees `{ secret: checkout-db, key: url }` rendered into a text input has
+ * been shown YAML source, not their configuration.
+ */
+export type EnvValue =
+  | { kind: "plain"; value: string }
+  | { kind: "secret"; secret: string; key: string }
+  | { kind: "binding"; service: string; key: string };
+
 /** One environment variable row. */
 export interface EnvVar {
   key: string;
-  value: string;
+  value: EnvValue;
+}
+
+export function plainEnv(value: string): EnvValue {
+  return { kind: "plain", value };
+}
+
+export function secretEnv(secret: string, key: string): EnvValue {
+  return { kind: "secret", secret, key };
+}
+
+export function bindingEnv(service: string, key: string): EnvValue {
+  return { kind: "binding", service, key };
+}
+
+/**
+ * An env value as the text that follows `KEY: `, in the one styling these
+ * builders write.
+ *
+ * The two mapping forms are emitted as single-line flow mappings with the
+ * spacing `replicas: { min: 1 }` already uses, because a flow mapping is what
+ * ADR-0018 and docs/model.md show an author writing and because it keeps one
+ * variable on one line. src/spec/edit.ts's round-trip guard is what makes that
+ * choice safe for a document somebody wrote differently — see its module
+ * comment for which stylings survive a rebuild and which go to the YAML tab.
+ */
+export function envValueText(value: EnvValue): string {
+  switch (value.kind) {
+    case "plain":
+      return yamlScalar(value.value);
+    case "secret":
+      return `{ secret: ${yamlScalar(value.secret)}, key: ${yamlScalar(value.key)} }`;
+    case "binding":
+      return `{ from: { service: ${yamlScalar(value.service)}, key: ${yamlScalar(value.key)} } }`;
+  }
+}
+
+/**
+ * The ready-to-paste reference for one key of a Secret — the same line
+ * `kelson secret set` prints after it writes (cmd/kelson/secret.go).
+ *
+ * One spelling of a reference, in one place: the UI's Secrets panel offers this
+ * to copy and the spec builders write the identical bytes, so what a reader
+ * pastes is what the editor would have produced.
+ */
+export function secretReference(name: string, key: string): string {
+  return envValueText(secretEnv(name, key));
+}
+
+/**
+ * A reference's own fields, trimmed.
+ *
+ * A plain value is left exactly as typed — trailing whitespace in a value is
+ * the author's business and `yamlScalar` quotes it so it survives — but the two
+ * halves of a reference are names, and a name with a space around it is a
+ * typing artefact that would be quoted into the document and refused by the
+ * server.
+ */
+export function trimEnvValue(value: EnvValue): EnvValue {
+  switch (value.kind) {
+    case "plain":
+      return value;
+    case "secret":
+      return secretEnv(value.secret.trim(), value.key.trim());
+    case "binding":
+      return bindingEnv(value.service.trim(), value.key.trim());
+  }
+}
+
+/**
+ * The variables that have a name, with their references trimmed.
+ *
+ * A row with no name is a row the user has started and not finished, and the
+ * form keeps showing it; the document does not, because `"": value` is not a
+ * variable. Both builders apply the same rule, which is why it lives here.
+ */
+export function namedEnv(env: readonly EnvVar[]): EnvVar[] {
+  return env
+    .map(({ key, value }) => ({ key: key.trim(), value: trimEnvValue(value) }))
+    .filter(({ key }) => key !== "");
+}
+
+/**
+ * Half a reference is not a reference.
+ *
+ * The server owns validation, and this checks only what the builder must know
+ * before it writes: `{ secret: "", key: "" }` is a mapping of the right shape
+ * carrying no answer, and writing it would send the user a `schema/*` finding
+ * about a document they can see is unfinished.
+ */
+export function envValueProblem(value: EnvValue): string | undefined {
+  if (value.kind === "secret" && (value.secret.trim() === "" || value.key.trim() === "")) {
+    return "a secret reference needs both a Secret name and a key: { secret: <name>, key: <key> } points at one key of a Secret in the environment's namespace";
+  }
+  if (value.kind === "binding" && (value.service.trim() === "" || value.key.trim() === "")) {
+    return "a service binding needs both a component name and a key: { from: { service: <component>, key: <key> } }";
+  }
+  return undefined;
 }
 
 /**
@@ -179,9 +297,7 @@ function normalize(form: NewAppForm): Normal {
     namespace: form.namespace.trim(),
     domains: form.domains.map((d) => d.trim()).filter((d) => d !== ""),
     replicas: form.replicas.trim(),
-    env: form.env
-      .map(({ key, value }) => ({ key: key.trim(), value }))
-      .filter(({ key }) => key !== ""),
+    env: namedEnv(form.env),
     health: form.health.trim(),
     schedule: form.schedule.trim(),
     kind: workloadKind(form),
@@ -235,7 +351,7 @@ function projectDocument(f: Normal): string {
   if (f.env.length > 0) {
     lines.push("", "  env:");
     for (const { key, value } of f.env) {
-      lines.push(`    ${yamlScalar(key)}: ${yamlScalar(value)}`);
+      lines.push(`    ${yamlScalar(key)}: ${envValueText(value)}`);
     }
   }
 
@@ -413,6 +529,13 @@ export function formProblems(form: NewAppForm): FieldProblem[] {
   const replicas = form.replicas.trim();
   if (replicas !== "" && !WHOLE_NUMBER.test(replicas)) {
     out.push({ field: "replicas", message: `"${replicas}" is not a whole number` });
+  }
+
+  for (const row of form.env) {
+    const name = row.key.trim();
+    if (name === "") continue;
+    const problem = envValueProblem(row.value);
+    if (problem !== undefined) out.push({ field: `env:${name}`, message: problem });
   }
 
   if (port !== "" && form.schedule.trim() !== "") {
