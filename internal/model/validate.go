@@ -247,18 +247,24 @@ func refExample(name string) string {
 //
 // The remediation names only what kelson can actually do today. It used to
 // send authors to a `kelson secret set` that does not exist (issue #142), and
-// then — while issue #141 gated bindings — to an overlay only. Two things
-// render end to end now, so both are named ahead of the overlay: a binding to a
-// managed service (issue #89), which is the answer for the credential this
-// check catches most often, and a secret reference (ADR-0018), which is the
-// answer for every other credential. The command that writes the Secret is
-// still issue #116, so the remediation names kubectl — a next step an author
-// can take today beats a command that does not exist.
+// then — while issue #141 gated bindings — to an overlay only. Three things
+// work end to end now: a secret reference (ADR-0018), which is the answer for
+// every credential; the command that writes the Secret the reference names
+// (issue #116); and a binding to a managed service (issue #89), which is the
+// shorter path for the credential this check catches most often.
+//
+// `kelson secret set` leads the writing step and `kubectl` follows it as the
+// alternative, because #116 landed the command ADR-0018 said the remediation
+// would name once it existed. kubectl stays named rather than being dropped: an
+// author reading this may be on a machine with kubectl and no kelson, and the
+// two commands write the same object.
 const secretRemediation = "the spec carries references, never values (ADR-0009). Write the variable as a reference: " +
 	"{secret: <secret name>, key: <key>}, which kelson renders as a valueFrom.secretKeyRef against a Secret in the " +
-	"environment's namespace and never reads (ADR-0018). Create that Secret out of band — " +
-	"`kubectl -n <namespace> create secret generic <secret name> --from-literal=<key>=…`; a kelson command that " +
-	"writes it for you is milestone M8 · Secrets, issue #116. For a managed service there is a shorter path: declare it under " +
+	"environment's namespace and never reads (ADR-0018). Write that Secret with " +
+	"`kelson secret set <secret name> --project <project> --env <environment> <key>=<value>` " +
+	"(use --from-stdin <key> or --from-file <key>=<path> to keep the value out of your shell history), or with " +
+	"`kubectl -n <namespace> create secret generic <secret name> --from-literal=<key>=…`. " +
+	"For a managed service there is a shorter path: declare it under " +
 	"spec.components with kind: postgres and bind {from: {service: <name>, key: uri}}, and kelson derives the " +
 	"secretKeyRef from the credentials the operator generates. An overlay patch (spec.overlays) remains the escape " +
 	"hatch for anything neither form expresses."

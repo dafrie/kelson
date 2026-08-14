@@ -430,13 +430,14 @@ change this: the operator generating an application credential, or kelson's secr
 being able to supply one. Either turns the `password` binding from a refusal into a
 `secretKeyRef` with nothing else in the renderer moving.
 
-The second of those is now half built. [ADR-0018](adr/0018-secret-references.md) gives the
+The second of those is now built on both ends. [ADR-0018](adr/0018-secret-references.md) gives the
 workload side its spelling — `{secret: <name>, key: password}` reads a password out of a Secret
 kelson references and never creates — and
-[#116](https://github.com/dafrie/kelson/issues/116) will give the authoring side the command
-that writes it. What is still missing is the piece in between: a spec surface for a Valkey ACL
-user rendered against that Secret's name, which is [#98](https://github.com/dafrie/kelson/issues/98)'s
-work and not a decision ADR-0018 takes.
+[#116](https://github.com/dafrie/kelson/issues/116) has landed the authoring side: author the user
+Secret with `kelson secret set <name> --project <p> --env <e> password=…`. What is still missing is
+the piece in between: a spec surface for a Valkey ACL user rendered against that Secret's name, which
+is [#98](https://github.com/dafrie/kelson/issues/98)'s remaining work and not a decision ADR-0018
+takes. **The renderer is unchanged** — the `password` binding is still the structured refusal below.
 
 ### Cache bindings
 

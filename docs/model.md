@@ -739,10 +739,29 @@ describes, so an agent generates it without parsing prose. A mapping that is nei
 kelson references it and nothing else: it does not create it, read it, diff it or own it. The rendered
 manifest carries `valueFrom.secretKeyRef` and the kubelet performs the projection at pod start.
 
-Writing the Secret is out of band — `kubectl -n <namespace> create secret generic <name>
---from-literal=<key>=…` today, `kelson secret set` when
-[#116](https://github.com/dafrie/kelson/issues/116) lands. Names are DNS-1123 labels; keys use
-Kubernetes' own key alphabet (letters, digits, `-`, `_`, `.`).
+Writing the Secret is out of band, and kelson has its own command for it since
+[#116](https://github.com/dafrie/kelson/issues/116):
+
+```bash
+kelson secret set checkout-db --project checkout --env production url=postgres://…
+
+# or, keeping the value out of your shell history:
+read -rs PW && printf '%s' "$PW" | kelson secret set checkout-db \
+  --project checkout --env production --from-stdin password
+kelson secret set tls --project checkout --env production --from-file tls.key=./tls.key
+```
+
+`kubectl -n <namespace> create secret generic <name> --from-literal=<key>=…` writes the same object
+and remains the alternative on a machine that has kubectl and not kelson. Names are DNS-1123 labels;
+keys use Kubernetes' own key alphabet (letters, digits, `-`, `_`, `.`) — the same rules the reference
+itself is held to, so a Secret kelson will write is always one a spec can name.
+
+`kelson secret set` **merges**: keys it is not given are preserved, so rotating one credential leaves
+the others alone. `kelson secret list --project <p> --env <e>` reports names, keys and ages and never
+a value — kelson does not store secret values, the cluster does (ADR-0009), and there is no flag that
+would print one. `kelson secret delete` removes a Secret kelson wrote and refuses one it did not: every
+Secret kelson writes carries `kelson.dev/managed-secret: "true"`, listing is a label query over it, and
+a namespace's TLS material and service-account tokens are neither listed nor deletable through kelson.
 
 A reference is legal wherever an env value is: `Project.spec.env`, a component's `env`, and
 `Environment.spec.components[].env`. **Rule P1 is unchanged** — references merge key by key like any
@@ -765,8 +784,9 @@ What that does **not** claim: kelson cannot stop you writing a password as a pla
   `CREDENTIAL`, `AUTH`) and the value is non-empty,
 
 and that is a heuristic, deliberately erring toward rejection because the fix is cheap in both
-directions. The error names the field and leads with the reference form, keeps the `from:` binding as
-the shorter path for a managed service ([#89](https://github.com/dafrie/kelson/issues/89)), and keeps
+directions. The error names the field and leads with the reference form and the `kelson secret set`
+that writes the Secret behind it, keeps the `from:` binding as the shorter path for a managed service
+([#89](https://github.com/dafrie/kelson/issues/89)), and keeps
 `spec.overlays` last. Overlays remain the escape hatch, including for a raw `kind: Secret` — and
 `internal/redact` replaces its `data`/`stringData` with `[redacted]` in every diff, preview, API
 read-back and log ([#117](https://github.com/dafrie/kelson/issues/117)).

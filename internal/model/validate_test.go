@@ -157,8 +157,21 @@ spec:
 			// reference since ADR-0018, so all three are legitimate answers and
 			// all three must be named — the reference first, because it is the
 			// one that covers every credential rather than a managed service's.
-			if strings.Contains(secret.Remediation, "kelson secret set") {
-				t.Errorf("remediation references the nonexistent `kelson secret set` command, got %q", secret.Remediation)
+			//
+			// The `kelson secret set` assertion is inverted from what it was
+			// before #116: the command now exists, so naming it is required
+			// rather than forbidden, and it must come before the kubectl line it
+			// replaces as the first choice (ADR-0018's "revisit when #116 lands
+			// `kelson secret set`"). kubectl is still named — the two commands
+			// write the same object and an author may only have one of them.
+			if !strings.Contains(secret.Remediation, "kelson secret set") {
+				t.Errorf("remediation should name `kelson secret set`, which exists since #116, got %q", secret.Remediation)
+			}
+			if !strings.Contains(secret.Remediation, "kubectl") {
+				t.Errorf("remediation should keep kubectl as the alternative, got %q", secret.Remediation)
+			}
+			if strings.Index(secret.Remediation, "kelson secret set") > strings.Index(secret.Remediation, "kubectl") {
+				t.Errorf("kelson secret set should lead and kubectl follow, got %q", secret.Remediation)
 			}
 			if !strings.Contains(secret.Remediation, "overlay") {
 				t.Errorf("remediation should name a fix that works today, got %q", secret.Remediation)
