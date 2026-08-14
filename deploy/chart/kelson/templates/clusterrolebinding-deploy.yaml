@@ -1,0 +1,21 @@
+{{- include "kelson.authGate" . -}}
+{{- if .Values.rbac.createDeployClusterRole }}
+# Binds the deploy ClusterRole to the server's ServiceAccount, and to nothing
+# else. It is deliberately not gated on `rbac.create`: that value governs the
+# namespaced Roles, and a cluster-scoped grant is a separate decision made with
+# a separate value, the same way the detect ClusterRole is.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "kelson.fullname" . }}-deploy
+  labels:
+    {{- include "kelson.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "kelson.fullname" . }}-deploy
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kelson.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

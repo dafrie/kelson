@@ -247,7 +247,10 @@ func TestImageTagIsRequired(t *testing.T) {
 func TestRenderedDetectRoleMatchesDeployRBAC(t *testing.T) {
 	var got []policyRule
 	for _, doc := range decodeDocs(t, helmTemplate(t, authValues...)) {
-		if doc["kind"] != "ClusterRole" {
+		// By name, not by kind: since the opt-in deploy grant exists there can
+		// be more than one ClusterRole in a render, and comparing the wrong one
+		// against deploy/rbac would be a confusing failure at best.
+		if doc["kind"] != "ClusterRole" || !strings.HasSuffix(nameOf(doc), "-detect") {
 			continue
 		}
 		remarshal(t, doc["rules"], &got)
@@ -282,7 +285,81 @@ func TestTargetNamespacesGetTheirOwnRole(t *testing.T) {
 	}
 }
 
+// TestDeployClusterRoleAbsentByDefault: the documented install must not quietly
+// hand the server cluster-wide write. This is the render-level half of
+// TestValuesDefaultDeployClusterRoleOff — the value could be false and the
+// template still render if its guard were wrong.
+func TestDeployClusterRoleAbsentByDefault(t *testing.T) {
+	for _, doc := range decodeDocs(t, helmTemplate(t, authValues...)) {
+		kind, _ := doc["kind"].(string)
+		if (kind == "ClusterRole" || kind == "ClusterRoleBinding") && strings.HasSuffix(nameOf(doc), "-deploy") {
+			t.Errorf("a default install rendered %s/%s. The deploy grant is cluster-wide write and "+
+				"has to be opted into (rbac.createDeployClusterRole).", kind, nameOf(doc))
+		}
+	}
+}
+
+// TestDeployClusterRoleRendersWhenEnabled covers the fix end to end at render
+// level: the value produces a ClusterRole that grants the namespace patch the
+// reported failure named, and a binding that points it at the server's own
+// ServiceAccount and no one else's.
+func TestDeployClusterRoleRendersWhenEnabled(t *testing.T) {
+	docs := decodeDocs(t, helmTemplate(t, append(authValues, "--set", "rbac.createDeployClusterRole=true")...))
+
+	var role, binding map[string]any
+	for _, doc := range docs {
+		if !strings.HasSuffix(nameOf(doc), "-deploy") {
+			continue
+		}
+		switch doc["kind"] {
+		case "ClusterRole":
+			role = doc
+		case "ClusterRoleBinding":
+			binding = doc
+		}
+	}
+	if role == nil {
+		t.Fatal("rbac.createDeployClusterRole=true rendered no ClusterRole")
+	}
+	if binding == nil {
+		t.Fatal("rbac.createDeployClusterRole=true rendered no ClusterRoleBinding; an unbound ClusterRole grants nothing")
+	}
+
+	var rules []policyRule
+	remarshal(t, role["rules"], &rules)
+	if !granted(rules, "", "namespaces", "patch") {
+		t.Error("the rendered deploy ClusterRole does not grant patch on namespaces — " +
+			"that is the exact call that failed, and the reason this template exists")
+	}
+	// A spot check that the rendered rules are the file's rules: the drift
+	// guard in deploy_rbac_test.go reads the template, and this proves helm
+	// does not transform it on the way out.
+	if !granted(rules, "apps", "deployments", "patch") || !granted(rules, "", "pods/log", "get") {
+		t.Errorf("the rendered rules are missing the apply or the log read:\n%s", mustYAML(t, rules))
+	}
+
+	roleRef, _ := binding["roleRef"].(map[string]any)
+	if roleRef["kind"] != "ClusterRole" || roleRef["name"] != nameOf(role) {
+		t.Errorf("the binding points at %v, not at the ClusterRole it ships with", roleRef)
+	}
+	subjects := anySlice(binding["subjects"])
+	if len(subjects) != 1 {
+		t.Fatalf("the binding has %d subjects; a cluster-wide write grant names exactly one", len(subjects))
+	}
+	subject, _ := subjects[0].(map[string]any)
+	if subject["kind"] != "ServiceAccount" || subject["name"] != "kelson" || subject["namespace"] != "kelson-system" {
+		t.Errorf("the binding's subject is %v, want the release's own ServiceAccount", subject)
+	}
+}
+
 // --- helpers ----------------------------------------------------------------
+
+// nameOf reads metadata.name off a decoded document.
+func nameOf(doc map[string]any) string {
+	meta, _ := doc["metadata"].(map[string]any)
+	name, _ := meta["name"].(string)
+	return name
+}
 
 func decodeDocs(t *testing.T, out string) []map[string]any {
 	t.Helper()
