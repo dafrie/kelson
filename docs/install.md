@@ -27,6 +27,10 @@ helm install kelson ./deploy/chart/kelson \
   --set auth.existingSecret.name=kelson-auth
 ```
 
+That installs a server that can read, preview and diff, and that cannot apply anything. **If this
+server is meant to deploy, add `--set rbac.createDeployClusterRole=true`** — the delivery grant is
+cluster-scoped and off by default, and the section below says what it costs.
+
 Then reach it:
 
 ```sh
@@ -84,11 +88,15 @@ not colonise one.
   ([cluster detection](detection.md)). Installing components that are genuinely *missing* is a
   separate, opt-in verb you run yourself: [`kelson install`](#platform-components-kelson-install)
   below.
-- **No write access to your workloads.** The chart grants the server its own state ConfigMaps,
-  the managed Secrets ADR-0009 defines, build Jobs, and the reads behind status and logs. The
-  grant that applies a rendered spec into your namespaces is as wide as the renderer's output and
-  belongs to those namespaces rather than to the installer; it is bound per namespace by you, and
-  least-privilege for it is #84's work. The chart's README has the full table.
+- **No write access to your workloads, unless you ask for it.** By default the chart grants the
+  server its own state ConfigMaps, the managed Secrets ADR-0009 defines, build Jobs, and the reads
+  behind status and logs — nothing that can apply a rendered spec. `rbac.createDeployClusterRole`
+  turns on the grant that can, and it is cluster-scoped rather than per-namespace because it has
+  to be: the renderer emits the environment's `Namespace` and a namespace is cluster-scoped, and
+  the web UI deploys into a namespace that does not exist at install time. It is a broad grant
+  bounded by the server's own authentication rather than by RBAC, and least-privilege for it is
+  #84's work. [The server](server.md#the-delivery-grant-is-opt-in-and-cluster-wide) and the
+  chart's README both spell out the trade.
 
 ## Platform components: `kelson install`
 
@@ -303,3 +311,8 @@ The detection ClusterRole is a plain manifest at `deploy/rbac/detect-clusterrole
 applied on its own — it is all the CLI ever needs, and it is read-only
 ([cluster detection](detection.md)). The chart's copy of it is kept identical by a test in
 `deploy/chart`.
+
+The delivery grant has no such standalone manifest, and that is not an oversight: the CLI applies
+under your own kubeconfig and never needs it, so the only thing that does is `kelson-server` — and
+`kelson-server` only ever arrives by chart. `helm template … --set rbac.createDeployClusterRole=true`
+is the way to see it, or to feed it to something else.

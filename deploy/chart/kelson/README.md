@@ -80,7 +80,9 @@ mean. Publishing the images is release work (`.goreleaser.yml`,
   [#60](https://github.com/dafrie/kelson/issues/60).
 - **No observability objects.** No ServiceMonitor, no PodMonitor, no dashboards. Adding one
   would assume a Prometheus stack the profile is supposed to detect.
-- **No write access to your workloads.** See RBAC below.
+- **No write access to your workloads, until you ask for it.** A default install cannot apply a
+  rendered spec anywhere. `rbac.createDeployClusterRole=true` grants that, cluster-wide, and a
+  server you expect to deploy needs it — see RBAC below.
 
 ## What it creates
 
@@ -89,6 +91,7 @@ mean. Publishing the images is release work (`.goreleaser.yml`,
 | `Namespace` | cluster | Only when `namespace.create=true`. |
 | `ServiceAccount` | release ns | The identity everything below binds to. |
 | `ClusterRole`/`ClusterRoleBinding` `<name>-detect` | cluster | The read-only detection grant, a verbatim copy of `deploy/rbac/detect-clusterrole.yaml`. Get and list only, no write verb anywhere ([#56](https://github.com/dafrie/kelson/issues/56)). |
+| `ClusterRole`/`ClusterRoleBinding` `<name>-deploy` | cluster | **Only when `rbac.createDeployClusterRole=true`, and off by default.** The delivery grant: `get, list, create, patch, delete` on every kind the renderer emits, `get, list, create, patch` on `namespaces` (no `delete`), plus the managed-Secret writes and the pod, log and preview reads — in every namespace. See below. |
 | `Role`/`RoleBinding` `<name>-state` | state ns | `configmaps: get, list, create, update, delete` — the spec and history stores (`internal/serverstate`). Plus `secrets: get, list, create, update` for the agent identity store ([#74](https://github.com/dafrie/kelson/issues/74)): one Secret per identity, holding a salted HMAC of the credential and never the credential. No `delete` — a revoked identity is kept so past actions stay attributable. |
 | `Role`/`RoleBinding` `<name>-env` | state ns + `rbac.targetNamespaces` | Managed Secrets, the pod and deployment reads behind status and logs, and build Jobs. |
 | `Role`/`RoleBinding` `<name>-build` | `server.buildNamespace` | Only when the build namespace is outside the served ones: Jobs, pod logs, and a read of the push Secret. Nothing writes Secrets there. |
@@ -99,13 +102,49 @@ Every rule exists because a named package makes that call. There are no wildcard
 is granted that nothing calls — `watch` is absent from the ConfigMap and Job grants because
 neither the state stores nor the build executor watch (the executor polls).
 
-**The delivery grant is not here.** Applying a rendered spec means writing Deployments, Services
-and whatever else a project's manifests contain, into the namespaces you deploy to. That grant
-is as wide as the renderer's output and it belongs to those namespaces rather than to the
-installer; least-privilege for it is [#84](https://github.com/dafrie/kelson/issues/84)'s work
-along with the rest of the threat model. Bind it yourself, per namespace, and scope
-`rbac.targetNamespaces` to the namespaces the server is meant to serve —
-[docs/server.md](../../../docs/server.md) says the same thing about the Secret grant.
+### The delivery grant: `rbac.createDeployClusterRole`
+
+A server that deploys needs `rbac.createDeployClusterRole=true`. Without it the first deploy from
+the web UI fails like this:
+
+```
+not permitted to apply this resource: namespaces "podinfo-development" is forbidden:
+User "system:serviceaccount:kelson-system:kelson" cannot patch resource "namespaces"
+```
+
+**And it cannot be fixed by binding a Role per namespace**, which is what this README used to say.
+Two reasons, both structural:
+
+1. The renderer emits the environment's `Namespace`
+   ([#150](https://github.com/dafrie/kelson/issues/150)) and the direct adapter PATCHes it to
+   record whether kelson created or adopted it. Namespaces are **cluster-scoped**; no namespaced
+   Role can grant a verb on one, ever.
+2. Creating an application in the UI targets a **new** namespace, `<project>-<environment>`. You
+   cannot pre-bind a Role in a namespace that does not exist, so `rbac.targetNamespaces` cannot
+   name it at install time. The same is true one click later for the reads behind the first
+   status verdict and the first log stream, which is why the ClusterRole carries those too.
+
+So the grant is cluster-scoped, and it is off by default because it is broad:
+
+- It is write access to **every namespace in the cluster** — yours, kelson's, `kube-system`.
+- It is bounded by the **server's** authentication and authorization, not by RBAC: the shared
+  password, the per-identity agent scopes ([#74](https://github.com/dafrie/kelson/issues/74),
+  [ADR-0024](../../../docs/adr/0024-agent-identities.md)) and the per-environment agent policy
+  ([ADR-0025](../../../docs/adr/0025-agent-policy.md)). The cluster sees one service account with
+  one grant and cannot tell one caller from another.
+- Least-privilege for this path — what a per-project or per-environment identity would look like
+  — is [#84](https://github.com/dafrie/kelson/issues/84)'s threat-model work. Until it lands,
+  this value is the whole of the fence.
+
+What it is not: not a wildcard (every apiGroup, resource and verb is named, and a test fails the
+build if a `*` appears), and not a promise that any spec will apply — `spec.overlays` can emit any
+kind at all, and one the ClusterRole does not name fails with a plain `forbidden`. Bind a
+ClusterRole of your own alongside it for those.
+
+Leave it `false` for a server used only to read status, preview diffs, or drive Git-backed
+delivery, where Flux does the applying and kelson only writes to a repository.
+`templates/clusterrole-deploy.yaml` carries the reasoning rule by rule, and
+[docs/server.md](../../../docs/server.md) has the posture.
 
 ## Uninstalling changes nothing about your apps
 
@@ -154,6 +193,7 @@ not delete them.
 | `serviceAccount.create` / `.name` / `.annotations` | `true` / `""` / `{}` | |
 | `rbac.create` | `true` | The namespaced Roles and bindings. |
 | `rbac.createDetectClusterRole` | `true` | The read-only detect ClusterRole. Without it, detection reports gaps instead of facts — it degrades, it does not break. |
+| `rbac.createDeployClusterRole` | `false` | The cluster-wide delivery grant. **A server expected to deploy needs it**; without it the first deploy fails on `namespaces`. Broad — read the section above before setting it. |
 | `rbac.targetNamespaces` | `[]` | Extra namespaces the server may serve. |
 | `service.type` / `.port` / `.annotations` | `ClusterIP` / `8420` / `{}` | |
 | `resources` | 50m/64Mi requests, 256Mi limit | |
@@ -177,6 +217,9 @@ practice means a `namespace.name` that is not the release namespace. The plain p
 
 - the detect ClusterRole here matches `deploy/rbac/detect-clusterrole.yaml`, rule for rule, both
   as files and as rendered output;
+- the deploy ClusterRole covers every kind `internal/renderer` emits — the set is derived from the
+  renderer's own golden files rather than written down twice, so a new rendered kind fails the
+  build until its rule exists — and it is absent from a default render;
 - `appVersion` tracks `internal/version`;
 - `helm lint` passes and every rendered document is valid YAML carrying the uninstall label;
 - the auth gate refuses a render with no password, and `image.tag` refuses to default.

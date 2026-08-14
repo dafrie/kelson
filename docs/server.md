@@ -477,6 +477,63 @@ on that namespace is the boundary. Not a record of unauthenticated attempts — 
 the HTTP gate before any interceptor runs, and there is no principal to attribute them to. Not in
 the web UI yet.
 
+## The delivery grant is opt-in, and cluster-wide
+
+A default `helm install` gives the server no way to apply anything. That is deliberate — the
+installer does not hand itself broad write on your say-so — but it means a server installed the
+documented way and then asked to deploy fails on its first click:
+
+```
+not permitted to apply this resource: namespaces "podinfo-development" is forbidden:
+User "system:serviceaccount:kelson-system:kelson" cannot patch resource "namespaces"
+```
+
+The fix is one value, `rbac.createDeployClusterRole=true`, which renders a `ClusterRole` and a
+`ClusterRoleBinding` for the server's service account.
+
+### Why it cannot be a Role per namespace
+
+That was the earlier answer and it does not work, for two reasons that are not going away:
+
+- **The renderer emits the environment's `Namespace`**
+  ([#150](https://github.com/dafrie/kelson/issues/150)), and `internal/delivery/direct` reads it
+  immediately before the apply and PATCHes it with `kelson.dev/namespace-ownership` — the record
+  of whether kelson created the namespace or adopted one that predates it, which is the only thing
+  `kelson uninstall` accepts as licence to delete it. A namespace is cluster-scoped, and no
+  namespaced Role can grant a verb on a cluster-scoped object.
+- **The web UI deploys into a namespace that does not exist yet.** Creating an application targets
+  `<project>-<environment>`, brought into existence by that first apply. `rbac.targetNamespaces`
+  is read when the chart is installed, so it cannot name it. The same argument covers everything
+  one step later: the pod and Deployment reads behind the first status verdict, the log stream the
+  UI opens, and the Secrets `SecretService` writes all happen in that same new namespace.
+
+### What it grants, and what bounds it
+
+Named apiGroups, resources and verbs only — no wildcards. Every kind `internal/renderer` emits
+gets `get, list, create, patch, delete`: `patch` plus `create` is the server-side apply, `get` is
+the status read-back, `list` plus `delete` is the prune. `namespaces` get everything but `delete`,
+because pruning excludes them and no RPC removes one. `update` and `watch` appear nowhere — the
+delivery plane server-side applies and polls. `deploy/chart/kelson/templates/clusterrole-deploy.yaml`
+gives the reason for each rule, and a test in `deploy/chart` derives the kind list from the
+renderer's own golden files so a new rendered kind fails the build until its rule exists.
+
+What bounds it is **not RBAC**. It is write access to every namespace in the cluster, so anything
+that can authenticate to the server can deploy anywhere: the cluster sees one service account with
+one grant and cannot tell one caller from another. The fences that do exist are the ones above in
+this document — the shared password, the per-identity agent scopes ([#74](https://github.com/dafrie/kelson/issues/74),
+[ADR-0024](adr/0024-agent-identities.md)), and the per-environment agent policy
+([ADR-0025](adr/0025-agent-policy.md)). Least-privilege RBAC for this path, including what a
+per-project or per-environment identity would look like, belongs to
+[#84](https://github.com/dafrie/kelson/issues/84) with the rest of the threat model.
+
+Two honest limits beyond that. `spec.overlays` can emit **any** kind, so a spec that overlays a
+`PodDisruptionBudget` fails with a plain `forbidden` naming it — bind a ClusterRole of your own
+alongside this one for those. And a Git-backed or Flux-backed environment does not need this value
+at all: there kelson writes to a repository and Flux does the applying, under Flux's RBAC.
+
+`hack/local/up.sh` (`make kind-up`) sets the value, because a throwaway kind cluster on your own
+machine is the one place where that trade is obviously right.
+
 ## SecretService needs Secret permissions, and that is a real grant
 
 `SecretService` ([#116](https://github.com/dafrie/kelson/issues/116)) writes the Kubernetes Secrets a
@@ -494,7 +551,11 @@ Two things bound it, and neither is authorization:
   server can reach; it does not turn the API into a way to read them out.
 
 Least-privilege RBAC for this path belongs to #84 along with the rest of the threat model. Until it
-lands, run the server with a service account scoped to the namespaces it is meant to serve.
+lands, run the server with a service account scoped to the namespaces it is meant to serve —
+`rbac.targetNamespaces` is how the chart does that. Note that the delivery grant above supersedes
+the scoping: `rbac.createDeployClusterRole=true` carries the same Secret verbs cluster-wide,
+because the namespace a deploy creates cannot be listed in advance. Setting it means accepting the
+Secret grant in every namespace too.
 
 ## PreviewService reads flux-operator's objects, and one read it cannot be granted
 
@@ -507,9 +568,12 @@ torn down by flux-operator, and no RPC in this schema creates or deletes one.
 
 The exception is hostnames. A preview's HTTPRoutes live in the preview's own namespace,
 `<project>-<environment>-pr<id>`, which is created at reconcile time and cannot be listed in
-`rbac.targetNamespaces` when the chart is installed. So that read needs cluster scope, the chart does
-not grant it, and without it the preview list is complete except for its hostnames — the read fails
-soft rather than failing the call. Bind this yourself if you want them:
+`rbac.targetNamespaces` when the chart is installed. So that read needs cluster scope. Without it
+the preview list is complete except for its hostnames — the read fails soft rather than failing the
+call.
+
+`rbac.createDeployClusterRole=true` covers it, because that grant is cluster-wide and HTTPRoute is
+a kind the renderer emits. If you do not want the delivery grant, bind just this instead:
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
