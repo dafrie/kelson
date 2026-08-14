@@ -32,6 +32,7 @@ import {
   plainEnv,
   splitFindings,
   workloadKind,
+  type BuildStrategy,
   type EnvVar,
   type FieldKey,
   type NewAppForm,
@@ -56,8 +57,11 @@ import {
  * a kind cluster's localhost:5000. Asking each creator would put an operator's
  * decision on a developer's first screen.
  *
- * The build strategy is not asked for either, and that one is a limitation
- * rather than a principle — see BUILD_STRATEGY in ../spec/documents.
+ * The build strategy *is* asked for, and only because ADR-0010's own default
+ * cannot be answered from here: `auto` means "read the source tree", and the
+ * tree only exists inside the build pod, after the clone (#50). So the git path
+ * asks the one question detection would have answered — is there a Dockerfile?
+ * — and writes the answer, rather than storing a spec whose build refuses.
  *
  * The bar this screen is held to (#63) is that a developer who has never seen
  * kelson deploys something without reading anything. So what is *present* is a
@@ -225,6 +229,13 @@ export function NewAppPage() {
           mode={form.sourceMode}
           onChange={(mode) => update("sourceMode", mode)}
         />
+
+        {form.sourceMode === "git" ? (
+          <StrategyToggle
+            strategy={form.buildStrategy}
+            onChange={(strategy) => update("buildStrategy", strategy)}
+          />
+        ) : null}
 
         <div className="k-panel k-new__row">
           <Field
@@ -744,8 +755,70 @@ function SourceToggle({
       </label>
       <span className="k-field__note k-mono">
         {mode === "git"
-          ? "kelson builds it in the cluster with rootless BuildKit and pushes to the server's registry — the strategy is `dockerfile`, so the repository needs a Dockerfile at its root"
+          ? "kelson clones it and builds the image in the cluster, rootless, then pushes it to the server's registry — how it is built is the choice below"
           : "an image someone or something else already built and pushed"}
+      </span>
+    </fieldset>
+  );
+}
+
+/**
+ * How the repository becomes an image (ADR-0010).
+ *
+ * Both sentences are on screen, not only the selected one: this is the one
+ * choice on this page a reader may genuinely not know the answer to, and what
+ * decides it is what each strategy needs from their repository. Hiding the
+ * other half behind the radio would make it a guess.
+ *
+ * `dockerfile` is the default because it is what this form wrote before there
+ * was a choice — ADR-0010's own zero-config default is buildpacks, and quietly
+ * adopting it here would build everybody's next project a different way.
+ * `auto` is not offered at all: see the module comment.
+ */
+function StrategyToggle({
+  strategy,
+  onChange,
+}: {
+  strategy: BuildStrategy;
+  onChange: (strategy: BuildStrategy) => void;
+}) {
+  return (
+    <fieldset className="k-panel k-new__strategy">
+      <legend className="k-eyebrow">How the image is built</legend>
+      <div className="k-new__strategy-option">
+        <label className="k-check k-mono">
+          <input
+            type="radio"
+            name="build-strategy"
+            checked={strategy === "dockerfile"}
+            onChange={() => onChange("dockerfile")}
+          />
+          Dockerfile
+        </label>
+        <span className="k-field__note k-mono">
+          the repository has a Dockerfile at its root, and kelson builds that
+        </span>
+      </div>
+      <div className="k-new__strategy-option">
+        <label className="k-check k-mono">
+          <input
+            type="radio"
+            name="build-strategy"
+            checked={strategy === "buildpacks"}
+            onChange={() => onChange("buildpacks")}
+          />
+          Buildpacks
+        </label>
+        <span className="k-field__note k-mono">
+          no Dockerfile: the Cloud Native Buildpacks lifecycle detects the
+          language and builds a rootless image
+        </span>
+      </div>
+      <span className="k-field__note k-mono k-new__strategy-note">
+        the answer is written into the spec as `spec.build.strategy`. ADR-0010's
+        own default — `auto`, look at the tree and decide — is not offered here,
+        because the tree only exists inside the build pod and the server has
+        nothing to look at until it does (#50).
       </span>
     </fieldset>
   );
@@ -964,9 +1037,10 @@ function BuildAndDeploy({
             </button>
           ) : null}
           <span className="k-mono k-deploy__note">
-            a rootless BuildKit Job in the cluster · the registry and the push
-            credential are the server's configuration, not this form's · stopping
-            stops the watching, not the Job
+            a rootless Job in the cluster, running the strategy the spec asked
+            for · the registry and the push credential are the server's
+            configuration, not this form's · stopping stops the watching, not
+            the Job
           </span>
         </div>
 
