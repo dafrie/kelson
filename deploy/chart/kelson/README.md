@@ -73,7 +73,7 @@ mean. Publishing the images is release work (`.goreleaser.yml`,
 | `Namespace` | cluster | Only when `namespace.create=true`. |
 | `ServiceAccount` | release ns | The identity everything below binds to. |
 | `ClusterRole`/`ClusterRoleBinding` `<name>-detect` | cluster | The read-only detection grant, a verbatim copy of `deploy/rbac/detect-clusterrole.yaml`. Get and list only, no write verb anywhere ([#56](https://github.com/dafrie/kelson/issues/56)). |
-| `Role`/`RoleBinding` `<name>-state` | state ns | `configmaps: get, list, create, update, delete` — the spec and history stores (`internal/serverstate`). |
+| `Role`/`RoleBinding` `<name>-state` | state ns | `configmaps: get, list, create, update, delete` — the spec and history stores (`internal/serverstate`). Plus `secrets: get, list, create, update` for the agent identity store ([#74](https://github.com/dafrie/kelson/issues/74)): one Secret per identity, holding a salted HMAC of the credential and never the credential. No `delete` — a revoked identity is kept so past actions stay attributable. |
 | `Role`/`RoleBinding` `<name>-env` | state ns + `rbac.targetNamespaces` | Managed Secrets, the pod and deployment reads behind status and logs, and build Jobs. |
 | `Role`/`RoleBinding` `<name>-build` | `server.buildNamespace` | Only when the build namespace is outside the served ones: Jobs, pod logs, and a read of the push Secret. Nothing writes Secrets there. |
 | `Secret` | release ns | Only when `auth.password` is a literal. |
