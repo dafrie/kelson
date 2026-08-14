@@ -135,6 +135,11 @@ const sidebars: SidebarsConfig = {
           id: 'adr/0017-pr-previews',
           label: '0017 — PR previews',
         },
+        {
+          type: 'doc',
+          id: 'adr/0018-secret-references',
+          label: '0018 — Secret references',
+        },
       ],
     },
   ],
