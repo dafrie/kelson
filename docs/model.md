@@ -716,7 +716,7 @@ spec:
   previews:
     provider: github                                   # github | gitlab
     repo: https://github.com/acme/checkout             # whose pull requests become previews
-    secretRef: github-auth                             # a Secret NAME, never a token
+    secretRef: github-auth                             # optional: bring your own Secret NAME, never a token
     interval: 10m                                      # how often the forge is polled
     filter:
       labels: [deploy/preview]                         # only labelled change requests
@@ -734,7 +734,7 @@ spec:
 |---|---|
 | `provider` | the forge. `github` → `GitHubPullRequest`, `gitlab` → `GitLabMergeRequest` |
 | `repo` | HTTP(S) URL of the repository whose change requests become previews |
-| `secretRef` | name of a Secret holding forge credentials, in the environment's namespace |
+| `secretRef` | name of a Secret holding forge credentials, in the environment's namespace. Optional — see below |
 | `interval` | forge polling interval; default `10m` |
 | `filter.labels` | only change requests carrying one of these labels get a preview |
 | `filter.includeBranch` / `filter.excludeBranch` | Go regular expressions against the branch name |
@@ -747,6 +747,15 @@ spec:
 is where the per-pull-request manifests are pushed. kelson defaults neither from the other, and an SSH
 remote in `repo` is `schema/invalid-format`: the forge is reached over its HTTP API.
 
+`secretRef` is optional ([ADR-0033](adr/0033-git-connections.md) decision 4). Leave it unset and kelson
+materializes the flux-operator Secret itself — `username`/`password` from a token connection, the
+`githubApp*` keys from an app connection — from whichever [git connection](adr/0033-git-connections.md)
+covers `repo`, writing it to `<project>-<environment>-previews` in the environment's namespace. The
+renderer points the `ResourceSetInputProvider` at that same derived name, so nothing has to store it.
+Set `secretRef` to bring your own Secret instead; a named Secret wins untouched, and kelson never reads
+or writes it. A `secretRef` is still held to being a Secret *name* — a DNS-1123 label — never a token,
+whichever way it got there.
+
 `filter.limit` defaults to 10 rather than flux-operator's own 100. The ceiling is a cost control, and
 an environment that quietly stands up a hundred preview namespaces the first time somebody bulk-labels
 a backlog is a surprise that arrives as a cluster bill. The value is always written into the rendered
@@ -756,9 +765,9 @@ manifest, so what the cluster will enforce is readable without knowing anyone's 
 
 Two objects, in the environment's own namespace:
 
-- a **`ResourceSetInputProvider`**, carrying the provider type, the repository URL, the `secretRef`,
-  the filter, the skip labels, and the polling interval as the
-  `fluxcd.controlplane.io/reconcileEvery` annotation;
+- a **`ResourceSetInputProvider`**, carrying the provider type, the repository URL, the `secretRef` —
+  the named one, or `<project>-<environment>-previews` when none was named — the filter, the skip
+  labels, and the polling interval as the `fluxcd.controlplane.io/reconcileEvery` annotation;
 - a **`ResourceSet`**, whose `resourcesTemplate` instantiates an `OCIRepository` and a `Kustomization`
   per change request — and **nothing else**.
 
@@ -1155,7 +1164,7 @@ spec:
   previews:                          # needs flux-operator — see "Previews" below
     provider: github                 # github | gitlab
     repo: https://github.com/acme/checkout           # the SOURCE repo, not the artifact repository
-    secretRef: github-auth           # a Secret name, never a token
+    secretRef: github-auth           # optional; a Secret name, never a token — omit to materialize one (ADR-0033)
     artifacts:
       repository: oci://ghcr.io/acme/checkout-previews
   components:                        # one override list, matched by name
