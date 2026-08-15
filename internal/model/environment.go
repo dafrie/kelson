@@ -319,8 +319,11 @@ const (
 // the rendered manifests for those previews are pulled from — it becomes the
 // OCIRepository inside the ResourceSet's template.
 //
-// Nothing here is a credential. `secretRef` on both halves is a Secret *name*;
-// the Secret exists out of band and kelson never reads it (ADR-0009, #79).
+// Nothing here is a credential. `secretRef` on both halves is a Secret *name*
+// and never a value (ADR-0009, #79). What changed with ADR-0033 decision 4 is
+// only who may create the Secret behind the forge one: an author still brings
+// their own by naming it, and an author who names nothing gets one kelson
+// materializes from the git connection covering `repo`.
 type Previews struct {
 	// Provider selects the forge. github → GitHubPullRequest,
 	// gitlab → GitLabMergeRequest.
@@ -335,7 +338,14 @@ type Previews struct {
 	// SecretRef names the Secret holding forge credentials, in the
 	// environment's namespace. Its keys are flux-operator's: username and
 	// password for basic auth, or the githubApp* keys.
-	SecretRef string `yaml:"secretRef" json:"secretRef" jsonschema:"required,description=name of the Secret holding forge credentials; never a token"`
+	//
+	// It is optional (ADR-0033 decision 4). Set it to bring your own Secret;
+	// leave it unset and kelson materializes the credential from the git
+	// connection covering `previews.repo`, into a Secret it owns at
+	// `<project>-<environment>-previews`. The name is derived on both sides —
+	// the renderer writes it into the ResourceSetInputProvider and the
+	// controller writes the Secret — so nothing has to store it.
+	SecretRef string `yaml:"secretRef,omitempty" json:"secretRef,omitempty" jsonschema:"description=name of the Secret holding forge credentials; never a token. Omit it to have kelson materialize one from the git connection covering previews.repo (ADR-0033)"`
 
 	// Interval is how often the forge is polled for change requests. It
 	// becomes the fluxcd.controlplane.io/reconcileEvery annotation.

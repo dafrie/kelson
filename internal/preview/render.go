@@ -1,6 +1,8 @@
 package preview
 
 import (
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -29,6 +31,24 @@ type Options struct {
 	// spec.image exactly as `kelson deploy --image` does — which is how this
 	// composes with `kelson build` in the same CI job.
 	Image string
+
+	// Images pins named components to the images a build produced for *this*
+	// commit: the map `BuildService.ReportBuild` carries
+	// ([ADR-0034](docs/adr/0034-forge-driven-delivery.md) decision 3), keyed by
+	// component name and digest-pinned by its caller.
+	//
+	// It sits above [Image] and above every authored image, which is the one
+	// thing about it that is a decision rather than plumbing. Everywhere else a
+	// pin is the strongest statement in the spec — an Environment's
+	// `components[].image` is ADR-0016's promotion primitive, and `--image`
+	// deliberately loses to it. A preview inverts that: the environment's pin
+	// says what production-shaped traffic runs, and a preview of a pull request
+	// that ran it would be previewing the commit the environment is already on
+	// rather than the change. So a reported image is applied as the preview
+	// environment's own override, which is the top of the P3 chain, and a
+	// component nobody reported keeps whatever the spec resolves for it — the
+	// "partial report is a partial pin" the RPC's schema promises.
+	Images map[string]string
 
 	// Profile is what the renderer is told about the target cluster. A preview
 	// is judged against the same cluster as its parent environment, so the same
@@ -213,6 +233,7 @@ func resolvePreview(opts Options) (resolved, parent *model.Resolved, err error) 
 	environment := *opts.Environment
 	environment.Spec.Namespace = naming.Preview(opts.Project.Metadata.Name, opts.Environment.Metadata.Name, opts.PR)
 	environment.Spec.Previews = nil
+	environment.Spec.Components = pinReported(environment.Spec.Components, opts.Images)
 	resolved, errs = model.Resolve(&project, &environment)
 	if len(errs) > 0 {
 		return nil, nil, errs
@@ -241,6 +262,48 @@ func previewHosts(resolved *model.Resolved, id string) {
 		}
 		c.Domains = hosts
 	}
+}
+
+// pinReported folds [Options.Images] into the preview environment's component
+// overrides — the top of the P3 chain, for the reason [Options.Images] states.
+//
+// It allocates rather than writing through the slice it was given, for
+// [previewHosts]' reason: the Environment document is the caller's, and a
+// publish must not edit a document the caller may still render for the parent
+// environment afterwards — a server publishes one report into several
+// environments out of one decoded spec.
+//
+// A reported component the Project does not declare lands here as an override
+// nothing matches, which [model.Resolve] ignores. That is not this function's
+// check to make: the caller that accepted the report already refused an unknown
+// component by name (the RPC's `report/unknown-component`), and a second
+// spelling of the rule here would be a second answer to one question.
+func pinReported(overrides []model.ComponentOverride, images map[string]string) []model.ComponentOverride {
+	if len(images) == 0 {
+		return overrides
+	}
+	out := make([]model.ComponentOverride, len(overrides))
+	copy(out, overrides)
+	at := make(map[string]int, len(out))
+	for i, ov := range out {
+		at[ov.Name] = i
+	}
+	// Sorted, so the override list a publish builds is the same list on every
+	// call: the artifact is a deterministic function of its inputs down to the
+	// digest (ADR-0017 decision 10), and a map range would make that true only
+	// by luck.
+	for _, name := range slices.Sorted(maps.Keys(images)) {
+		ref := strings.TrimSpace(images[name])
+		if ref == "" {
+			continue
+		}
+		if i, ok := at[name]; ok {
+			out[i].Image = ref
+			continue
+		}
+		out = append(out, model.ComponentOverride{Name: name, Image: ref})
+	}
+	return out
 }
 
 func quoted(s string) string { return `"` + s + `"` }

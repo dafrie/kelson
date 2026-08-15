@@ -9,7 +9,8 @@
       "type": "string",
       "enum": [
         "Project",
-        "Environment"
+        "Environment",
+        "GitConnection"
       ]
     },
     "metadata": {
@@ -191,7 +192,7 @@
             },
             "secretRef": {
               "type": "string",
-              "description": "name of the Secret holding forge credentials; never a token"
+              "description": "name of the Secret holding forge credentials; never a token. Omit it to have kelson materialize one from the git connection covering previews.repo (ADR-0033)"
             },
             "interval": {
               "type": "string",
@@ -262,7 +263,6 @@
           "required": [
             "provider",
             "repo",
-            "secretRef",
             "artifacts"
           ]
         },

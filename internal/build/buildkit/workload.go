@@ -75,8 +75,50 @@ func (c Config) withDefaults() Config {
 // Job. Same inputs, same bytes. It is what the non-privileged acceptance test
 // asserts on, and it never touches a cluster.
 func (c Config) Workload(req build.Request) ([]byte, error) {
-	if err := validate(req, c); err != nil {
+	manifest, _, err := c.workload(req)
+	return manifest, err
+}
+
+// WorkloadWithCredential renders what one build submits when kelson holds a
+// credential for its source: the per-run Secret carrying it, then the Job that
+// projects it (ADR-0033 decision 5).
+//
+// Two documents rather than one because a Secret and a Job are two objects, and
+// because the executor has to create them in an order the pod can tolerate. It
+// is still a pure function — the credential is an argument, not something this
+// package went and fetched — so the golden assertions about the Job survive
+// unchanged: an empty credential renders exactly what [Config.Workload] does.
+func (c Config) WorkloadWithCredential(req build.Request, cred build.CloneCredential) ([]byte, error) {
+	if !cred.Set() || req.SourceGit == "" {
+		return c.Workload(req)
+	}
+	job, labels, err := c.workload(withCloneSecret(req))
+	if err != nil {
 		return nil, err
+	}
+	secret, err := build.CloneSecretManifest(build.CloneSecretName(jobName(req)), c.Namespace, labels, cred)
+	if err != nil {
+		return nil, err
+	}
+	// The Secret first, so a reader of the manifest meets the thing the Job
+	// depends on before the Job that depends on it. Creation order is the
+	// executor's decision and is the other way round (internal/delivery/kube).
+	return append(append(secret, []byte("---\n")...), job...), nil
+}
+
+// withCloneSecret names the per-run Secret on a copy of the Request, which is
+// what makes the clone script emit its credential helper and the pod spec its
+// projection.
+func withCloneSecret(req build.Request) build.Request {
+	req.CloneSecret = build.CloneSecretName(jobName(req))
+	return req
+}
+
+// workload renders the Job and returns the labels it carries, so the Secret
+// beside it can be labelled identically without deriving them twice.
+func (c Config) workload(req build.Request) ([]byte, map[string]string, error) {
+	if err := validate(req, c); err != nil {
+		return nil, nil, err
 	}
 	cfg := c.withDefaults()
 
@@ -106,7 +148,7 @@ func (c Config) Workload(req build.Request) ([]byte, error) {
 		RestartPolicy:      "Never",
 		InitContainers:     sourceInitContainers(req, cfg),
 		Containers:         []container{ctr},
-		Volumes:            volumes(cfg),
+		Volumes:            volumes(req, cfg),
 	}
 
 	job := workload{
@@ -128,7 +170,11 @@ func (c Config) Workload(req build.Request) ([]byte, error) {
 		},
 	}
 
-	return yaml.Marshal(job)
+	out, err := yaml.Marshal(job)
+	if err != nil {
+		return nil, nil, err
+	}
+	return out, labels, nil
 }
 
 // validate enforces the invariants a build Job needs before it is rendered:
@@ -463,11 +509,24 @@ type resourceList struct {
 // clone init container), writable buildkit state + tmp that the rootless image
 // requires without a privileged node, and — when the caller named one — the
 // projected push credential.
-func volumes(cfg Config) []volume {
+func volumes(req build.Request, cfg Config) []volume {
 	vols := []volume{
 		{Name: "workspace", EmptyDir: &emptyDirVolume{}},
 		{Name: "buildkit-state", EmptyDir: &emptyDirVolume{}},
 		{Name: "tmp", EmptyDir: &emptyDirVolume{}},
+	}
+	if req.CloneSecret != "" {
+		mode := build.CloneCredentialMode
+		vols = append(vols, volume{
+			Name: build.CloneCredentialVolume,
+			Secret: &secretVolume{
+				// The name of the per-run Secret, and nothing else. The
+				// credential is in the cluster; the manifest says where
+				// (ADR-0009), and the kubelet does the projection.
+				SecretName:  req.CloneSecret,
+				DefaultMode: &mode,
+			},
+		})
 	}
 	if cfg.PushSecret != "" {
 		mode := pushSecretMode
@@ -531,11 +590,22 @@ func sourceInitContainers(req build.Request, cfg Config) []container {
 	if req.SourceGit == "" {
 		return nil
 	}
+	mounts := []volumeMount{{Name: "workspace", MountPath: build.Workspace}}
+	if req.CloneSecret != "" {
+		// Only the clone gets the credential. The build container that follows
+		// has no business reading it, and a Dockerfile that could `cat` it would
+		// be one `COPY` from baking it into a layer.
+		mounts = append(mounts, volumeMount{
+			Name:      build.CloneCredentialVolume,
+			MountPath: build.CloneCredentialDir,
+			ReadOnly:  true,
+		})
+	}
 	return []container{{
 		Name:         "clone",
 		Image:        cfg.GitImage,
 		Command:      []string{"sh", "-c", build.CloneScript(req)},
-		VolumeMounts: []volumeMount{{Name: "workspace", MountPath: build.Workspace}},
+		VolumeMounts: mounts,
 		SecurityContext: &securityContext{
 			RunAsNonRoot:             boolPtr(true),
 			RunAsUser:                int64Ptr(defaultRunAsUser),

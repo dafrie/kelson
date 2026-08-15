@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	"gopkg.in/yaml.v3"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -646,10 +647,19 @@ func specRef(project string) string { return "spec/" + project }
 // Environment's status while a deployment is in flight, and a client that could
 // not watch would leave the façade polling for a change the API server is able
 // to push. client.WithWatch is a client.Client, so [SpecStore] is unaffected.
+//
+// core/v1 is in the scheme because [GitConnectionStore.ReadAuthSecret] reads
+// the Secret a connection references through this same client (ADR-0033
+// decision 1). One client rather than two: a server whose connection CRs and
+// their Secrets were read through different credentials could report a
+// connection Ready against a Secret it was not actually allowed to use.
 func NewClient(cfg *rest.Config) (client.WithWatch, error) {
 	s := runtime.NewScheme()
 	if err := v1alpha1.AddToScheme(s); err != nil {
 		return nil, fmt.Errorf("controlstore: registering kelson.dev/v1alpha1: %w", err)
+	}
+	if err := corev1.AddToScheme(s); err != nil {
+		return nil, fmt.Errorf("controlstore: registering core/v1: %w", err)
 	}
 	c, err := client.NewWithWatch(cfg, client.Options{Scheme: s})
 	if err != nil {

@@ -17,6 +17,7 @@ import { LogService } from "../gen/kelson/v1alpha1/logs_pb";
 import { EventService } from "../gen/kelson/v1alpha1/events_pb";
 import { BuildService } from "../gen/kelson/v1alpha1/build_pb";
 import { SecretService } from "../gen/kelson/v1alpha1/secret_pb";
+import { GitConnectionService } from "../gen/kelson/v1alpha1/gitconnection_pb";
 import { PreviewService } from "../gen/kelson/v1alpha1/preview_pb";
 import { InstallService } from "../gen/kelson/v1alpha1/install_pb";
 import { NodeService } from "../gen/kelson/v1alpha1/nodes_pb";
@@ -84,6 +85,7 @@ export function createClients(transport: Transport) {
     event: createClient(EventService, transport),
     build: createClient(BuildService, transport),
     secret: createClient(SecretService, transport),
+    gitConnection: createClient(GitConnectionService, transport),
     preview: createClient(PreviewService, transport),
     install: createClient(InstallService, transport),
     node: createClient(NodeService, transport),

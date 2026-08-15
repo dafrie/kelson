@@ -251,8 +251,14 @@ The builder image, the run image and any extra buildpacks are **driver
 configuration**, not spec: `buildpacks.Config` carries them, defaulting to
 Paketo's `builder-jammy-base` / `run-jammy-base` pair. "Configure buildpacks"
 means setting that config, never teaching the kelson spec a builder DSL —
-ADR-0010 forbids the DSL, and `spec.build` has exactly two fields for that
-reason.
+ADR-0010 forbids the DSL, and `spec.build` says exactly two things about *how*
+an image is built — `strategy` and `dockerfile` — for that reason. Its third
+field, `by`, says *who* builds it rather than how
+([ADR-0034](adr/0034-forge-driven-delivery.md) decision 3): `kelson`, the
+default for a project with `source:`, is everything this document describes,
+and `ci` hands image production to a pipeline that reports what it built
+through `BuildService.ReportBuild` — see
+[Publishing the artifacts](model.md#publishing-the-artifacts).
 
 `rebase` — patching a built image onto a new run image without rebuilding the
 application — exists on the driver (`Driver.Rebase`, digest-pinned on both

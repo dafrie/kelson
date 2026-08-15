@@ -113,12 +113,28 @@ func (o serverOptions) credential() string {
 // deployClient builds the DeployService client for one command run, and
 // returns the address it dials so callers can put it in an error message.
 func (o serverOptions) deployClient() (kelsonv1alpha1connect.DeployServiceClient, string) {
-	addr := o.resolvedAddress()
+	addr, opts := o.dial()
+	return kelsonv1alpha1connect.NewDeployServiceClient(newServerHTTPClient(), addr, opts...), addr
+}
+
+// buildClient builds the BuildService client, which `kelson ci report-build`
+// is the one caller of: `kelson build` still runs the build plane itself
+// (build.go's buildConnector), and the CI hand-off is a wire call by
+// construction — the whole point of ADR-0034 decision 3 is that CI reports and
+// the *server* renders.
+func (o serverOptions) buildClient() (kelsonv1alpha1connect.BuildServiceClient, string) {
+	addr, opts := o.dial()
+	return kelsonv1alpha1connect.NewBuildServiceClient(newServerHTTPClient(), addr, opts...), addr
+}
+
+// dial resolves where to call and how to authenticate, so a second service's
+// client cannot drift from the first's on either.
+func (o serverOptions) dial() (string, []connect.ClientOption) {
 	var opts []connect.ClientOption
 	if cred := o.credential(); cred != "" {
 		opts = append(opts, connect.WithInterceptors(bearerAuth(cred)))
 	}
-	return kelsonv1alpha1connect.NewDeployServiceClient(newServerHTTPClient(), addr, opts...), addr
+	return o.resolvedAddress(), opts
 }
 
 // newServerHTTPClient bounds only the dial, never the request: a streaming

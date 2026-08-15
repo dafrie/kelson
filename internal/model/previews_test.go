@@ -77,14 +77,18 @@ func TestPreviewsValid(t *testing.T) {
 	}
 }
 
-// TestPreviewsRequiredFields: every one of the four required fields is reported
-// on its own path, in one pass — validation never fails fast (issue #28).
+// TestPreviewsRequiredFields: every one of the three required fields is
+// reported on its own path, in one pass — validation never fails fast
+// (issue #28).
+//
+// `secretRef` is deliberately absent from the list. It was the fourth until
+// ADR-0033 decision 4 made it optional, and TestPreviewsWithoutASecretRef below
+// is the other half of that change.
 func TestPreviewsRequiredFields(t *testing.T) {
 	errs := decodePreviews(t, "    interval: 10m\n")
 	for _, field := range []string{
 		"$.spec.previews.provider",
 		"$.spec.previews.repo",
-		"$.spec.previews.secretRef",
 		"$.spec.previews.artifacts.repository",
 	} {
 		e := findErr(errs, field)
@@ -97,6 +101,57 @@ func TestPreviewsRequiredFields(t *testing.T) {
 		}
 		if e.Remediation == "" || e.Line == 0 {
 			t.Errorf("%s must carry a remediation and a source line: %+v", field, e)
+		}
+	}
+}
+
+// TestPreviewsWithoutASecretRef: omitting the field is a valid spec, and it
+// resolves to an empty SecretRef rather than to a name validation invented.
+//
+// ADR-0033 decision 4 made it optional — "kelson materializes the
+// flux-operator-shaped Secret from it, and previews.secretRef becomes optional"
+// — and the derived name is spelled by the renderer and the controller, not
+// here: resolution must not fill in a Secret name, because the *authored* spec
+// is what says whether the author brought their own.
+func TestPreviewsWithoutASecretRef(t *testing.T) {
+	block := `    provider: github
+    repo: https://github.com/acme/checkout
+    artifacts:
+      repository: oci://ghcr.io/acme/checkout-previews
+`
+	if errs := decodePreviews(t, block); len(errs) > 0 {
+		t.Fatalf("an omitted secretRef must validate (ADR-0033 decision 4):\n%v", errs)
+	}
+
+	docs, errs := DecodeDocuments([]byte(previewsProject + "---\n" + previewsEnv(block)))
+	if len(errs) > 0 {
+		t.Fatalf("decoding: %v", errs)
+	}
+	r, errs := Resolve(docs[0].(*Project), docs[1].(*Environment))
+	if len(errs) > 0 {
+		t.Fatalf("resolving: %v", errs)
+	}
+	if got := r.Environment.Previews.SecretRef; got != "" {
+		t.Errorf("SecretRef = %q, want it carried through empty", got)
+	}
+}
+
+// TestPreviewsSecretRefStillHasToBeAName: optional is not unchecked. A named
+// Secret is still held to being a name, and the remediation says the other
+// option out loud rather than only repeating the alphabet.
+func TestPreviewsSecretRefStillHasToBeAName(t *testing.T) {
+	errs := decodePreviews(t, `    provider: github
+    repo: https://github.com/acme/checkout
+    secretRef: "Not A Secret Name"
+    artifacts: {repository: "oci://ghcr.io/acme/p"}
+`)
+	e := findErr(errs, "$.spec.previews.secretRef")
+	if e == nil || e.Code != ErrInvalidFormat {
+		t.Fatalf("a name that is not a DNS-1123 label must be %s, got:\n%v", ErrInvalidFormat, errs)
+	}
+	for _, want := range []string{"leave it unset", "ADR-0033"} {
+		if !strings.Contains(e.Remediation, want) {
+			t.Errorf("remediation must mention %q: %s", want, e.Remediation)
 		}
 	}
 }

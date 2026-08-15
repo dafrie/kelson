@@ -60,6 +60,7 @@ In a cluster it is a Helm install, and every flag below is a values knob — see
 | `--listen` | — | `127.0.0.1:8420` | Address to serve on. See [Who may reach it](#who-may-reach-it). |
 | `--insecure-bind` | — | off | Allow a non-loopback bind with no password. |
 | `--password` | `KELSON_PASSWORD` | unset | The shared password clients authenticate with. Unset means no authentication. |
+| `--external-url` | `KELSON_EXTERNAL_URL` | unset | Base URL this server is reachable at from the internet, e.g. `https://kelson.acme.com`. Baked into the GitHub App webhook and callback URLs the manifest flow creates. Empty derives it per request from `Host` and the forwarded scheme. See [Forge connections](#forge-connections-the-github-app-webhooks-and-the-connect-flow). |
 | `--kubeconfig` | `KUBECONFIG` | in-cluster, then `~/.kube/config` | Which cluster it works against. |
 | `--namespace` | — | `kelson-system` | Where kelson's custom resources and control-plane records live. |
 | `--keep` | — | 20 | Deployment revisions retained per environment — the bound on the history mirror in `Environment.status`. |
@@ -67,6 +68,7 @@ In a cluster it is a Helm install, and every flag below is a values knob — see
 | `--registry` | `KELSON_REGISTRY` | unset | Destination registry for builds, e.g. `ghcr.io/acme`. See [build](build.md). |
 | `--push-secret` | — | unset | Name of an existing `kubernetes.io/dockerconfigjson` Secret authenticating the push. |
 | `--build-namespace` | — | the environment's namespace | Where build Jobs run. |
+| `--registry-config` | `KELSON_REGISTRY_CONFIG` | `/etc/kelson/registry/config.json` | Path to a docker `config.json` holding the credential preview artifacts are published with. It is a mounted file rather than a Secret name because this process pushes the artifact itself; `--push-secret` above is for the build Job, which pushes from a pod. Same flag, variable and default as [kelson-controller](install.md#configuring-the-controller). A file that is not there is an anonymous push, which is what the Helm chart does until `server.artifactPushSecret` names a `dockerconfigjson` Secret to mount here — the chart provides it exactly as it provides the controller's. |
 | `--insecure-registries` | `KELSON_INSECURE_REGISTRIES` | unset | Comma-separated registry hosts served over plain HTTP, e.g. `localhost:5000`. Exactly these; never a request's. See [build](build.md#plain-http-registries). |
 
 `/healthz` reports liveness plus the build (`version`, `commit`) and never requires authentication —
@@ -735,9 +737,115 @@ It is a cluster-wide read of routing objects and nothing else; kelson narrows th
 `app.kubernetes.io/managed-by: kelson` provenance labels and to namespaces named for this
 environment's previews.
 
+## Forge connections: the GitHub App, webhooks and the connect flow
+
+Three endpoints under `/forge/*` (`internal/forgehttp`) are kelson-server's forge-facing surface:
+`POST /forge/github/webhook` receives GitHub's deliveries, and `GET /forge/github/manifest/start` /
+`GET /forge/github/manifest/callback` are the two ends of the "Connect GitHub" flow the UI's
+Connections page starts. Neither is an RPC — a webhook body is signed by somebody else's HMAC and
+shaped by GitHub's schema, and the manifest flow is three browser redirects and a form — so both are
+plain handlers registered directly on the mux, the same way `/healthz` and `/auth/*` are
+([ADR-0033](adr/0033-git-connections.md), [ADR-0034](adr/0034-forge-driven-delivery.md) decisions 1
+and 2, tracked on [#248](https://github.com/dafrie/kelson/issues/248)).
+
+### `--external-url`: the address GitHub is told to use
+
+Every URL the manifest flow hands to GitHub comes from `--external-url` / `KELSON_EXTERNAL_URL` when
+it is set, e.g. `https://kelson.acme.com`. Unset, kelson derives one per request instead: the forwarded
+scheme (`X-Forwarded-Proto`, or a TLS connection) and the forwarded host (`X-Forwarded-Host`, else
+`Host`) — right behind a proxy that sets those headers, wrong behind one that does not, the same
+single-origin assumption the rest of this document already makes (ADR-0013 §3).
+
+The configured value wins over the derived one because it is the only one that is a *fact* rather than
+an inference: the webhook URL a GitHub App is created with is baked into the app, and getting it wrong
+means deleting the app and remaking it, not editing a setting.
+
+**The manifest flow refuses to start against a loopback base URL,** because that failure cannot be
+fixed after the fact — an app's webhook URL cannot be edited once GitHub creates it, only recreated:
+
+```
+this server thinks it is reachable at http://127.0.0.1:8420, and GitHub cannot deliver webhooks to a
+loopback address. The webhook URL is baked into the app GitHub creates, so an app made now would have
+to be deleted and remade: set --external-url (or KELSON_EXTERNAL_URL) to the address GitHub can reach
+— a tunnel's URL is fine — and connect again
+```
+
+This is not a startup refusal like the bind check above — the server still starts and serves
+everything else. It arrives as a redirect to `/connections?error=unreachable&message=…` the moment
+someone clicks "Connect GitHub": the flow degrades to a stated error on the page it started from.
+
+### `POST /forge/github/webhook`: HMAC-verified, best-effort
+
+Every GitHub connection this instance holds has its own webhook secret (GitHub mints one per app at
+creation, ADR-0033 decision 2), and a delivery is checked against all of them in constant time; the
+first that verifies is the connection the delivery belongs to. There is no other gate — no cookie, no
+shared password — because the HMAC *is* the identity claim, and it is checked before the body is
+parsed: branching on GitHub's JSON before establishing the sender would mean trusting attacker-supplied
+structure. A delivery that verifies against nothing is refused with `401` and nothing about which
+secret it tried. Bodies are capped at 5 MiB, well under GitHub's own 25 MB limit — a backstop against
+an endpoint that is not what it claims to be, not a bound anyone should meet.
+
+| Event | What kelson does |
+|---|---|
+| `ping` | Answers `200`. GitHub's handshake — confirms the webhook URL is reachable and correctly signed. |
+| `pull_request` | Stamps `reconcile.fluxcd.io/requestedAt` on every environment's `ResourceSetInputProvider` whose `previews.repo` matches this repository, so flux-operator re-polls now instead of at `previews.interval` (ADR-0034 decision 2). |
+| `push` | No-op today: `autoDeploy` (ADR-0034 decision 4) is the feature that would act on it, and it is not built yet. |
+| `installation` | Records the installation ID on the connection whose secret verified it — the one fact only this event can supply, because the manifest flow creates the connection before anyone installs the app (ADR-0033 decision 2 step 3). A `deleted` or `suspend` action zeroes it back. |
+| anything else | `202`, `{"ignored": true}`. |
+
+**A webhook is never load-bearing** (ADR-0034 decision 1). Nothing in a delivery becomes state beyond
+the one `installation` case above — a `pull_request` event only asks flux-operator to poll *now*
+rather than carrying anything itself — so a forged or replayed delivery can at worst cause a redundant
+reconcile, and losing every delivery costs latency, never correctness. Polling on `previews.interval`
+is the reconciliation backstop, and it is the only path on an instance a firewall or NAT keeps GitHub
+from reaching: previews still work, just as fast as the poll interval rather than as fast as a push.
+
+A poke that fails is logged and named in the response body's `failed` list, never a `5xx` — GitHub's
+redelivery exists for its own transient failures, not kelson's. The one exception is the `installation`
+write, which does answer `500` on failure so GitHub redelivers the one fact nothing else can recover.
+
+### Connect GitHub: `/forge/github/manifest/start` and `/callback`
+
+"Connect GitHub" in the UI is `GET /forge/github/manifest/start`, which begins GitHub's
+[app-manifest flow](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest):
+kelson builds a manifest — named after this instance's host, or `?name=` to override when that name is
+already taken — naming this instance's webhook (`<base>/forge/github/webhook`) and callback
+(`<base>/forge/github/manifest/callback`) URLs and the fixed permission set ADR-0033 decision 2 lists
+(`contents:read`, `metadata:read`, `pull_requests:write`, `statuses:write`, `checks:write`; events
+`push`, `pull_request`), then answers with an auto-submitting form that posts it to
+`https://github.com/settings/apps/new` — or an organization's equivalent (`?org=`), or a GitHub
+Enterprise Server host (`?host=`).
+
+The user approves creation on GitHub, which redirects back to
+`GET /forge/github/manifest/callback?code=…&state=…`: kelson exchanges the one-time code for the app's
+ID, private key and webhook secret, writes the key and webhook secret into a Secret in kelson's own
+namespace, and creates the `GitConnection` — with no installation ID yet, because nobody has installed
+the app on a repository at this point. The browser lands back on `/connections`, either
+`?connected=<name>&install=<url>` (the URL where the user picks repositories) or `?error=…&message=…`
+naming what went wrong.
+
+The round trip is protected by a `state` parameter: kelson generates one, keeps it in an `HttpOnly`,
+`SameSite=Lax`, `/forge/`-scoped cookie (`kelson_forge_manifest`, 15-minute TTL — comfortably longer
+than approving an app takes and far shorter than GitHub's own one-hour code expiry), and compares it
+against GitHub's echoed value in constant time on the callback. That makes the callback unforgeable by
+a third party — a code delivered to a browser that never started a flow here is refused — but it is
+CSRF protection for the round trip, **not authentication of the person taking it**.
+
+**Both endpoints sit outside the shared-password gate, honestly stated.** The auth middleware in
+[Who may reach it](#who-may-reach-it) wraps only `/kelson.v1alpha1.*`; `/forge/*` is registered on the
+mux the same way `/healthz` and `/auth/*` are, unprotected by it. That is right for the webhook (its
+gate is the HMAC above) and is a stated gap for the manifest endpoints: under today's interim trust
+model (loopback, or a password behind a TLS-terminating proxy — [ADR-0013](adr/0013-server-state-and-api-v0.md)
+§3) anyone who can reach the port can start or complete a GitHub App connect flow. Authenticating this
+pair against the shared password or an agent identity is a flagged follow-up, tracked on
+[#248](https://github.com/dafrie/kelson/issues/248) alongside the rest of the threat model
+[#84](https://github.com/dafrie/kelson/issues/84) owns.
+
 ## Where the code lives
 
-- `cmd/kelson-server` — flags, the mux, the bind check.
+- `cmd/kelson-server` — flags (including `--external-url`), the mux, the bind check.
+- `internal/forgehttp` — the `/forge/*` surface: the webhook listener (`webhook.go`), the GitHub App
+  manifest flow (`manifest.go`), and the shared routing and `baseURL` derivation (`forgehttp.go`).
 - `internal/webui` — the embedded web UI, the SPA fallback and the placeholder.
 - `cmd/kelson` — `kelson agent create|list|revoke` (`agent.go`), which writes to the cluster.
 - `internal/api` — the ConnectRPC handlers (`api.go`), the credential gate (`auth.go`), the principal

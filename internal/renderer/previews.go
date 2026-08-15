@@ -172,7 +172,7 @@ func previewInputProvider(previews *model.ResolvedPreviews, prov provenance) Man
 	specKV := []any{
 		"type", previewProviderType(previews.Provider),
 		"url", previews.Repo,
-		"secretRef", mapNode("name", previews.SecretRef),
+		"secretRef", mapNode("name", previewSecretName(previews, prov)),
 	}
 
 	filterKV := []any{}
@@ -197,6 +197,30 @@ func previewInputProvider(previews *model.ResolvedPreviews, prov provenance) Man
 	m := baseManifest(resourceSetAPIVersion, "ResourceSetInputProvider", prov, mapNode(specKV...))
 	annotate(m, annReconcileEvery, previews.Interval)
 	return m
+}
+
+// previewSecretName is the Secret the ResourceSetInputProvider authenticates
+// with: the one the author named, or the one kelson materializes when they
+// named none (ADR-0033 decision 4).
+//
+// The derived spelling is [naming.Lifecycle] — the same
+// `<project>-<environment>-previews` this pair already carries — and it is
+// *derived* on both sides rather than stored anywhere: the controller's
+// materializer spells it with the same function
+// (internal/forgeconn.PreviewSecretName), which is the "agree by shared code"
+// rule the rest of this file follows for the preview namespace and tag.
+//
+// Rendering the name is what makes the empty field mean something. A provider
+// whose secretRef were left blank would be a reference to a Secret with no
+// name, and flux-operator would poll anonymously while a perfectly good
+// credential sat in the namespace beside it. The renderer stays pure doing it:
+// this is a string derived from two names already in the spec, not a lookup of
+// anything.
+func previewSecretName(previews *model.ResolvedPreviews, prov provenance) string {
+	if previews.SecretRef != "" {
+		return previews.SecretRef
+	}
+	return naming.Lifecycle(prov.project, prov.environment)
 }
 
 // previewResourceSet renders the fan-out: one OCIRepository and one

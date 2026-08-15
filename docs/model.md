@@ -115,6 +115,12 @@ not a second spec format: it is a small set of fields on the Project (`source`, 
 that act as defaults merged into each workload Component by rule P1 below. A Component written inline in a
 Project and one authored field-by-field against the JSON Schema are the same document.
 
+[ADR-0033](adr/0033-git-connections.md) adds a third kind, `GitConnection`. It does not join the two
+above: it carries forge identifiers and a Secret reference rather than a workload, is never named by a
+Project or Environment, and the renderer never reads one — it is read only by the planes that already
+have cluster access (the server, the controller, the build plane). See
+[its reference](reference/gitconnection.md).
+
 ## Resolutions of ADR-0006's open questions
 
 **1. Precedence when Project and Environment both set a value.**
@@ -694,10 +700,11 @@ naming just those two components remains a supported and common shape
 > [ADR-0016](adr/0016-delivery-flows-v0.md) decision 5 decided the shape. It is the **one feature that
 > needs flux-operator** ([ADR-0030](adr/0030-flux-aio-install.md) decision 4): `ResourceSet` and
 > `ResourceSetInputProvider` are its CRDs. **Two halves have to be in place**: the `previews:` block
-> below, and a CI step that runs
-> `kelson preview publish` — read [Publishing the artifacts](#publishing-the-artifacts) before turning
-> this on. Once they are, `PreviewService.ListPreviews` and the web UI's previews section say which
-> change requests are running ([Seeing your previews](#seeing-your-previews)).
+> below, and something that publishes the artifacts it points at — either a CI step reporting its
+> build to kelson-server, or `kelson preview publish` in CI. Read
+> [Publishing the artifacts](#publishing-the-artifacts) before turning this on. Once they are,
+> `PreviewService.ListPreviews` and the web UI's previews section say which change requests are
+> running ([Seeing your previews](#seeing-your-previews)).
 
 An environment may spawn a child environment per open pull request. kelson does not poll the forge and
 does not garbage-collect: a flux-operator `ResourceSetInputProvider` finds the change requests and a
@@ -710,7 +717,7 @@ spec:
   previews:
     provider: github                                   # github | gitlab
     repo: https://github.com/acme/checkout             # whose pull requests become previews
-    secretRef: github-auth                             # a Secret NAME, never a token
+    secretRef: github-auth                             # optional: bring your own Secret NAME, never a token
     interval: 10m                                      # how often the forge is polled
     filter:
       labels: [deploy/preview]                         # only labelled change requests
@@ -728,7 +735,7 @@ spec:
 |---|---|
 | `provider` | the forge. `github` → `GitHubPullRequest`, `gitlab` → `GitLabMergeRequest` |
 | `repo` | HTTP(S) URL of the repository whose change requests become previews |
-| `secretRef` | name of a Secret holding forge credentials, in the environment's namespace |
+| `secretRef` | name of a Secret holding forge credentials, in the environment's namespace. Optional — see below |
 | `interval` | forge polling interval; default `10m` |
 | `filter.labels` | only change requests carrying one of these labels get a preview |
 | `filter.includeBranch` / `filter.excludeBranch` | Go regular expressions against the branch name |
@@ -741,6 +748,15 @@ spec:
 is where the per-pull-request manifests are pushed. kelson defaults neither from the other, and an SSH
 remote in `repo` is `schema/invalid-format`: the forge is reached over its HTTP API.
 
+`secretRef` is optional ([ADR-0033](adr/0033-git-connections.md) decision 4). Leave it unset and kelson
+materializes the flux-operator Secret itself — `username`/`password` from a token connection, the
+`githubApp*` keys from an app connection — from whichever [git connection](adr/0033-git-connections.md)
+covers `repo`, writing it to `<project>-<environment>-previews` in the environment's namespace. The
+renderer points the `ResourceSetInputProvider` at that same derived name, so nothing has to store it.
+Set `secretRef` to bring your own Secret instead; a named Secret wins untouched, and kelson never reads
+or writes it. A `secretRef` is still held to being a Secret *name* — a DNS-1123 label — never a token,
+whichever way it got there.
+
 `filter.limit` defaults to 10 rather than flux-operator's own 100. The ceiling is a cost control, and
 an environment that quietly stands up a hundred preview namespaces the first time somebody bulk-labels
 a backlog is a surprise that arrives as a cluster bill. The value is always written into the rendered
@@ -750,9 +766,9 @@ manifest, so what the cluster will enforce is readable without knowing anyone's 
 
 Two objects, in the environment's own namespace:
 
-- a **`ResourceSetInputProvider`**, carrying the provider type, the repository URL, the `secretRef`,
-  the filter, the skip labels, and the polling interval as the
-  `fluxcd.controlplane.io/reconcileEvery` annotation;
+- a **`ResourceSetInputProvider`**, carrying the provider type, the repository URL, the `secretRef` —
+  the named one, or `<project>-<environment>-previews` when none was named — the filter, the skip
+  labels, and the polling interval as the `fluxcd.controlplane.io/reconcileEvery` annotation;
 - a **`ResourceSet`**, whose `resourcesTemplate` instantiates an `OCIRepository` and a `Kustomization`
   per change request — and **nothing else**.
 
@@ -781,11 +797,32 @@ same way it fails the parent environment's (see [data services](data-services.md
 
 ### Publishing the artifacts
 
-The `previews:` block renders the cluster-side machinery and nothing else. The manifests each preview
-applies are pushed by **`kelson preview publish`, run in the application repository's CI on pull
+The `previews:` block renders the cluster-side machinery and nothing else. Something has to push the
+manifests each preview applies, and there are now two things that can. Without either, flux-operator
+finds the labelled pull requests, creates an `OCIRepository` for each, and reports that the artifact
+does not exist.
+
+**The server publishes, and CI only reports** ([ADR-0034](adr/0034-forge-driven-delivery.md)
+decision 3). A project that sets `build.by: ci` hands kelson one sentence per build — this commit,
+this change request, these digest-pinned images — and kelson renders the preview from the spec it
+already holds, publishes the artifact under the head commit and asks flux-operator to look now. CI
+never runs kelson's renderer, never needs a checkout of the spec and never holds the
+artifact-registry credential.
+
+> **What exists today.** The server side is complete: `BuildService.ReportBuild` publishes, and
+> kelson-server publishes with the credential in `--registry-config`. The client side is
+> `kelson ci report-build`, the verb ADR-0034 names — a pipeline runs that rather than calling the
+> method itself ([#248](https://github.com/dafrie/kelson/issues/248)). A report for a project whose
+> `build.by` is `kelson` (the default for a project with `source:`) is answered `accepted: false`
+> naming the field, because those images come from kelson's own build plane; a report with no
+> `--pr` is refused, because the tracking environments it would feed (`autoDeploy`, decision 4) are
+> not in the model yet.
+
+**Or CI publishes, with `kelson preview publish`, run in the application repository's CI on pull
 request events** — that is where the pull request's checkout and the image built from it already are
-([ADR-0017](adr/0017-pr-previews.md) decision 8). Without that step, flux-operator finds the labelled
-pull requests, creates an `OCIRepository` for each, and reports that the artifact does not exist.
+([ADR-0017](adr/0017-pr-previews.md) decision 8). ADR-0034 demotes this from the recommended path to
+the escape hatch for pipelines that cannot reach a kelson server at all — an air-gapped runner, a
+control plane behind a network the runner has no route to — and it is unchanged for those.
 
 ```yaml
 # .github/workflows/preview.yml
@@ -1149,7 +1186,7 @@ spec:
   previews:                          # needs flux-operator — see "Previews" below
     provider: github                 # github | gitlab
     repo: https://github.com/acme/checkout           # the SOURCE repo, not the artifact repository
-    secretRef: github-auth           # a Secret name, never a token
+    secretRef: github-auth           # optional; a Secret name, never a token — omit to materialize one (ADR-0033)
     artifacts:
       repository: oci://ghcr.io/acme/checkout-previews
   components:                        # one override list, matched by name
@@ -1225,6 +1262,7 @@ Stable code taxonomy:
 | `ref/unknown-service-key` | semantic | `from: {service: db, key: tls}` |
 | `secret/literal` | semantic | secret value where a reference belongs |
 | `semantic/no-image-source` | semantic | no image and `build.strategy: none` |
+| `semantic/auth-provider-mismatch` | semantic | GitConnection `auth.githubApp` with `provider: generic` — the app-manifest flow and installation tokens are GitHub's ([ADR-0033](adr/0033-git-connections.md)) |
 
 `semantic/git-target-missing` existed to require a git target for a mode that no longer exists, and goes
 with the `delivery:` block ([ADR-0028](adr/0028-delivery-spine.md) decision 9). The codes are a

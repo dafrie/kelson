@@ -36,18 +36,19 @@ import (
 // cmd/kelson-server run a plain net/http server with no h2c. If that ever
 // stopped being true, the streaming tests below would fail here first.
 type clients struct {
-	spec     kelsonv1alpha1connect.SpecServiceClient
-	render   kelsonv1alpha1connect.RenderServiceClient
-	profile  kelsonv1alpha1connect.ProfileServiceClient
-	deploy   kelsonv1alpha1connect.DeployServiceClient
-	logs     kelsonv1alpha1connect.LogServiceClient
-	events   kelsonv1alpha1connect.EventServiceClient
-	builds   kelsonv1alpha1connect.BuildServiceClient
-	secrets  kelsonv1alpha1connect.SecretServiceClient
-	previews kelsonv1alpha1connect.PreviewServiceClient
-	explain  kelsonv1alpha1connect.ExplainServiceClient
-	installs kelsonv1alpha1connect.InstallServiceClient
-	nodes    kelsonv1alpha1connect.NodeServiceClient
+	spec        kelsonv1alpha1connect.SpecServiceClient
+	render      kelsonv1alpha1connect.RenderServiceClient
+	profile     kelsonv1alpha1connect.ProfileServiceClient
+	deploy      kelsonv1alpha1connect.DeployServiceClient
+	logs        kelsonv1alpha1connect.LogServiceClient
+	events      kelsonv1alpha1connect.EventServiceClient
+	builds      kelsonv1alpha1connect.BuildServiceClient
+	secrets     kelsonv1alpha1connect.SecretServiceClient
+	previews    kelsonv1alpha1connect.PreviewServiceClient
+	explain     kelsonv1alpha1connect.ExplainServiceClient
+	installs    kelsonv1alpha1connect.InstallServiceClient
+	nodes       kelsonv1alpha1connect.NodeServiceClient
+	connections kelsonv1alpha1connect.GitConnectionServiceClient
 }
 
 func serve(t *testing.T, opts Options) clients {
@@ -67,18 +68,19 @@ func serveServer(t *testing.T, server *Server) clients {
 
 	hc := srv.Client()
 	return clients{
-		spec:     kelsonv1alpha1connect.NewSpecServiceClient(hc, srv.URL),
-		render:   kelsonv1alpha1connect.NewRenderServiceClient(hc, srv.URL),
-		profile:  kelsonv1alpha1connect.NewProfileServiceClient(hc, srv.URL),
-		deploy:   kelsonv1alpha1connect.NewDeployServiceClient(hc, srv.URL),
-		logs:     kelsonv1alpha1connect.NewLogServiceClient(hc, srv.URL),
-		events:   kelsonv1alpha1connect.NewEventServiceClient(hc, srv.URL),
-		builds:   kelsonv1alpha1connect.NewBuildServiceClient(hc, srv.URL),
-		secrets:  kelsonv1alpha1connect.NewSecretServiceClient(hc, srv.URL),
-		previews: kelsonv1alpha1connect.NewPreviewServiceClient(hc, srv.URL),
-		explain:  kelsonv1alpha1connect.NewExplainServiceClient(hc, srv.URL),
-		installs: kelsonv1alpha1connect.NewInstallServiceClient(hc, srv.URL),
-		nodes:    kelsonv1alpha1connect.NewNodeServiceClient(hc, srv.URL),
+		spec:        kelsonv1alpha1connect.NewSpecServiceClient(hc, srv.URL),
+		render:      kelsonv1alpha1connect.NewRenderServiceClient(hc, srv.URL),
+		profile:     kelsonv1alpha1connect.NewProfileServiceClient(hc, srv.URL),
+		deploy:      kelsonv1alpha1connect.NewDeployServiceClient(hc, srv.URL),
+		logs:        kelsonv1alpha1connect.NewLogServiceClient(hc, srv.URL),
+		events:      kelsonv1alpha1connect.NewEventServiceClient(hc, srv.URL),
+		builds:      kelsonv1alpha1connect.NewBuildServiceClient(hc, srv.URL),
+		secrets:     kelsonv1alpha1connect.NewSecretServiceClient(hc, srv.URL),
+		previews:    kelsonv1alpha1connect.NewPreviewServiceClient(hc, srv.URL),
+		explain:     kelsonv1alpha1connect.NewExplainServiceClient(hc, srv.URL),
+		installs:    kelsonv1alpha1connect.NewInstallServiceClient(hc, srv.URL),
+		nodes:       kelsonv1alpha1connect.NewNodeServiceClient(hc, srv.URL),
+		connections: kelsonv1alpha1connect.NewGitConnectionServiceClient(hc, srv.URL),
 	}
 }
 

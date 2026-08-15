@@ -7,6 +7,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/dafrie/kelson/internal/model"
+	"github.com/dafrie/kelson/internal/preview/naming"
 )
 
 // PR previews (ADR-0017). The rendered shapes are pinned by the golden fixtures
@@ -212,6 +213,63 @@ func TestPreviewArtifactSecretIsOmittedWhenUnset(t *testing.T) {
 	if !strings.Contains(tmpl, "  secretRef:\n    name: ghcr-auth\n") {
 		t.Errorf("a private artifact repository must carry its pull secret:\n%s", tmpl)
 	}
+}
+
+// TestPreviewsSecretRefIsDerivedWhenUnset is the rendered half of ADR-0033
+// decision 4. `previews.secretRef` is optional now: an author who names nothing
+// gets a Secret kelson materializes at <project>-<environment>-previews, and
+// the provider has to point at that name. A blank secretRef would be a
+// reference to a Secret with no name and a forge polled anonymously beside a
+// perfectly good credential.
+//
+// The golden fixture testdata/render/previews-materialized-secret pins the same
+// thing in bytes; this pins the pairing itself — the renderer's name and
+// internal/preview/naming's are the same string, which is what the controller's
+// materializer spells its Secret with.
+func TestPreviewsSecretRefIsDerivedWhenUnset(t *testing.T) {
+	previews := githubPreviews()
+	previews.SecretRef = ""
+	r := previewsFixture(previews)
+
+	got := renderedInputProviderSecret(t, r)
+	want := naming.Lifecycle(r.Project, r.Environment.Name)
+	if got != want {
+		t.Errorf("secretRef.name = %q, want the derived %q", got, want)
+	}
+	if want != "checkout-production-previews" {
+		t.Errorf("the derived name is %q; the materializer writes <project>-<environment>-previews", want)
+	}
+}
+
+// The other direction: a named Secret is written verbatim and nothing is
+// derived over it. "The field stays for anyone bringing their own Secret;
+// nothing breaks" (ADR-0033 decision 4).
+func TestPreviewsSecretRefIsVerbatimWhenSet(t *testing.T) {
+	if got := renderedInputProviderSecret(t, previewsFixture(githubPreviews())); got != "github-auth" {
+		t.Errorf("secretRef.name = %q, want the author's own %q", got, "github-auth")
+	}
+}
+
+// renderedInputProviderSecret returns the ResourceSetInputProvider's
+// spec.secretRef.name.
+func renderedInputProviderSecret(t *testing.T, r *model.Resolved) string {
+	t.Helper()
+	ms, err := Render(r, gatewayProfile(), nil)
+	if err != nil {
+		t.Fatalf("Render failed: %v", err)
+	}
+	for _, m := range ms {
+		if m.Kind != "ResourceSetInputProvider" {
+			continue
+		}
+		ref := mapGet(mapGet(docRoot(m.doc), "spec"), "secretRef")
+		if ref == nil {
+			t.Fatalf("the provider carries no secretRef")
+		}
+		return mapGet(ref, "name").Value
+	}
+	t.Fatalf("no ResourceSetInputProvider in %v", kinds(ms))
+	return ""
 }
 
 // TestPreviewTemplateIsDeterministic. The template is assembled as text, so it

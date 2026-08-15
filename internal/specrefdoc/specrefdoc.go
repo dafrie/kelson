@@ -1,6 +1,6 @@
 // Package main contains the specrefdoc generator: it renders the committed
 // JSON Schemas (schema/*.json) into the user-facing Markdown spec reference
-// (docs/reference/*.md) for the Project and Environment documents.
+// (docs/reference/*.md) for the Project, Environment and GitConnection documents.
 //
 // The reference is generated, not hand-maintained (issue #22): it is sourced
 // from the same schema/ files the rest of the tooling validates against, so
@@ -33,6 +33,7 @@ var refs = []struct {
 }{
 	{"project.schema.json", "reference/project.md", "Project spec"},
 	{"environment.schema.json", "reference/environment.md", "Environment spec"},
+	{"gitconnection.schema.json", "reference/gitconnection.md", "GitConnection spec"},
 }
 
 // Generate reads every committed schema in schemaDir and returns the rendered

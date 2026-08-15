@@ -1,0 +1,156 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: billing-review
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/environment: review
+    kelson.dev/project: billing
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:c658adc6cd87f9259cb7680fcace0fc0438c4c1b10d1a3160fe9d3e1f8a9e0a2
+    kelson.dev/namespace-ownership: declared
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: api
+  namespace: billing-review
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/component: api
+    kelson.dev/environment: review
+    kelson.dev/project: billing
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:167e3cede46727e2ff33084939c10d4e5bbb14437e95f257c1c84db9b5331f75
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: billing-review
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/component: api
+    kelson.dev/environment: review
+    kelson.dev/project: billing
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:167e3cede46727e2ff33084939c10d4e5bbb14437e95f257c1c84db9b5331f75
+spec:
+  selector:
+    kelson.dev/project: billing
+    kelson.dev/component: api
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: billing-review
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/component: api
+    kelson.dev/environment: review
+    kelson.dev/project: billing
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:167e3cede46727e2ff33084939c10d4e5bbb14437e95f257c1c84db9b5331f75
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      kelson.dev/project: billing
+      kelson.dev/component: api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/managed-by: kelson
+        kelson.dev/component: api
+        kelson.dev/environment: review
+        kelson.dev/project: billing
+    spec:
+      serviceAccountName: api
+      containers:
+        - name: api
+          image: ghcr.io/acme/billing:3.1.0
+          ports:
+            - name: http
+              containerPort: 8080
+---
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSetInputProvider
+metadata:
+  name: billing-review-previews
+  namespace: billing-review
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/environment: review
+    kelson.dev/project: billing
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:baf619e4091985dfe6e3a895b35d786fbcc0593e22d3209450fe39beedcc5982
+    fluxcd.controlplane.io/reconcileEvery: 10m
+spec:
+  type: GitHubPullRequest
+  url: https://github.com/acme/billing
+  secretRef:
+    name: billing-review-previews
+  filter:
+    limit: 10
+---
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata:
+  name: billing-review-previews
+  namespace: billing-review
+  labels:
+    app.kubernetes.io/managed-by: kelson
+    kelson.dev/environment: review
+    kelson.dev/project: billing
+  annotations:
+    kelson.dev/renderer-version: 0.2.0
+    kelson.dev/spec-hash: sha256:baf619e4091985dfe6e3a895b35d786fbcc0593e22d3209450fe39beedcc5982
+spec:
+  inputsFrom:
+    - apiVersion: fluxcd.controlplane.io/v1
+      kind: ResourceSetInputProvider
+      name: billing-review-previews
+  commonMetadata:
+    labels:
+      app.kubernetes.io/managed-by: kelson
+      kelson.dev/environment: review
+      kelson.dev/project: billing
+  wait: true
+  resourcesTemplate: |
+    ---
+    apiVersion: source.toolkit.fluxcd.io/v1beta2
+    kind: OCIRepository
+    metadata:
+      name: billing-review-pr<< inputs.id >>
+      namespace: billing-review
+    spec:
+      interval: 10m
+      url: oci://ghcr.io/acme/billing-previews
+      ref:
+        tag: << inputs.sha >>
+    ---
+    apiVersion: kustomize.toolkit.fluxcd.io/v1
+    kind: Kustomization
+    metadata:
+      name: billing-review-pr<< inputs.id >>
+      namespace: billing-review
+    spec:
+      interval: 10m
+      prune: true
+      wait: true
+      targetNamespace: billing-review-pr<< inputs.id >>
+      sourceRef:
+        kind: OCIRepository
+        name: billing-review-pr<< inputs.id >>
+      path: ./

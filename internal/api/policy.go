@@ -135,10 +135,28 @@ func refused(e policyError) error { return fail(connect.CodePermissionDenied, e)
 // (TestEveryMutatingMethodHasAPolicyOperation), which is what makes a new
 // mutating RPC a test failure rather than an unguarded route.
 var agentOperations = map[string]model.AgentOperation{
-	kelsonv1alpha1connect.DeployServiceDeployProcedure:       model.AgentOpDeploy,
-	kelsonv1alpha1connect.DeployServiceRollbackProcedure:     model.AgentOpRollback,
-	kelsonv1alpha1connect.DeployServicePromoteProcedure:      model.AgentOpPromote,
-	kelsonv1alpha1connect.BuildServiceBuildProcedure:         model.AgentOpBuild,
+	kelsonv1alpha1connect.DeployServiceDeployProcedure:   model.AgentOpDeploy,
+	kelsonv1alpha1connect.DeployServiceRollbackProcedure: model.AgentOpRollback,
+	kelsonv1alpha1connect.DeployServicePromoteProcedure:  model.AgentOpPromote,
+	kelsonv1alpha1connect.BuildServiceBuildProcedure:     model.AgentOpBuild,
+	// ReportBuild is filed under `deploy` and not under `build`, which is the
+	// one place this table maps two RPCs to one word (ADR-0034 decision 3).
+	//
+	// The name would suggest `build`, and `build` is precisely wrong: it is the
+	// operation propose-only exempts, because a build changes no environment.
+	// A report does. It records images for a commit and triggers the
+	// server-side render→publish for the previews and `autoDeploy` environments
+	// that commit feeds — a deploy that CI starts rather than a human. Filing it
+	// under `build` would let a propose-only environment be deployed into by a
+	// pipeline, which is the exact hole this gate table exists to close, so it
+	// is filed under the word that describes its effect.
+	//
+	// Whether "CI may report, but an agent may not deploy by hand" deserves a
+	// word of its own is a model-plane decision (model.AgentOperations is the
+	// vocabulary of record) and belongs to whoever builds the pipeline. Until
+	// then the coarse mapping fails closed in both directions: `forbid:
+	// [deploy]` stops the report, and so does propose-only.
+	kelsonv1alpha1connect.BuildServiceReportBuildProcedure:   model.AgentOpDeploy,
 	kelsonv1alpha1connect.SecretServiceSetSecretProcedure:    model.AgentOpSecretSet,
 	kelsonv1alpha1connect.SecretServiceDeleteSecretProcedure: model.AgentOpSecretDelete,
 	kelsonv1alpha1connect.SpecServicePutSpecProcedure:        model.AgentOpSpecWrite,

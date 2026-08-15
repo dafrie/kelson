@@ -131,6 +131,26 @@ func planeErrors(err error) []*kelsonv1alpha1.Error {
 	if errors.As(err, &policyErr) {
 		return []*kelsonv1alpha1.Error{policyErr.wire()}
 	}
+
+	// The build-report plane (ADR-0034 decision 3). Also the api plane's own
+	// vocabulary, with its own prefix: `report/image-not-pinned` is a statement
+	// about what CI sent, where `build/no-source` is one about what the Project
+	// says — and an agent that conflated them would edit the wrong file.
+	var reportErr reportError
+	if errors.As(err, &reportErr) {
+		return []*kelsonv1alpha1.Error{reportErr.wire()}
+	}
+
+	// The forge-connection plane (ADR-0033, issue #248). The api plane's
+	// vocabulary again, and its prefix answers a question the others cannot:
+	// `connection/capability-unsupported` says this *forge* has no repository
+	// browser, where `store/not-found` would say the connection is missing and
+	// `auth/out-of-scope` would say the caller may not ask. A client that
+	// conflated them would tell somebody to fix a connection that is working.
+	var connErr connectionError
+	if errors.As(err, &connErr) {
+		return []*kelsonv1alpha1.Error{connErr.wire()}
+	}
 	return nil
 }
 

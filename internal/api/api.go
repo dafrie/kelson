@@ -72,7 +72,10 @@ import (
 	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/delivery/flux"
 	"github.com/dafrie/kelson/internal/diff"
+	"github.com/dafrie/kelson/internal/forge"
+	"github.com/dafrie/kelson/internal/model"
 	"github.com/dafrie/kelson/internal/observation"
+	"github.com/dafrie/kelson/internal/preview"
 	"github.com/dafrie/kelson/internal/secret"
 )
 
@@ -98,6 +101,49 @@ type SpecStore interface {
 
 // The Environment-status seam is [EnvironmentStore] in environment.go, beside
 // the projection that turns a status into the wire's phases and transitions.
+
+// GitConnectionStore is the forge-connection seam (ADR-0033 decision 1, issue
+// #248). *controlstore.GitConnectionStore implements it.
+//
+// Note what is *not* on it: there is no method here that returns a credential.
+// Reading the Secret a connection references is [ConnectionSecretReader], a
+// separate interface held in a separate field, so the handlers that list and
+// show connections cannot reach the material even by mistake — which is
+// gitconnection.proto's "no RPC in this file can carry a credential value"
+// enforced by the type system rather than by remembering.
+type GitConnectionStore interface {
+	List(ctx context.Context) ([]controlstore.StoredConnection, error)
+	Get(ctx context.Context, name string) (controlstore.StoredConnection, error)
+	Create(ctx context.Context, name string, spec model.GitConnectionSpec, opts controlstore.CreateConnectionOptions) (controlstore.StoredConnection, error)
+	Delete(ctx context.Context, name string, opts controlstore.DeleteConnectionOptions) error
+	UpdateStatus(ctx context.Context, name string, obs controlstore.ConnectionObservation) (controlstore.StoredConnection, error)
+}
+
+// ConnectionSecretReader is the one seam that opens a connection's Secret. Only
+// TestConnection holds it, and what it does with the material is make an
+// outbound call to the forge — the values never come back to a client, because
+// no message in the schema has a field they would fit in.
+type ConnectionSecretReader interface {
+	ReadAuthSecret(ctx context.Context, conn controlstore.StoredConnection) (controlstore.AuthMaterial, error)
+}
+
+// ConnectionStore is what cmd/kelson-server supplies: one object, both halves.
+// [Server] splits it into the two narrowed fields above on the way in, so the
+// narrowing is a property of the handlers rather than of the wiring.
+type ConnectionStore interface {
+	GitConnectionStore
+	ConnectionSecretReader
+}
+
+// ForgeLookup resolves a connection's `spec.provider` to the adapter that
+// speaks it. Nil selects forge.For, internal/forge's own registry.
+//
+// It is a seam for the reason every cluster-facing capability here is one: the
+// production adapters make HTTPS calls, and a handler test that had to stand up
+// an httptest forge to reach the "this provider has no repository browser"
+// branch would be testing the adapter rather than the handler (ADR-0033
+// decision 3's degradation path is exactly what needs covering).
+type ForgeLookup func(provider string) (forge.Provider, bool)
 
 // AgentStore is the agent-identity seam (issue #74, ADR-0024).
 // *controlstore.AgentStore implements it. A nil one is a server with no agent
@@ -181,6 +227,89 @@ type PreviewEngine interface {
 // receives the resolved ClusterProfile so the engine can consult
 // HasPolicyEngine() when attributing a rejection (issue #45).
 type PreviewConnector func(ctx context.Context, profile clusterprofile.ClusterProfile) (PreviewEngine, error)
+
+// The three seams of the ReportBuild trigger ([ADR-0034](docs/adr/0034-forge-driven-delivery.md)
+// decisions 1, 2 and 5). They are separate interfaces rather than one "trigger
+// plane" because their absences mean three different things and degrade three
+// different ways: without a publisher the report is refused, without a poker
+// the preview updates at its poll interval, and without a status reporter the
+// forge is simply never told.
+
+// PreviewPublisher renders one change request's preview and pushes it as an OCI
+// artifact — the server-side half of ADR-0017 decision 10's "shared package with
+// a thin CLI wrapper", now with a second wrapper.
+//
+// It is a seam here for the reason every cluster-facing capability is one,
+// widened by one word: a handler must be testable without a *registry*, not
+// merely without a cluster. The implementation is *preview.Publisher, which
+// needs no Kubernetes client at all — it renders (pure), packages (pure) and
+// speaks the OCI distribution API over net/http with a credential read from a
+// mounted docker config. What it does need is the network and a real registry
+// to answer, and a handler test that had to stand one up would be testing the
+// pusher rather than the trigger.
+type PreviewPublisher interface {
+	Publish(ctx context.Context, opts preview.Options) (*preview.Published, error)
+}
+
+// PreviewPoker asks flux-operator to re-poll one ResourceSetInputProvider now
+// rather than at `previews.interval` (ADR-0034 decision 2).
+// [flux.InputProviderPoker] is the implementation, and internal/forgehttp holds
+// an identically shaped seam for the webhook path — one annotation stamp, two
+// triggers that want it, spelled once in internal/delivery/flux.
+//
+// A poke is never load-bearing: losing one costs `previews.interval` of latency
+// and never correctness, which is why the handler records a failure in its
+// answer and does not fail the report over it.
+type PreviewPoker interface {
+	Poke(ctx context.Context, namespace, name string) error
+}
+
+// CommitStatus is one outcome written back onto a commit (ADR-0034 decision 5).
+//
+// It carries a *path* rather than a URL because the two halves of the link
+// belong to different planes: which page describes this outcome is the api
+// plane's to say, and where this server is reachable from outside is the
+// binary's `--external-url` (cmd/kelson-server). A reporter with no external
+// URL configured sends the status without a link rather than guessing at one.
+type CommitStatus struct {
+	// Repo is the repository the commit lives in as the spec spells it —
+	// `previews.repo`, the repository whose pull requests become previews, and
+	// not the project's source or delivery repository (ADR-0017 decision 1
+	// keeps those distinct and defaults between them not at all). It is what a
+	// connection is matched against, by host.
+	Repo string
+	// FullName is `owner/repo`, split from [Repo] by the plane that read the
+	// spec. It travels beside the URL rather than being re-derived by the
+	// reporter because a forge's status API is keyed by it and reducing a
+	// repository reference to a host and a path is already spelled twice in
+	// this repository; a third copy in the wiring would be the one that drifts.
+	FullName string
+	// SHA is the commit the status is about, in full.
+	SHA string
+	// State is the forge's vocabulary: pending, success, failure, error.
+	State string
+	// Context is the check name. It must be stable across publishes of one
+	// commit, because a forge keys statuses by it and a changing one leaves a
+	// graveyard of stale checks instead of replacing the previous answer.
+	Context string
+	// Description is one line a human reads beside the check.
+	Description string
+	// Path is the UI path the check links to, e.g. "/projects/checkout".
+	Path string
+}
+
+// CommitStatusReporter writes a [CommitStatus] back to the forge through the
+// connection that covers the repository (ADR-0034 decision 5).
+//
+// A nil reporter, a connection that does not exist and a provider with no
+// StatusReporter capability are all the same outcome — nothing is written and
+// nothing fails — because ADR-0034 makes that degradation the rule rather than
+// an accident: "statuses are a courtesy of the integration, not a delivery
+// dependency". Only a reporter that was asked and *failed* is worth saying out
+// loud, and the handler says it in the report's message.
+type CommitStatusReporter interface {
+	ReportCommitStatus(ctx context.Context, s CommitStatus) error
+}
 
 // LogEngine is the log-query seam. The engine owns the bounding rules and this
 // package only translates the wire message onto them (issue #54).
@@ -324,6 +453,25 @@ type Options struct {
 	Secrets      SecretStore
 	Agents       AgentStore
 
+	// The ReportBuild trigger (ADR-0034 decision 3). Publish is the only one
+	// whose absence refuses anything: a server with no publisher answers
+	// CodeUnimplemented to a change request's report rather than accepting it
+	// and dropping it. A nil Poke costs a preview `previews.interval` of
+	// latency and a nil Statuses costs the commit its check, both of which the
+	// ADR makes degradations rather than failures.
+	Publish  PreviewPublisher
+	Poke     PreviewPoker
+	Statuses CommitStatusReporter
+
+	// Connections is the GitConnection store behind GitConnectionService
+	// (ADR-0033). A nil one is a server that holds no forge credentials: every
+	// RPC of that service answers CodeUnimplemented, which is the pre-#248
+	// posture exactly.
+	Connections ConnectionStore
+	// Forges overrides the adapter registry TestConnection probes through.
+	// Nil selects forge.For, which is what production wants.
+	Forges ForgeLookup
+
 	// Install builds the platform-component installer (issue #60, ADR-0021);
 	// the seam behind InstallService. Nil answers unimplemented.
 	Install InstallConnector
@@ -361,7 +509,7 @@ type Options struct {
 	WatchInterval time.Duration
 }
 
-// Server implements all fourteen kelson.v1alpha1 services.
+// Server implements all fifteen kelson.v1alpha1 services.
 type Server struct {
 	specs        SpecStore
 	environments EnvironmentStore
@@ -374,6 +522,18 @@ type Server struct {
 	agents       AgentStore
 	install      InstallConnector
 	nodes        NodeReader
+	publish      PreviewPublisher
+	poke         PreviewPoker
+	statuses     CommitStatusReporter
+
+	// connections and connectionSecrets are one store seen through two
+	// interfaces. The split is load-bearing: List and Get reach for
+	// `connections`, which has no method that returns credential material, so
+	// the no-secret-on-the-wire promise holds structurally rather than by
+	// review (ADR-0033 decision 1, gitconnection.proto's header).
+	connections       GitConnectionStore
+	connectionSecrets ConnectionSecretReader
+	forges            ForgeLookup
 
 	// authz is the scope, rate-limit and audit interceptor. It is built here
 	// and mounted by Register so no caller can serve these handlers without it
@@ -412,6 +572,8 @@ var (
 	_ kelsonv1alpha1connect.AuditServiceHandler   = (*Server)(nil)
 	_ kelsonv1alpha1connect.InstallServiceHandler = (*Server)(nil)
 	_ kelsonv1alpha1connect.NodeServiceHandler    = (*Server)(nil)
+
+	_ kelsonv1alpha1connect.GitConnectionServiceHandler = (*Server)(nil)
 )
 
 // New returns a Server over the given seams.
@@ -428,6 +590,10 @@ func New(opts Options) *Server {
 		agents:        opts.Agents,
 		install:       opts.Install,
 		nodes:         opts.Nodes,
+		publish:       opts.Publish,
+		poke:          opts.Poke,
+		statuses:      opts.Statuses,
+		forges:        opts.Forges,
 		authz:         newAuthorizer(opts.Now, opts.Logger, opts.Audit),
 		buildDefaults: opts.BuildDefaults,
 		deployTimeout: opts.DeployTimeout,
@@ -438,6 +604,13 @@ func New(opts Options) *Server {
 	}
 	if s.pollInterval <= 0 {
 		s.pollInterval = DefaultPollInterval
+	}
+	// One store, two narrowed views. Assigning the same value twice is the
+	// point: what a handler can do with it is decided by which field it reads,
+	// and no handler holds the wide interface.
+	if opts.Connections != nil {
+		s.connections = opts.Connections
+		s.connectionSecrets = opts.Connections
 	}
 	s.audit = s.authz.audit
 	s.events = newBroker(s.observeScope, opts.WatchInterval, watchRingSize)
@@ -469,6 +642,7 @@ func (s *Server) Register(mux *http.ServeMux, opts ...connect.HandlerOption) {
 		func() (string, http.Handler) { return kelsonv1alpha1connect.NewAuditServiceHandler(s, opts...) },
 		func() (string, http.Handler) { return kelsonv1alpha1connect.NewInstallServiceHandler(s, opts...) },
 		func() (string, http.Handler) { return kelsonv1alpha1connect.NewNodeServiceHandler(s, opts...) },
+		func() (string, http.Handler) { return kelsonv1alpha1connect.NewGitConnectionServiceHandler(s, opts...) },
 	}
 	for _, build := range handlers {
 		mux.Handle(build())

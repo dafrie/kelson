@@ -1,4 +1,5 @@
 {{- include "kelson.authGate" . -}}
+{{- $registryConfigPath := "/etc/kelson/registry/config.json" }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -57,6 +58,15 @@ spec:
             {{- with .Values.server.pushSecret }}
             - --push-secret={{ . }}
             {{- end }}
+            {{- if .Values.server.artifactPushSecret }}
+            # Points at the file the registry-config volume mount below
+            # projects the artifactPushSecret's `.dockerconfigjson` key onto.
+            # Same flag, same path and same mount as kelson-controller's
+            # (controller-deployment.yaml): the server publishes preview
+            # artifacts itself now (ADR-0034 decision 3), and without this the
+            # push is anonymous.
+            - --registry-config={{ $registryConfigPath }}
+            {{- end }}
             {{- with .Values.server.buildNamespace }}
             - --build-namespace={{ . }}
             {{- end }}
@@ -114,6 +124,29 @@ spec:
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          {{- if .Values.server.artifactPushSecret }}
+          volumeMounts:
+            - name: registry-config
+              mountPath: /etc/kelson/registry
+              readOnly: true
+          {{- end }}
+      {{- if .Values.server.artifactPushSecret }}
+      # The artifactPushSecret is a kubernetes.io/dockerconfigjson Secret, whose
+      # data key is literally `.dockerconfigjson` — `items` projects it onto the
+      # plain filename $registryConfigPath's directory holds, so the mounted
+      # file is the same docker config.json shape a CI `docker login` writes and
+      # internal/artifact already parses. Identical to the controller's mount,
+      # deliberately: the two processes push the same artifacts to the same
+      # registries, and an operator who has mounted one Secret should not
+      # discover the other half of the control plane wanted it somewhere else.
+      volumes:
+        - name: registry-config
+          secret:
+            secretName: {{ .Values.server.artifactPushSecret }}
+            items:
+              - key: .dockerconfigjson
+                path: config.json
+      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

@@ -107,6 +107,13 @@ type FluxDeliverer struct {
 
 	// Pusher is the seam tests replace. Nil is the real registry client.
 	Pusher PusherFor
+
+	// PreviewSecrets materializes the flux-operator-shaped Secret an
+	// environment's `previews:` block needs, from the git connection its
+	// repository resolves to (ADR-0033 decision 4). Nil materializes nothing,
+	// which is the behaviour before connections existed and is still correct for
+	// an instance that holds none.
+	PreviewSecrets PreviewSecrets
 }
 
 var _ Deliverer = (*FluxDeliverer)(nil)

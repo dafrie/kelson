@@ -104,6 +104,26 @@ server:
   # create it: registry credentials are yours, not the installer's.
   pushSecret: ""
 
+  # -- Name of an existing `kubernetes.io/dockerconfigjson` Secret holding the
+  # credential the server publishes *preview artifacts* with. Mounted into the
+  # pod and passed as `--registry-config`; the chart does not create it either.
+  # Empty is an anonymous push, which is what a registry with no auth (like
+  # `kelson install registry`'s) takes — and which is all a chart-installed
+  # server could do before this knob existed.
+  #
+  # This is a different credential from `pushSecret` above, read by a different
+  # process, which is why it is a second knob rather than a second use of the
+  # first: `pushSecret` is a Secret *name* handed to a build Job that pushes
+  # from a pod, and this is a *file* this process reads because it pushes the
+  # artifact itself (ADR-0034 decision 3, docs/server.md). It is also separate
+  # from `controller.pushSecret`, which mounts the same shape for the same flag
+  # into the controller — the two deployments are enabled independently, and one
+  # value feeding a Deployment that may not exist would be worse than two that
+  # each say who reads them. In practice they are usually the same Secret:
+  #
+  #   --set server.artifactPushSecret=ghcr-push --set controller.pushSecret=ghcr-push
+  artifactPushSecret: ""
+
   # -- Namespace build Jobs run in (`--build-namespace`). Empty means the
   # environment's own namespace, as in the CLI.
   buildNamespace: ""

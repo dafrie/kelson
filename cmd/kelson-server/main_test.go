@@ -13,9 +13,12 @@ import (
 	"connectrpc.com/connect"
 
 	"github.com/dafrie/kelson/internal/api"
-	"github.com/dafrie/kelson/internal/build"
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
 	"github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1/kelsonv1alpha1connect"
+	"github.com/dafrie/kelson/internal/build"
+	"github.com/dafrie/kelson/internal/controlstore"
+	"github.com/dafrie/kelson/internal/forgeconn"
+	"github.com/dafrie/kelson/internal/model"
 	"github.com/dafrie/kelson/internal/version"
 	"github.com/dafrie/kelson/internal/webui"
 )
@@ -150,7 +153,7 @@ func TestPasswordComesFromTheEnvironment(t *testing.T) {
 // TestHealthzServes: liveness plus the build it is reporting for — "the server
 // is up" and "the server is the build you deployed" are asked at once.
 func TestHealthzServes(t *testing.T) {
-	srv := httptest.NewServer(newMux(api.New(api.Options{}), openAuth(t)))
+	srv := httptest.NewServer(newMux(&serverPlane{api: api.New(api.Options{}), sources: &forgeconn.Resolver{}}, openAuth(t)))
 	defer srv.Close()
 
 	res, err := srv.Client().Get(srv.URL + "/healthz")
@@ -177,7 +180,7 @@ func TestHealthzServes(t *testing.T) {
 // binary's mux answers a v1alpha1 RPC. Render needs no cluster, so it is the
 // one that proves routing, codec and schema without any wiring.
 func TestMuxServesTheSchema(t *testing.T) {
-	srv := httptest.NewServer(newMux(api.New(api.Options{}), openAuth(t)))
+	srv := httptest.NewServer(newMux(&serverPlane{api: api.New(api.Options{}), sources: &forgeconn.Resolver{}}, openAuth(t)))
 	defer srv.Close()
 
 	client := kelsonv1alpha1connect.NewRenderServiceClient(srv.Client(), srv.URL)
@@ -220,7 +223,7 @@ spec:
 // prefix that it did not register answers as a missing endpoint rather than as
 // a page (internal/webui).
 func TestMuxServesTheWebUIWithoutDisturbingTheAPI(t *testing.T) {
-	srv := httptest.NewServer(newMux(api.New(api.Options{}), openAuth(t)))
+	srv := httptest.NewServer(newMux(&serverPlane{api: api.New(api.Options{}), sources: &forgeconn.Resolver{}}, openAuth(t)))
 	defer srv.Close()
 
 	// "/" is a page — the UI, or the placeholder saying this binary has none.
@@ -306,7 +309,7 @@ func TestMuxWithAPasswordGatesTheAPIAndOnlyTheAPI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("api.NewAuth: %v", err)
 	}
-	srv := httptest.NewServer(newMux(api.New(api.Options{}), auth))
+	srv := httptest.NewServer(newMux(&serverPlane{api: api.New(api.Options{}), sources: &forgeconn.Resolver{}}, auth))
 	defer srv.Close()
 
 	// /healthz stays open: a probe holds no credential and a server that fails
@@ -385,7 +388,7 @@ func TestAuthBannerSaysWhichPostureItStartedIn(t *testing.T) {
 func TestBuildDriverForStrategy(t *testing.T) {
 	cfg := config{insecureRegistries: []string{"localhost:5000"}}
 	for _, strategy := range []string{"dockerfile", "buildpacks"} {
-		driver, err := buildDriver(cfg, api.BuildTarget{Strategy: strategy, Namespace: "shop-production"}, nopExecutor{})
+		driver, err := buildDriver(cfg, api.BuildTarget{Strategy: strategy, Namespace: "shop-production"}, nopExecutor{}, nil)
 		if err != nil {
 			t.Fatalf("buildDriver(%q): %v", strategy, err)
 		}
@@ -394,7 +397,7 @@ func TestBuildDriverForStrategy(t *testing.T) {
 		}
 	}
 	for _, strategy := range []string{"", "none", "railpack"} {
-		if _, err := buildDriver(cfg, api.BuildTarget{Strategy: strategy}, nopExecutor{}); err == nil {
+		if _, err := buildDriver(cfg, api.BuildTarget{Strategy: strategy}, nopExecutor{}, nil); err == nil {
 			t.Errorf("strategy %q has no driver and must be refused", strategy)
 		}
 	}
@@ -434,4 +437,189 @@ type nopExecutor struct{}
 func (nopExecutor) Submit(context.Context, []byte) (string, error) { return "", nil }
 func (nopExecutor) Wait(context.Context, string, io.Writer) (build.Result, error) {
 	return build.Result{}, nil
+}
+
+// --- the ReportBuild trigger's wiring (ADR-0034) -----------------------------
+
+// The publisher and the poker are asserted by construction — they are values,
+// and a change to either seam is a build failure at the wiring. What is worth
+// testing here is the half with behaviour of its own: the docker config the
+// preview publish authenticates with, and the status write-back, whose whole
+// contract is which failures it swallows.
+
+// TestRegistryConfigDefaultsToTheMountedFile: the server publishes preview
+// artifacts itself now, so it needs the same credential file kelson-controller
+// reads — under the same flag, the same variable and the same default, because
+// an operator who mounted one Secret should not discover the two halves of the
+// control plane wanted it in different places.
+func TestRegistryConfigDefaultsToTheMountedFile(t *testing.T) {
+	cfg, err := parseFlags(nil, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("parseFlags: %v", err)
+	}
+	if cfg.registryConfig != defaultRegistryConfig {
+		t.Errorf("registryConfig = %q, want %q", cfg.registryConfig, defaultRegistryConfig)
+	}
+
+	t.Setenv(registryConfigEnv, "/run/creds/config.json")
+	if cfg, err = parseFlags(nil, &bytes.Buffer{}); err != nil {
+		t.Fatalf("parseFlags: %v", err)
+	}
+	if cfg.registryConfig != "/run/creds/config.json" {
+		t.Errorf("registryConfig = %q, want the environment's value", cfg.registryConfig)
+	}
+	if cfg, err = parseFlags([]string{"--registry-config", "/flag.json"}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("parseFlags: %v", err)
+	}
+	if cfg.registryConfig != "/flag.json" {
+		t.Errorf("registryConfig = %q, want the flag to win", cfg.registryConfig)
+	}
+}
+
+// fakeConnections is the forgeconn.Store seam: the connections this instance
+// holds and the material behind them, with no cluster.
+type fakeConnections struct {
+	conns []controlstore.StoredConnection
+}
+
+func (f fakeConnections) List(context.Context) ([]controlstore.StoredConnection, error) {
+	return f.conns, nil
+}
+
+func (f fakeConnections) ReadAuthSecret(_ context.Context, c controlstore.StoredConnection) (controlstore.AuthMaterial, error) {
+	return controlstore.AuthMaterial{SecretRef: "auth", Token: "t0ken-for-" + c.Name}, nil
+}
+
+func connectionTo(name, provider, host string) controlstore.StoredConnection {
+	return controlstore.StoredConnection{
+		Name: name,
+		Spec: model.GitConnectionSpec{
+			Provider: model.GitProvider(provider),
+			Host:     host,
+			Auth:     model.GitConnectionAuth{Token: &model.TokenAuth{SecretRef: "auth"}},
+		},
+		Status: controlstore.ConnectionStatus{Ready: true},
+	}
+}
+
+func statusesOver(conns ...controlstore.StoredConnection) forgeStatuses {
+	return forgeStatuses{
+		sources:     &forgeconn.Resolver{Store: fakeConnections{conns: conns}},
+		externalURL: "https://kelson.acme.com",
+	}
+}
+
+// The write-back end to end: the connection covering the repository is
+// resolved, its provider's StatusReporter is used, and the check links back to
+// this server's external URL.
+func TestForgeStatusesReportsThroughTheCoveringConnection(t *testing.T) {
+	var path, authorization string
+	var body map[string]string
+	forgeAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path, authorization = r.URL.Path, r.Header.Get("Authorization")
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer forgeAPI.Close()
+
+	err := statusesOver(connectionTo("acme", "github", forgeAPI.URL)).ReportCommitStatus(t.Context(), api.CommitStatus{
+		Repo:        forgeAPI.URL + "/acme/checkout",
+		FullName:    "acme/checkout",
+		SHA:         "ccc222",
+		State:       "success",
+		Context:     api.PreviewStatusContext,
+		Description: "published checkout-staging-pr412",
+		Path:        "/projects/checkout",
+	})
+	if err != nil {
+		t.Fatalf("ReportCommitStatus: %v", err)
+	}
+	if want := "/api/v3/repos/acme/checkout/statuses/ccc222"; path != want {
+		t.Errorf("posted to %q, want %q", path, want)
+	}
+	if authorization == "" {
+		t.Error("the status was posted with no credential; the connection's Secret was not used")
+	}
+	if body["context"] != api.PreviewStatusContext || body["state"] != "success" {
+		t.Errorf("body = %v, want the handler's state and context passed through", body)
+	}
+	if want := "https://kelson.acme.com/projects/checkout"; body["target_url"] != want {
+		t.Errorf("target_url = %q, want %q", body["target_url"], want)
+	}
+}
+
+// A server with no --external-url sends the status without a link rather than
+// guessing at one: internal/forgehttp derives an origin from a request's Host
+// header because it has a request, and an RPC publishing an artifact has none.
+func TestForgeStatusesOmitsTheLinkWithoutAnExternalURL(t *testing.T) {
+	var body map[string]string
+	forgeAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer forgeAPI.Close()
+
+	reporter := statusesOver(connectionTo("acme", "github", forgeAPI.URL))
+	reporter.externalURL = ""
+	if err := reporter.ReportCommitStatus(t.Context(), api.CommitStatus{
+		Repo: forgeAPI.URL + "/acme/checkout", FullName: "acme/checkout", SHA: "ccc222",
+		State: "success", Context: api.PreviewStatusContext, Path: "/projects/checkout",
+	}); err != nil {
+		t.Fatalf("ReportCommitStatus: %v", err)
+	}
+	if _, ok := body["target_url"]; ok {
+		t.Errorf("target_url = %q, want it omitted rather than guessed", body["target_url"])
+	}
+}
+
+// The two silent degradations of ADR-0034 decision 5. Neither is a failure:
+// "statuses are a courtesy of the integration, not a delivery dependency", and
+// a preview that published is a preview that published.
+func TestForgeStatusesDegradesSilently(t *testing.T) {
+	cases := []struct {
+		name     string
+		reporter forgeStatuses
+	}{
+		{name: "no reporter is wired at all", reporter: forgeStatuses{}},
+		{name: "no connection covers the repository", reporter: statusesOver()},
+		{
+			// A `generic` token connection is a working connection with fewer
+			// capabilities, and forge.For gives it no StatusReporter.
+			name:     "the provider cannot report statuses",
+			reporter: statusesOver(connectionTo("bare", "generic", "https://git.acme.internal")),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.reporter.ReportCommitStatus(t.Context(), api.CommitStatus{
+				Repo: "https://git.acme.internal/acme/checkout", FullName: "acme/checkout",
+				SHA: "ccc222", State: "success", Context: api.PreviewStatusContext,
+			})
+			if err != nil {
+				t.Errorf("ReportCommitStatus = %v, want a silent no-op", err)
+			}
+		})
+	}
+}
+
+// …and the one that is not silent: a resolution that failed rather than found
+// nothing. Two connections covering one host is a misconfiguration, and the
+// report's message is where an operator will see it.
+func TestForgeStatusesReportsABrokenResolution(t *testing.T) {
+	reporter := statusesOver(
+		connectionTo("one", "github", "https://github.example"),
+		connectionTo("two", "github", "https://github.example"),
+	)
+	err := reporter.ReportCommitStatus(t.Context(), api.CommitStatus{
+		Repo: "https://github.example/acme/checkout", FullName: "acme/checkout",
+		SHA: "ccc222", State: "success", Context: api.PreviewStatusContext,
+	})
+	if err == nil {
+		t.Fatal("an ambiguous connection resolution was swallowed")
+	}
+	if !strings.Contains(err.Error(), "one") || !strings.Contains(err.Error(), "two") {
+		t.Errorf("the failure does not name the tied connections: %v", err)
+	}
 }

@@ -20,6 +20,14 @@ import react from "@vitejs/plugin-react";
 // DeployService and LogService at once — a new service needs no change here.
 // `/auth/` covers the three session endpoints for the same reason.
 //
+// `/forge/` is not an RPC prefix at all: it is the GitHub App manifest flow and
+// the webhook listener (ADR-0033 decision 2, ADR-0034 decision 1), which are
+// plain handlers on kelson-server's mux because a webhook body's schema is
+// GitHub's and the manifest flow is browser redirects. It is here because
+// "Connect GitHub" on the connections page is an ordinary anchor to
+// `/forge/github/manifest/start`, and without this entry that navigation
+// reaches Vite's dev server and 404s instead of reaching kelson-server.
+//
 // Streaming (DeployService.Deploy, LogService.FollowLogs) requires the proxy to
 // pass bytes through as they arrive. http-proxy streams by default; nothing
 // below turns that off, and nothing here may start buffering responses
@@ -33,6 +41,7 @@ export default defineConfig({
     proxy: {
       "/kelson.v1alpha1.": { target: API_TARGET, changeOrigin: false },
       "/auth/": { target: API_TARGET, changeOrigin: false },
+      "/forge/": { target: API_TARGET, changeOrigin: false },
       "/healthz": { target: API_TARGET, changeOrigin: false },
     },
   },

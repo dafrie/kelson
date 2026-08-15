@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -14,6 +16,9 @@ import (
 
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
 	"github.com/dafrie/kelson/internal/build"
+	"github.com/dafrie/kelson/internal/controlstore"
+	"github.com/dafrie/kelson/internal/delivery"
+	"github.com/dafrie/kelson/internal/preview"
 )
 
 // BuildService is assembly, like the other handlers: resolve the spec, resolve
@@ -622,5 +627,771 @@ func TestBuildConnectorFailureIsUnavailable(t *testing.T) {
 	_, err := collectBuild(t, c, &kelsonv1alpha1.BuildRequest{Spec: buildSpec(), Environment: "production"})
 	if connect.CodeOf(err) != connect.CodeUnavailable {
 		t.Fatalf("code = %v, want Unavailable (err %v)", connect.CodeOf(err), err)
+	}
+}
+
+// --- ReportBuild ---------------------------------------------------------------
+
+// ReportBuild is the CI hand-off (ADR-0034 decision 3): judge the report in
+// full, decide whether kelson owns this project's images, and — for a change
+// request — render and publish the preview through the publisher seam.
+//
+// Everything behind that seam is tested where it lives (internal/preview
+// renders, packages and pushes; internal/delivery/flux stamps the reconcile
+// annotation). What these tests hold the handler to is the decision and the
+// wiring: which environments it chose, what it handed the publisher, what it
+// answered, and which of the four refusals it gave.
+
+const reportSHA = "9f0a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2"
+
+// reportProjectDoc is a Project on the `ci` posture with two components, so a
+// report can name one it declares and one it does not.
+const reportProjectDoc = `apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata: {name: checkout}
+spec:
+  image: ghcr.io/acme/checkout:v1
+  components:
+    - name: web
+      kind: service
+      port: 8080
+    - name: worker
+      kind: worker
+  source:
+    git: https://github.com/acme/checkout
+    ref: main
+  build:
+    by: ci
+`
+
+// reportEnvironmentDoc is an environment with no previews block. It exists
+// because a report is guarded by agent policy (policy.go files ReportBuild
+// under `deploy`), and policy is a property of the environment — so a stored
+// project with no environments is a spec whose policy cannot be read, which is
+// its own refusal.
+const reportEnvironmentDoc = `apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata: {name: production}
+spec:
+  project: checkout
+`
+
+// reportPreviewEnvDoc previews the project's own source repository, which is
+// what makes it a target of a report about that repository.
+func reportPreviewEnvDoc(name, repo string) []byte {
+	return []byte(`apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata: {name: ` + name + `}
+spec:
+  project: checkout
+  delivery:
+    mode: flux
+    git: {repo: "git@github.com:acme/deploy.git", path: checkout/` + name + `}
+  previews:
+    provider: github
+    repo: ` + repo + `
+    secretRef: github-auth
+    artifacts: {repository: "oci://ghcr.io/acme/checkout-previews"}
+`)
+}
+
+// --- fakes ------------------------------------------------------------------
+
+// fakePublisher stands in for internal/preview's Publisher. It records the
+// options it was handed, which is the only way from this side of the fence to
+// assert that the reported image pins reached the render.
+type fakePublisher struct {
+	mu    sync.Mutex
+	calls []preview.Options
+	// errs maps an environment name to the failure that environment's publish
+	// answers with, so a partial-failure test can fail exactly one of two.
+	errs map[string]error
+}
+
+func (f *fakePublisher) Publish(_ context.Context, opts preview.Options) (*preview.Published, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, opts)
+	if err := f.errs[opts.Environment.Metadata.Name]; err != nil {
+		return nil, err
+	}
+	// The namespaces are the naming scheme's, spelled out rather than derived,
+	// so a change to the scheme fails a test that says what it changed.
+	name := opts.Project.Metadata.Name + "-" + opts.Environment.Metadata.Name
+	return &preview.Published{
+		Set: &preview.Set{
+			Project:         opts.Project.Metadata.Name,
+			Environment:     opts.Environment.Metadata.Name,
+			PR:              opts.PR,
+			SHA:             opts.SHA,
+			Namespace:       name + "-pr" + opts.PR,
+			ParentNamespace: name,
+			Repository:      "ghcr.io/acme/checkout-previews",
+			Tag:             opts.SHA,
+		},
+		Reference: "ghcr.io/acme/checkout-previews@sha256:" + strings.Repeat("f", 64),
+	}, nil
+}
+
+func (f *fakePublisher) only(t *testing.T) preview.Options {
+	t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.calls) != 1 {
+		t.Fatalf("the publisher was called %d times, want exactly once", len(f.calls))
+	}
+	return f.calls[0]
+}
+
+func (f *fakePublisher) count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.calls)
+}
+
+// fakePoker records which ResourceSetInputProvider was asked to look now.
+type fakePoker struct {
+	mu    sync.Mutex
+	poked []string
+	err   error
+}
+
+func (f *fakePoker) Poke(_ context.Context, namespace, name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.poked = append(f.poked, namespace+"/"+name)
+	return f.err
+}
+
+func (f *fakePoker) objects() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.poked)
+}
+
+// fakeStatuses records the commit statuses the handler wrote back.
+type fakeStatuses struct {
+	mu    sync.Mutex
+	wrote []CommitStatus
+	err   error
+}
+
+func (f *fakeStatuses) ReportCommitStatus(_ context.Context, s CommitStatus) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.wrote = append(f.wrote, s)
+	return f.err
+}
+
+func (f *fakeStatuses) statuses() []CommitStatus {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.wrote)
+}
+
+// --- harness ----------------------------------------------------------------
+
+// reportPlane is one server with every trigger seam faked, so a test can assert
+// what the handler did as well as what it answered.
+type reportPlane struct {
+	clients
+	publisher *fakePublisher
+	poker     *fakePoker
+	statuses  *fakeStatuses
+}
+
+// reportServerWith stores one project and serves it with the trigger seams
+// wired. envs is keyed by environment name, as the spec store holds them.
+func reportServerWith(t *testing.T, project string, envs map[string][]byte) reportPlane {
+	t.Helper()
+	specs := newFakeSpecStore()
+	if _, err := specs.Put(t.Context(), "checkout", controlstore.Documents{
+		Project:      []byte(project),
+		Environments: envs,
+	}, controlstore.PutOptions{}); err != nil {
+		t.Fatalf("storing the project: %v", err)
+	}
+	plane := reportPlane{
+		publisher: &fakePublisher{errs: map[string]error{}},
+		poker:     &fakePoker{},
+		statuses:  &fakeStatuses{},
+	}
+	plane.clients = serve(t, Options{
+		Specs:    specs,
+		Publish:  plane.publisher,
+		Poke:     plane.poker,
+		Statuses: plane.statuses,
+	})
+	return plane
+}
+
+// reportServer is the validation harness: the `ci` project and one environment
+// with no previews, which is enough to judge a report and not enough to publish
+// one.
+func reportServer(t *testing.T) clients {
+	t.Helper()
+	return reportServerWith(t, reportProjectDoc,
+		map[string][]byte{"production": []byte(reportEnvironmentDoc)}).clients
+}
+
+// previewReportServer is the publishing harness: the same project with an
+// environment that previews its source repository.
+func previewReportServer(t *testing.T) reportPlane {
+	t.Helper()
+	return reportServerWith(t, reportProjectDoc, map[string][]byte{
+		"staging": reportPreviewEnvDoc("staging", "https://github.com/acme/checkout"),
+	})
+}
+
+func reportBuild(t *testing.T, c clients, req *kelsonv1alpha1.ReportBuildRequest) error {
+	t.Helper()
+	_, err := c.builds.ReportBuild(t.Context(), connect.NewRequest(req))
+	return err
+}
+
+// report drives a successful report and returns the answer.
+func report(t *testing.T, c clients, req *kelsonv1alpha1.ReportBuildRequest) *kelsonv1alpha1.ReportBuildResponse {
+	t.Helper()
+	res, err := c.builds.ReportBuild(t.Context(), connect.NewRequest(req))
+	if err != nil {
+		t.Fatalf("ReportBuild: %v", err)
+	}
+	return res.Msg
+}
+
+func pinnedImage() string {
+	return "ghcr.io/acme/checkout-web@sha256:" + strings.Repeat("a", 64)
+}
+
+// previewReport is the report a pipeline sends for a pull request build.
+func previewReport() *kelsonv1alpha1.ReportBuildRequest {
+	return &kelsonv1alpha1.ReportBuildRequest{
+		Project: "checkout",
+		Sha:     reportSHA,
+		Ref:     "refs/pull/412/head",
+		Pr:      412,
+		Images:  map[string]string{"web": pinnedImage()},
+	}
+}
+
+// --- the live half: change requests ----------------------------------------
+
+// The whole hand-off in one test: a report for a pull request renders that pull
+// request's preview with the reported digests, publishes it, and asks
+// flux-operator to look now instead of at previews.interval.
+func TestReportBuildPublishesTheChangeRequestPreview(t *testing.T) {
+	p := previewReportServer(t)
+	res := report(t, p.clients, previewReport())
+
+	if !res.GetAccepted() {
+		t.Errorf("accepted = false for a report kelson acted on: %s", res.GetMessage())
+	}
+	if got := res.GetTriggered(); len(got) != 1 || got[0] != "checkout-staging-pr412" {
+		t.Errorf("triggered = %v, want the preview's own identifier", got)
+	}
+
+	opts := p.publisher.only(t)
+	if opts.PR != "412" || opts.SHA != reportSHA {
+		t.Errorf("the publisher was asked for pr %q at %q, want 412 at %s", opts.PR, opts.SHA, reportSHA)
+	}
+	if opts.Environment.Metadata.Name != "staging" || opts.Project.Metadata.Name != "checkout" {
+		t.Errorf("the publisher was handed %s/%s", opts.Project.Metadata.Name, opts.Environment.Metadata.Name)
+	}
+	// The reported pins are the point of the hand-off: the preview must run the
+	// image CI built for this commit, not the one the spec resolves.
+	if got := opts.Images["web"]; got != pinnedImage() {
+		t.Errorf("the publisher was handed image %q for web, want the reported digest %s", got, pinnedImage())
+	}
+	if got := p.poker.objects(); len(got) != 1 || got[0] != "checkout-staging/checkout-staging-previews" {
+		t.Errorf("poked %v, want the environment's ResourceSetInputProvider", got)
+	}
+}
+
+// The message says why `triggered` is what it is, which is the field's whole
+// job: "a pipeline whose report silently did nothing is the failure mode this
+// field exists to prevent".
+func TestReportBuildMessageNamesWhatItPublished(t *testing.T) {
+	p := previewReportServer(t)
+	res := report(t, p.clients, previewReport())
+	for _, want := range []string{"412", "checkout-staging-pr412"} {
+		if !strings.Contains(res.GetMessage(), want) {
+			t.Errorf("the message does not mention %q: %s", want, res.GetMessage())
+		}
+	}
+}
+
+// A report for a project whose environments preview nothing is an ordinary
+// answer, not a failure — and it says what is missing rather than saying
+// nothing.
+func TestReportBuildWithNoPreviewsSaysWhatWouldHaveMatched(t *testing.T) {
+	p := reportServerWith(t, reportProjectDoc, map[string][]byte{"production": []byte(reportEnvironmentDoc)})
+	res := report(t, p.clients, previewReport())
+
+	if !res.GetAccepted() || len(res.GetTriggered()) != 0 {
+		t.Fatalf("accepted=%v triggered=%v, want an accepted report that triggered nothing",
+			res.GetAccepted(), res.GetTriggered())
+	}
+	if !strings.Contains(res.GetMessage(), "spec.previews") {
+		t.Errorf("the message does not name the field that would have matched: %s", res.GetMessage())
+	}
+	if p.publisher.count() != 0 {
+		t.Error("something was published for a project with no previews")
+	}
+}
+
+// `previews.repo` is the source repository and ADR-0017 decision 1 defaults
+// between it and everything else not at all, so an environment previewing some
+// other repository is not a target of this report — and the answer says which
+// one it previews.
+func TestReportBuildSkipsEnvironmentsPreviewingAnotherRepository(t *testing.T) {
+	p := reportServerWith(t, reportProjectDoc, map[string][]byte{
+		"staging": reportPreviewEnvDoc("staging", "https://github.com/acme/other"),
+	})
+	res := report(t, p.clients, previewReport())
+
+	if len(res.GetTriggered()) != 0 || p.publisher.count() != 0 {
+		t.Fatalf("published into an environment previewing another repository: %v", res.GetTriggered())
+	}
+	if !strings.Contains(res.GetMessage(), "acme/other") {
+		t.Errorf("the message does not name the repository that environment previews: %s", res.GetMessage())
+	}
+}
+
+// The same repository written two ways is one repository: a spec that spells
+// its source `git@github.com:acme/checkout.git` still matches previews of
+// `https://github.com/acme/checkout`.
+func TestReportBuildMatchesRepositoriesAcrossSpellings(t *testing.T) {
+	project := strings.Replace(reportProjectDoc,
+		"git: https://github.com/acme/checkout", `git: "git@github.com:acme/Checkout.git"`, 1)
+	p := reportServerWith(t, project, map[string][]byte{
+		"staging": reportPreviewEnvDoc("staging", "https://github.com/acme/checkout"),
+	})
+	if got := report(t, p.clients, previewReport()).GetTriggered(); len(got) != 1 {
+		t.Errorf("triggered = %v, want the preview published for the same repository written two ways", got)
+	}
+}
+
+// Partial failure: publish what can be published, and name what could not with
+// the cause the publisher gave.
+func TestReportBuildPublishesWhatItCanAndNamesWhatFailed(t *testing.T) {
+	p := reportServerWith(t, reportProjectDoc, map[string][]byte{
+		"staging": reportPreviewEnvDoc("staging", "https://github.com/acme/checkout"),
+		"canary":  reportPreviewEnvDoc("canary", "https://github.com/acme/checkout"),
+	})
+	p.publisher.errs["canary"] = errors.New("403 Forbidden pushing to ghcr.io/acme/checkout-previews")
+	res := report(t, p.clients, previewReport())
+
+	if got := res.GetTriggered(); len(got) != 1 || got[0] != "checkout-staging-pr412" {
+		t.Fatalf("triggered = %v, want only the environment that published", got)
+	}
+	if !res.GetAccepted() {
+		t.Error("accepted = false; a publish that failed is not a report kelson declined to act on")
+	}
+	for _, want := range []string{"canary", "403 Forbidden"} {
+		if !strings.Contains(res.GetMessage(), want) {
+			t.Errorf("the message does not carry %q: %s", want, res.GetMessage())
+		}
+	}
+}
+
+// …and when nothing could be published at all, the RPC fails. `accepted: true`
+// with nothing triggered where something was meant to be is precisely the green
+// pipeline that published nothing.
+func TestReportBuildFailsWhenNothingCouldBePublished(t *testing.T) {
+	p := previewReportServer(t)
+	p.publisher.errs["staging"] = errors.New("connection refused")
+
+	err := reportBuild(t, p.clients, previewReport())
+	if connect.CodeOf(err) != connect.CodeFailedPrecondition {
+		t.Fatalf("err = %v (code %s), want failed-precondition", err, connect.CodeOf(err))
+	}
+	if !strings.Contains(err.Error(), "connection refused") {
+		t.Errorf("the failure does not carry the publisher's own cause: %v", err)
+	}
+}
+
+// A spec with overlays cannot be rendered server-side — overlay paths resolve
+// against the files they were authored beside — and publishing an artifact
+// silently missing them would come up wrong rather than not come up.
+func TestReportBuildRefusesToPublishASpecWithOverlays(t *testing.T) {
+	env := append(reportPreviewEnvDoc("staging", "https://github.com/acme/checkout"),
+		[]byte("  overlays:\n    - patch: ./patches/staging.yaml\n")...)
+	p := reportServerWith(t, reportProjectDoc, map[string][]byte{"staging": env})
+
+	err := reportBuild(t, p.clients, previewReport())
+	if connect.CodeOf(err) != connect.CodeFailedPrecondition {
+		t.Fatalf("err = %v (code %s), want failed-precondition", err, connect.CodeOf(err))
+	}
+	if !strings.Contains(err.Error(), "overlays") {
+		t.Errorf("the refusal does not name overlays: %v", err)
+	}
+	if p.publisher.count() != 0 {
+		t.Error("a spec with overlays was published anyway")
+	}
+}
+
+// A poke is never load-bearing: losing one costs previews.interval of latency
+// and never correctness, so it is reported and not fatal.
+func TestReportBuildSurvivesAFailedPoke(t *testing.T) {
+	p := previewReportServer(t)
+	p.poker.err = errors.New(`resourcesetinputproviders.fluxcd.controlplane.io "checkout-staging-previews" not found`)
+	res := report(t, p.clients, previewReport())
+
+	if len(res.GetTriggered()) != 1 {
+		t.Fatalf("triggered = %v; a failed poke unpublished the preview", res.GetTriggered())
+	}
+	if !strings.Contains(res.GetMessage(), "previews.interval") {
+		t.Errorf("the message does not say what the lost poke costs: %s", res.GetMessage())
+	}
+}
+
+// A server with no publisher refuses rather than accepting and dropping the
+// report, which is the rule this method has always kept.
+func TestReportBuildWithoutAPublisherIsUnimplemented(t *testing.T) {
+	specs := newFakeSpecStore()
+	if _, err := specs.Put(t.Context(), "checkout", controlstore.Documents{
+		Project: []byte(reportProjectDoc),
+		Environments: map[string][]byte{
+			"staging": reportPreviewEnvDoc("staging", "https://github.com/acme/checkout"),
+		},
+	}, controlstore.PutOptions{}); err != nil {
+		t.Fatalf("storing the project: %v", err)
+	}
+	err := reportBuild(t, serve(t, Options{Specs: specs}), previewReport())
+	if connect.CodeOf(err) != connect.CodeUnimplemented {
+		t.Fatalf("err = %v (code %s), want unimplemented", err, connect.CodeOf(err))
+	}
+}
+
+// Idempotency at this seam: a replayed report asks for the same publish and
+// gets the same answer. That the *artifact* is byte-identical is internal/
+// preview's property and tested there; what matters here is that the handler
+// adds no second effect and no second answer of its own.
+func TestReportBuildReplayIsTheSameReport(t *testing.T) {
+	p := previewReportServer(t)
+	req := previewReport()
+	req.IdempotencyKey = "gha-run-9912"
+
+	first := report(t, p.clients, req)
+	second := report(t, p.clients, req)
+	if first.GetMessage() != second.GetMessage() || !slices.Equal(first.GetTriggered(), second.GetTriggered()) {
+		t.Fatalf("a replayed report answered differently:\n %v %s\n %v %s",
+			first.GetTriggered(), first.GetMessage(), second.GetTriggered(), second.GetMessage())
+	}
+	p.publisher.mu.Lock()
+	defer p.publisher.mu.Unlock()
+	a, b := p.publisher.calls[0], p.publisher.calls[1]
+	if a.PR != b.PR || a.SHA != b.SHA || !maps.Equal(a.Images, b.Images) {
+		t.Error("the two publishes were asked for different inputs, so they would not deduplicate in the registry")
+	}
+}
+
+// --- the commit status (ADR-0034 decision 5) --------------------------------
+
+// A successful publish is written back onto the commit, under a context stable
+// enough for a branch-protection rule to name.
+func TestReportBuildWritesTheCommitStatus(t *testing.T) {
+	p := previewReportServer(t)
+	report(t, p.clients, previewReport())
+
+	wrote := p.statuses.statuses()
+	if len(wrote) != 1 {
+		t.Fatalf("wrote %d statuses, want one for the repository the previews are about", len(wrote))
+	}
+	got := wrote[0]
+	if got.Repo != "https://github.com/acme/checkout" || got.SHA != reportSHA {
+		t.Errorf("status is about %s@%s, want the previewed repository at the reported commit", got.Repo, got.SHA)
+	}
+	if got.State != "success" || got.Context != PreviewStatusContext {
+		t.Errorf("status = %s under %q, want success under %s", got.State, got.Context, PreviewStatusContext)
+	}
+	if got.Path != "/projects/checkout" {
+		t.Errorf("status links to %q, want the project the preview belongs to", got.Path)
+	}
+}
+
+// A partial publish is not a success, and the check says so.
+func TestReportBuildStatusIsFailureWhenAnEnvironmentFailed(t *testing.T) {
+	p := reportServerWith(t, reportProjectDoc, map[string][]byte{
+		"staging": reportPreviewEnvDoc("staging", "https://github.com/acme/checkout"),
+		"canary":  reportPreviewEnvDoc("canary", "https://github.com/acme/checkout"),
+	})
+	p.publisher.errs["canary"] = errors.New("403 Forbidden")
+	report(t, p.clients, previewReport())
+
+	wrote := p.statuses.statuses()
+	if len(wrote) != 1 || wrote[0].State != "failure" {
+		t.Fatalf("statuses = %+v, want one failure", wrote)
+	}
+}
+
+// Absence degrades to nothing, silently: a status is a courtesy of the
+// integration, not a delivery dependency.
+func TestReportBuildPublishesWithoutAStatusReporter(t *testing.T) {
+	specs := newFakeSpecStore()
+	if _, err := specs.Put(t.Context(), "checkout", controlstore.Documents{
+		Project: []byte(reportProjectDoc),
+		Environments: map[string][]byte{
+			"staging": reportPreviewEnvDoc("staging", "https://github.com/acme/checkout"),
+		},
+	}, controlstore.PutOptions{}); err != nil {
+		t.Fatalf("storing the project: %v", err)
+	}
+	publisher := &fakePublisher{errs: map[string]error{}}
+	c := serve(t, Options{Specs: specs, Publish: publisher})
+	if got := report(t, c, previewReport()).GetTriggered(); len(got) != 1 {
+		t.Errorf("triggered = %v; a server with no status reporter published nothing", got)
+	}
+}
+
+// A reporter that was asked and failed is different from one that is absent:
+// something is configured and broken, and the report says so without pretending
+// the publish did not happen.
+func TestReportBuildNamesAFailedStatusWriteBack(t *testing.T) {
+	p := previewReportServer(t)
+	p.statuses.err = errors.New("404 Not Found (statuses:write not granted)")
+	res := report(t, p.clients, previewReport())
+
+	if len(res.GetTriggered()) != 1 {
+		t.Fatalf("triggered = %v; a failed status write-back unpublished the preview", res.GetTriggered())
+	}
+	if !strings.Contains(res.GetMessage(), "statuses:write") {
+		t.Errorf("the message does not carry the forge's own refusal: %s", res.GetMessage())
+	}
+}
+
+// --- build.by (ADR-0034 decision 3) -----------------------------------------
+
+// A project kelson builds for itself declines the report rather than publishing
+// over its own build plane. It is `accepted: false` and not an error code,
+// because that is the meaning the schema pins to the field.
+func TestReportBuildDeclinesAKelsonBuiltProject(t *testing.T) {
+	for _, tc := range []struct {
+		name, by, says string
+	}{
+		{name: "explicit", by: "  build:\n    by: kelson\n", says: "spec.build.by: kelson"},
+		{name: "defaulted for a project with a source", by: "", says: "defaults to"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			project := strings.Replace(reportProjectDoc, "  build:\n    by: ci\n", tc.by, 1)
+			p := reportServerWith(t, project, map[string][]byte{
+				"staging": reportPreviewEnvDoc("staging", "https://github.com/acme/checkout"),
+			})
+			res := report(t, p.clients, previewReport())
+
+			if res.GetAccepted() || len(res.GetTriggered()) != 0 {
+				t.Fatalf("accepted=%v triggered=%v, want a declined report", res.GetAccepted(), res.GetTriggered())
+			}
+			if !strings.Contains(res.GetMessage(), tc.says) || !strings.Contains(res.GetMessage(), "by: ci") {
+				t.Errorf("the message does not name the field and its remedy: %s", res.GetMessage())
+			}
+			if p.publisher.count() != 0 {
+				t.Error("a declined report published something anyway")
+			}
+		})
+	}
+}
+
+// A project kelson cannot build has no build plane to publish over, so the
+// default is read as ADR-0034 wrote it — "`by: kelson` (default for projects
+// with `source:`)" — rather than as "empty means kelson, always". Declining
+// here would state a reason that is false.
+func TestReportBuildAcceptsAProjectKelsonCannotBuild(t *testing.T) {
+	for _, tc := range []struct{ name, project string }{
+		{name: "no source at all", project: strings.NewReplacer(
+			"  build:\n    by: ci\n", "",
+			"  source:\n    git: https://github.com/acme/checkout\n    ref: main\n", "").Replace(reportProjectDoc)},
+		{name: "strategy none", project: strings.Replace(reportProjectDoc,
+			"  build:\n    by: ci\n", "  build:\n    strategy: none\n", 1)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := reportServerWith(t, tc.project, map[string][]byte{
+				"staging": reportPreviewEnvDoc("staging", "https://github.com/acme/checkout"),
+			})
+			res := report(t, p.clients, previewReport())
+			if !res.GetAccepted() || len(res.GetTriggered()) != 1 {
+				t.Fatalf("accepted=%v triggered=%v message=%s, want the report acted on",
+					res.GetAccepted(), res.GetTriggered(), res.GetMessage())
+			}
+		})
+	}
+}
+
+// --- the tracking half, still refused ---------------------------------------
+
+// A report with no `pr` is for the environments that track the ref it was built
+// from, and `autoDeploy` is not in the model. The refusal names that field and
+// the issue rather than the whole pipeline, half of which now exists.
+func TestReportBuildRefusesABranchReport(t *testing.T) {
+	p := previewReportServer(t)
+	err := reportBuild(t, p.clients, &kelsonv1alpha1.ReportBuildRequest{
+		Project: "checkout",
+		Sha:     reportSHA,
+		Ref:     "refs/heads/main",
+		Images:  map[string]string{"web": pinnedImage()},
+	})
+	if connect.CodeOf(err) != connect.CodeUnimplemented {
+		t.Fatalf("a branch report = %v (code %s), want unimplemented", err, connect.CodeOf(err))
+	}
+	if !hasCode(detailCodes(err), string(delivery.ErrNotImplemented)) {
+		t.Errorf("the refusal does not carry %s: %v", delivery.ErrNotImplemented, detailCodes(err))
+	}
+	for _, want := range []string{"autoDeploy", "#248"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %s: %v", want, err)
+		}
+	}
+	if p.publisher.count() != 0 {
+		t.Error("a branch report published a preview")
+	}
+}
+
+// A pipeline author must learn what is wrong with their report *now*, not on
+// the day the slot is filled.
+func TestReportBuildValidatesBeforeItRefuses(t *testing.T) {
+	cases := []struct {
+		name    string
+		req     *kelsonv1alpha1.ReportBuildRequest
+		code    string
+		wantsIn string
+	}{{
+		name:    "an abbreviated commit",
+		req:     &kelsonv1alpha1.ReportBuildRequest{Project: "checkout", Sha: "9f0a1b2", Images: map[string]string{"web": pinnedImage()}},
+		code:    ErrReportShaInvalid,
+		wantsIn: "40-character",
+	}, {
+		name:    "no commit at all",
+		req:     &kelsonv1alpha1.ReportBuildRequest{Project: "checkout", Images: map[string]string{"web": pinnedImage()}},
+		code:    ErrReportShaInvalid,
+		wantsIn: "join key",
+	}, {
+		name:    "no images",
+		req:     &kelsonv1alpha1.ReportBuildRequest{Project: "checkout", Sha: reportSHA},
+		code:    ErrReportNoImages,
+		wantsIn: "names no images",
+	}, {
+		// The one guarantee the build plane exists to provide, and the one path
+		// where the image comes from outside (#51, ADR-0010).
+		name: "an image pinned by tag",
+		req: &kelsonv1alpha1.ReportBuildRequest{Project: "checkout", Sha: reportSHA,
+			Images: map[string]string{"web": "ghcr.io/acme/checkout-web:latest"}},
+		code:    ErrReportImageNotPinned,
+		wantsIn: "not pinned by digest",
+	}, {
+		name: "an empty image reference",
+		req: &kelsonv1alpha1.ReportBuildRequest{Project: "checkout", Sha: reportSHA,
+			Images: map[string]string{"web": ""}},
+		code:    ErrReportImageNotPinned,
+		wantsIn: "empty image reference",
+	}, {
+		// The proto asks for this by name: a key the Project does not declare
+		// is an error naming it, not a silent drop.
+		name: "a component the Project does not declare",
+		req: &kelsonv1alpha1.ReportBuildRequest{Project: "checkout", Sha: reportSHA,
+			Images: map[string]string{"api": pinnedImage()}},
+		code:    ErrReportUnknownComponent,
+		wantsIn: "declares no component",
+	}}
+
+	c := reportServer(t)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := reportBuild(t, c, tc.req)
+			if connect.CodeOf(err) != connect.CodeInvalidArgument {
+				t.Fatalf("err = %v (code %s), want invalid-argument", err, connect.CodeOf(err))
+			}
+			if !hasCode(detailCodes(err), tc.code) {
+				t.Errorf("the refusal carries %v, want %s", detailCodes(err), tc.code)
+			}
+			if !strings.Contains(err.Error(), tc.wantsIn) {
+				t.Errorf("the refusal does not say %q: %v", tc.wantsIn, err)
+			}
+		})
+	}
+}
+
+// The reverse of the component check is not an error: a component the Project
+// declares and the report omits keeps whatever the spec resolves for it, so a
+// partial report is a partial pin rather than a broken render. The publisher is
+// handed exactly the components that were reported and no others.
+func TestReportBuildAcceptsAPartialReport(t *testing.T) {
+	p := previewReportServer(t)
+	req := previewReport()
+	req.Images = map[string]string{"web": pinnedImage()}
+	report(t, p.clients, req)
+
+	if got := p.publisher.only(t).Images; !maps.Equal(got, req.Images) {
+		t.Errorf("the publisher was handed %v, want only the reported component", got)
+	}
+}
+
+func TestReportBuildRefusesAnUnknownProject(t *testing.T) {
+	err := reportBuild(t, reportServer(t), &kelsonv1alpha1.ReportBuildRequest{
+		Project: "nowhere",
+		Sha:     reportSHA,
+		Images:  map[string]string{"web": pinnedImage()},
+	})
+	if connect.CodeOf(err) != connect.CodeNotFound {
+		t.Fatalf("a report for a project that does not exist = %v (code %s), want not-found", err, connect.CodeOf(err))
+	}
+}
+
+// A report with two bad images always names the same one first: a refusal that
+// varied with Go's map order is one nobody can fix twice the same way.
+func TestReportBuildRefusalIsDeterministic(t *testing.T) {
+	c := reportServer(t)
+	req := &kelsonv1alpha1.ReportBuildRequest{Project: "checkout", Sha: reportSHA, Images: map[string]string{
+		"web":    "ghcr.io/acme/checkout-web:latest",
+		"worker": "ghcr.io/acme/checkout-worker:latest",
+	}}
+	first := reportBuild(t, c, req).Error()
+	for range 20 {
+		if got := reportBuild(t, c, req).Error(); got != first {
+			t.Fatalf("the refusal changed between identical requests:\n %s\n %s", first, got)
+		}
+	}
+	if !strings.Contains(first, `"web"`) {
+		t.Errorf("the refusal reads %q, want the alphabetically first component named", first)
+	}
+}
+
+// A report is a deploy that CI starts, so a propose-only environment refuses
+// it — policy.go files ReportBuild under `deploy` and explains at length why
+// `build` would be precisely wrong. This is the test that makes that comment
+// true: the report names no environment, so every stored environment of the
+// project gets a say, and production's propose-only is the one that answers.
+func TestReportBuildIsRefusedByProposeOnly(t *testing.T) {
+	g := policyServer(t, Options{})
+	agent := g.as(g.mint(t, "ci", controlstore.Scope{
+		Operations: []controlstore.Operation{controlstore.OpMutate},
+	}))
+
+	err := reportBuild(t, agent, &kelsonv1alpha1.ReportBuildRequest{
+		Project: "shop",
+		Sha:     reportSHA,
+		Images:  map[string]string{"web": pinnedImage()},
+	})
+	if connect.CodeOf(err) != connect.CodePermissionDenied {
+		t.Fatalf("a report into a propose-only project = %v (code %s), want permission-denied",
+			err, connect.CodeOf(err))
+	}
+	if !hasCode(detailCodes(err), ErrPolicyProposeOnly) {
+		t.Errorf("the refusal carries %v, want %s", detailCodes(err), ErrPolicyProposeOnly)
+	}
+}
+
+// And a human is never refused by agent policy, which is the other half of
+// ADR-0025's criterion: the report reaches the handler and is answered on its
+// merits instead. This one carries no `pr`, so what it reaches is the tracking
+// half's refusal.
+func TestReportBuildFromAHumanReachesTheGate(t *testing.T) {
+	g := policyServer(t, Options{})
+	err := reportBuild(t, g.as(testPassword), &kelsonv1alpha1.ReportBuildRequest{
+		Project: "shop",
+		Sha:     reportSHA,
+		Images:  map[string]string{"web": pinnedImage()},
+	})
+	if connect.CodeOf(err) != connect.CodeUnimplemented {
+		t.Fatalf("a human's report = %v (code %s), want unimplemented", err, connect.CodeOf(err))
 	}
 }

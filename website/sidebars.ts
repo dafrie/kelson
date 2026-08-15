@@ -24,6 +24,7 @@ const sidebars: SidebarsConfig = {
       items: [
         {type: 'doc', id: 'reference/project', label: 'Project spec'},
         {type: 'doc', id: 'reference/environment', label: 'Environment spec'},
+        {type: 'doc', id: 'reference/gitconnection', label: 'GitConnection spec'},
         {type: 'doc', id: 'detection', label: 'Cluster detection'},
         {type: 'doc', id: 'server', label: 'Server'},
         {type: 'doc', id: 'mcp', label: 'MCP server'},
@@ -212,6 +213,16 @@ const sidebars: SidebarsConfig = {
           type: 'doc',
           id: 'adr/0032-finish-the-component-rename',
           label: '0032 — Finish the component rename',
+        },
+        {
+          type: 'doc',
+          id: 'adr/0033-git-connections',
+          label: '0033 — Git connections',
+        },
+        {
+          type: 'doc',
+          id: 'adr/0034-forge-driven-delivery',
+          label: '0034 — Forge-driven delivery',
         },
       ],
     },

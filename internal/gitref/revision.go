@@ -40,9 +40,17 @@ import (
 // `kelson build` consumes this through a one-method interface the same way it
 // consumes the cluster — production wires this type in, tests wire a fake.
 type RemoteResolver struct {
-	// Auth authenticates the remote read. Nil means anonymous, which is
-	// correct for public repositories and local paths.
+	// Auth authenticates every remote read with one credential. Nil means
+	// anonymous, which is correct for public repositories and local paths.
+	//
+	// It is the pre-connections shape and it survives for the callers that
+	// genuinely have one credential — `kelson build` reads the user's own
+	// `KELSON_GIT_TOKEN`. [Source] takes precedence when both are set.
 	Auth Auth
+
+	// Source picks the credential per repository, which is what a
+	// GitConnection is (ADR-0033 decision 4). Nil falls back to [Auth].
+	Source AuthSource
 }
 
 // Resolve returns the commit hash that ref names in repo. An empty ref (or
@@ -60,9 +68,14 @@ func (r RemoteResolver) Resolve(ctx context.Context, repo, ref string) (string, 
 			"set spec.source.git on the Project")
 	}
 
-	auth := Auth(Anonymous{})
-	if r.Auth != nil {
-		auth = r.Auth
+	source := r.source()
+	auth, err := source.AuthFor(ctx, repo)
+	if err != nil {
+		// A resolution refusal — two connections cover this repository, or the
+		// one it names does not exist — is already the structured error naming
+		// the field that fixes it. Wrapping it in a git/revision failure would
+		// bury `$.spec.source.connection` under "could not read the refs".
+		return "", err
 	}
 	method, err := auth.GitAuth()
 	if err != nil {
@@ -76,8 +89,10 @@ func (r RemoteResolver) Resolve(ctx context.Context, repo, ref string) (string, 
 	refs, err := remote.ListContext(ctx, &gogit.ListOptions{Auth: method})
 	if err != nil {
 		e := delivery.ApplyFailed("git/revision", "repo",
-			"could not read the refs of the source repository",
-			"check that the repository URL is reachable and that the credential (e.g. KELSON_GIT_TOKEN) can read it")
+			"could not read the refs of the source repository (read "+authName(auth)+")",
+			"check that the repository URL is reachable and that the credential can read it. A private repository "+
+				"needs a GitConnection covering its host (ADR-0033); an anonymous read of one answers 404, which is "+
+				"how a missing connection looks from here")
 		e.Cause = err.Error()
 		return "", e
 	}
@@ -89,6 +104,28 @@ func (r RemoteResolver) Resolve(ctx context.Context, repo, ref string) (string, 
 			"pass --ref with a branch, tag or 40-character commit that exists in the repository")
 	}
 	return hash, nil
+}
+
+// source is the credential picker this resolver was configured with, with the
+// two pre-connections spellings folded onto the one path.
+func (r RemoteResolver) source() AuthSource {
+	if r.Source != nil {
+		return r.Source
+	}
+	return Fixed{Auth: r.Auth}
+}
+
+// authName names the method a failed read used, so "could not read the refs"
+// says whether a credential was even involved. It is the method's own name and
+// never its value (ADR-0009).
+func authName(a Auth) string {
+	if a == nil {
+		return "anonymously"
+	}
+	if a.Name() == (Anonymous{}).Name() {
+		return "anonymously"
+	}
+	return "with " + a.Name() + " authentication"
 }
 
 // resolveRef picks the commit for ref out of an ls-remote listing. It is a

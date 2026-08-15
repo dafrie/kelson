@@ -40,6 +40,18 @@ type ProjectSpec struct {
 type Source struct {
 	Git string `yaml:"git" json:"git" jsonschema:"required,format=uri,description=git URL of the application source"`
 	Ref string `yaml:"ref,omitempty" json:"ref,omitempty" jsonschema:"default=main"`
+
+	// Connection names the GitConnection kelson authenticates to this
+	// repository with (ADR-0033 decision 4).
+	//
+	// Empty is the common case rather than a gap: the connection is chosen by
+	// matching this URL's host against the connections the instance holds, so
+	// one GitHub connection means nothing to write here, and a public
+	// repository needs no connection at all. The field exists for the case
+	// resolution refuses — two connections matching one repository, which is an
+	// error naming both rather than a silent pick — and it is what disambiguates
+	// them.
+	Connection string `yaml:"connection,omitempty" json:"connection,omitempty" jsonschema:"description=name of the GitConnection to authenticate with; resolved by host match against the instance's connections when omitted"`
 }
 
 type BuildStrategy string
@@ -51,10 +63,33 @@ const (
 	BuildNone       BuildStrategy = "none"
 )
 
+// Who produces a project's images (ADR-0034 decision 3). The two answers are
+// postures rather than degrees: `kelson` is the zero-configuration loop where
+// kelson's own build plane builds at the head commit, and `ci` is the
+// build-and-report contract for teams whose pipeline already builds — CI says
+// which images exist for a commit and kelson renders and publishes from there.
+//
+// The values are plain strings rather than a named type because the field is
+// carried across the wire and into a CRD by other planes, and a Go type there
+// would be a conversion at every boundary and information at none.
+const (
+	BuildByKelson = "kelson"
+	BuildByCI     = "ci"
+)
+
 type Build struct {
 	Strategy BuildStrategy `yaml:"strategy,omitempty" json:"strategy,omitempty" jsonschema:"default=auto,enum=auto,enum=dockerfile,enum=buildpacks,enum=none"`
 	// Dockerfile path within the source; default "Dockerfile".
 	Dockerfile string `yaml:"dockerfile,omitempty" json:"dockerfile,omitempty"`
+
+	// By is who produces this project's images (ADR-0034 decision 3). Empty
+	// means BuildByKelson, which is the default for a project with a source.
+	//
+	// It lives on the Project and not on an Environment because provenance is a
+	// property of the artifact rather than of where it runs: previews and
+	// environments of one project share one answer, and the same reason puts
+	// `source:` and `build:` here.
+	By string `yaml:"by,omitempty" json:"by,omitempty" jsonschema:"default=kelson,enum=kelson,enum=ci,description=who produces this project's images; kelson builds them in its own build plane and ci reports images its pipeline already built"`
 }
 
 // ComponentKind is what a component renders to. The set is closed, which is

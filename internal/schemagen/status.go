@@ -144,6 +144,36 @@ func projectStatusSchema() omap {
 	return m
 }
 
+// gitConnectionStatusSchema mirrors api/kelson/v1alpha1.GitConnectionStatus.
+// The two provider-reported fields are what a controller writes down after
+// asking the forge, which is the only thing that can tell a working credential
+// from a document that merely parses (ADR-0033 decision 1).
+func gitConnectionStatusSchema() omap {
+	var m omap
+	m.set("description", "GitConnectionStatus is what the control plane observed about this "+
+		"GitConnection: whether the document is usable, and what the forge said when kelson used it.")
+	m.set("type", "object")
+	m.set("properties", omap{
+		{"account", omap{
+			{"description", "who the credential acts as, as the provider reports it: the organization " +
+				"or user the app is installed on, or the account a token belongs to"},
+			{"type", "string"},
+		}},
+		{"conditions", conditionsSchema("the observed conditions, with Ready as the summary and " +
+			"Reachable as the forge's own answer")},
+		{"observedGeneration", observedGenerationSchema()},
+		{"repositories", omap{
+			{"description", "how many repositories this credential can see, as the provider reports " +
+				"it. A scope readout rather than a count: an installation that should cover forty " +
+				"repositories and reports one is a picked-the-wrong-repository mistake."},
+			{"type", "integer"},
+			{"format", "int32"},
+		}},
+		{"validationErrors", validationErrorsSchema()},
+	})
+	return m
+}
+
 func environmentStatusSchema() omap {
 	var historyItem omap
 	historyItem.set("type", "object")

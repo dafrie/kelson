@@ -50,7 +50,8 @@ func (t Token) GitAuth() (transport.AuthMethod, error) {
 	if t.Token == "" {
 		return nil, delivery.ApplyFailed("git/auth", "token",
 			"token authentication configured with an empty token",
-			"set the source credential (e.g. KELSON_GIT_TOKEN), or leave it unset to read a public repository anonymously")
+			"connect the forge the source lives on so kelson can mint a credential for it (ADR-0033), or set the "+
+				"bootstrap variable KELSON_GIT_TOKEN, or leave both unset to read a public repository anonymously")
 	}
 	user := t.Username
 	if user == "" {

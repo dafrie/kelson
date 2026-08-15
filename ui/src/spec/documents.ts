@@ -195,6 +195,18 @@ export interface NewProjectForm {
   image: string;
   git: string;
   ref: string;
+  /**
+   * `spec.source.connection`: the GitConnection this project's source resolves
+   * through, written only when something chose one (ADR-0033 decision 4).
+   *
+   * Empty is the ordinary state and means "resolve by host match", which is
+   * what one connection and zero configuration look like. It is filled by the
+   * repository picker, because picking a repository *from* a connection has
+   * already answered the question the host match would guess at — and a guess
+   * that later goes ambiguous, when a second connection covers the same host,
+   * would break a project that was created by pointing at one.
+   */
+  connection: string;
   /** Only written in `git` mode: `spec.build.strategy` (ADR-0010). */
   buildStrategy: BuildStrategy;
   port: string;
@@ -213,6 +225,7 @@ export const EMPTY_FORM: NewProjectForm = {
   image: "",
   git: "",
   ref: "",
+  connection: "",
   buildStrategy: DEFAULT_BUILD_STRATEGY,
   port: "",
   environment: "development",
@@ -287,6 +300,7 @@ interface Normal {
   image: string;
   git: string;
   ref: string;
+  connection: string;
   buildStrategy: BuildStrategy;
   port: string;
   environment: string;
@@ -306,6 +320,7 @@ function normalize(form: NewProjectForm): Normal {
     image: form.image.trim(),
     git: form.git.trim(),
     ref: form.ref.trim(),
+    connection: form.connection.trim(),
     buildStrategy: form.buildStrategy,
     port: form.port.trim(),
     // Blank means "the default", not "no environment": the field ships filled
@@ -359,6 +374,13 @@ function projectDocument(f: Normal): string {
     // key out says. Writing `ref: main` for someone whose default branch is
     // `master` would be a guess with a failure mode.
     if (f.ref !== "") lines.push(`    ref: ${yamlScalar(f.ref)}`);
+    // Written only when a connection was chosen. An absent key is ADR-0033
+    // decision 4's default — resolve by longest host-then-owner match — and
+    // writing the connection the match would have picked anyway would pin a
+    // project to a name that is free to be deleted, for no gain.
+    if (f.connection !== "") {
+      lines.push(`    connection: ${yamlScalar(f.connection)}`);
+    }
     // The strategy is written even when it is the one ADR-0010 would have
     // picked anyway: a document that leaves it out means `auto`, and `auto` is
     // the one answer the server cannot act on for a remote repository (#50).
@@ -471,6 +493,7 @@ export type FieldKey =
   | "image"
   | "git"
   | "ref"
+  | "connection"
   | "port"
   | "environment"
   | "namespace"
@@ -600,7 +623,10 @@ export type ComponentField =
  * its code, its remediation and its line number intact.
  */
 export type ErrorTarget =
-  | { doc: "project"; on: "name" | "image" | "git" | "ref" | "build" }
+  | {
+      doc: "project";
+      on: "name" | "image" | "git" | "ref" | "connection" | "build";
+    }
   | { doc: "project"; on: "env"; name: string }
   | { doc: "project"; on: "component"; index: number; field: ComponentField }
   | { doc: "project"; on: "component-env"; index: number; name: string }
@@ -644,6 +670,12 @@ export function errorTarget(error: WireError): ErrorTarget | undefined {
   if (path === "$.spec.image") return { doc: "project", on: "image" };
   if (path === "$.spec.source.git") return { doc: "project", on: "git" };
   if (path === "$.spec.source.ref") return { doc: "project", on: "ref" };
+  // Where a resolution refusal lands: internal/forgeconn points both of them —
+  // two connections cover this repository, or the named one does not exist —
+  // at this path, and the control that fixes either is the repository picker.
+  if (path === "$.spec.source.connection") {
+    return { doc: "project", on: "connection" };
+  }
   // The only input the build stanza has is the strategy choice, and both of
   // its answers are values the server accepts — so a finding here is about
   // something no radio can fix (a dockerfile path, a strategy this release does
@@ -706,6 +738,8 @@ export function fieldForError(error: WireError): FieldKey | undefined {
       return "git";
     case "ref":
       return "ref";
+    case "connection":
+      return "connection";
     case "build":
       return undefined;
     case "env":

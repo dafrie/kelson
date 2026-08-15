@@ -259,6 +259,32 @@ func TestAuthoredSecretValueReachesNoOutputSurface(t *testing.T) {
 	}
 }
 
+// Surface 7: a build report's `message` (ADR-0034 decision 3). It is the one
+// wire field in this package that carries plane error text on a *successful*
+// response — a publish that failed rides in it beside the ones that succeeded —
+// so it does not pass the errors.go boundary where every other free-text
+// surface is scrubbed. The credential a preview publish authenticates with is
+// resolved by kelson and registered when it is learned, and "403 Forbidden" is
+// exactly the text a registry client could quote it into.
+func TestReportMessageCarriesNoResolvedCredential(t *testing.T) {
+	redact.Register(resolvedCredential)
+
+	p := reportServerWith(t, reportProjectDoc, map[string][]byte{
+		"staging": reportPreviewEnvDoc("staging", "https://github.com/acme/checkout"),
+		"canary":  reportPreviewEnvDoc("canary", "https://github.com/acme/checkout"),
+	})
+	p.publisher.errs["canary"] = errors.New("401 Unauthorized pushing as " + resolvedCredential)
+
+	res := report(t, p.clients, previewReport())
+	if len(res.GetTriggered()) != 1 {
+		t.Fatalf("triggered = %v; the partial failure this test needs did not happen", res.GetTriggered())
+	}
+	assertNoSentinel(t, "ReportBuild message", []byte(res.GetMessage()), resolvedCredential)
+	if !strings.Contains(res.GetMessage(), "401 Unauthorized") {
+		t.Errorf("the scrub took the diagnostic with the credential: %s", res.GetMessage())
+	}
+}
+
 func assertNoSentinel(t *testing.T, surface string, body []byte, sentinel string) {
 	t.Helper()
 	if bytes.Contains(body, []byte(sentinel)) {

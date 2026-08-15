@@ -34,10 +34,12 @@ var renderedFields = map[string]map[string]string{
 		"$.kind":          "decode: selects the document type",
 		"$.metadata.name": "renderer: project label and resource naming",
 
-		"$.spec.source.git":       "internal/build: clone URL (build.Request.SourceURL)",
-		"$.spec.source.ref":       "internal/build: checkout ref (build.Request.SourceRef)",
-		"$.spec.build.strategy":   "internal/build/detect: strategy selection",
-		"$.spec.build.dockerfile": "internal/build/detect: Dockerfile path",
+		"$.spec.source.git":        "internal/build: clone URL (build.Request.SourceURL)",
+		"$.spec.source.ref":        "internal/build: checkout ref (build.Request.SourceRef)",
+		"$.spec.source.connection": "internal/forgeconn: which GitConnection the ref resolution and the build pod's clone authenticate with (ADR-0033 decision 4)",
+		"$.spec.build.strategy":    "internal/build/detect: strategy selection",
+		"$.spec.build.dockerfile":  "internal/build/detect: Dockerfile path",
+		"$.spec.build.by":          "internal/api: BuildService.ReportBuild acts on a CI report only for `ci` — it renders and publishes the change request's preview — and declines one for `kelson`, whose images come from kelson's own build plane (ADR-0034 decision 3)",
 
 		"$.spec.image":              "renderer: container image, and the P3 fallback for components",
 		"$.spec.env.*":              "renderer: container env (literal form)",
@@ -113,7 +115,7 @@ var renderedFields = map[string]map[string]string{
 
 		"$.spec.previews.provider":             "renderer: ResourceSetInputProvider spec.type (GitHubPullRequest / GitLabMergeRequest)",
 		"$.spec.previews.repo":                 "renderer: ResourceSetInputProvider spec.url",
-		"$.spec.previews.secretRef":            "renderer: ResourceSetInputProvider spec.secretRef.name",
+		"$.spec.previews.secretRef":            "renderer: ResourceSetInputProvider spec.secretRef.name — the author's Secret, or the one internal/controller materializes from the git connection when the field is unset (ADR-0033 decision 4)",
 		"$.spec.previews.interval":             "renderer: the fluxcd.controlplane.io/reconcileEvery annotation on the ResourceSetInputProvider",
 		"$.spec.previews.filter.labels":        "renderer: ResourceSetInputProvider spec.filter.labels",
 		"$.spec.previews.filter.includeBranch": "renderer: ResourceSetInputProvider spec.filter.includeBranch",
@@ -160,6 +162,18 @@ var renderedFields = map[string]map[string]string{
 	},
 }
 
+// specDocuments are the documents the harness covers: the two *authoring*
+// documents, whose fields are read by the renderer and the planes around it.
+//
+// GitConnection is deliberately absent, and the omission is the harness's own
+// premise rather than an oversight. Every field of a connection is read at use
+// time by a plane with cluster access — the server minting a token, the build
+// pod cloning, the controller calling a forge API (ADR-0033 decision 1) — and
+// none of it resolves, renders or reaches a manifest. There is nothing for
+// renderedFields to name a consumer of and nothing for the resolver to drop on
+// the floor, which is the silence issue #141 is about. What a connection's
+// fields are held to instead is validate.go, which refuses every one it can
+// judge from the document alone.
 func specDocuments() map[string]reflect.Type {
 	return map[string]reflect.Type{
 		KindProject:     reflect.TypeOf(Project{}),

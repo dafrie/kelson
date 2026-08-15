@@ -49,6 +49,25 @@ rules:
   - apiGroups: ["kelson.dev"]
     resources: ["projects", "environments"]
     verbs: ["get", "list", "patch", "delete"]
+  # internal/controlstore's connection store (ADR-0033 decision 1, issue #248).
+  # A GitConnection is one custom resource in this namespace, and the verbs
+  # differ from the spec store's a rule above because the write does: there is
+  # no UpdateConnection in the schema, so `create` is the only way one is
+  # written and `patch` is deliberately NOT granted — a server that could patch
+  # a connection could repoint every project resolving through it at a different
+  # forge, which is exactly what "delete and create says so" refuses.
+  # `delete` is DeleteConnection.
+  - apiGroups: ["kelson.dev"]
+    resources: ["gitconnections"]
+    verbs: ["get", "list", "create", "delete"]
+  # The status subresource is the exception to the rule beside `projects`: there
+  # the server must not write status because the controller owns it, and here
+  # the server IS the writer — TestConnection probes the forge on demand and
+  # records what came back, and no GitConnection reconciler exists to race with.
+  # When one lands, this grant is what has to be re-argued, not silently kept.
+  - apiGroups: ["kelson.dev"]
+    resources: ["gitconnections/status"]
+    verbs: ["get", "update"]
   # internal/controlstore's agent identity store (issue #74, ADR-0024): one
   # Secret per agent identity, holding a salted HMAC of the credential and never
   # the credential. Get on every request (revocation must be immediate, so no
@@ -59,6 +78,15 @@ rules:
   # A Secret rather than a ConfigMap even though what is stored is not a
   # credential — identity material belongs behind whatever RBAC an operator puts
   # on Secrets, and this grant is one namespace wide.
+  #
+  # The same Get is what ADR-0033 decision 1 spends: a GitConnection references
+  # a Secret in this namespace, and kelson reads it to mint a token and to call
+  # the forge (internal/controlstore's ReadAuthSecret). That is the amendment
+  # ADR-0033 makes to ADR-0009 stated as an RBAC grant — the values still live
+  # only in Secrets an operator manages, and kelson now uses them rather than
+  # only naming them. No `create` is added for it: kelson does not write the
+  # Secret behind a token connection, and the app-manifest flow that does write
+  # one already has the verb above.
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "list", "create", "update"]
