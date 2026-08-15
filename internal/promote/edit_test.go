@@ -328,7 +328,112 @@ func assertOnlyPinChanged(t *testing.T, file, before, after string) {
 
 func assertPin(t *testing.T, doc []byte, environment, component, want string) {
 	t.Helper()
-	if err := verifyPin(doc, environment, component, want); err != nil {
+	if err := verifyPin(doc, environment, component, want, false); err != nil {
 		t.Errorf("%v\n%s", err, doc)
 	}
+}
+
+/* ------------------------------------------- the marker (ADR-0036 decision 5) */
+
+// A tracked pin writes two lines rather than one, and the second is what tells
+// the next push that this image is a starting point rather than a hold. The
+// image sits above the marker, next to the name it belongs to.
+func TestTrackedPinWritesTheMarkerBesideTheImage(t *testing.T) {
+	doc := `apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: staging
+spec:
+  project: checkout
+  autoDeploy: true
+  components:
+    - name: web
+      replicas: { min: 2 }   # unrelated, and it stays
+`
+	out, err := Pin([]byte(doc), "staging", "web", promoted, Tracked())
+	if err != nil {
+		t.Fatalf("Pin: %v", err)
+	}
+	want := strings.Replace(doc,
+		"    - name: web\n",
+		"    - name: web\n      image: "+promoted+"\n      imageTracked: true\n", 1)
+	if string(out) != want {
+		t.Errorf("Pin:\n--- got\n%s\n--- want\n%s", out, want)
+	}
+	if err := verifyPin(out, "staging", "web", promoted, true); err != nil {
+		t.Error(err)
+	}
+}
+
+// The second push is the one the marker exists for: it replaces the image the
+// first one wrote and leaves the marker exactly where it is, so the document
+// after two pushes differs from the document after one by the digest alone.
+func TestTrackedPinReplacesItsOwnPin(t *testing.T) {
+	doc := `apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata: {name: staging}
+spec:
+  project: checkout
+  autoDeploy: true
+  components:
+    - name: web
+      image: ghcr.io/acme/checkout@sha256:0000
+      imageTracked: true
+`
+	out, err := Pin([]byte(doc), "staging", "web", promoted, Tracked())
+	if err != nil {
+		t.Fatalf("Pin: %v", err)
+	}
+	want := strings.Replace(doc, "ghcr.io/acme/checkout@sha256:0000", promoted, 1)
+	if string(out) != want {
+		t.Errorf("a second tracked pin rewrote more than the digest:\n--- got\n%s\n--- want\n%s", out, want)
+	}
+}
+
+// A person pinning over a trigger's pin takes the component back: the marker is
+// cleared rather than inherited, or the next push would overwrite a promotion.
+// Nothing is written where no marker was — a promotion into a document that has
+// never auto-deployed is still one image line and nothing else.
+func TestAnUnmarkedPinClearsAMarkerAndOtherwiseWritesNone(t *testing.T) {
+	t.Run("clears a marker it finds", func(t *testing.T) {
+		doc := `apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata: {name: staging}
+spec:
+  project: checkout
+  components:
+    - name: web
+      image: ghcr.io/acme/checkout@sha256:0000
+      imageTracked: true
+`
+		out, err := Pin([]byte(doc), "staging", "web", promoted)
+		if err != nil {
+			t.Fatalf("Pin: %v", err)
+		}
+		want := strings.Replace(
+			strings.Replace(doc, "ghcr.io/acme/checkout@sha256:0000", promoted, 1),
+			"imageTracked: true", "imageTracked: false", 1)
+		if string(out) != want {
+			t.Errorf("Pin:\n--- got\n%s\n--- want\n%s", out, want)
+		}
+	})
+
+	t.Run("writes none where there was none", func(t *testing.T) {
+		doc := `apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata: {name: production}
+spec:
+  project: checkout
+  components:
+    - name: web
+      image: ghcr.io/acme/checkout@sha256:0000
+`
+		out, err := Pin([]byte(doc), "production", "web", promoted)
+		if err != nil {
+			t.Fatalf("Pin: %v", err)
+		}
+		if strings.Contains(string(out), "imageTracked") {
+			t.Errorf("a promotion wrote a marker to say what its absence already says:\n%s", out)
+		}
+	})
 }

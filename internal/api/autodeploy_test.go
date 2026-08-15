@@ -49,6 +49,10 @@ func trackingReport(images map[string]string) *kelsonv1alpha1.ReportBuildRequest
 func webImage() string    { return "ghcr.io/acme/checkout-web@sha256:" + strings.Repeat("a", 64) }
 func workerImage() string { return "ghcr.io/acme/checkout-worker@sha256:" + strings.Repeat("b", 64) }
 
+// nextWebImage is what the *second* push to the tracked branch built. Tracking
+// is only tracking if this one lands too.
+func nextWebImage() string { return "ghcr.io/acme/checkout-web@sha256:" + strings.Repeat("c", 64) }
+
 // storedEnvironment reads one environment document back out of the store, which
 // is where the whole outcome of this trigger lives.
 func storedEnvironment(t *testing.T, specs *fakeSpecStore, project, environment string) string {
@@ -148,6 +152,116 @@ func TestReportBuildFollowsATag(t *testing.T) {
 	})
 	if got := res.GetTriggered(); len(got) != 1 || got[0] != "staging" {
 		t.Fatalf("triggered = %v (message %s), want the environment following the tag", got, res.GetMessage())
+	}
+}
+
+// --- the marker, and the second push (ADR-0036 decision 5) ---------------------
+
+// TestASecondPushMovesWhatTheFirstPushMoved is the defect decision 5 exists to
+// close, and it is the one test that could not pass before it.
+//
+// The trigger's only way to tell the controller anything is a spec write, and
+// the field it writes is a pin — so before the marker, this environment moved to
+// the first push's digest and then reported itself as pinned forever after. What
+// makes the second push land is that the pin it is overwriting is one it wrote:
+// marked, therefore in the stale set, therefore its own to move.
+func TestASecondPushMovesWhatTheFirstPushMoved(t *testing.T) {
+	p := reportServerWith(t, reportProjectDoc, map[string][]byte{"staging": trackingEnvDoc("staging", "")})
+
+	first := report(t, p.clients, trackingReport(map[string]string{"web": webImage()}))
+	if got := first.GetTriggered(); len(got) != 1 || got[0] != "staging" {
+		t.Fatalf("the first push triggered %v (%s), want staging", got, first.GetMessage())
+	}
+	after := storedEnvironment(t, p.specs, "checkout", "staging")
+	if !strings.Contains(after, webImage()) {
+		t.Fatalf("the first push did not pin the reported image:\n%s", after)
+	}
+	// The pin carries its provenance, which is the whole mechanism: without it
+	// the next stale set cannot tell this from a person's promotion.
+	if !strings.Contains(after, "imageTracked: true") {
+		t.Fatalf("the trigger's pin is unmarked, so tracking stops here:\n%s", after)
+	}
+
+	second := report(t, p.clients, trackingReport(map[string]string{"web": nextWebImage()}))
+	if got := second.GetTriggered(); len(got) != 1 || got[0] != "staging" {
+		t.Fatalf("the second push triggered %v, want staging again — this is the defect #248 hit: %s",
+			got, second.GetMessage())
+	}
+	if strings.Contains(second.GetMessage(), "an image pin holds it") {
+		t.Errorf("the trigger reported its own pin as somebody holding the component still: %s", second.GetMessage())
+	}
+
+	after = storedEnvironment(t, p.specs, "checkout", "staging")
+	if !strings.Contains(after, nextWebImage()) {
+		t.Errorf("the second push's image did not reach the document:\n%s", after)
+	}
+	if strings.Contains(after, webImage()) {
+		t.Errorf("the first push's image survived the second:\n%s", after)
+	}
+	if strings.Count(after, "imageTracked") != 1 {
+		t.Errorf("the marker was written more than once:\n%s", after)
+	}
+}
+
+// An author may write the marker deliberately — image plus marker is "start
+// here, and let tracking advance it" (decision 5's third bullet). A document
+// that says so moves on the very first push, where the same document without
+// the marker would not have moved at all.
+func TestAnAuthorWrittenMarkerIsRespected(t *testing.T) {
+	const authored = "ghcr.io/acme/checkout-worker:start-here"
+	p := reportServerWith(t, reportProjectDoc, map[string][]byte{
+		"staging": trackingEnvDoc("staging", `  components:
+    - name: worker
+      image: `+authored+`
+      imageTracked: true
+`),
+	})
+	res := report(t, p.clients, trackingReport(map[string]string{"worker": workerImage()}))
+
+	if got := res.GetTriggered(); len(got) != 1 || got[0] != "staging" {
+		t.Fatalf("triggered = %v (%s), want the environment whose author marked the pin", got, res.GetMessage())
+	}
+	staging := storedEnvironment(t, p.specs, "checkout", "staging")
+	if !strings.Contains(staging, workerImage()) || strings.Contains(staging, authored) {
+		t.Errorf("the marked pin was not advanced to what the push built:\n%s", staging)
+	}
+}
+
+// The other half, and the one decision 2 protects: a pin nobody marked is a
+// person holding the component still, and the trigger neither overwrites it nor
+// argues with it. The document keeps the line byte for byte and the answer says
+// why, in the words it has always used.
+func TestAnUnmarkedPinIsNeverOverwritten(t *testing.T) {
+	const held = "      image: ghcr.io/acme/checkout-worker:frozen-by-a-person\n"
+	p := reportServerWith(t, reportProjectDoc, map[string][]byte{
+		"staging": trackingEnvDoc("staging", "  components:\n    - name: worker\n"+held),
+	})
+	res := report(t, p.clients, trackingReport(map[string]string{
+		"web":    webImage(),
+		"worker": workerImage(),
+	}))
+
+	const reason = "environment staging did not move worker: an image pin holds it, and a pinned component " +
+		"ignores everything (rule P3, ADR-0016)"
+	if !strings.Contains(res.GetMessage(), reason) {
+		t.Errorf("the pinned reason is not the one a person's pin has always got\n  want: %s\n  got:  %s",
+			reason, res.GetMessage())
+	}
+	staging := storedEnvironment(t, p.specs, "checkout", "staging")
+	if !strings.Contains(staging, held) {
+		t.Errorf("the person's pin was rewritten:\n%s", staging)
+	}
+	if strings.Contains(staging, workerImage()) {
+		t.Errorf("the trigger overwrote an unmarked pin:\n%s", staging)
+	}
+	// It never became the trigger's to move, so nothing marked it either.
+	if strings.Contains(staging, "name: worker\n      imageTracked") {
+		t.Errorf("the trigger marked a pin it was not allowed to move:\n%s", staging)
+	}
+	// web was stale, so the environment still moved — the refusal is per
+	// component, not per environment.
+	if got := res.GetTriggered(); len(got) != 1 {
+		t.Fatalf("triggered = %v, want staging to still move for web", got)
 	}
 }
 

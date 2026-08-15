@@ -449,7 +449,7 @@ hold ([ADR-0036](adr/0036-autodeploy.md) decision 2):
 | binds a source whose `ref` is the ref that moved | compared as short names — `main`, `v1.2.3` |
 | binds a source whose `ref` is not a commit | a SHA-pinned source names one revision forever, so there is nothing about it to track |
 | tracks | the effective flag above |
-| is not pinned | an `image:` on the environment override or on the component beats `--image` (rule P3), so a build cannot move it — production moves when a person moves its pin ([below](#promotion)) |
+| is not pinned | an `image:` on the environment override or on the component beats `--image` (rule P3), so a build cannot move it — production moves when a person moves its pin ([below](#promotion)). An image the override marks `imageTracked` is not such a pin ([below](#a-marked-pin-names-where-a-component-starts-not-that-it-stays)) |
 
 An environment whose stale set is empty does nothing, silently: a push to a repository it happens to
 build from is not news.
@@ -475,7 +475,7 @@ nor report builds keeps manual deploys, which is exactly today's behaviour; webh
 tracking to manual without an error, and the delivery-state surface (last delivery, last report) is what
 makes that visible.
 
-### How an environment is actually moved, and what it costs
+### How an environment is actually moved
 
 kelson-server publishes no environment artifact and must not: under
 [ADR-0028](adr/0028-delivery-spine.md) a revision is a `<generation>-<spec-hash>` artifact tag plus an
@@ -485,14 +485,52 @@ trigger writes the reported (or freshly built) digests into
 `.metadata.generation`, and the reconcile that follows renders and publishes — the same mechanism
 `kelson deploy --image` and `kelson promote` already use, through the same splice.
 
-> **The cost, stated ([#248](https://github.com/dafrie/kelson/issues/248)).** That field is a *pin*, and a
-> pinned component is not in the stale set — so a component an auto-deploy moves is excluded from the next
-> push's, and the answer then names it as pinned. Auto-deploy moves each component once until the pin is
-> removed. It is a collision between two decisions rather than a fault in either: ADR-0036 decision 2 reads
-> "the spec names an image" as "a person is holding this still", and ADR-0028 leaves a spec write as the
-> only way to tell the controller anything. Closing it needs the model to tell an author's pin from a
-> trigger's — which is a design decision, not something a trigger path should decide by ignoring pins it
-> believes it recognises.
+### A marked pin names where a component starts, not that it stays
+
+That field is a *pin*, and a pinned component is not in the stale set — so without more, auto-deploy
+would move each component once and then report it as pinned forever after. The fix is not for the
+trigger to ignore pins it believes it wrote; it is for the pin to **say who wrote it**
+([ADR-0036](adr/0036-autodeploy.md) decision 5):
+
+```yaml
+components:
+  - name: web
+    image: ghcr.io/acme/checkout@sha256:9f6ad2c1…   # what runs right now
+    imageTracked: true                              # …and tracking may advance it
+```
+
+`imageTracked` marks the image as a starting point rather than a hold. It changes nothing about
+rendering — rule P3 is untouched and the revision it names is exactly what runs — but the component
+stays out of the pin list, so a later push moves it again and the trigger overwrites its own pin.
+**The trigger writes it with every image it splices**, which is what makes auto-deploy tracking rather
+than one move.
+
+Without the marker, an `image:` means what it has always meant:
+
+- **an unmarked pin is a person's**, whether it came from an author's `image:`,
+  [`kelson promote`](#promotion) or `kelson deploy --image`. No trigger overwrites one — not by
+  checking, but because a pinned component is not in the stale set at all. A push that was asked to
+  move it says so instead: *"an image pin holds it, and a pinned component ignores everything"*.
+  Tracking resumes when the pin is removed.
+- **a promotion into a tracking environment takes the component back.** Pinning over a marked image
+  writes `imageTracked: false` beside it, because a person deciding what runs outranks the next push.
+  A document that has never auto-deployed gains no such key: a promotion there is still one image line
+  and nothing else.
+
+You may write the marker yourself, and image-plus-marker is a coherent thing to say: *start here, and
+let tracking advance it* — a fresh environment seeded at a known-good digest that then follows its
+branch. It is a workload field, refused on data components and charts like the `image:` it qualifies.
+
+> **One re-tag, disclosed.** `imageTracked` is spec, so it reaches the `<generation>-<spec-hash>`
+> artifact tag ([ADR-0028](adr/0028-delivery-spine.md) decision 2) — through the resolved pin list,
+> which is what it changes. An environment that marks a pin publishes one new revision and then stays
+> put; an environment that never writes the field hashes exactly as it did before the field existed.
+
+> **GitOps-managed installs do not compose with this.** Where Environment documents are reconciled
+> from a repository, the trigger's spec writes fight the git reconciler and one of them loses silently.
+> `autoDeploy` is for instances whose specs kelson owns; the ownership-detection UX on
+> [#248](https://github.com/dafrie/kelson/issues/248) has to say so rather than let the two overwrite
+> each other.
 
 ## Promotion
 
@@ -526,7 +564,9 @@ Four consequences worth stating before they surprise anyone:
 - **A pinned environment stops moving.** `--image` stands in for Project `image:` and therefore loses
   to a pin: a CI job passing a fresh digest will not change a pinned environment. Unpinning is deleting
   the field. This is what "pinned" means, and it is the point — production changes when someone
-  promotes to it.
+  promotes to it. The one image that does not hold a component still is one marked
+  [`imageTracked`](#a-marked-pin-names-where-a-component-starts-not-that-it-stays), which says so in
+  the document rather than leaving a reader to work out which pins a trigger considers its own.
 - **The promotion stamps where it came from.** The patched `Environment` carries
   `kelson.dev/promoted-from: <source-environment>@<revision>`. This is a deliberate walk-back of
   ADR-0016's *"promotion keeps no record of its own"*, and a small one: an annotation has no lifecycle,
@@ -1419,6 +1459,7 @@ spec:
   components:                        # one override list, matched by name
     - name: web                      # must name a Component in the Project
       image: ghcr.io/acme/checkout@sha256:9f6ad2c1…   # P3: the promotion pin
+      imageTracked: false            # true = a starting point tracking may advance; the trigger writes it
       replicas: { min: 3, max: 20 }
       resources:
         requests: { cpu: 500m, memory: 512Mi }

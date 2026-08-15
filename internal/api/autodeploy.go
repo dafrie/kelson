@@ -50,23 +50,26 @@ import (
 // [promote.Pin] splice. Nothing here renders, packages or pushes; the plane that
 // owns delivery still owns all of it.
 //
-// # What that costs, stated out loud
+// # The pin says who wrote it, which is what makes this tracking
 //
 // `Environment.spec.components[].image` is the only component-keyed image the
-// model has, and [model.Resolved.ImagePins] counts it as a pin — so a component
-// this trigger moves is, from the next push onwards, a component the stale set
-// excludes. Auto-deploy therefore moves each component once and then reports it
-// as pinned, which is honest but is not tracking.
+// model has, and [model.Resolved.ImagePins] used to count every one of them as a
+// pin — so a component this trigger moved was, from the next push onwards, a
+// component the stale set excluded. Auto-deploy moved each component once and
+// then reported it as pinned, which was honest but was not tracking.
 //
-// That is a contradiction between two accepted-in-spirit decisions rather than a
-// bug in either half: ADR-0036 decision 2 reads "the spec names an image" as "a
-// person is holding this still", and ADR-0028 leaves a spec write as the only
-// way to tell the controller anything. Closing it is a model change — a pin
-// needs to say who wrote it, or an environment needs a component-keyed image
-// input that is not a pin — and a model change is a design discussion, not a
-// trigger path quietly ignoring pins it thinks it recognises. [notMoved] says so
-// in the response rather than letting a pipeline discover it by watching a
-// second push do nothing.
+// ADR-0036 decision 5 closes that in the model rather than here: the pin carries
+// `imageTracked: true`, a marked pin renders as any pin does but is left out of
+// [model.Resolved.ImagePins], and the stale set may move it again. So this path
+// writes [promote.Tracked] with every splice, and it still never overwrites an
+// unmarked pin — not by checking, but because an unmarked pin keeps a component
+// out of the stale set, which is the one list this path pins from. That
+// component reaches [notMoved] instead and is named with the pinned reason,
+// exactly as a person's pin has always been.
+//
+// The refusal is structural on purpose. A trigger that decided for itself which
+// pins it was allowed to overwrite would be a second authority over rule P3;
+// what it is allowed to overwrite is what the resolved spec says it is.
 
 // PushTrigger is one push, reduced to what the stale set is asked about
 // (ADR-0036 decision 2) plus what moves the components it names.
@@ -398,7 +401,11 @@ func (s *Server) applyTrigger(ctx context.Context, stored controlstore.Stored, s
 			return PushOutcome{}, err
 		}
 		for _, name := range pinsOrder(stale, pins) {
-			if doc, err = promote.Pin(doc, env.Metadata.Name, name, pins[name]); err != nil {
+			// Marked, always (ADR-0036 decision 5). The pin this writes is a
+			// record of where the component is, not a decision to hold it there,
+			// and the marker is the only thing that tells the next push's stale
+			// set which of the two it is looking at.
+			if doc, err = promote.Pin(doc, env.Metadata.Name, name, pins[name], promote.Tracked()); err != nil {
 				return PushOutcome{}, err
 			}
 		}
@@ -549,7 +556,8 @@ func heldStill(resolved *model.Resolved, component string, repositories []string
 		return "it does not track its source here — set autoDeploy on the environment or on this component (ADR-0036 decision 1)"
 	case resolved.ImagePinned(component):
 		return "an image pin holds it, and a pinned component ignores everything (rule P3, ADR-0016). " +
-			"Remove the pin to let it follow its source again"
+			"Remove the pin to let it follow its source again, or mark it imageTracked: true to keep the image " +
+			"as a starting point tracking may advance (ADR-0036 decision 5)"
 	default:
 		// Unreachable: the five conditions above are the whole of the stale set,
 		// so a component that fails none of them is in it. Silent rather than
