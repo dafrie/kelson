@@ -718,9 +718,9 @@ spec:
 	}
 }
 
-// TestBuildStrategyNoneBindsNothingToBuild: with nothing built, a binding would
-// promise a clone that never happens.
-func TestBuildStrategyNoneBindsNothingToBuild(t *testing.T) {
+// TestBuildStrategyNoneBuildsNothing: the binding still says where the code
+// lives, and nothing is built from it — the image is the pre-built one.
+func TestBuildStrategyNoneBuildsNothing(t *testing.T) {
 	p, e := loadPair(t, `
 apiVersion: kelson.dev/v1alpha1
 kind: Project
@@ -738,5 +738,9 @@ spec:
 	}
 	if r.Components[0].Image != "ghcr.io/acme/checkout:1" {
 		t.Errorf("image = %q, want the pre-built reference", r.Components[0].Image)
+	}
+	if bound := r.SourceFor("web"); bound == nil {
+		t.Error("the binding survives a project that builds nothing: it says where the code is, " +
+			"which is what webhook and preview matching are asked about")
 	}
 }

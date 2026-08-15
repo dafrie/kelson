@@ -43,9 +43,17 @@ type Resolved struct {
 	// where kelson reads the code from is part of what a revision is.
 	Source *ResolvedSource `json:"source,omitempty"`
 
-	// Sources are the per-component bindings: which source each component that
-	// builds was resolved to, in spec order (ADR-0035 decision 3). It is empty
-	// for a project that builds nothing.
+	// Sources are the per-component bindings: which source each component's code
+	// lives in, in spec order (ADR-0035 decision 3). It is empty for a project
+	// that declares no source at all.
+	//
+	// A binding says where the code is, not that a build is due. A component
+	// pinned to an already-built image still has one — its code did not move,
+	// and the union of its project's bound repositories is what webhook and
+	// preview matching are asked about (ADR-0035 decision 4). Whether anything
+	// is built from it is the image chain's answer (rule P3) and the build
+	// plane's. Kinds that build nothing at all — data components and charts —
+	// have no entry, because there is no code of ours in them to place.
 	//
 	// They live on the envelope rather than on [ResolvedComponent] deliberately.
 	// Nothing about a source reaches a manifest — ADR-0035 decision 4 leaves
@@ -93,15 +101,14 @@ type ResolvedSource struct {
 }
 
 // ResolvedComponentSource is one component's binding: which component, and the
-// source it builds from. A component that builds nothing — a data component, a
-// chart, one pinned to an image — has no entry.
+// source its code lives in.
 type ResolvedComponentSource struct {
 	Component string         `json:"component"`
 	Source    ResolvedSource `json:"source"`
 }
 
-// SourceFor returns the source a component builds from, or nil for one that
-// builds nothing. It is how a plane holding a resolved spec asks the question
+// SourceFor returns the source a component's code lives in, or nil for one
+// bound to none. It is how a plane holding a resolved spec asks the question
 // ADR-0035 decision 4 puts to the build plane — clone *this* component's
 // repository at *this* component's ref — without re-deriving the binding from
 // the document and getting a different answer.
@@ -370,8 +377,8 @@ func resolve(p *Project, e *Environment, globals []Source) (*Resolved, Errors) {
 	return r, bindErrs
 }
 
-// resolveSources binds every component that builds to the source it builds
-// from, and records the Project's default (ADR-0035 decision 3).
+// resolveSources binds every workload component to the source its code lives
+// in, and records the Project's default (ADR-0035 decision 3).
 //
 // Resolution order is the project's own list, then the instance's: a
 // project-local name shadows a global one, which is the same instinct as the
