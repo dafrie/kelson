@@ -38,6 +38,21 @@ var (
 	// nothing is wrong with the key, the user has to add the repository to the
 	// installation (ADR-0033 decision 2 step 3).
 	ErrNotInstalled = errors.New("forge: the app is not installed for that account or repository")
+
+	// ErrWriteNotPermitted: the credential authenticated, the installation
+	// covers the repository, and the forge refused the *write* for lack of a
+	// permission. It is the expected answer for [PRProposer] on a connection
+	// created by the app-manifest flow, because that manifest asks for
+	// `contents: read` and opening a pull request writes objects
+	// (githubmanifest.go).
+	//
+	// It is a fifth sentinel rather than a shade of ErrAuthFailed because the
+	// two send a user to different screens and only one of them is alarming:
+	// ErrAuthFailed means rotate a credential, and this means grant a
+	// permission on an app that is otherwise working perfectly. A caller that
+	// reported "your credential was rejected" here would send somebody to
+	// re-do the whole connect ceremony for a checkbox.
+	ErrWriteNotPermitted = errors.New("forge: the connection may read this repository and not write to it")
 )
 
 // maxErrorBody is how much of a forge's error response is quoted back. Enough
@@ -111,6 +126,21 @@ func isStatus(err error, status int) bool {
 func notInstalled(err error) error {
 	if isStatus(err, http.StatusNotFound) {
 		return fmt.Errorf("%w: %w", ErrNotInstalled, err)
+	}
+	return err
+}
+
+// writeNotPermitted re-labels a 403 on a write endpoint, the same way
+// [notInstalled] re-labels a 404 on a read one and for the same reason: the
+// status means something narrower where the endpoint is known.
+//
+// [newHTTPError] maps 403 to ErrAuthFailed globally, and that stays true here —
+// the wrap keeps the underlying error reachable, so a caller that only knows
+// about the four original sentinels still reads this as an auth failure and
+// fails closed. What the extra sentinel buys is the caller that knows better.
+func writeNotPermitted(err error) error {
+	if isStatus(err, http.StatusForbidden) {
+		return fmt.Errorf("%w: %w", ErrWriteNotPermitted, err)
 	}
 	return err
 }

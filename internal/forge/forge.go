@@ -8,13 +8,13 @@
 // fetchable by a build pod (ADR-0033 decision 5, the gap that made a private
 // repo resolve but not clone). Everything a forge offers on top of that — a
 // repository picker, webhook deliveries, commit statuses, the one upserted
-// pull-request comment — is an optional interface a caller type-asserts for:
-// [RepoBrowser], [WebhookSource], [StatusReporter]. A `generic` token
-// connection implements the mandatory one and none of the others, and that is
-// a working connection rather than a broken one — absence degrades the UI,
-// never the deploy. What this replaces is `if provider == "github"` spread
-// through every caller, where the degradation path is invisible until it is
-// hit.
+// pull-request comment, a proposed change — is an optional interface a caller
+// type-asserts for: [RepoBrowser], [WebhookSource], [StatusReporter],
+// [PRProposer]. A `generic` token connection implements the mandatory one and
+// none of the others, and that is a working connection rather than a broken
+// one — absence degrades the UI, never the deploy. What this replaces is
+// `if provider == "github"` spread through every caller, where the degradation
+// path is invisible until it is hit.
 //
 // # No forge SDK, now or later
 //
@@ -37,11 +37,22 @@
 // so a value that escapes into a log through some other package's format
 // string is still unprintable.
 //
-// PRProposer — ADR-0033 decision 3's fifth capability — is deliberately not
-// declared. It lands with the propose-only flow ([ADR-0025](docs/adr/0025-agent-policy.md))
-// that is its only caller; an interface with no implementation and no consumer
-// describes nothing, which is the mistake [ADR-0028](docs/adr/0028-delivery-spine.md)
-// decision 9 corrected one plane over.
+// # PRProposer arrived with its first caller, and has a second one waiting
+//
+// ADR-0033 decision 3's fifth capability was held back until something called
+// it — an interface with no implementation and no consumer describes nothing,
+// which is the mistake [ADR-0028](docs/adr/0028-delivery-spine.md) decision 9
+// corrected one plane over. Its caller is the GitOps export flow (#248): a
+// Project or Environment document applied by somebody else's Flux cannot be
+// edited through kelson's store, so the edit is proposed to the repository
+// that owns it instead.
+//
+// The *second* caller is the one ADR-0033 named — `propose-only` agent policy
+// ([ADR-0025](docs/adr/0025-agent-policy.md)), which today refuses the mutation
+// and points at the diff. It rides [PRProposer] unchanged when it lands: the
+// interface takes a file set and a base branch and knows nothing about who
+// edited the bytes, which is exactly the property that lets one capability
+// serve a human clicking "propose" and an agent that was refused an apply.
 package forge
 
 import (
@@ -211,6 +222,66 @@ type StatusReporter interface {
 	ReportStatus(ctx context.Context, c Conn, repoFullName, sha string, s Status) error
 	// UpsertPRComment finds the comment containing marker and edits it, or creates one.
 	UpsertPRComment(ctx context.Context, c Conn, repoFullName string, pr int, marker, body string) error
+}
+
+// Proposal is one pull request: a branch cut from a base, a single commit
+// writing a set of whole files, and the request that asks a human to merge it.
+//
+// # Whole files, not patches
+//
+// [Proposal.Files] carries each path's complete new content, because that is
+// what kelson can honestly produce. The documents it proposes are re-serialized
+// from stored custom resources (ADR-0027 decision 6: the authored bytes do not
+// round-trip), so kelson knows what the file should *say* and does not know
+// what the file currently *says* — and a patch computed against bytes it never
+// read would be a patch against a guess. The pull request's own diff is where
+// that difference becomes visible to the human who reviews it, which is the
+// right place for it.
+//
+// # Every field a caller could get wrong is named rather than derived
+//
+// Base branch, branch name, commit message, title and body are the caller's,
+// not this package's. An adapter that invented a branch name would produce a
+// collision the caller could neither predict nor recover from, and an adapter
+// that wrote its own commit message would sign kelson's name to a human's
+// change. The one derivation is BaseBranch when it is empty: the repository's
+// default branch, which is the only value a forge can answer for itself.
+type Proposal struct {
+	// BaseBranch is the branch the change is proposed against and cut from.
+	// Empty means the repository's default branch, which the adapter asks the
+	// forge for.
+	BaseBranch string
+	// Branch is the new branch this proposal creates. It must not exist: a
+	// proposal that force-moved an existing branch could discard a change
+	// somebody else is still reviewing.
+	Branch string
+	// CommitMessage is the message of the single commit the branch carries.
+	CommitMessage string
+	// Files maps a repository-relative path to that file's whole new content.
+	// A path the repository does not have yet is created.
+	Files map[string][]byte
+	// Title and Body are the pull request's own.
+	Title, Body string
+}
+
+// PRProposer is the capability behind "propose this change to the repository
+// that owns it" (ADR-0033 decision 3).
+//
+// Its absence is the difference between a change a human can review in the
+// forge they already use and a block of YAML they have to paste somewhere
+// themselves — a UI difference, in the same sense as [RepoBrowser]'s, except
+// that here the fallback is *export*: the document is always copyable, and this
+// capability only saves the round trip.
+//
+// The credential this needs is strictly wider than everything else in this
+// package: writing a blob, a tree, a commit and a ref is `contents: write`,
+// and the app manifest of ADR-0033 decision 2 asks for `contents: read`
+// (githubmanifest.go says why, and means it). So a connection that satisfies
+// every other capability can still refuse this one at the forge, which is why
+// [ErrWriteNotPermitted] exists as its own sentinel: nothing is wrong with the
+// credential, and the remedy is a permission the installation's owner grants.
+type PRProposer interface {
+	OpenPullRequest(ctx context.Context, c Conn, repoFullName string, p Proposal) (url string, err error)
 }
 
 const (
