@@ -198,10 +198,14 @@ changed.
 > History,Promote}` are reshaped over the CRs — SSA of the spec, an
 > `Environment.status` watch, the `kelson.dev/rollback-to` merge patch, the
 > promotion splice — and `kelson deploy`/`rollback`/`promote`/`history` are
-> ConnectRPC clients of that façade rather than refusing (#225). What has not
-> moved: `RenderService.Diff(from_revision)` still refuses with
-> `delivery/not-implemented` naming #224, because a revision diff needs the
-> rendered-history store ADR-0027 deleted and nothing has replaced it yet.
+> ConnectRPC clients of that façade rather than refusing (#225).
+> `RenderService.Diff(from_revision)` answers again (#247): a revision's
+> rendered set is an immutable artifact in the registry, so the server pulls it
+> and compares the recorded bytes — the rendered-history store ADR-0027 deleted
+> is not needed, and re-rendering the old spec was never the same question. The
+> rollback preview is the same machinery, so it carries a real diff instead of
+> the `rollback/preview-unavailable` finding wherever both revisions can be
+> pulled.
 > `kelson render`, `kelson diff`, `kelson build`, `kelson profile`,
 > `kelson install`/`uninstall`, the cluster secret backend and the MCP read and
 > dry-run tools are unaffected. `kelson status` now reads the delivery phase

@@ -105,11 +105,19 @@ server:
   pushSecret: ""
 
   # -- Name of an existing `kubernetes.io/dockerconfigjson` Secret holding the
-  # credential the server publishes *preview artifacts* with. Mounted into the
-  # pod and passed as `--registry-config`; the chart does not create it either.
-  # Empty is an anonymous push, which is what a registry with no auth (like
+  # credential the server publishes *preview artifacts* with, and reads the
+  # registry back with. Mounted into the pod and passed as `--registry-config`;
+  # the chart does not create it either. Empty is an anonymous push and an
+  # anonymous read, which is what a registry with no auth (like
   # `kelson install registry`'s) takes — and which is all a chart-installed
   # server could do before this knob existed.
+  #
+  # The reads need `pull` scope as well as push: `History` and `Rollback` page
+  # past the twenty-entry status mirror through the registry's tag list (#241),
+  # and `Diff(from_revision)` and the rollback preview pull a revision's
+  # artifact back to compare the manifests it recorded (#247, ADR-0028
+  # decisions 4 and 5). A push-only credential leaves those refused, naming the
+  # credential — never answered as "that revision does not exist".
   #
   # This is a different credential from `pushSecret` above, read by a different
   # process, which is why it is a second knob rather than a second use of the
