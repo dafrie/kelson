@@ -14,6 +14,7 @@ import { HistoryPage } from "./pages/HistoryPage";
 import { LogsPage } from "./pages/LogsPage";
 import { NewProjectPage } from "./pages/NewProjectPage";
 import { OnboardingPage } from "./pages/OnboardingPage";
+import { PreviewDetailPage } from "./pages/PreviewDetailPage";
 import { PromotePage } from "./pages/PromotePage";
 import { RollbackPage } from "./pages/RollbackPage";
 import { EmptyState } from "./components/States";
@@ -65,6 +66,14 @@ export const routes = createRoutesFromElements(
         <Route path="projects/:project/:env/diff" element={<DiffPage />} />
         <Route path="projects/:project/:env/history" element={<HistoryPage />} />
         <Route path="projects/:project/:env/logs" element={<LogsPage />} />
+        {/* The identifier a commit status and a PR comment link to (ADR-0017
+            stage 3, #248): pr<N> is what a human types when they go looking,
+            so it is the route's own leaf rather than the compound
+            <project>-<environment>-pr<N> the namespace uses internally. */}
+        <Route
+          path="projects/:project/:env/previews/:pr"
+          element={<PreviewDetailPage />}
+        />
         {/* The environment in the path is the promotion's *target* — the one
             whose pins are written — and the source is picked on the screen.
             Naming the target is what makes this route reachable from the
