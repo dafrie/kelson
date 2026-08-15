@@ -198,7 +198,6 @@ spec:
                   required:
                     - provider
                     - repo
-                    - secretRef
                     - artifacts
                   properties:
                     artifacts:
@@ -244,7 +243,7 @@ spec:
                       description: HTTP(S) URL of the source repository whose change requests become previews; not delivery.git.repo
                       type: string
                     secretRef:
-                      description: name of the Secret holding forge credentials; never a token
+                      description: name of the Secret holding forge credentials; never a token. Omit it to have kelson materialize one from the git connection covering previews.repo (ADR-0033)
                       type: string
                     skip:
                       type: object

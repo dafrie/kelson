@@ -243,15 +243,12 @@ func sameData(live, desired map[string][]byte) bool {
 // kelsonManages reports whether kelson may write the Secret an environment's
 // previews read.
 //
-// Two spellings qualify, and only the second is reachable today. An empty
-// `previews.secretRef` is ADR-0033 decision 4's case — "`previews.secretRef`
-// becomes optional" — which internal/model does not allow yet: the field is
-// still required in its validation and its generated schema, and
-// internal/renderer writes it verbatim into the ResourceSetInputProvider, so an
-// empty one would render a provider pointing at a Secret with no name. Until
-// those two change, an author opts in by naming exactly the Secret kelson would
-// derive, and the same code serves both spellings the day the field goes
-// optional.
+// Two spellings qualify. An empty `previews.secretRef` is ADR-0033 decision 4's
+// case — the field is optional, and the renderer writes the derived name into
+// the ResourceSetInputProvider for exactly this Secret. Naming that derived
+// name outright is the same request said explicitly, and it stays supported
+// because a spec written while the field was still required means what it
+// always meant.
 //
 // Anything else is somebody's own Secret and is never touched.
 func kelsonManages(secretRef, derived string) bool {

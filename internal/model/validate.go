@@ -713,13 +713,19 @@ func (v *validator) previews(field string, p *Previews) {
 				"takes — is the wrong string in the right-looking field")
 	}
 
-	if p.SecretRef == "" {
-		v.err(ErrMissingRequired, field+".secretRef",
-			"previews.secretRef is required when previews is set",
-			"set secretRef to the name of a Secret holding forge credentials (ADR-0009: the spec carries the "+
-				"name, never the token). flux-operator reads username/password, or the githubApp* keys")
-	} else {
-		v.name(field+".secretRef", p.SecretRef, "secret")
+	// An empty secretRef is a choice rather than an omission (ADR-0033
+	// decision 4): kelson materializes the credential from the git connection
+	// covering previews.repo, so there is nothing for an author to write. A
+	// *named* one is still held to being a name, because the failure that
+	// catches — a pasted token where a Secret name belongs — is the one
+	// ADR-0009 exists to prevent.
+	if p.SecretRef != "" && !ValidSecretName(p.SecretRef) {
+		v.err(ErrInvalidFormat, field+".secretRef",
+			fmt.Sprintf("%q is not a DNS-1123 label, so it cannot name a Secret", p.SecretRef),
+			"set secretRef to the name of a Secret holding forge credentials — flux-operator reads "+
+				"username/password, or the githubApp* keys, and the spec carries the name and never the "+
+				"token (ADR-0009) — or leave it unset and kelson materializes the credential from the git "+
+				"connection covering previews.repo (ADR-0033 decision 4)")
 	}
 
 	if p.Interval != "" {

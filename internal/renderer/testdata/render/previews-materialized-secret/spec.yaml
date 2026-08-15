@@ -1,0 +1,54 @@
+# Fixture: a previews block that names no Secret (ADR-0033 decision 4).
+#
+# `previews.secretRef` was required until ADR-0033; it is optional now, and an
+# author who omits it is asking kelson to materialize the credential from the
+# git connection covering `previews.repo`. The controller writes that Secret
+# into the environment's namespace at `<project>-<environment>-previews`
+# (internal/forgeconn.PreviewSecretName), and this fixture pins the other half
+# of the agreement: the rendered ResourceSetInputProvider points its secretRef
+# at exactly that name — `billing-review-previews` below — rather than at
+# nothing.
+#
+# A blank secretRef would be the wrong output twice over: a reference to a
+# Secret with no name, and a flux-operator that polls the forge anonymously
+# while the credential it needs sits in the namespace beside it. The renderer
+# derives the name and stays pure doing it — it is a string built from two names
+# already in the spec, via internal/preview/naming, which is the same package
+# the publisher and the controller spell it with.
+#
+# `source.connection` on the Project is here because it is what the materializer
+# reads on the other side: previews.repo and source.git are the same repository,
+# so the author's explicit connection covers both. It has no effect on rendered
+# output at all — no credential ever reaches the renderer (ADR-0001,
+# ADR-0033 decision 1) — and the golden showing nothing about it is the point.
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: billing
+spec:
+  source:
+    git: https://github.com/acme/billing
+    ref: main
+    connection: acme-github
+  image: ghcr.io/acme/billing:3.1.0
+  components:
+    - name: api
+      port: 8080
+---
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: review
+spec:
+  project: billing
+  namespace: billing-review
+  delivery:
+    mode: flux
+    git:
+      repo: git@github.com:acme/deploy.git
+      path: billing/review
+  previews:
+    provider: github
+    repo: https://github.com/acme/billing
+    artifacts:
+      repository: oci://ghcr.io/acme/billing-previews

@@ -114,7 +114,7 @@ var renderedFields = map[string]map[string]string{
 
 		"$.spec.previews.provider":             "renderer: ResourceSetInputProvider spec.type (GitHubPullRequest / GitLabMergeRequest)",
 		"$.spec.previews.repo":                 "renderer: ResourceSetInputProvider spec.url",
-		"$.spec.previews.secretRef":            "renderer: ResourceSetInputProvider spec.secretRef.name",
+		"$.spec.previews.secretRef":            "renderer: ResourceSetInputProvider spec.secretRef.name — the author's Secret, or the one internal/controller materializes from the git connection when the field is unset (ADR-0033 decision 4)",
 		"$.spec.previews.interval":             "renderer: the fluxcd.controlplane.io/reconcileEvery annotation on the ResourceSetInputProvider",
 		"$.spec.previews.filter.labels":        "renderer: ResourceSetInputProvider spec.filter.labels",
 		"$.spec.previews.filter.includeBranch": "renderer: ResourceSetInputProvider spec.filter.includeBranch",

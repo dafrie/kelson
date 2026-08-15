@@ -113,7 +113,7 @@ This reference is **generated** from the committed JSON Schema [`schema/environm
 | `interval` | string | no | `"10m"` | how often the forge is polled for change requests |
 | `provider` | string enum `"github"`, `"gitlab"` | yes |  | the forge whose change requests become previews |
 | `repo` | string | yes |  | HTTP(S) URL of the source repository whose change requests become previews; not delivery.git.repo |
-| `secretRef` | string | yes |  | name of the Secret holding forge credentials; never a token |
+| `secretRef` | string | no |  | name of the Secret holding forge credentials; never a token. Omit it to have kelson materialize one from the git connection covering previews.repo (ADR-0033) |
 | `skip` | object | no |  |  |
 
 ##### `spec.previews.artifacts`
