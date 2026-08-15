@@ -288,6 +288,11 @@ func (r *EnvironmentReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 	env.Status.Phase = phaseFor(env.Status.Phase, previous, outcome)
 	env.Status.History = recordHistory(env.Status.History, outcome, specHash, metav1.Now())
+	// Wholesale, nil included (issue #240). A readback is a snapshot of one
+	// moment, and keeping the last good one when this reconcile did not look
+	// would produce a status whose phase and workload counts describe different
+	// minutes — which is worse than a section that is simply absent.
+	env.Status.Workloads = outcome.Workloads
 	// Both the active and the inert case keep their bookkeeping: an inert
 	// rollback that lost its status.rollbackGeneration would be re-read as a
 	// *new* rollback on the next reconcile (case 1 of rollbackFor) and pin

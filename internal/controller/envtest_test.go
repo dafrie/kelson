@@ -53,6 +53,7 @@ import (
 	"testing"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -100,6 +101,12 @@ func envtestClient(t *testing.T) client.Client {
 	s := testScheme(t)
 	if err := corev1.AddToScheme(s); err != nil {
 		t.Fatalf("registering core/v1: %v", err)
+	}
+	// apps/v1 for the workload readback's fixtures (issue #240). The readback
+	// itself reads unstructured and needs no scheme entry; the tests that seed
+	// a Deployment want the typed struct rather than a hand-built map.
+	if err := appsv1.AddToScheme(s); err != nil {
+		t.Fatalf("registering apps/v1: %v", err)
 	}
 	c, err := client.New(testEnv.Config, client.Options{Scheme: s})
 	if err != nil {

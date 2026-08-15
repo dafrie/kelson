@@ -228,11 +228,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err := (&controller.GitSourceReconciler{Client: mgr.GetClient()}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("registering the git source reconciler: %w", err)
 	}
-	// The previews credential (ADR-0033 decision 4). It rides a *direct* client
-	// rather than the manager's, for the reason controller.ClientSecrets states:
-	// reading Secrets and GitConnections through the manager's cache would start
-	// an informer over every Secret in the cluster.
-	previewSecrets, err := previewSecretMaterializer(restCfg, cfg)
+	// The one *direct* client this binary holds: reads that must not go through
+	// the manager's cache, because the manager's cache starts an informer for
+	// every kind read through it. Two things need that — the previews credential
+	// (Secrets and GitConnections, ADR-0033 decision 4) and the workload readback
+	// (Deployments and Pods, issue #240) — and the second is the sharper case:
+	// a cached Pod read would hold every pod in the cluster in this process's
+	// memory and wake the reconciler on every pod event in it.
+	directClient, err := controlstore.NewClient(restCfg)
+	if err != nil {
+		return fmt.Errorf("building the direct client: %w", err)
+	}
+	previewSecrets, err := previewSecretMaterializer(directClient, cfg)
 	if err != nil {
 		return err
 	}
@@ -274,6 +281,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			PullSecret:         cfg.pullSecret,
 			Interval:           cfg.reconcileInterval,
 			PreviewSecrets:     previewSecrets,
+			// ADR-0028 step 6's second half (issue #240). It arrives with the
+			// chart grant that lets it work — read-only get/list on Pods and
+			// Deployments — and degrades to `status.workloads.unavailable` if
+			// that grant is not there, rather than failing the deploy.
+			Workloads: controller.ClusterWorkloads{Reader: controller.ClientWorkloads(directClient)},
 		},
 	}).SetupWithManager(mgr, found.profile.Flux != nil); err != nil {
 		return fmt.Errorf("registering the environment reconciler: %w", err)
@@ -309,11 +321,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 // reason it does in the server (ADR-0033 decision 5), so an instance that has
 // not connected a forge yet still gets authenticated previews out of the
 // credential it already had.
-func previewSecretMaterializer(restCfg *rest.Config, cfg config) (controller.PreviewSecrets, error) {
-	crClient, err := controlstore.NewClient(restCfg)
-	if err != nil {
-		return nil, fmt.Errorf("building the connection client: %w", err)
-	}
+func previewSecretMaterializer(crClient client.WithWatch, cfg config) (controller.PreviewSecrets, error) {
 	connections, err := controlstore.NewGitConnectionStore(controlstore.GitConnectionStoreOptions{
 		Client:    crClient,
 		Namespace: cfg.fluxNamespace,

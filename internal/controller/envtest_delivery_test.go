@@ -27,7 +27,10 @@ import (
 	"strings"
 	"testing"
 
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -436,4 +439,139 @@ func hasFinalizer(finalizers []string) bool {
 		}
 	}
 	return false
+}
+
+// TestWorkloadReadbackAgainstARealAPIServer is the readback's half of what this
+// file exists for (issue #240).
+//
+// Against the fake client, [ClientWorkloads] proves that Go code called List
+// with some arguments and got back whatever the fake was seeded with. Every
+// interesting way it can be wrong survives that: an unstructured list needs the
+// *List* kind ("DeploymentList", not "Deployment") or the RESTMapper never
+// resolves it; a label selector is applied server-side, so a malformed one is a
+// query that quietly returns everything; `apps/v1` versus anything else is a
+// 404 only a real discovery document produces. None of those is a property of
+// kelson's logic, and this is the only place any of them is exercised.
+//
+// It also pins the one property no schema can: the query is scoped by kelson's
+// own provenance labels, so a workload in the same namespace that kelson did
+// not apply is invisible to it.
+func TestWorkloadReadbackAgainstARealAPIServer(t *testing.T) {
+	c := envtestClient(t)
+	ctx := context.Background()
+	ns := createNamespace(t, c, nsName(t.Name(), ""))
+
+	// Two of kelson's own, and one the environment did not apply.
+	createDeployment(t, c, ns, "web", "web", true)
+	createDeployment(t, c, ns, "worker", "worker", true)
+	createDeployment(t, c, ns, "someone-elses", "someone-elses", false)
+
+	// web is up; worker's pod is in CrashLoopBackOff; the foreign workload's is
+	// too, and must not appear anywhere in the answer.
+	createPod(t, c, ns, "web-0", map[string]string{"app": "web"}, "")
+	createPod(t, c, ns, "worker-0", map[string]string{"app": "worker"}, "CrashLoopBackOff")
+	createPod(t, c, ns, "someone-elses-0", map[string]string{"app": "someone-elses"}, "CrashLoopBackOff")
+
+	got, err := ClusterWorkloads{Reader: ClientWorkloads(c)}.Observe(ctx, Revision{
+		Project: "checkout", Environment: "production", TargetNamespace: ns,
+	})
+	if err != nil {
+		t.Fatalf("Observe against a real API server: %v", err)
+	}
+
+	if got.Checked != 2 {
+		t.Fatalf("checked = %d, want 2 — the label selector is what keeps a workload kelson did not "+
+			"apply out of this environment's status: %+v", got.Checked, got)
+	}
+	if got.Degraded != 1 || got.Healthy != 1 {
+		t.Errorf("degraded = %d healthy = %d, want 1 and 1: %+v", got.Degraded, got.Healthy, got)
+	}
+	if len(got.Unhealthy) != 1 {
+		t.Fatalf("unhealthy = %+v, want the worker alone", got.Unhealthy)
+	}
+	entry := got.Unhealthy[0]
+	if entry.Code != v1alpha1.WorkloadCrashLoopBackOff {
+		t.Errorf("code = %q, want %q", entry.Code, v1alpha1.WorkloadCrashLoopBackOff)
+	}
+	if !strings.Contains(entry.Resource, "worker") || strings.Contains(entry.Resource, "someone") {
+		t.Errorf("resource = %q, want the worker Deployment and never the foreign one", entry.Resource)
+	}
+	if len(entry.Containers) != 1 || entry.Containers[0].Pod != "worker-0" {
+		t.Errorf("containers = %+v, want the failing pod named. A pod selector that came back empty "+
+			"would look exactly like this test passing with zero containers.", entry.Containers)
+	}
+}
+
+// createDeployment applies a minimal but schema-valid Deployment. `mine` stamps
+// kelson's provenance labels; without them the readback must not see it.
+func createDeployment(t *testing.T, c client.Client, namespace, name, selector string, mine bool) {
+	t.Helper()
+	labels := map[string]string{}
+	if mine {
+		labels = map[string]string{
+			delivery.LabelManagedBy:   delivery.ManagedByKelson,
+			delivery.LabelProject:     "checkout",
+			delivery.LabelEnvironment: "production",
+		}
+	}
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, Labels: labels},
+		Spec: appsv1.DeploymentSpec{
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": selector}},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": selector}},
+				Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "nginx"}}},
+			},
+		},
+	}
+	if err := c.Create(context.Background(), dep); err != nil {
+		t.Fatalf("creating Deployment %s/%s: %v", namespace, name, err)
+	}
+	// envtest runs no controllers, so the Available condition has to be written
+	// by hand — and through the status subresource, which is the write path a
+	// real deployment-controller uses.
+	dep.Status = appsv1.DeploymentStatus{
+		ObservedGeneration: dep.Generation,
+		Conditions: []appsv1.DeploymentCondition{
+			{Type: appsv1.DeploymentAvailable, Status: corev1.ConditionTrue, Reason: "MinimumReplicasAvailable"},
+		},
+	}
+	if err := c.Status().Update(context.Background(), dep); err != nil {
+		t.Fatalf("writing the Deployment status of %s/%s: %v", namespace, name, err)
+	}
+}
+
+// createPod applies a pod and writes the container status the classifier reads.
+// An empty waiting reason is a ready pod.
+func createPod(t *testing.T, c client.Client, namespace, name string, labels map[string]string, waiting string) {
+	t.Helper()
+	p := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, Labels: labels},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "nginx"}}},
+	}
+	if err := c.Create(context.Background(), p); err != nil {
+		t.Fatalf("creating Pod %s/%s: %v", namespace, name, err)
+	}
+	status := corev1.PodStatus{
+		Conditions: []corev1.PodCondition{
+			{Type: corev1.PodScheduled, Status: corev1.ConditionTrue},
+			{Type: corev1.PodReady, Status: corev1.ConditionTrue},
+		},
+		ContainerStatuses: []corev1.ContainerStatus{{
+			Name:  "app",
+			Ready: true,
+			State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+		}},
+	}
+	if waiting != "" {
+		status.Conditions[1].Status = corev1.ConditionFalse
+		status.ContainerStatuses[0].Ready = false
+		status.ContainerStatuses[0].State = corev1.ContainerState{
+			Waiting: &corev1.ContainerStateWaiting{Reason: waiting, Message: "back-off restarting failed container"},
+		}
+	}
+	p.Status = status
+	if err := c.Status().Update(context.Background(), p); err != nil {
+		t.Fatalf("writing the Pod status of %s/%s: %v", namespace, name, err)
+	}
 }
