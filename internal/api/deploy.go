@@ -3,10 +3,14 @@ package api
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"strings"
+	"time"
 
 	"connectrpc.com/connect"
 
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
+	"github.com/dafrie/kelson/internal/controlstore"
 	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/delivery/statemachine"
 	"github.com/dafrie/kelson/internal/diff"
@@ -14,29 +18,37 @@ import (
 	"github.com/dafrie/kelson/internal/observation"
 )
 
-// Deploy renders the spec and answers with what it would do. The rungs that
-// change the cluster are gated (issue #224); the rungs that do not are intact.
+// Deploy writes the spec and then streams what the controller does with it.
 //
-// # Which half of this RPC survives, and why that split is the honest one
+// # Deploying is a write and a watch (ADR-0028, issue #225)
 //
-// [ADR-0028](docs/adr/0028-delivery-spine.md) deleted the delivery adapters, so
-// there is nothing left to call Apply on. What it did not touch is everything
-// upstream of the apply: dry_run=RENDER is the offline rung — the manifests ARE
-// the answer and no adapter was ever built — and dry_run=SERVER is the API
-// server's own verdict on the rendered set through internal/delivery/dryrun,
-// which is a cluster capability and not an adapter. Both keep working, exactly
-// as before, and an agent whose mutations default to dry-run (ADR-0025, the MCP
-// surface) notices nothing.
+// There is no apply left to call. kelson-controller reconciles an
+// `Environment`: it validates, renders, publishes an immutable OCI artifact and
+// applies the Flux pair, and it records every step in `Environment.status`. So
+// the deploy is the *spec write* — a server-side apply through the spec store,
+// which is what bumps `.metadata.generation` and starts a reconcile — and the
+// rest of this RPC is a projection of the status that follows, until it settles
+// or the caller goes away.
 //
-// The apply rung answers `CodeUnimplemented` carrying a
-// `delivery/not-implemented` detail. It answers it AFTER the Proposed event,
-// deliberately: a caller streaming this RPC learns what would have been
-// deployed — the project, the environment, the resource count — and then learns
-// that kelson cannot deploy it, which is strictly more than a bare refusal and
-// is the shape a dry run already has.
+// # What the write touches, and what it deliberately leaves alone
 //
-// The event order for the rungs that still run is unchanged and never varies:
-// Proposed (what is about to happen), then the rung's own answer.
+// A deploy writes the project document it carries and the one environment it
+// names. The other environments a project holds are left exactly as they are:
+// PutSpec is the verb that replaces a document set, and a deploy of
+// `-f project.yaml -f production.yaml` must not delete staging because it was
+// not mentioned.
+//
+// # The dry-run rungs are unchanged
+//
+// dry_run=RENDER is the offline rung — the manifests ARE the answer — and
+// dry_run=SERVER is the API server's own verdict on the rendered set through
+// internal/delivery/dryrun. Neither ever needed an adapter and neither writes
+// anything, so both behave exactly as they did before the spine (ADR-0025's
+// propose-only agents notice nothing).
+//
+// The event order never varies: Proposed (what is about to happen), then the
+// rung's own answer — for a real deploy, Committed once the controller reports
+// a revision, a Transition per visible status change, and exactly one Settled.
 func (s *Server) Deploy(ctx context.Context, req *connect.Request[kelsonv1alpha1.DeployRequest], stream *connect.ServerStream[kelsonv1alpha1.DeployResponse]) error {
 	msg := req.Msg
 	// The audit record is opened by the interceptor and enriched here, where
@@ -72,6 +84,21 @@ func (s *Server) Deploy(ctx context.Context, req *connect.Request[kelsonv1alpha1
 		if err := guard.blastRadius(out.resolved); err != nil {
 			return err
 		}
+		// A deploy is a spec write now (issue #225), so a deploy that carries
+		// its own documents is also governed by the rule PutSpec is governed
+		// by — and for the identical reason. The documents it writes include
+		// the Project, and the Project carries `defaults.policy`: an agent that
+		// could rewrite it through this RPC could set `agents: allow` and then
+		// do anything, which would make every other refusal here advisory.
+		//
+		// A deploy of a *stored* spec changes no document and is exempt, which
+		// is what the agent surface actually sends (internal/mcp names a
+		// stored project).
+		if _, inline := msg.GetSpec().GetSpec().(*kelsonv1alpha1.SpecRef_Documents); inline {
+			if err := s.guardStored(ctx, model.AgentOpSpecWrite, set.Project); err != nil {
+				return err
+			}
+		}
 	}
 
 	proposed := &kelsonv1alpha1.DeployResponse_Proposed{
@@ -100,24 +127,211 @@ func (s *Server) Deploy(ctx context.Context, req *connect.Request[kelsonv1alpha1
 
 	// `require: [dry-run]` is satisfied by kelson running one here, on the set
 	// that would be applied — never by a claim on the request that one was run
-	// elsewhere (ADR-0025 §5). It still runs ahead of the gate for the reason
-	// the doc comment gives: what an agent may do is a stable answer about
-	// them, and what kelson can do is a temporary one about kelson.
+	// elsewhere (ADR-0025 §5). It runs before the write, because a refused
+	// deploy must change nothing.
 	if err := s.requireDryRun(ctx, guard, out.profile, set); err != nil {
 		return err
 	}
-	return fail(connect.CodeUnimplemented, deployUnavailable())
+
+	if err := s.writeSpec(ctx, msg, set.Project); err != nil {
+		return failRequest(err)
+	}
+	return s.followEnvironment(ctx, set.Project, set.Environment, msg.GetTimeoutSeconds(), stream)
 }
 
-// deployUnavailable is the refusal every deleted apply path in this package
-// shares, so the message a caller reads does not depend on which RPC they
-// happened to call.
-func deployUnavailable() error {
-	return delivery.NotImplemented("deploy",
-		"kelson cannot apply a rendered set: the direct applier and the git writer were deleted with "+
-			"the old delivery machinery, and the controller that replaces them does not publish yet. "+
-			"dry_run=RENDER and dry_run=SERVER are unaffected and still answer",
-		"#224")
+// writeSpec is the deploy itself: the spec, applied.
+//
+// The version it asserts is the one it just read, which is the same
+// read-modify-write Promote performs and for the same reason — DeployRequest
+// carries no version field, so the alternative to reading one is a blind
+// overwrite, and blind overwrites are what optimistic concurrency exists to
+// refuse. A spec that changed between the read and the write comes back as
+// store/version-conflict, which is the honest answer: something else deployed
+// while this request was in flight.
+func (s *Server) writeSpec(ctx context.Context, msg *kelsonv1alpha1.DeployRequest, project string) error {
+	if s.specs == nil {
+		return unimplemented("the spec store")
+	}
+	docs, version, err := s.deployDocuments(ctx, msg.GetSpec(), project, msg.GetEnvironment())
+	if err != nil {
+		return err
+	}
+	_, err = s.specs.Put(ctx, project, docs, controlstore.PutOptions{
+		ExpectedVersion: version,
+		IdempotencyKey:  msg.GetIdempotencyKey(),
+		Image:           msg.GetImage(),
+	})
+	return err
+}
+
+// deployDocuments assembles the document set the deploy writes, and the version
+// the write asserts.
+//
+// A stored spec deploys itself: the documents are already the desired state, so
+// the apply is a no-op at the API server and the stream that follows reports
+// what the environment is doing. Inline documents are merged into whatever the
+// store already holds — the project document and the named environment are
+// replaced, every other environment is carried through untouched — because a
+// deploy names one environment and a document set nobody sent is not a
+// deletion request.
+func (s *Server) deployDocuments(ctx context.Context, ref *kelsonv1alpha1.SpecRef, project, environment string) (controlstore.Documents, string, error) {
+	docs, inline := ref.GetSpec().(*kelsonv1alpha1.SpecRef_Documents)
+	stored, err := s.specs.Get(ctx, project)
+	switch {
+	case err == nil:
+	case !controlstore.AsNotFound(err):
+		return controlstore.Documents{}, "", err
+	case !inline:
+		// A stored spec that is not stored: the read is the answer.
+		return controlstore.Documents{}, "", err
+	default:
+		// A first deploy of an inline spec creates the project.
+		stored = controlstore.Stored{Documents: controlstore.Documents{Environments: map[string][]byte{}}}
+	}
+	if !inline {
+		return stored.Documents, stored.Version, nil
+	}
+
+	out := copyDocuments(stored.Documents)
+	if out.Environments == nil {
+		out.Environments = map[string][]byte{}
+	}
+	out.Project = docs.Documents.GetProject()
+	name, doc, err := requestedEnvironment(docs.Documents.GetEnvironments(), environment)
+	if err != nil {
+		return controlstore.Documents{}, "", err
+	}
+	out.Environments[name] = doc
+	return out, stored.Version, nil
+}
+
+// requestedEnvironment picks the inline document the deploy is about, under the
+// same rule --env has: an unnamed environment is unambiguous only when the
+// request carries one.
+func requestedEnvironment(docs map[string][]byte, environment string) (string, []byte, error) {
+	if environment != "" {
+		if doc, ok := docs[environment]; ok {
+			return environment, doc, nil
+		}
+		return "", nil, fmt.Errorf("api: the request names environment %q and the documents do not carry it", environment)
+	}
+	if len(docs) != 1 {
+		return "", nil, fmt.Errorf("api: the request carries %d environment documents and names none; name one", len(docs))
+	}
+	for name, doc := range docs {
+		return name, doc, nil
+	}
+	return "", nil, fmt.Errorf("api: the request carries no environment document")
+}
+
+// followEnvironment streams `Environment.status` until it settles, the budget
+// expires, or the caller goes away.
+//
+// # Which event each status write becomes
+//
+// The first status naming a revision is Committed: the artifact is published
+// and the Flux pair points at it, which is what "the apply landed; revision
+// assigned" means on this spine. Every status whose projection differs from the
+// last one is a Transition. The settle is the controller's own
+// `Progressing=False` for the current generation, which is the one place that
+// knows the difference between "Flux is still working" and "nothing more will
+// happen without a human".
+//
+// # A status that has not caught up is not an answer
+//
+// Every event is gated on `observedGeneration >= generation`. Between the write
+// above and the controller's first reconcile the object still carries the
+// *previous* deployment's phase, revision and conditions, and streaming those
+// would report the last deploy's outcome as this one's.
+func (s *Server) followEnvironment(ctx context.Context, project, environment string, timeoutSeconds int64, stream *connect.ServerStream[kelsonv1alpha1.DeployResponse]) error {
+	environments, err := s.environmentStore()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	states, err := environments.Watch(ctx, project, environment)
+	if err != nil {
+		return failRequest(err)
+	}
+
+	budget := time.NewTimer(s.deployBudget(timeoutSeconds))
+	defer budget.Stop()
+
+	var last *kelsonv1alpha1.DeployResponse_Transition
+	var committed bool
+	var current controlstore.EnvironmentState
+	for {
+		select {
+		case <-ctx.Done():
+			// A cancelled client is not a failed deployment: the write landed
+			// and the controller carries on without this stream.
+			return ctx.Err()
+
+		case <-budget.C:
+			// The budget is this stream's, not the deployment's. Stuck is the
+			// state machine's word for "no progress within the timeout", and
+			// the phase it is stuck in is the diagnosis.
+			state := deliveryState(current, true)
+			return s.settle(stream, current, state)
+
+		case st, ok := <-states:
+			if !ok {
+				return failRequest(unavailable("api: the watch on %s/%s ended before the deployment settled",
+					project, environment))
+			}
+			current = st
+			if !st.Current() {
+				continue
+			}
+			if !committed && st.Revision != "" {
+				committed = true
+				// The audit record's revision is the *delivery* revision, and
+				// this is where it becomes knowable: the controller assigns it
+				// when it publishes, so a spec write that nothing has picked up
+				// yet has produced no revision to record (audit.go).
+				auditChange(ctx, controlstore.AuditChange{Revision: st.Revision})
+				if err := stream.Send(&kelsonv1alpha1.DeployResponse{
+					Event: &kelsonv1alpha1.DeployResponse_Committed_{Committed: &kelsonv1alpha1.DeployResponse_Committed{
+						Revision: st.Revision,
+						Adapter:  adapterName,
+					}},
+				}); err != nil {
+					return err
+				}
+			}
+			state := deliveryState(st, false)
+			transition := wireTransition(state)
+			if !sameTransition(last, transition) {
+				last = transition
+				if err := stream.Send(&kelsonv1alpha1.DeployResponse{
+					Event: &kelsonv1alpha1.DeployResponse_Transition_{Transition: transition},
+				}); err != nil {
+					return err
+				}
+			}
+			if st.Settled() {
+				return s.settle(stream, st, state)
+			}
+		}
+	}
+}
+
+// settle sends the one terminal event.
+//
+// An unhealthy deployment settles cleanly: the stream completes and the error
+// rides *inside* Settled, because a deployment that failed is an answer and not
+// a transport failure — statemachine.Run's contract, and the reason the wire
+// has an error field here at all.
+func (s *Server) settle(stream *connect.ServerStream[kelsonv1alpha1.DeployResponse], st controlstore.EnvironmentState, state statemachine.State) error {
+	settled := &kelsonv1alpha1.DeployResponse_Settled{Final: wireTransition(state)}
+	if err := settledError(st, state); err != nil {
+		settled.Error = wireError(err)
+	}
+	return stream.Send(&kelsonv1alpha1.DeployResponse{
+		Event: &kelsonv1alpha1.DeployResponse_Settled_{Settled: settled},
+	})
 }
 
 // previewDeploy is the dry_run=SERVER rung: the API server's own verdict on the
@@ -166,20 +380,16 @@ func previewSummary(d *diff.Diff) string {
 		d.Summary.Added, d.Summary.Modified, d.Summary.Removed, d.Summary.MaxRisk)
 }
 
-// Status reports the observation plane's verdict for each workload the
-// rendered spec declares.
+// Status reports two things and neither substitutes for the other (issue #53):
+// the delivery phase says whether the change ARRIVED, the verdicts say whether
+// it WORKS.
 //
-// It used to report two things and say that neither substituted for the other
-// (issue #53): the delivery phase said whether the change ARRIVED, the verdicts
-// said whether it WORKS. The phase came from an adapter, and ADR-0028 deleted
-// the adapters; ADR-0027 decision 6 says where it comes back from — this handler
-// reads `Environment.status` — and issue #224 is when.
-//
-// So the response carries an empty phase and an empty revision rather than a
-// guess. Empty is a value a client can branch on and "Healthy" would not be;
-// the UI reads the same field it always did and finds nothing in it, which is
-// the truth. The verdicts, the namespace and the causes behind each verdict are
-// unchanged, and they are the half a caller looks at when something is broken.
+// The phase, the revision and the cause come from `Environment.status`
+// (ADR-0027 decision 6) and the verdicts from the observation plane, exactly as
+// before. A server with no status seam, or an environment kelson has never been
+// given, reports the workload half and says in `cause` why the delivery half is
+// missing — an empty phase is a value a client can branch on, and a guessed
+// "Healthy" would not be.
 func (s *Server) Status(ctx context.Context, req *connect.Request[kelsonv1alpha1.StatusRequest]) (*connect.Response[kelsonv1alpha1.StatusResponse], error) {
 	msg := req.Msg
 	out, err := s.renderSpec(ctx, msg.GetSpec(), msg.GetEnvironment(), msg.GetImage(), msg.GetProfile())
@@ -200,15 +410,46 @@ func (s *Server) Status(ctx context.Context, req *connect.Request[kelsonv1alpha1
 	if err != nil {
 		return nil, failRequest(err)
 	}
-	return connect.NewResponse(&kelsonv1alpha1.StatusResponse{
+	res := &kelsonv1alpha1.StatusResponse{
 		Verdicts: verdicts,
 		// The namespace the target resolved to, so a client addressing this
 		// environment's workloads reads it rather than reconstructing the
 		// model's default and missing a spec.namespace override (#161).
 		Namespace: t.Namespace,
-		Cause: "the delivery phase is not reported: the adapters that answered it were deleted with the " +
-			"old delivery machinery (ADR-0028) and it returns with issue #224, read from Environment.status",
-	}), nil
+	}
+	s.reportDelivery(ctx, res, t)
+	return connect.NewResponse(res), nil
+}
+
+// reportDelivery fills in the delivery half of a status from
+// `Environment.status`, or says why it is empty.
+//
+// It never fails the RPC. The workload verdicts are the half a caller looks at
+// when something is broken, and losing them because the control plane could not
+// answer the other half would be the wrong trade — so a missing seam, an
+// environment that was never stored and a status that has not caught up are all
+// reported in `cause` with the phase left empty.
+func (s *Server) reportDelivery(ctx context.Context, res *kelsonv1alpha1.StatusResponse, t Target) {
+	if s.environments == nil {
+		res.Cause = "the delivery phase is not reported: this server was started without the Environment " +
+			"status reader, so it can see the workloads but not what kelson delivered"
+		return
+	}
+	st, err := s.environments.Get(ctx, t.Project, t.Environment)
+	if err != nil {
+		res.Cause = fmt.Sprintf("the delivery phase is not reported: %v", err)
+		return
+	}
+	res.Phase, res.Revision = st.Phase, st.Revision
+	state := deliveryState(st, false)
+	res.Cause = state.Cause.String()
+	if !st.Current() {
+		// The status describes an older generation than the spec. Saying so is
+		// the whole point of observedGeneration: the phase below is real, and
+		// it is not about the spec the caller is holding.
+		res.Cause = fmt.Sprintf("%s (status is at generation %d, the spec is at %d)",
+			state.Cause.String(), st.ObservedGeneration, st.Generation)
+	}
 }
 
 // workloadVerdicts evaluates the observation verdict for every resource in the
@@ -290,71 +531,312 @@ func observeWorkloads(ctx context.Context, plane *Plane, set delivery.ManifestSe
 	return verdicts, nil
 }
 
-// Rollback is gated (issue #224).
+// Rollback pins the environment to a revision it has already published, by
+// writing `kelson.dev/rollback-to` (ADR-0028 decision 5).
 //
-// Every one of its three parts is deleted. The recorded revisions came from the
-// history store (ADR-0027 decision 7 deletes it), the irreversibility preview
-// came from internal/delivery/rollback, and the replay was an adapter's
-// Rollback. [ADR-0028](docs/adr/0028-delivery-spine.md) decision 5 replaces all
-// three with a pointer move — repoint the environment's OCIRepository at an
-// immutable tag that already exists, via a `kelson.dev/rollback-to` annotation
-// that also suspends re-render.
+// # A rollback is a pointer move, and the preview says less than it used to
 //
-// Even dry_run=RENDER is refused, unlike Deploy's. The preview rung of a
-// rollback is not a render: it is the comparison of two recorded revisions, and
-// answering it with "no findings" because there is nothing to compare would be
-// the precise failure the preview exists to prevent — a rollback that looked
-// safe because kelson could not look.
-func (s *Server) Rollback(ctx context.Context, req *connect.Request[kelsonv1alpha1.RollbackRequest], _ *connect.ServerStream[kelsonv1alpha1.RollbackResponse]) error {
+// It used to pick a revision, compute what replaying it could not revert, and
+// replay it. Two of those three are gone: the artifact for every revision is in
+// the registry, immutable, so there is nothing to replay — the controller
+// repoints the OCIRepository at a tag that already exists — and the byte-level
+// comparison that produced the findings would need this server to fetch two
+// artifacts, which it does not do.
+//
+// So the Preview event carries the target and one finding that says the
+// comparison is unavailable and where to get it (`flux pull artifact`). It does
+// not carry an empty diff: "no findings" and "kelson did not look" are
+// different facts, and reporting the first when the second is true is the
+// precise failure a preview exists to prevent.
+//
+// # The target is checked against the same window the controller checks
+//
+// The controller refuses a target that is not in `status.history` and reports
+// it as `RollbackTargetUnknown` — after the annotation is written, which would
+// leave the environment carrying a pin nobody can honour. This handler checks
+// the mirror first and refuses in the caller's own request, so a typo is an
+// InvalidArgument with the known revisions listed and nothing is written.
+// A target that passes that check and is still refused by the controller — the
+// history moved under the request — arrives as the Settled event's error.
+func (s *Server) Rollback(ctx context.Context, req *connect.Request[kelsonv1alpha1.RollbackRequest], stream *connect.ServerStream[kelsonv1alpha1.RollbackResponse]) error {
 	msg := req.Msg
 	auditDryRun(ctx, msg.GetDryRun())
+	auditIdempotencyKey(ctx, msg.GetIdempotencyKey())
 
-	// Agent policy answers first, and the ordering is the same one Deploy
-	// states: `forbid: [rollback]` and `propose-only` are stable statements
-	// about this principal, and the gate is a temporary one about kelson. An
-	// agent told "not implemented" would learn nothing about the rule that will
-	// still refuse it when the capability returns.
+	// Agent policy answers first: `forbid: [rollback]` and `propose-only` are
+	// statements about this principal, and they must be reached before
+	// anything about the request's own shape.
 	//
-	// It needs the project and the environment, which come from the spec — the
-	// only thing this handler still resolves.
-	out, err := s.renderSpec(ctx, msg.GetSpec(), msg.GetEnvironment(), "", msg.GetProfile())
+	// The spec is resolved rather than rendered. A rollback is exactly the
+	// operation an author reaches for when the current spec is bad, and
+	// requiring it to render would refuse the rollback that fixes a render
+	// failure (the one the environment is stuck on).
+	project, environment, _, err := s.resolve(ctx, msg.GetSpec(), msg.GetEnvironment(), "")
 	if err != nil {
 		return failRequest(err)
 	}
+	name, envName := project.Metadata.Name, environment.Metadata.Name
 	if msg.GetDryRun() != kelsonv1alpha1.DryRun_DRY_RUN_RENDER {
-		t := target(out)
-		if _, err := s.guard(ctx, model.AgentOpRollback, t.Project, t.Environment); err != nil {
+		if _, err := s.guard(ctx, model.AgentOpRollback, name, envName); err != nil {
 			return err
 		}
 	}
 
-	return fail(connect.CodeUnimplemented, delivery.NotImplemented("rollback",
-		"kelson cannot roll back: the recorded rendered history and the irreversibility preview it is "+
-			"computed from were deleted with the old delivery machinery, and the annotation-driven "+
-			"rollback that replaces them is not built",
-		"#224"))
+	environments, err := s.environmentStore()
+	if err != nil {
+		return err
+	}
+	st, err := environments.Get(ctx, name, envName)
+	if err != nil {
+		return failRequest(err)
+	}
+	revision, err := rollbackTarget(st, msg.GetToRevision())
+	if err != nil {
+		return fail(connect.CodeInvalidArgument, err)
+	}
+
+	if err := stream.Send(&kelsonv1alpha1.RollbackResponse{
+		Event: &kelsonv1alpha1.RollbackResponse_Preview_{Preview: &kelsonv1alpha1.RollbackResponse_Preview{
+			ToRevision: revision.Revision,
+			Findings:   []*kelsonv1alpha1.RollbackResponse_Finding{rollbackPreviewGap(st, revision)},
+		}},
+	}); err != nil {
+		return err
+	}
+	// RENDER is preview-only, for the API as for the CLI.
+	if msg.GetDryRun() == kelsonv1alpha1.DryRun_DRY_RUN_RENDER {
+		return nil
+	}
+
+	if _, err := environments.Annotate(ctx, name, envName, map[string]string{
+		annotationRollbackTo: revision.Revision,
+	}); err != nil {
+		return failRequest(err)
+	}
+	auditChange(ctx, controlstore.AuditChange{Revision: revision.Revision, From: st.Revision})
+
+	if err := stream.Send(&kelsonv1alpha1.RollbackResponse{
+		Event: &kelsonv1alpha1.RollbackResponse_Committed_{Committed: &kelsonv1alpha1.RollbackResponse_Committed{
+			RestoredRevision: revision.Revision,
+			// AsRevision is empty and stays empty: a rollback publishes
+			// nothing and prepends no history entry (ADR-0028 decision 5,
+			// internal/controller/history.go). There is no new revision it was
+			// "recorded as", and naming the restored one twice would invent a
+			// deployment that did not happen.
+		}},
+	}); err != nil {
+		return err
+	}
+	return s.followRollback(ctx, name, envName, revision.Revision, stream)
 }
 
-// History is gated (issue #224).
+// followRollback waits for the controller to act on the annotation and reports
+// how it went.
 //
-// [ADR-0028](docs/adr/0028-delivery-spine.md) decision 4 moves the record out of
-// kelson entirely: the registry holds every artifact ever published for an
-// environment, immutably, and that IS the history — nothing stores rendered
-// manifests a second time. `Environment.status.history[]` mirrors the most
-// recent 20 entries for humans and for this RPC, and anything older is a
-// registry query.
+// The wait is bounded by the same budget a deploy gets. On expiry the rollback
+// is *not* cancelled — the annotation is in force and the controller will
+// honour it — so the Settled error says exactly that rather than claiming a
+// failure.
+func (s *Server) followRollback(ctx context.Context, project, environment, revision string, stream *connect.ServerStream[kelsonv1alpha1.RollbackResponse]) error {
+	environments, err := s.environmentStore()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	states, err := environments.Watch(ctx, project, environment)
+	if err != nil {
+		return failRequest(err)
+	}
+	budget := time.NewTimer(s.deployBudget(0))
+	defer budget.Stop()
+
+	settle := func(err error) error {
+		settled := &kelsonv1alpha1.RollbackResponse_Settled{}
+		if err != nil {
+			settled.Error = wireError(err)
+		}
+		return stream.Send(&kelsonv1alpha1.RollbackResponse{
+			Event: &kelsonv1alpha1.RollbackResponse_Settled_{Settled: settled},
+		})
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-budget.C:
+			return settle(delivery.Error{
+				Code:     delivery.ErrNotWatched,
+				Resource: project + "/" + environment,
+				Message: fmt.Sprintf("the rollback to %s is written and the controller has not reported acting on it yet",
+					revision),
+				Remediation: "the pin is in force and nothing is cancelled: watch it with `kelson status`, or " +
+					"`kubectl describe environment " + environment + "`",
+				DocsURL: "https://kelson.dev/delivery/errors/" + string(delivery.ErrNotWatched),
+			})
+		case st, ok := <-states:
+			if !ok {
+				return settle(unavailable("api: the watch on %s/%s ended before the rollback settled",
+					project, environment))
+			}
+			if st.RollbackRevision != revision {
+				continue
+			}
+			if ready, found := st.Ready(); found && !ready.True() {
+				return settle(settledError(st, deliveryState(st, false)))
+			}
+			if st.Revision == revision {
+				return settle(nil)
+			}
+		}
+	}
+}
+
+// rollbackTarget decides which revision a rollback restores, and refuses every
+// target the controller would refuse.
 //
-// Neither the mirror nor the publisher exists yet, so this answers with the
-// refusal rather than with an empty list. An empty history and an unavailable
-// history are different facts, and a caller that cannot tell them apart would
-// conclude nothing was ever deployed.
-func (s *Server) History(ctx context.Context, _ *connect.Request[kelsonv1alpha1.HistoryRequest]) (*connect.Response[kelsonv1alpha1.HistoryResponse], error) {
-	_ = ctx
-	return nil, fail(connect.CodeUnimplemented, delivery.NotImplemented("history",
-		"kelson cannot list an environment's revisions: the rendered-history store was deleted with the "+
-			"old delivery machinery, and the registry tag list and Environment.status mirror that replace "+
-			"it are not built",
-		"#224"))
+// An empty to_revision is "the previous revision": the newest published one
+// that is not the one being served. Anything else must be in the history
+// mirror — kelson will not point an OCIRepository at a tag it cannot confirm it
+// published, and the mirror is bounded, so a correct-but-ancient target reads
+// exactly like a typo and both are refused with the window named.
+func rollbackTarget(st controlstore.EnvironmentState, requested string) (controlstore.Revision, error) {
+	if len(st.History) == 0 {
+		return controlstore.Revision{}, fmt.Errorf(
+			"api: %s/%s has published nothing, so there is no revision to roll back to",
+			st.Project, st.Environment)
+	}
+	if requested == "" {
+		previous, ok := st.PreviousRevision()
+		if !ok {
+			return controlstore.Revision{}, fmt.Errorf(
+				"api: %s/%s has published one revision (%s) and it is the one running, so there is no previous one to roll back to",
+				st.Project, st.Environment, st.History[0].Revision)
+		}
+		return previous, nil
+	}
+	if !revisionFormat.MatchString(requested) {
+		return controlstore.Revision{}, fmt.Errorf(
+			"api: %q is not a revision: a revision is <generation>-<spec-hash-short>, e.g. %s",
+			requested, st.History[0].Revision)
+	}
+	if found, ok := st.FindRevision(requested); ok {
+		return found, nil
+	}
+	return controlstore.Revision{}, fmt.Errorf(
+		"api: %s/%s has no revision %q in its history (%s). The mirror holds the most recent %d revisions; "+
+			"the registry holds every one ever published, so an older target is a registry query",
+		st.Project, st.Environment, requested, strings.Join(knownRevisions(st), ", "), len(st.History))
+}
+
+// revisionFormat is the artifact tag grammar of ADR-0028 decision 2:
+// <generation>-<spec-hash-short>. Checking it before the history lookup is what
+// lets a caller who typed a branch name or a digest read that they typed the
+// wrong *kind* of thing, rather than that their revision is not in the window.
+var revisionFormat = regexp.MustCompile(`^[1-9][0-9]*-[0-9a-f]{8}$`)
+
+func knownRevisions(st controlstore.EnvironmentState) []string {
+	out := make([]string, 0, len(st.History))
+	for _, r := range st.History {
+		out = append(out, r.Revision)
+	}
+	return out
+}
+
+// rollbackPreviewGap is the one finding a rollback preview always carries: what
+// this server cannot tell the caller, and where they can get it.
+//
+// It is a finding rather than an omission because the caller must not read an
+// empty findings list as "nothing about this rollback is irreversible". It is
+// not marked unrecoverable: nothing about the rollback is known to be
+// unrevertible — what is missing is the knowledge, and saying otherwise would
+// be a second lie in place of the first.
+func rollbackPreviewGap(st controlstore.EnvironmentState, target controlstore.Revision) *kelsonv1alpha1.RollbackResponse_Finding {
+	from := st.Revision
+	if from == "" {
+		from = "the current revision"
+	}
+	return &kelsonv1alpha1.RollbackResponse_Finding{
+		Resource: st.Project + "/" + st.Environment,
+		Cause:    "rollback/preview-unavailable",
+		Message: fmt.Sprintf("kelson cannot show what changes between %s and %s: both revisions are immutable OCI "+
+			"artifacts in the registry (ADR-0028 decision 4) and this server does not fetch them. The rollback "+
+			"itself is exact — it repoints at bytes that already exist and cannot have changed.", from, target.Revision),
+		Unrecoverable: false,
+	}
+}
+
+// History lists what this environment has published, newest first.
+//
+// # The record is the registry; this is the window onto it
+//
+// `Environment.status.history[]` mirrors the most recent
+// [v1alpha1.MaxHistoryEntries] revisions (ADR-0028 decision 4). Anything older
+// is still in the registry, immutably, and reading it is a registry query this
+// RPC deliberately does not make: a bounded, cheap answer that says how far it
+// goes is more useful than an unbounded one that needs registry credentials.
+//
+// # What the wire cannot carry, and where it went
+//
+// The spine's entry has a digest, the images it resolved to and the outcome it
+// reached; HistoryEntry has `message` and `author`. So the message carries the
+// outcome, the digest and the images — it is the only slot they fit in — and
+// the author stays empty, because the spine records who deployed nothing. Who
+// did what is the audit trail's question (ADR-0026, QueryAudit).
+func (s *Server) History(ctx context.Context, req *connect.Request[kelsonv1alpha1.HistoryRequest]) (*connect.Response[kelsonv1alpha1.HistoryResponse], error) {
+	msg := req.Msg
+	// Resolved, not rendered: history is a question about what ran, and a spec
+	// whose render is currently broken is exactly when it gets asked.
+	project, environment, _, err := s.resolve(ctx, msg.GetSpec(), msg.GetEnvironment(), "")
+	if err != nil {
+		return nil, failRequest(err)
+	}
+	environments, err := s.environmentStore()
+	if err != nil {
+		return nil, err
+	}
+	st, err := environments.Get(ctx, project.Metadata.Name, environment.Metadata.Name)
+	if err != nil {
+		return nil, failRequest(err)
+	}
+
+	entries := make([]*kelsonv1alpha1.HistoryEntry, 0, len(st.History))
+	for _, r := range st.History {
+		entries = append(entries, &kelsonv1alpha1.HistoryEntry{
+			Revision:    r.Revision,
+			SpecHash:    r.SpecHash,
+			CommittedAt: committedAt(r.Timestamp),
+			Message:     revisionSummary(r, r.Revision == st.Revision),
+		})
+	}
+	return connect.NewResponse(&kelsonv1alpha1.HistoryResponse{Entries: entries}), nil
+}
+
+func committedAt(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
+}
+
+// revisionSummary is the prose the wire's `message` carries for one revision:
+// how that deployment ended, what it published and what it runs.
+func revisionSummary(r controlstore.Revision, serving bool) string {
+	parts := make([]string, 0, 4)
+	if r.Outcome != "" {
+		parts = append(parts, r.Outcome)
+	}
+	if serving {
+		parts = append(parts, "serving")
+	}
+	if r.Digest != "" {
+		parts = append(parts, r.Digest)
+	}
+	if len(r.Images) > 0 {
+		parts = append(parts, strings.Join(r.Images, ", "))
+	}
+	return strings.Join(parts, " · ")
 }
 
 // plane builds the cluster-reading plane for this request, mirroring

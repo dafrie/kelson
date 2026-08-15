@@ -4,13 +4,13 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 
 	"connectrpc.com/connect"
 
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
 	"github.com/dafrie/kelson/internal/clusterprofile"
 	"github.com/dafrie/kelson/internal/controlstore"
-	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/diff"
 	"github.com/dafrie/kelson/internal/model"
 	"github.com/dafrie/kelson/internal/promote"
@@ -29,13 +29,21 @@ import (
 // environment's document. internal/promote decides and splices; this handler
 // only sequences and stores.
 //
-// # It is gated (issue #224)
+// # Where the deployed images come from now
 //
-// The first of the three reads is what broke: the deployed digest came from the
-// rendered-history store, which ADR-0027 decision 7 deleted. [deployedImages]
-// carries the refusal and the reasoning. Everything else in this file — the
-// plan, the splice, the promotion diff, the agent-policy guard — is untouched
-// and is what the rebuild plugs a new digest source into.
+// The first of the three reads is the one the spine changed: the images come
+// from the source `Environment.status` — the revision it is serving and the
+// images that revision resolved to (ADR-0028 decision 4) — where they used to
+// come from the rendered-history store ADR-0027 decision 7 deleted.
+// [deployedImages] does that read and [attributeImages] says which component
+// each image belongs to. Everything else in this file — the plan, the splice,
+// the promotion diff, the agent-policy guard — is unchanged.
+//
+// The write is unchanged too and is already what ADR-0028 decision 6 asks for:
+// the pins are spliced into the target environment's document and stored, and
+// the store applies that document as an `Environment` custom resource under
+// field manager kelson-server. What is new beside it is the
+// `kelson.dev/promoted-from` stamp.
 //
 // # The diff is computed here, not left to the caller
 //
@@ -148,7 +156,29 @@ func (s *Server) Promote(ctx context.Context, req *connect.Request[kelsonv1alpha
 		return nil, failRequest(err)
 	}
 	res.Version = written.Version
-	auditChange(ctx, controlstore.AuditChange{Revision: written.Version})
+	auditChange(ctx, controlstore.AuditChange{Revision: written.Version, From: revision})
+
+	// The provenance stamp (ADR-0028 decision 6): where this environment's
+	// images came from, as a `kubectl get` rather than an archaeology
+	// exercise. It goes *after* the write and not into it, because the write is
+	// a server-side apply of the document set — an apply that also carried the
+	// annotation would own it, and the next apply, which mentions no
+	// annotations, would silently delete it (controlstore.AnnotationManager
+	// says the same thing from the other side).
+	//
+	// A failed stamp does not fail the promotion. The pins are written and the
+	// environment will deploy them; losing the note about where they came from
+	// is a smaller harm than reporting a promotion that happened as one that
+	// did not.
+	if s.environments != nil && len(promote.Pinned(changes)) > 0 {
+		stamp := fmt.Sprintf("%s@%s", source.Metadata.Name, revision)
+		if _, err := s.environments.Annotate(ctx, stored.Project, targetEnv.Metadata.Name,
+			map[string]string{annotationPromotedFrom: stamp}); err != nil {
+			s.authz.logger.Warn("promotion could not stamp its provenance",
+				"project", stored.Project, "environment", targetEnv.Metadata.Name,
+				"annotation", annotationPromotedFrom, "error", err)
+		}
+	}
 	return connect.NewResponse(res), nil
 }
 
@@ -167,25 +197,115 @@ func checkPromoteRequest(msg *kelsonv1alpha1.PromoteRequest) error {
 	return nil
 }
 
-// deployedImages reads what the source environment's latest revision runs.
+// deployedImages reads what the source environment's latest revision runs, from
+// `Environment.status` (ADR-0028 decision 4).
 //
-// It is the one step of the promotion that has no source any more. The seam it
-// read through was the rendered-history store, whose bytes were what was
-// actually applied; the spine's replacement is the source Environment's
-// `status.history[]` mirror and, beyond that window, the registry's tag list
-// (ADR-0028 decision 4). Neither exists yet, so the promotion refuses here —
-// before the plan, before the splice, and before anything is stored.
+// The revision is the one the environment is *serving* rather than the last one
+// it published — the two differ exactly while a rollback is pinned, and
+// ADR-0016 decision 2 defines a promotion as moving what ran.
 //
-// Reading the *spec* of the source environment instead would be the wrong fix
-// and is deliberately not done: ADR-0016 decision 2 defines a promotion as
-// moving what ran, not what was intended, and a promotion that silently
-// promoted an intention would be worse than one that refuses.
-func (s *Server) deployedImages(_ context.Context, project *model.Project, source *model.Environment) (string, map[string]string, error) {
-	return "", nil, delivery.NotImplemented("promote",
-		fmt.Sprintf("kelson cannot read what %s/%s is running: promotion moves the images of the source "+
-			"environment's deployed revision, and the recorded history that answered that was deleted "+
-			"with the old delivery machinery", project.Metadata.Name, source.Metadata.Name),
-		"#224")
+// Reading the source environment's *spec* instead would be the wrong answer and
+// is deliberately not done: a spec says what should be deployed and a revision
+// says what was, and a promotion that quietly moved an intention would promote
+// an image the source has not proven.
+func (s *Server) deployedImages(ctx context.Context, project *model.Project, source *model.Environment) (string, map[string]string, error) {
+	if s.environments == nil {
+		return "", nil, unimplemented("the Environment status reader")
+	}
+	st, err := s.environments.Get(ctx, project.Metadata.Name, source.Metadata.Name)
+	if err != nil {
+		return "", nil, err
+	}
+	running, ok := st.Running()
+	if !ok {
+		return "", nil, promote.NothingDeployed(project.Metadata.Name, source.Metadata.Name)
+	}
+	resolved, errs := model.Resolve(project, source)
+	if len(errs) > 0 {
+		return "", nil, errs
+	}
+	return running.Revision, attributeImages(resolved, running.Images), nil
+}
+
+// attributeImages says which component each image of a recorded revision
+// belongs to.
+//
+// # Why this is not a zip, and why it is not a guess either
+//
+// `status.history[].images` is a list of image references "in component order"
+// with the imageless components left out (internal/controller's images()), so
+// position alone cannot name a component: a component added or removed since
+// that revision shifts everything after it, and a promotion that mis-attributed
+// an image would pin production to the wrong build — the one failure mode this
+// whole path exists to prevent.
+//
+// So the correlation is the image *repository*, which survives a tag change and
+// is what actually identifies "the same thing, a different build". The
+// positional pairing is used only where it agrees with the repository, and a
+// component whose repository matches no image, or matches more than one, is
+// simply absent — promote.Plan turns that into a skip with a reason
+// (promote/not-in-revision), and skipping is never silent.
+//
+// This is a re-derivation of something the spine could record directly. A
+// component name on the history entry would make it exact, and that is a change
+// to the custom resource and the controller that writes it — recorded here as
+// the reason this function is more careful than it should have to be.
+func attributeImages(resolved *model.Resolved, images []string) map[string]string {
+	type candidate struct {
+		name string
+		repo string
+	}
+	components := make([]candidate, 0, len(resolved.Components))
+	for _, c := range resolved.Components {
+		if c.Image == "" {
+			continue
+		}
+		components = append(components, candidate{name: c.Name, repo: imageRepository(c.Image)})
+	}
+
+	out := make(map[string]string, len(components))
+	taken := make([]bool, len(images))
+	// The agreeing positional pass: same length, same repository at the same
+	// index, which is the ordinary case of a spec whose components have not
+	// changed since the revision was published.
+	if len(components) == len(images) {
+		for i, c := range components {
+			if imageRepository(images[i]) == c.repo {
+				out[c.name] = images[i]
+				taken[i] = true
+			}
+		}
+	}
+	for _, c := range components {
+		if _, done := out[c.name]; done {
+			continue
+		}
+		match, count := "", 0
+		for i, image := range images {
+			if taken[i] || imageRepository(image) != c.repo {
+				continue
+			}
+			match, count = image, count+1
+		}
+		if count == 1 {
+			out[c.name] = match
+		}
+	}
+	return out
+}
+
+// imageRepository strips the tag or digest from an image reference, leaving
+// what identifies the artifact rather than the build. A colon before the last
+// slash is a port, not a tag separator, which is why this cannot be a
+// strings.Split.
+func imageRepository(image string) string {
+	if at := strings.Index(image, "@"); at >= 0 {
+		image = image[:at]
+	}
+	if colon := strings.LastIndex(image, ":"); colon > strings.LastIndex(image, "/") {
+		image = image[:colon]
+	}
+	return image
 }
 
 // pinnedDocuments applies every pin the plan writes to the environment's

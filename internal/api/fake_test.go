@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
@@ -363,4 +364,160 @@ func (c *cyclingEvaluator) Evaluate(_ context.Context, namespace, name string) (
 		Code:     codes[i],
 		Resource: "Deployment/" + namespace + "/" + name,
 	}, nil
+}
+
+// --- the Environment status seam --------------------------------------------
+
+// fakeEnvironments is an in-memory [EnvironmentStore]: the status the
+// controller would have written, without a controller.
+//
+// A Watch delivers the current state and then whatever the test queued for that
+// environment, and never closes — which is what the real one does while an
+// environment exists, and what makes the handlers' own budget and cancellation
+// the thing under test rather than the fake's end of stream.
+type fakeEnvironments struct {
+	mu      sync.Mutex
+	states  map[string]controlstore.EnvironmentState
+	updates map[string][]controlstore.EnvironmentState
+	// annotated records every Annotate call in order.
+	annotated []fakeAnnotation
+	// controller, when set, is what the annotation makes the status become —
+	// the reconcile a real controller would run in response to it.
+	controller func(controlstore.EnvironmentState, map[string]string) controlstore.EnvironmentState
+	err        error
+}
+
+type fakeAnnotation struct {
+	Project     string
+	Environment string
+	Annotations map[string]string
+}
+
+func newFakeEnvironments(states ...controlstore.EnvironmentState) *fakeEnvironments {
+	f := &fakeEnvironments{
+		states:  map[string]controlstore.EnvironmentState{},
+		updates: map[string][]controlstore.EnvironmentState{},
+	}
+	for _, st := range states {
+		f.states[environmentKey(st.Project, st.Environment)] = st
+	}
+	return f
+}
+
+func environmentKey(project, environment string) string { return project + "/" + environment }
+
+// queue stages the states a Watch delivers after the current one.
+func (f *fakeEnvironments) queue(project, environment string, states ...controlstore.EnvironmentState) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	key := environmentKey(project, environment)
+	f.updates[key] = append(f.updates[key], states...)
+}
+
+func (f *fakeEnvironments) Get(_ context.Context, project, environment string) (controlstore.EnvironmentState, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.err != nil {
+		return controlstore.EnvironmentState{}, f.err
+	}
+	st, ok := f.states[environmentKey(project, environment)]
+	if !ok {
+		return controlstore.EnvironmentState{}, controlstore.NotFound(
+			"environment/"+project+"/"+environment,
+			fmt.Sprintf("no Environment resource exists for %s/%s", project, environment),
+			"store the spec with PutSpec")
+	}
+	return st, nil
+}
+
+func (f *fakeEnvironments) Watch(_ context.Context, project, environment string) (<-chan controlstore.EnvironmentState, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.err != nil {
+		return nil, f.err
+	}
+	key := environmentKey(project, environment)
+	st, ok := f.states[key]
+	if !ok {
+		return nil, controlstore.NotFound("environment/"+key, "no Environment resource exists", "store the spec with PutSpec")
+	}
+	queued := f.updates[key]
+	ch := make(chan controlstore.EnvironmentState, len(queued)+1)
+	ch <- st
+	for _, next := range queued {
+		ch <- next
+	}
+	return ch, nil
+}
+
+func (f *fakeEnvironments) Annotate(_ context.Context, project, environment string, annotations map[string]string) (controlstore.EnvironmentState, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.err != nil {
+		return controlstore.EnvironmentState{}, f.err
+	}
+	key := environmentKey(project, environment)
+	st, ok := f.states[key]
+	if !ok {
+		return controlstore.EnvironmentState{}, controlstore.NotFound("environment/"+key, "no Environment resource exists", "store the spec with PutSpec")
+	}
+	f.annotated = append(f.annotated, fakeAnnotation{Project: project, Environment: environment, Annotations: maps.Clone(annotations)})
+	if st.Annotations == nil {
+		st.Annotations = map[string]string{}
+	}
+	maps.Copy(st.Annotations, annotations)
+	if f.controller != nil {
+		st = f.controller(st, annotations)
+	}
+	f.states[key] = st
+	return st, nil
+}
+
+// healthyEnvironment is the status of an environment that deployed one revision
+// and settled: what the controller writes when everything worked.
+func healthyEnvironment(project, environment, revision string) controlstore.EnvironmentState {
+	return controlstore.EnvironmentState{
+		Project:            project,
+		Environment:        environment,
+		Generation:         1,
+		ObservedGeneration: 1,
+		Phase:              string(delivery.PhaseHealthy),
+		Revision:           revision,
+		Conditions: []controlstore.Condition{
+			{Type: "Ready", Status: "True", Reason: "Ready", Message: "revision " + revision + " is live and healthy", ObservedGeneration: 1},
+			{Type: "Progressing", Status: "False", Reason: "Settled", Message: "nothing is in flight for generation 1", ObservedGeneration: 1},
+		},
+		History: []controlstore.Revision{{
+			Revision: revision,
+			Digest:   "sha256:" + strings.Repeat("a", 8),
+			SpecHash: "sha256:cafebabe",
+			Images:   []string{"ghcr.io/acme/hello:1.4.2"},
+			Outcome:  string(delivery.PhaseHealthy),
+		}},
+	}
+}
+
+// recordingSpecStore is a fakeSpecStore that remembers the options every write
+// carried, for the assertions that are about what reached the store rather than
+// about what it did.
+type recordingSpecStore struct {
+	*fakeSpecStore
+	puts []controlstore.PutOptions
+}
+
+func (r *recordingSpecStore) Put(ctx context.Context, project string, docs controlstore.Documents, opts controlstore.PutOptions) (controlstore.Stored, error) {
+	r.puts = append(r.puts, opts)
+	return r.fakeSpecStore.Put(ctx, project, docs, opts)
+}
+
+// refusingSpecStore is a SpecStore whose writes always lose the
+// optimistic-concurrency check, so a handler's failure path can be driven
+// without scripting the handler.
+type refusingSpecStore struct {
+	SpecStore
+}
+
+func (r *refusingSpecStore) Put(context.Context, string, controlstore.Documents, controlstore.PutOptions) (controlstore.Stored, error) {
+	return controlstore.Stored{}, controlstore.VersionConflict("spec/hello",
+		"the project changed while this write was in flight", "re-read the spec and retry with the version it returns")
 }

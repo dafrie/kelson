@@ -443,6 +443,19 @@ func connectServer(cfg config, attribution *slog.Logger) (*api.Server, *controls
 	if err != nil {
 		return nil, nil, err
 	}
+	// The delivery verbs read `Environment.status` (ADR-0027 decision 6): the
+	// phase, the revision, the history mirror and the rollback pin. It shares
+	// the spec store's client — the same resolved credentials, the same
+	// namespace — because a server whose two halves disagreed about which
+	// cluster holds a project would be worse than one that could not read
+	// either.
+	environments, err := controlstore.NewEnvironmentStore(controlstore.EnvironmentStoreOptions{
+		Client:    crClient,
+		Namespace: cfg.namespace,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
 	logs, err := observation.NewLogQuery(observation.LogQueryConfig{Client: cluster.Typed})
 	if err != nil {
 		return nil, nil, err
@@ -480,10 +493,11 @@ func connectServer(cfg config, attribution *slog.Logger) (*api.Server, *controls
 	}
 
 	return api.New(api.Options{
-		Specs:  specs,
-		Agents: agents,
-		Audit:  audit,
-		Logger: attribution,
+		Specs:        specs,
+		Environments: environments,
+		Agents:       agents,
+		Audit:        audit,
+		Logger:       attribution,
 		Profile: api.CaptureFunc(func(context.Context) (clusterprofile.ClusterProfile, error) {
 			return detect.FromCluster(cfg.kubeconfig)
 		}),

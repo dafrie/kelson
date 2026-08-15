@@ -99,6 +99,19 @@ type PutOptions struct {
 	// makes this call a replay: the stored state is returned as success and
 	// nothing is written.
 	IdempotencyKey string
+	// Image replaces the Project's `spec.image` before the objects are built.
+	//
+	// It exists for one caller: a Deploy carrying `--image`. Under the spine
+	// the render happens in the controller, from the custom resource, so an
+	// image override that was applied only to the server's own render would be
+	// silently dropped on the way to the cluster — the deploy would report one
+	// image and run another. Writing it is what makes it real, and it is the
+	// same substitution the pipeline does (rule P3: it stands in for
+	// `spec.image`, so a component or environment pin still wins).
+	//
+	// Empty means "leave the authored image alone", which is every other
+	// caller.
+	Image string
 }
 
 // DeleteOptions carries the same controls for a delete.
@@ -160,7 +173,7 @@ func (s *SpecStore) Put(ctx context.Context, project string, docs Documents, opt
 	if err := validSegment("project", project); err != nil {
 		return Stored{}, err
 	}
-	desired, err := s.resources(project, docs)
+	desired, err := s.resources(project, docs, opts.Image)
 	if err != nil {
 		return Stored{}, err
 	}
@@ -443,7 +456,7 @@ func (s *SpecStore) read(ctx context.Context, project string) (resourceSet, bool
 }
 
 // resources decodes the authored documents into the objects a Put applies.
-func (s *SpecStore) resources(project string, docs Documents) (resourceSet, error) {
+func (s *SpecStore) resources(project string, docs Documents, image string) (resourceSet, error) {
 	if len(docs.Project) == 0 {
 		return resourceSet{}, fmt.Errorf("controlstore: project %q has no project document", project)
 	}
@@ -454,6 +467,9 @@ func (s *SpecStore) resources(project string, docs Documents) (resourceSet, erro
 	if mp.Metadata.Name != project {
 		return resourceSet{}, fmt.Errorf("controlstore: the project document names %q and the request names %q",
 			mp.Metadata.Name, project)
+	}
+	if image != "" {
+		mp.Spec.Image = image
 	}
 
 	out := resourceSet{
@@ -629,12 +645,17 @@ func specRef(project string) string { return "spec/" + project }
 // so a handler cannot reach for a cluster call instead of going through a
 // store; building the client here keeps that fence intact while still letting
 // the server hand this package a connection.
-func NewClient(cfg *rest.Config) (client.Client, error) {
+//
+// It is a *watching* client because [EnvironmentStore] follows an
+// Environment's status while a deployment is in flight, and a client that could
+// not watch would leave the façade polling for a change the API server is able
+// to push. client.WithWatch is a client.Client, so [SpecStore] is unaffected.
+func NewClient(cfg *rest.Config) (client.WithWatch, error) {
 	s := runtime.NewScheme()
 	if err := v1alpha1.AddToScheme(s); err != nil {
 		return nil, fmt.Errorf("controlstore: registering kelson.dev/v1alpha1: %w", err)
 	}
-	c, err := client.New(cfg, client.Options{Scheme: s})
+	c, err := client.NewWithWatch(cfg, client.Options{Scheme: s})
 	if err != nil {
 		return nil, fmt.Errorf("controlstore: building the custom-resource client: %w", err)
 	}
