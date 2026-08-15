@@ -160,6 +160,18 @@ var renderedFields = map[string]map[string]string{
 	},
 }
 
+// specDocuments are the documents the harness covers: the two *authoring*
+// documents, whose fields are read by the renderer and the planes around it.
+//
+// GitConnection is deliberately absent, and the omission is the harness's own
+// premise rather than an oversight. Every field of a connection is read at use
+// time by a plane with cluster access — the server minting a token, the build
+// pod cloning, the controller calling a forge API (ADR-0033 decision 1) — and
+// none of it resolves, renders or reaches a manifest. There is nothing for
+// renderedFields to name a consumer of and nothing for the resolver to drop on
+// the floor, which is the silence issue #141 is about. What a connection's
+// fields are held to instead is validate.go, which refuses every one it can
+// judge from the document alone.
 func specDocuments() map[string]reflect.Type {
 	return map[string]reflect.Type{
 		KindProject:     reflect.TypeOf(Project{}),

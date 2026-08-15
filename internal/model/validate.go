@@ -1490,6 +1490,182 @@ func validateEnvironmentShape(e *Environment, v *validator) {
 	}
 }
 
+// validateGitConnection checks a GitConnection (ADR-0033). There is no
+// cross-document half to it: a connection names a Secret, and whether that
+// Secret exists — or holds the keys kelson will look for — is the cluster's to
+// know at use time. Validation refuses what it can judge from the document
+// alone, which is the same line every other reference in this package draws
+// (ADR-0009).
+func validateGitConnection(g *GitConnection, v *validator) {
+	v.name("$.metadata.name", g.Metadata.Name, "connection")
+	s := &g.Spec
+
+	switch {
+	case s.Provider == "":
+		v.err(ErrMissingRequired, "$.spec.provider",
+			"a GitConnection names the forge it connects to",
+			"set provider to one of: "+gitProviderNames()+
+				". Use generic for any git host reachable with a token")
+	case !s.Provider.Valid():
+		v.err(ErrInvalidEnum, "$.spec.provider",
+			fmt.Sprintf("unknown git provider %q", s.Provider),
+			"valid providers: "+gitProviderNames()+
+				". The enum grows one value per adapter, so a provider kelson has not written an "+
+				"adapter for is spelled generic and gets private clones and nothing else (ADR-0033)")
+	}
+
+	v.connectionHost("$.spec.host", s)
+	v.connectionAuth("$.spec.auth", s)
+	v.connectionOwner("$.spec.owner", s.Owner)
+}
+
+// connectionHost holds the forge base URL to what kelson can judge without a
+// network — the same judgement [validator.remoteURL] makes everywhere else —
+// and decides when the field may be omitted.
+//
+// Only `provider: github` may omit it, because only it has a default worth
+// writing down (DefaultGitHubHost). A provider whose whole point is that it
+// runs somewhere else has nothing to fall back to, and a connection with no
+// host would resolve against no repository.
+func (v *validator) connectionHost(field string, s *GitConnectionSpec) {
+	switch {
+	case s.Host != "":
+		v.remoteURL(field, s.Host, []string{"https", "http"},
+			"use the forge's base URL over HTTP(S) — the host the API and the clones are reached at, "+
+				"e.g. https://github.com or https://git.acme.internal. Everything here is HTTPS: an SSH "+
+				"remote is a different credential class and is not this field (ADR-0033)")
+	case s.Provider == GitProviderGitHub:
+		// DefaultGitHubHost is what an omitted host means here, and it is the
+		// common case: one connection to github.com, zero configuration.
+	case s.Provider.Valid():
+		v.err(ErrMissingRequired, field,
+			fmt.Sprintf("provider %q names no default host", s.Provider),
+			"set host to the forge's base URL, e.g. https://git.acme.internal. Only provider github "+
+				"may omit it, because only it has a default worth writing down ("+DefaultGitHubHost+")")
+		// A provider that is empty or unknown has already been reported; adding a
+		// second error about the host it cannot default would name the wrong field.
+	}
+}
+
+// connectionAuth holds a connection to exactly one credential kind, and then to
+// what that kind needs.
+//
+// Neither arm carries a value, which is why the checks below are all about
+// names and identifiers: the private key, the webhook secret and the token live
+// in a Kubernetes Secret somebody else manages, and nothing in this package
+// reads one (ADR-0009, ADR-0033 decision 1).
+func (v *validator) connectionAuth(field string, s *GitConnectionSpec) {
+	app, token := s.Auth.GitHubApp, s.Auth.Token
+	switch {
+	case app == nil && token == nil:
+		v.err(ErrMissingRequired, field,
+			"a GitConnection carries no credential reference",
+			"set exactly one of auth.githubApp (the per-instance GitHub App of ADR-0033 decision 2) or "+
+				"auth.token (a token held in a Secret). A connection that authenticates with neither "+
+				"can reach nothing a public clone could not")
+		return
+	case app != nil && token != nil:
+		v.err(ErrMutuallyExclusive, field,
+			"a GitConnection sets both auth.githubApp and auth.token",
+			"keep one: an installation token is scoped to chosen repositories and expires within the "+
+				"hour, a token is a standing credential, and kelson would otherwise have to pick which "+
+				"one it acts as without the author knowing which")
+		return
+	}
+
+	if token != nil {
+		v.connectionSecretRef(field+".token.secretRef", token.SecretRef,
+			"the token, under key "+TokenKey+" (and optionally "+TokenUsernameKey+")")
+		return
+	}
+
+	// GitHub App auth is the github adapter's shape: the manifest flow, the
+	// installation, the RS256 JWT. No other provider has one to speak.
+	if s.Provider != "" && s.Provider != GitProviderGitHub {
+		v.err(ErrAuthProviderMismatch, field+".githubApp",
+			fmt.Sprintf("auth.githubApp needs provider %q but the connection declares %q",
+				GitProviderGitHub, s.Provider),
+			fmt.Sprintf("set provider to %s if this really is a GitHub App, or authenticate with "+
+				"auth.token instead — the app-manifest flow and installation tokens are GitHub's and "+
+				"no other adapter can mint one (ADR-0033)", GitProviderGitHub))
+	}
+	if app.AppID < 1 {
+		v.err(ErrOutOfRange, field+".githubApp.appID",
+			fmt.Sprintf("appID is %d; an app has a positive numeric ID", app.AppID),
+			"set appID to the ID GitHub reports when the app is created — the manifest flow writes it "+
+				"here, and it is the subject of every JWT kelson signs with the app key")
+	}
+	if app.InstallationID < 0 {
+		v.err(ErrOutOfRange, field+".githubApp.installationID",
+			fmt.Sprintf("installationID is %d; an installation has a non-negative ID", app.InstallationID),
+			"set installationID to the ID the installation webhook reports, or omit it: 0 is the valid "+
+				"state between creating the app and installing it, and the connection reports "+
+				"Ready=False until the installation arrives")
+	}
+	v.connectionSecretRef(field+".githubApp.secretRef", app.SecretRef,
+		"the app private key and webhook secret, under keys "+
+			GitHubAppPrivateKeyKey+" and "+GitHubAppWebhookSecretKey)
+}
+
+// connectionSecretRef holds one credential reference to a name kelson could
+// actually address. `what` names the keys the reader will look for, so the
+// remediation tells an operator what to put in the Secret it is asking for.
+func (v *validator) connectionSecretRef(field, name, what string) {
+	if name == "" {
+		v.err(ErrMissingRequired, field,
+			"a credential reference needs the name of a Secret",
+			"set "+trimRoot(field)+" to the name of a Secret in kelson's namespace holding "+what+
+				". The spec carries the name and never the value (ADR-0009)")
+		return
+	}
+	v.name(field, name, "secret")
+}
+
+// connectionOwner checks the discriminated owner reference of ADR-0033
+// decision 6.
+//
+// It is validated in full today and enforced by nothing, which is the decision
+// and not an oversight: the semantics are fixed now so tenancy (#231) attaches
+// to stored connections rather than migrating them. A malformed owner would
+// otherwise be found for the first time by the code that finally enforces it.
+func (v *validator) connectionOwner(field string, o *ConnectionOwner) {
+	if o == nil {
+		return
+	}
+	switch {
+	case o.Kind == "":
+		v.err(ErrMissingRequired, field+".kind",
+			"an owner block names the kind of principal that owns the connection",
+			"set kind to one of: "+strings.Join(OwnerKinds, ", ")+
+				", or remove owner entirely — an absent owner is instance-owned")
+	case !slices.Contains(OwnerKinds, o.Kind):
+		v.err(ErrInvalidEnum, field+".kind",
+			fmt.Sprintf("unknown owner kind %q", o.Kind),
+			"valid kinds: "+strings.Join(OwnerKinds, ", "))
+	case o.Kind == OwnerInstance:
+		if o.Name != "" {
+			v.err(ErrMutuallyExclusive, field+".name",
+				fmt.Sprintf("owner.kind is %q and names principal %q", o.Kind, o.Name),
+				"remove name, or set kind to "+OwnerUser+" or "+OwnerTeam+" — an instance-owned "+
+					"connection belongs to the instance and there is no principal to name")
+		}
+	case o.Name == "":
+		v.err(ErrMissingRequired, field+".name",
+			fmt.Sprintf("owner.kind is %q and names no principal", o.Kind),
+			"set name to the "+o.Kind+" that owns this connection, or set kind to "+OwnerInstance+
+				" — an owner kind with no name owns nothing")
+	}
+}
+
+// gitProviderNames lists the provider enum the way a remediation reads it.
+func gitProviderNames() string {
+	out := make([]string, 0, len(GitProviders))
+	for _, p := range GitProviders {
+		out = append(out, string(p))
+	}
+	return strings.Join(out, ", ")
+}
+
 // validateServiceRefs re-checks an environment's binding targets against the
 // Project's data components.
 func validateServiceRefs(e *Environment, services map[string]Component, v *validator) {
@@ -1645,6 +1821,17 @@ func ValidateEnvironment(e *Environment, p *Project) Errors {
 			fmt.Sprintf("effective delivery mode is %q (environment or project default) but no git target is set", mode),
 			"set delivery.git.repo (and optionally branch, path) on this environment")
 	}
+	return v.errs
+}
+
+// ValidateGitConnection validates a GitConnection (ADR-0033). It is the third
+// entry point beside [ValidateEnvironment] and [ValidateSet], and it takes one
+// document because a connection has no cross-document half: what it references
+// is a Secret, and what references it is a Project's source.connection, and
+// neither is resolvable without a cluster.
+func ValidateGitConnection(g *GitConnection) Errors {
+	v := validator{resource: fmt.Sprintf("%s/%s", KindGitConnection, g.Metadata.Name), kind: KindGitConnection}
+	validateGitConnection(g, &v)
 	return v.errs
 }
 

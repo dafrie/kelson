@@ -5,12 +5,20 @@
 //
 // # Documents
 //
-// Two document kinds exist — Project and Environment — both carrying
-// apiVersion kelson.dev/v1alpha1. A Project names its Components inline
-// (spec.components); an Environment binds to a Project by name (spec.project)
-// and carries everything that differs per deployment target: cluster,
-// namespace, routing, delivery mode, policy, secret backend and per-Component
-// overrides.
+// Three document kinds exist — Project, Environment and GitConnection — all
+// carrying apiVersion kelson.dev/v1alpha1. A Project names its Components
+// inline (spec.components); an Environment binds to a Project by name
+// (spec.project) and carries everything that differs per deployment target:
+// cluster, namespace, routing, delivery mode, policy, secret backend and
+// per-Component overrides.
+//
+// GitConnection is the odd one out and deliberately so (ADR-0033): it is a
+// control-plane document rather than an authoring one. Nothing about it is
+// rendered and the renderer never sees one — it says which forge kelson can
+// talk to and which Secret it talks with, and it is read by the planes that
+// have cluster access. It lives here because what a kelson document *is* has
+// exactly one home, and because validate.go is the one taxonomy every surface
+// reports (ADR-0027 decisions 3 and 5).
 //
 // # Design rules
 //
@@ -61,14 +69,18 @@ const (
 	// APIVersion is the only supported spec apiVersion.
 	APIVersion = "kelson.dev/v1alpha1"
 
-	KindProject     = "Project"
-	KindEnvironment = "Environment"
+	KindProject       = "Project"
+	KindEnvironment   = "Environment"
+	KindGitConnection = "GitConnection"
 )
 
-// TypeMeta carries apiVersion and kind for both document kinds.
+// Kinds is every document kind, in the order error remediations list them.
+var Kinds = []string{KindProject, KindEnvironment, KindGitConnection}
+
+// TypeMeta carries apiVersion and kind for every document kind.
 type TypeMeta struct {
 	APIVersion string `yaml:"apiVersion" json:"apiVersion" jsonschema:"required"`
-	Kind       string `yaml:"kind" json:"kind" jsonschema:"required,enum=Project,enum=Environment"`
+	Kind       string `yaml:"kind" json:"kind" jsonschema:"required,enum=Project,enum=Environment,enum=GitConnection"`
 }
 
 // ObjectMeta is the (deliberately minimal) shared metadata.

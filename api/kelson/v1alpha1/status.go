@@ -22,6 +22,18 @@ const ConditionReady = "Ready"
 // has nothing to be progressing towards.
 const ConditionProgressing = "Progressing"
 
+// ConditionReachable is the forge's own answer, and only a GitConnection
+// carries it (ADR-0033 decision 1).
+//
+// It is separate from Ready because the two fail for opposite reasons and want
+// opposite fixes: Ready=False is a document or a Secret kelson can see is wrong,
+// Reachable=False is everything kelson cannot see — a revoked installation, an
+// expired token, a forge that is down, an instance behind a NAT. Collapsing
+// them would make "your connection is broken" the answer to both, which is the
+// checked-versus-could-not-check distinction the ClusterProfile already refuses
+// to blur.
+const ConditionReachable = "Reachable"
+
 // AnnotationRollbackTo pins an Environment to a revision it has already
 // published (ADR-0028 decision 5):
 //
@@ -353,4 +365,42 @@ type EnvironmentStatus struct {
 	// History is the bounded mirror of the published revisions, newest first,
 	// at most MaxHistoryEntries entries.
 	History []HistoryEntry `json:"history,omitempty"`
+}
+
+// GitConnectionStatus is what the control plane observed about a GitConnection:
+// whether the document is usable, and what the forge said when kelson used it
+// (ADR-0033 decision 1).
+//
+// The two provider-reported fields are the honest answer to "did this actually
+// work". A connection whose document validates, whose Secret exists and whose
+// credential the forge rejects looks identical to a working one until something
+// asks the forge — so the connection asks, and writes down what came back.
+// Neither field is authored: an author who sets them is overwritten by the next
+// refresh.
+type GitConnectionStatus struct {
+	// ObservedGeneration is the .metadata.generation this status describes.
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	// Conditions carries Ready as its summary and Reachable as the forge's own
+	// answer (ConditionReady, ConditionReachable).
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// Account is who the credential acts as, as the provider reports it: the
+	// organization or user the GitHub App is installed on, or the account a
+	// token belongs to. It is what makes a list of connections readable —
+	// `provider: github` twice says nothing, `acme` and `acme-staging` says
+	// which is which.
+	Account string `json:"account,omitempty"`
+
+	// Repositories is how many repositories this credential can see, as the
+	// provider reports it. It is a scope readout rather than a count anybody
+	// needs: an installation that should cover forty repositories and reports
+	// one is a picked-the-wrong-repository mistake, visible in
+	// `kubectl get gitconnections` without opening the forge.
+	Repositories int32 `json:"repositories,omitempty"`
+
+	// ValidationErrors is what validate.go said about this connection, with the
+	// slash codes intact. An invalid spec is a status and not a rejection here
+	// for the same reason it is on the other two kinds (ADR-0027 decision 5).
+	ValidationErrors []ValidationError `json:"validationErrors,omitempty"`
 }

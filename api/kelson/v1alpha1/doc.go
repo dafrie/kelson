@@ -1,5 +1,6 @@
-// Package v1alpha1 is the Kubernetes API surface of kelson: the Project and
-// Environment custom resources of group kelson.dev (ADR-0027).
+// Package v1alpha1 is the Kubernetes API surface of kelson: the Project,
+// Environment and GitConnection custom resources of group kelson.dev (ADR-0027,
+// ADR-0033).
 //
 // # What is here, and what is deliberately not
 //
@@ -9,8 +10,9 @@
 // defaulting and no behaviour of any kind.
 //
 // The spec structs are *not* redefined here. `Spec` is typed as
-// [github.com/dafrie/kelson/internal/model.ProjectSpec] and
-// [github.com/dafrie/kelson/internal/model.EnvironmentSpec] directly, because
+// [github.com/dafrie/kelson/internal/model.ProjectSpec],
+// [github.com/dafrie/kelson/internal/model.EnvironmentSpec] and
+// [github.com/dafrie/kelson/internal/model.GitConnectionSpec] directly, because
 // internal/model is the single home of what a kelson spec is — its fields, its
 // yaml/json tags and its validate.go (ADR-0027 decision 3). A second copy of
 // those structs would be a second answer to "what may an author write", and the
@@ -34,7 +36,7 @@
 // # The two kubebuilder markers
 //
 // `+kubebuilder:object:generate=true` below, and `+kubebuilder:object:root=true`
-// on Project/ProjectList/Environment/EnvironmentList, drive exactly one thing:
+// on each root type and its list, drive exactly one thing:
 // controller-gen's deepcopy generator, which produces zz_generated.deepcopy.go.
 // They are not a schema pipeline. ADR-0027 decision 4 refuses marker-driven CRD
 // generation — the openAPIV3Schema in deploy/crds/*.yaml comes from

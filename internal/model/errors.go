@@ -35,6 +35,13 @@ const (
 	ErrSecretLiteral    Code = "secret/literal"
 	ErrNoImageSource    Code = "semantic/no-image-source"
 	ErrGitTargetMissing Code = "semantic/git-target-missing"
+	// ErrAuthProviderMismatch marks an auth shape the connection's provider
+	// cannot use — today, `githubApp` on anything but `provider: github`
+	// (ADR-0033). It is a semantic code rather than schema/mutually-exclusive
+	// because the two fields are not alternatives to each other: the fix is to
+	// name the provider whose adapter speaks that credential, or to use the
+	// credential kind the named provider does speak.
+	ErrAuthProviderMismatch Code = "semantic/auth-provider-mismatch"
 )
 
 // DocsBaseURL is the stable basis for error documentation links. The docs

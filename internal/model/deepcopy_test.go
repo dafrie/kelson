@@ -180,4 +180,35 @@ func TestSpecTypesHaveNoUnexportedFields(t *testing.T) {
 	}
 	walk(reflect.TypeOf(ProjectSpec{}), "ProjectSpec")
 	walk(reflect.TypeOf(EnvironmentSpec{}), "EnvironmentSpec")
+	walk(reflect.TypeOf(GitConnectionSpec{}), "GitConnectionSpec")
+}
+
+// richGitConnection is a GitConnectionSpec with every pointer member set, which
+// is all the mutable memory it has: the rest is scalars.
+func richGitConnection() *GitConnectionSpec {
+	return &GitConnectionSpec{
+		Provider: GitProviderGitHub,
+		Host:     DefaultGitHubHost,
+		Auth: GitConnectionAuth{
+			GitHubApp: &GitHubAppAuth{AppID: 12345, InstallationID: 678910, SecretRef: "acme-github-app"},
+		},
+		Owner: &ConnectionOwner{Kind: OwnerInstance},
+	}
+}
+
+func TestGitConnectionSpecDeepCopyIsIndependent(t *testing.T) {
+	in := richGitConnection()
+	out := in.DeepCopy()
+
+	out.Auth.GitHubApp.InstallationID = 99
+	out.Auth.GitHubApp.SecretRef = "mutated"
+	out.Owner.Kind = OwnerTeam
+
+	if !reflect.DeepEqual(in, richGitConnection()) {
+		t.Fatalf("mutating the copy changed the source:\n got: %#v\nwant: %#v", in, richGitConnection())
+	}
+	var nilConn *GitConnectionSpec
+	if nilConn.DeepCopy() != nil {
+		t.Errorf("DeepCopy of a nil *GitConnectionSpec must be nil")
+	}
 }

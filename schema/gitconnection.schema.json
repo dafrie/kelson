@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kelson.dev/model/gitconnection.schema.json",
+  "properties": {
+    "apiVersion": {
+      "type": "string"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "Project",
+        "Environment",
+        "GitConnection"
+      ]
+    },
+    "metadata": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "maxLength": 63,
+          "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+          "description": "DNS-1123 label"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name"
+      ]
+    },
+    "spec": {
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": [
+            "github",
+            "generic"
+          ],
+          "description": "the forge this connection speaks to; the enum grows one value per adapter"
+        },
+        "host": {
+          "type": "string",
+          "format": "uri",
+          "description": "forge base URL such as https://github.com or https://git.acme.internal; defaults to https://github.com for provider github"
+        },
+        "auth": {
+          "properties": {
+            "githubApp": {
+              "properties": {
+                "appID": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "the GitHub App's numeric ID as the manifest flow reports it"
+                },
+                "installationID": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "the installation this app acts as; 0 is the valid pre-install state before the installation webhook arrives"
+                },
+                "secretRef": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "name of the Secret holding the app private key and webhook secret; never a value"
+                }
+              },
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "appID",
+                "secretRef"
+              ],
+              "description": "provider github only; the per-instance GitHub App this connection acts as"
+            },
+            "token": {
+              "properties": {
+                "secretRef": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "name of the Secret holding the token; never a value"
+                }
+              },
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "secretRef"
+              ],
+              "description": "a personal or project access token held in a Secret; the fallback every forge answers"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "owner": {
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "instance",
+                "user",
+                "team"
+              ],
+              "description": "who may edit this connection; only instance is enforced today"
+            },
+            "name": {
+              "type": "string",
+              "description": "the owning principal; required when kind is user or team and refused when it is instance"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "provider",
+        "auth"
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ]
+}

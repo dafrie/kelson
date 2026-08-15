@@ -7,7 +7,7 @@ This reference is **generated** from the committed JSON Schema [`schema/project.
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `apiVersion` | string | yes |  |  |
-| `kind` | string enum `"Project"`, `"Environment"` | yes |  |  |
+| `kind` | string enum `"Project"`, `"Environment"`, `"GitConnection"` | yes |  |  |
 | `metadata` | object | yes |  |  |
 | `spec` | object | yes |  |  |
 

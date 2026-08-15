@@ -118,14 +118,14 @@ func decodeDocument(raw *yaml.Node, docIdx int) (any, Errors) {
 	}
 
 	switch tm.Kind {
-	case KindProject, KindEnvironment:
+	case KindProject, KindEnvironment, KindGitConnection:
 	case "":
 		v.err(ErrMissingRequired, "$.kind", "kind is required",
-			fmt.Sprintf("set kind to %q or %q", KindProject, KindEnvironment))
+			"set kind to one of: "+strings.Join(Kinds, ", "))
 	default:
 		v.err(ErrInvalidEnum, "$.kind",
 			fmt.Sprintf("unknown kind %q", tm.Kind),
-			fmt.Sprintf("valid kinds: %s, %s", KindProject, KindEnvironment))
+			"valid kinds: "+strings.Join(Kinds, ", "))
 	}
 	if len(v.errs) > 0 {
 		return nil, v.errs
@@ -139,6 +139,9 @@ func decodeDocument(raw *yaml.Node, docIdx int) (any, Errors) {
 	case KindEnvironment:
 		e := new(Environment)
 		doc = e
+	case KindGitConnection:
+		g := new(GitConnection)
+		doc = g
 	}
 
 	resource := docResource(doc)
@@ -155,6 +158,10 @@ func decodeDocument(raw *yaml.Node, docIdx int) (any, Errors) {
 		ve := validator{resource: resource, kind: KindEnvironment, pos: pos}
 		validateEnvironmentShape(d, &ve)
 		errs = append(errs, ve.errs...)
+	case *GitConnection:
+		vg := validator{resource: resource, kind: KindGitConnection, pos: pos}
+		validateGitConnection(d, &vg)
+		errs = append(errs, vg.errs...)
 	}
 	return doc, errs
 }
@@ -165,6 +172,8 @@ func docResource(doc any) string {
 		return fmt.Sprintf("%s/%s", KindProject, d.Metadata.Name)
 	case *Environment:
 		return fmt.Sprintf("%s/%s", KindEnvironment, d.Metadata.Name)
+	case *GitConnection:
+		return fmt.Sprintf("%s/%s", KindGitConnection, d.Metadata.Name)
 	}
 	return "document"
 }
