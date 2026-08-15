@@ -37,6 +37,8 @@ wrong, open an issue — it is far cheaper to reverse a decision now than after 
 | [0030](0030-flux-aio-install.md) | Install substrate — flux-aio, pre-rendered at release time and pinned | Accepted |
 | [0031](0031-single-cluster-single-tenant.md) | One cluster, one tenant — for now, and recorded as such | Accepted |
 | [0032](0032-finish-the-component-rename.md) | Finish the component rename — the label, the selector and the MCP tools (amends 0014, 0008) | Accepted |
+| [0033](0033-git-connections.md) | Git connections — the forge credentials kelson holds, and how they are scoped (amends 0009) | Proposed |
+| [0034](0034-forge-driven-delivery.md) | Forge-driven delivery — webhooks, the CI hand-off, server-side preview publishing (amends 0017) | Proposed |
 
 *Rebuild note (2026-08-14):* ADRs 0027–0031 are the pre-release rebuild taken as one decision. Read in
 order they are: where state lives, how it is delivered, what renders it, what runs it, and how far it
