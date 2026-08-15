@@ -37,9 +37,23 @@ const transport = createRouterTransport((router) => {
   router.service(DeployService, {
     history: () => ({
       entries: [
-        { revision: "rev-9", committedAt: "2026-08-13T09:00:00Z", author: "ci", message: "raise replicas" },
-        { revision: "rev-8", committedAt: "2026-08-12T17:31:00Z", author: "ci", message: "bump image" },
-        { revision: "rev-7", committedAt: "2026-08-12T09:02:00Z", author: "hb" },
+        {
+          revision: "rev-9",
+          committedAt: "2026-08-13T09:00:00Z",
+          author: "ci",
+          message: "raise replicas",
+        },
+        {
+          revision: "rev-8",
+          committedAt: "2026-08-12T17:31:00Z",
+          author: "ci",
+          message: "bump image",
+        },
+        {
+          revision: "rev-7",
+          committedAt: "2026-08-12T09:02:00Z",
+          author: "hb",
+        },
       ],
     }),
     rollback: async function* (req) {
@@ -136,7 +150,9 @@ describe("RollbackPage", () => {
     expect(screen.getByText("replicas will return to 3")).toBeTruthy();
     expect(screen.getAllByText("cannot revert")).toHaveLength(1);
     // The heading counts the unrecoverable ones out of the total.
-    expect(screen.getByText(/What this rollback cannot revert \(1 of 2\)/)).toBeTruthy();
+    expect(
+      screen.getByText(/What this rollback cannot revert \(1 of 2\)/),
+    ).toBeTruthy();
     // The preview's diff_json is decoded and rendered alongside.
     expect(screen.getByText("Deployment/web")).toBeTruthy();
   });
@@ -256,6 +272,76 @@ const unavailableTransport = createRouterTransport((router) => {
         },
       });
     },
+  });
+});
+
+/**
+ * A target older than the bounded history the cluster keeps (#241): the picker
+ * offers it because the registry's tag list confirms it, and the preview
+ * carries a second note saying what nothing recorded about it.
+ */
+const beyondWindowTransport = createRouterTransport((router) => {
+  router.service(DeployService, {
+    history: () => ({
+      entries: [
+        { revision: "9-aaaa0000", committedAt: "2026-08-13T09:00:00Z" },
+        {
+          revision: "1-0badc0de",
+          beyondWindow: true,
+          message: "older than the mirror",
+        },
+      ],
+    }),
+    rollback: async function* (req) {
+      yield create(RollbackResponseSchema, {
+        event: {
+          case: "preview",
+          value: {
+            toRevision: req.toRevision,
+            findings: [
+              {
+                resource: "checkout/production",
+                cause: "rollback/preview-unavailable",
+                message:
+                  "kelson cannot show what changes between 9-aaaa0000 and 1-0badc0de.",
+                unrecoverable: false,
+              },
+              {
+                resource: "checkout/production",
+                cause: "rollback/beyond-window",
+                message:
+                  "revision 1-0badc0de is older than the 20 entries this environment's status keeps; what kelson cannot tell you is how that deployment ended.",
+                unrecoverable: false,
+              },
+            ],
+          },
+        },
+      });
+    },
+  });
+});
+
+describe("RollbackPage's beyond-window target", () => {
+  it("offers a registry-only revision and shows its notice as a note, not a risk", async () => {
+    renderAt(
+      beyondWindowTransport,
+      "/projects/checkout/production/rollback",
+      "/projects/:project/:env/rollback",
+      <RollbackPage />,
+    );
+
+    // The picker marks it, because its empty meta line is an absence of record
+    // rather than an absence of facts about the deployment.
+    expect(await screen.findByText("registry only")).toBeTruthy();
+
+    fireEvent.click((await screen.findAllByRole("radio"))[1] as HTMLElement);
+
+    expect(await screen.findByText(/how that deployment ended/)).toBeTruthy();
+    // Both notes are statements about what kelson knows, so neither is counted
+    // among the changes this rollback will fail to undo.
+    expect(
+      screen.getByText(/What this rollback cannot revert \(0 of 0\)/),
+    ).toBeTruthy();
   });
 });
 

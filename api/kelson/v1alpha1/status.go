@@ -156,11 +156,20 @@ const (
 	// kelson refuses and changes nothing.
 	ReasonNameConflict = "NameConflict"
 
-	// ReasonRollbackTargetUnknown — AnnotationRollbackTo names a revision that
-	// is not in status.history. kelson will not point an OCIRepository at a tag
-	// it cannot confirm it published; the mirror is bounded at
-	// MaxHistoryEntries, so a target older than the window is this too.
+	// ReasonRollbackTargetUnknown — AnnotationRollbackTo names a revision
+	// neither status.history nor the registry holds. kelson will not point an
+	// OCIRepository at a tag it cannot confirm it published, and both places it
+	// can confirm one have been asked: the bounded mirror, and the registry's
+	// own tag list, which is the record the mirror mirrors (ADR-0028
+	// decision 4, issue #241).
 	ReasonRollbackTargetUnknown = "RollbackTargetUnknown"
+
+	// ReasonRegistryReadDenied — the registry answered a read and said no. It
+	// is separate from ReasonPushDenied because the fix is: a credential
+	// scoped to pull as well as push. Reporting it as "that revision does not
+	// exist" would turn "kelson may not look" into a fact about the registry's
+	// contents, which is the one mistake a durable record must not make.
+	ReasonRegistryReadDenied = "RegistryReadDenied"
 )
 
 // The reasons ConditionProgressing takes.

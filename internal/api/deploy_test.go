@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -1013,6 +1015,238 @@ func TestHistoryReadsTheStatusMirror(t *testing.T) {
 	}
 	if entries[0].GetAuthor() != "" {
 		t.Errorf("author = %q, want empty: the spine records who deployed nothing", entries[0].GetAuthor())
+	}
+}
+
+// fakeRecord is the registry's tag list, without a registry: the durable record
+// ADR-0028 decision 4 makes the history (issue #241).
+type fakeRecord struct {
+	revisions []string
+	digests   map[string]string
+	err       error
+	// resolved records what was asked about, so a lookup that should have been
+	// served from the mirror can be shown not to have reached the registry.
+	resolved []string
+}
+
+func (f *fakeRecord) Revisions(context.Context, string, string) ([]string, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.revisions, nil
+}
+
+func (f *fakeRecord) Resolve(_ context.Context, _, _, revision string) (string, bool, error) {
+	f.resolved = append(f.resolved, revision)
+	if f.err != nil {
+		return "", false, f.err
+	}
+	for _, r := range f.revisions {
+		if r == revision {
+			return f.digests[r], true, nil
+		}
+	}
+	return "", false, nil
+}
+
+// TestRollbackReachesPastTheMirror is issue #241 at the façade: the window is
+// twenty entries and the registry holds every artifact ever published, so a
+// revision that aged out is still a rollback target.
+func TestRollbackReachesPastTheMirror(t *testing.T) {
+	envs := newFakeEnvironments(twoRevisions())
+	envs.controller = rolledBack
+	record := &fakeRecord{
+		revisions: []string{"4-b2c3d4e5", "3-9f0a1b2c", "1-0badc0de"},
+		digests:   map[string]string{"1-0badc0de": "sha256:aged"},
+	}
+	c := serve(t, Options{Specs: newFakeSpecStore(), Environments: envs, Revisions: record})
+
+	stream, err := c.deploy.Rollback(context.Background(), connect.NewRequest(rollbackRequest("1-0badc0de")))
+	if err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	_, msgs := rollbackEvents(t, stream)
+	preview := msgs[0].GetPreview()
+	if preview.GetToRevision() != "1-0badc0de" {
+		t.Fatalf("target = %q, want the aged-out revision", preview.GetToRevision())
+	}
+	// Two findings now, and the second is the honest half: the rollback is
+	// exact, and everything the mirror would have said about the target is
+	// gone. An empty `outcome` must not read as "nothing went wrong".
+	causes := make([]string, 0, len(preview.GetFindings()))
+	for _, f := range preview.GetFindings() {
+		causes = append(causes, f.GetCause())
+	}
+	if strings.Join(causes, ",") != "rollback/preview-unavailable,rollback/beyond-window" {
+		t.Fatalf("findings = %v, want the gap and the beyond-window notice", causes)
+	}
+	beyond := preview.GetFindings()[1]
+	for _, want := range []string{"older than", "cannot tell you", "how that deployment ended"} {
+		if !strings.Contains(beyond.GetMessage(), want) {
+			t.Errorf("the finding does not say what is unknown (%q): %q", want, beyond.GetMessage())
+		}
+	}
+	if beyond.GetUnrecoverable() {
+		t.Error("the beyond-window finding is marked unrecoverable; the rollback itself is exact")
+	}
+	if len(envs.annotated) != 1 || envs.annotated[0].Annotations[annotationRollbackTo] != "1-0badc0de" {
+		t.Errorf("the pin was not written: %+v", envs.annotated)
+	}
+}
+
+// TestRollbackInsideTheMirrorNeverAsksTheRegistry: the mirror is free and knows
+// more, so it answers first — and a rollback in the common case costs no
+// registry round trip at all.
+func TestRollbackInsideTheMirrorNeverAsksTheRegistry(t *testing.T) {
+	envs := newFakeEnvironments(twoRevisions())
+	envs.controller = rolledBack
+	record := &fakeRecord{revisions: []string{"4-b2c3d4e5", "3-9f0a1b2c"}}
+	c := serve(t, Options{Specs: newFakeSpecStore(), Environments: envs, Revisions: record})
+
+	stream, err := c.deploy.Rollback(context.Background(), connect.NewRequest(rollbackRequest("3-9f0a1b2c")))
+	if err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	rollbackEvents(t, stream)
+	if len(record.resolved) != 0 {
+		t.Errorf("the registry was asked about %v, which the mirror already held", record.resolved)
+	}
+}
+
+// TestRollbackToARevisionNeitherPlaceHolds: with both sources asked, a refusal
+// is a fact about both — and it says so, because "the mirror is bounded" alone
+// would read as "kelson forgot".
+func TestRollbackToARevisionNeitherPlaceHolds(t *testing.T) {
+	envs := newFakeEnvironments(twoRevisions())
+	record := &fakeRecord{revisions: []string{"4-b2c3d4e5", "3-9f0a1b2c"}}
+	c := serve(t, Options{Specs: newFakeSpecStore(), Environments: envs, Revisions: record})
+
+	stream, err := c.deploy.Rollback(context.Background(), connect.NewRequest(rollbackRequest("9-aaaaaaaa")))
+	if err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	for stream.Receive() {
+		t.Errorf("a refused rollback streamed an event: %+v", stream.Msg())
+	}
+	if got := connect.CodeOf(stream.Err()); got != connect.CodeInvalidArgument {
+		t.Fatalf("code = %v, want InvalidArgument (%v)", got, stream.Err())
+	}
+	if !strings.Contains(stream.Err().Error(), "or in the registry") {
+		t.Errorf("the refusal does not say both places were asked: %v", stream.Err())
+	}
+	if len(envs.annotated) != 0 {
+		t.Fatalf("a refused rollback wrote %+v", envs.annotated)
+	}
+}
+
+// TestRollbackDoesNotBlameTheCallerForAnUnreadableRegistry: a registry that
+// would not answer is this server's dependency failing. Reported as
+// InvalidArgument it would tell a caller to fix a revision that may be
+// perfectly good.
+func TestRollbackDoesNotBlameTheCallerForAnUnreadableRegistry(t *testing.T) {
+	envs := newFakeEnvironments(twoRevisions())
+	record := &fakeRecord{err: errors.New("dial tcp: no route to host")}
+	c := serve(t, Options{Specs: newFakeSpecStore(), Environments: envs, Revisions: record})
+
+	stream, err := c.deploy.Rollback(context.Background(), connect.NewRequest(rollbackRequest("1-0badc0de")))
+	if err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	for stream.Receive() {
+		t.Errorf("a failed rollback streamed an event: %+v", stream.Msg())
+	}
+	if got := connect.CodeOf(stream.Err()); got != connect.CodeUnavailable {
+		t.Fatalf("code = %v, want Unavailable (%v)", got, stream.Err())
+	}
+	if len(envs.annotated) != 0 {
+		t.Fatalf("a failed rollback wrote %+v", envs.annotated)
+	}
+}
+
+// TestHistoryPagesPastTheWindow: a list that silently stops at twenty entries
+// is the bug — it makes a restorable revision invisible to everybody who does
+// not already know the window is there.
+func TestHistoryPagesPastTheWindow(t *testing.T) {
+	record := &fakeRecord{revisions: []string{"4-b2c3d4e5", "3-9f0a1b2c", "2-1a2b3c4d", "1-0badc0de"}}
+	c := serve(t, Options{
+		Specs: newFakeSpecStore(), Environments: newFakeEnvironments(twoRevisions()), Revisions: record,
+	})
+
+	res, err := c.deploy.History(context.Background(), connect.NewRequest(&kelsonv1alpha1.HistoryRequest{
+		Spec:        inlineSpec(projectDoc, map[string]string{"development": developmentDoc}),
+		Environment: "development",
+	}))
+	if err != nil {
+		t.Fatalf("History: %v", err)
+	}
+	entries := res.Msg.GetEntries()
+	revisions := make([]string, 0, len(entries))
+	for _, e := range entries {
+		revisions = append(revisions, e.GetRevision())
+	}
+	if want := "4-b2c3d4e5,3-9f0a1b2c,2-1a2b3c4d,1-0badc0de"; strings.Join(revisions, ",") != want {
+		t.Fatalf("revisions = %v, want %s — one list, newest generation first", revisions, want)
+	}
+	// The mirrored entries keep everything they had; the registry's carry one
+	// fact and a marker saying the rest is unknown rather than absent.
+	if entries[0].GetBeyondWindow() || entries[1].GetBeyondWindow() {
+		t.Error("a mirrored entry was marked as coming from the registry")
+	}
+	aged := entries[3]
+	if !aged.GetBeyondWindow() {
+		t.Fatal("the aged-out revision is not marked beyond_window; a client cannot tell unknown from empty")
+	}
+	if aged.GetOutcome() != "" || aged.GetDigest() != "" || aged.GetCommittedAt() != "" ||
+		len(aged.GetImages()) != 0 {
+		t.Errorf("the registry entry invented facts it cannot have: %+v", aged)
+	}
+	if !strings.Contains(aged.GetMessage(), "older than") {
+		t.Errorf("message = %q, want prose saying why the rest is missing", aged.GetMessage())
+	}
+}
+
+// TestHistorySurvivesAnUnreadableRegistryWhileTheMirrorIsWhole: `kelson
+// history` is what somebody reaches for when other things are broken. Below the
+// bound nothing has aged out, so the mirror IS the whole history and a registry
+// that did not answer changed nothing about it.
+func TestHistorySurvivesAnUnreadableRegistryWhileTheMirrorIsWhole(t *testing.T) {
+	record := &fakeRecord{err: errors.New("dial tcp: no route to host")}
+	c := serve(t, Options{
+		Specs: newFakeSpecStore(), Environments: newFakeEnvironments(twoRevisions()), Revisions: record,
+	})
+
+	res, err := c.deploy.History(context.Background(), connect.NewRequest(&kelsonv1alpha1.HistoryRequest{
+		Spec:        inlineSpec(projectDoc, map[string]string{"development": developmentDoc}),
+		Environment: "development",
+	}))
+	if err != nil {
+		t.Fatalf("History: %v", err)
+	}
+	if len(res.Msg.GetEntries()) != 2 {
+		t.Errorf("entries = %d, want the mirror served alone", len(res.Msg.GetEntries()))
+	}
+}
+
+// TestHistoryRefusesAnIncompleteAnswerWhenTheMirrorIsFull: a full mirror is the
+// case where something has probably aged out, so a registry that will not
+// answer makes the list incomplete in a way nothing in it could say.
+func TestHistoryRefusesAnIncompleteAnswerWhenTheMirrorIsFull(t *testing.T) {
+	st := twoRevisions()
+	st.History = make([]controlstore.Revision, 0, maxHistoryEntries)
+	for i := maxHistoryEntries; i > 0; i-- {
+		st.History = append(st.History, controlstore.Revision{Revision: fmt.Sprintf("%d-b2c3d4e5", i)})
+	}
+	record := &fakeRecord{err: errors.New("dial tcp: no route to host")}
+	c := serve(t, Options{
+		Specs: newFakeSpecStore(), Environments: newFakeEnvironments(st), Revisions: record,
+	})
+
+	_, err := c.deploy.History(context.Background(), connect.NewRequest(&kelsonv1alpha1.HistoryRequest{
+		Spec:        inlineSpec(projectDoc, map[string]string{"development": developmentDoc}),
+		Environment: "development",
+	}))
+	if got := connect.CodeOf(err); got != connect.CodeUnavailable {
+		t.Fatalf("code = %v, want Unavailable (%v)", got, err)
 	}
 }
 

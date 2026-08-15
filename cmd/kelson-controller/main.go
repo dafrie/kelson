@@ -275,6 +275,17 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			Interval:           cfg.reconcileInterval,
 			PreviewSecrets:     previewSecrets,
 		},
+		// The durable record behind the twenty-entry mirror (ADR-0028
+		// decision 4, issue #241), built from the same registry configuration
+		// the publish uses — a lister pointed anywhere else would answer
+		// confidently about artifacts this controller never pushed. It is what
+		// lets a rollback reach a revision that has aged out of the window;
+		// kelson-server wires the identical type from the identical two flags.
+		Revisions: controller.RegistryRevisions{
+			Registry:           cfg.registry,
+			RegistryConfig:     cfg.registryConfig,
+			InsecureRegistries: cfg.insecureRegistries,
+		},
 	}).SetupWithManager(mgr, found.profile.Flux != nil); err != nil {
 		return fmt.Errorf("registering the environment reconciler: %w", err)
 	}

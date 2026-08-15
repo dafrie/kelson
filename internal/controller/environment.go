@@ -81,6 +81,15 @@ type EnvironmentReconciler struct {
 	// back to, so a test about validation needs no registry.
 	Delivery Deliverer
 
+	// Revisions reads the registry's tag list: the record ADR-0028 decision 4
+	// makes the history, of which `status.history` is a bounded mirror. It is
+	// what lets a rollback reach a revision older than the window (issue #241).
+	//
+	// Nil is a reconciler that can see only the mirror, and it refuses an
+	// aged-out target by saying so — which is honest, and is the behaviour
+	// every test that does not care about the registry gets for free.
+	Revisions RevisionLister
+
 	// FluxWatches records whether SetupWithManager registered the watches on
 	// the Flux objects. It is false on a cluster with no Flux, where an
 	// informer on an unserved CRD would hang the cache sync forever — see
@@ -220,13 +229,12 @@ func (r *EnvironmentReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	// The target's digest travels with the pin: it is what lets the
 	// OCIRepository name the immutable bytes rather than only the tag that
 	// points at them (fluxobjects.go).
-	var pinnedDigest string
+	var target rollbackTarget
 	if rb.Active {
-		digest, err := verifyRollbackTarget(rb.Requested, env.Status.History)
+		target, err = r.verifyRollbackTarget(ctx, project.Name, env.Name, rb.Requested, env.Status.History)
 		if err != nil {
 			return r.refuse(ctx, &env, base, err)
 		}
-		pinnedDigest = digest
 	}
 
 	var manifests []renderer.Manifest
@@ -257,7 +265,7 @@ func (r *EnvironmentReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		Observed:             env.Status.Revision,
 		ObservedDigest:       headDigest(env.Status.History, env.Status.Revision),
 		PinnedTo:             rb.Pin(),
-		PinnedDigest:         pinnedDigest,
+		PinnedDigest:         target.Digest,
 	})
 	if err != nil {
 		return r.refuse(ctx, &env, base, err)
@@ -298,7 +306,7 @@ func (r *EnvironmentReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		env.Status.RollbackRevision, env.Status.RollbackGeneration = rb.Requested, rb.Generation
 	}
 
-	r.setConditions(&env, rb, outcome, len(manifests))
+	r.setConditions(&env, rb, target, outcome, len(manifests))
 	if err := patchStatus(ctx, r.Client, &env, base); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -307,12 +315,12 @@ func (r *EnvironmentReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 // setConditions writes both conditions from one outcome, so Ready and
 // Progressing can never disagree about what happened.
-func (r *EnvironmentReconciler) setConditions(env *v1alpha1.Environment, rb rollback, outcome Outcome, rendered int) {
+func (r *EnvironmentReconciler) setConditions(env *v1alpha1.Environment, rb rollback, target rollbackTarget,
+	outcome Outcome, rendered int) {
 	switch {
 	case outcome.RolledBack:
 		setReady(&env.Status.Conditions, env.Generation, metav1.ConditionTrue,
-			v1alpha1.ReasonRolledBack,
-			fmt.Sprintf("serving revision %s, which this environment published earlier", outcome.Revision))
+			v1alpha1.ReasonRolledBack, rolledBackMessage(outcome.Revision, target.BeyondWindow))
 		setProgressing(&env.Status.Conditions, env.Generation, metav1.ConditionFalse,
 			v1alpha1.ReasonRollbackPinned, rollbackPinnedMessage(outcome.Revision))
 		return

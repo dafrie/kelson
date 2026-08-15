@@ -38,6 +38,16 @@ func TestRollbackRefusalReasonMatchesTheCustomResource(t *testing.T) {
 	}
 }
 
+// TestHistoryBoundMatchesTheCustomResource: this plane decides whether a failed
+// registry query is worth refusing a History over by asking whether the mirror
+// is full, so a copy that drifted from the controller's bound would make that
+// judgement about the wrong number.
+func TestHistoryBoundMatchesTheCustomResource(t *testing.T) {
+	if maxHistoryEntries != v1alpha1.MaxHistoryEntries {
+		t.Errorf("history bound = %d, want %d", maxHistoryEntries, v1alpha1.MaxHistoryEntries)
+	}
+}
+
 // TestPhasesMatchTheCustomResource: the wire's phase strings come from
 // internal/delivery and the controller writes api/kelson/v1alpha1's. The two
 // lists are asserted identical in the resource's own package; this is the third

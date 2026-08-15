@@ -52,6 +52,43 @@ type EnvironmentStore interface {
 	Annotate(ctx context.Context, project, environment string, annotations map[string]string) (controlstore.EnvironmentState, error)
 }
 
+// RevisionLister is the durable record the status mirror is a mirror of: the
+// registry's own tag list (ADR-0028 decision 4, issue #241).
+//
+// It is spelled exactly as internal/controller's lister of the same name, over
+// the same two questions, because the two planes have to answer them
+// identically: a rollback this server accepted and the controller then refused
+// — or the reverse — would be one record read twice and believed once.
+// controller.RegistryRevisions implements both, and both binaries build it from
+// the same `--registry` and `--registry-config`.
+//
+// A nil one is a server that can see only the bounded mirror: History stops at
+// the window and a rollback to anything older is refused with the window named.
+// That is the pre-#241 posture exactly, and it stays correct for an instance
+// that holds no registry credential — what it must never become is a server
+// that reports a revision it never looked for as one that does not exist.
+type RevisionLister interface {
+	// Revisions lists every revision the registry holds for one environment,
+	// newest first. An environment that has published nothing is an empty list
+	// and no error.
+	Revisions(ctx context.Context, project, environment string) ([]string, error)
+
+	// Resolve reports whether one revision is in the registry and which bytes
+	// it names. found=false with a nil error is "there is no such revision" —
+	// an answer, and a different one from "kelson could not look".
+	Resolve(ctx context.Context, project, environment, revision string) (digest string, found bool, err error)
+}
+
+// maxHistoryEntries is the bound on `Environment.status.history[]` (ADR-0028
+// decision 4). It is spelled here for the reason the annotations below are —
+// this plane holds no Kubernetes types — and asserted against the custom
+// resource's own constant in environment_test.go.
+//
+// The server reads it for one decision: a mirror holding that many entries is
+// one that has probably dropped something, which is what makes a failed
+// registry query worth refusing over rather than degrading past (History).
+const maxHistoryEntries = 20
+
 // The annotations ADR-0028 defines on an Environment. They are spelled here
 // rather than imported from api/kelson/v1alpha1 for the reason the phase
 // constants are: this plane holds no Kubernetes types, and the constants are

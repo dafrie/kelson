@@ -115,7 +115,9 @@ Have no registry of your own? Point it at the in-cluster one
 The rest of the delivery spine's configuration is chart values that map onto
 `kelson-controller`'s own flags one for one: `controller.pushSecret` (an existing
 `dockerconfigjson` Secret, mounted into the pod and passed as `--registry-config` — the controller
-reads a file, the same shape a CI `docker login` writes), `controller.pullSecret` (a *different*
+reads a file, the same shape a CI `docker login` writes; it needs pull scope as well as push, because
+reaching a revision older than the bounded status history means listing the registry's tags
+([#241](https://github.com/dafrie/kelson/issues/241))), `controller.pullSecret` (a *different*
 credential, named on the `OCIRepository` so source-controller can pull — the controller pushes,
 source-controller pulls, and they are different processes), `controller.fluxNamespace` (where the
 `OCIRepository`/`Kustomization` pair lives; empty means the release namespace, and the chart's

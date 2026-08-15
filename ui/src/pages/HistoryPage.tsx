@@ -15,8 +15,9 @@ import { formatWhen, shortHash } from "./history";
  *
  * # What this screen can say, and what it refuses to
  *
- * `DeployService.History` returns eight fields per revision — revision, spec
- * hash, committed-at, message, author, digest, images and outcome — and the
+ * `DeployService.History` returns nine fields per revision — revision, spec
+ * hash, committed-at, message, author, digest, images, outcome and
+ * beyond-window — and the
  * screen shows what it can of those and derives nothing beyond them (see
  * ./history.ts, which holds the derivations and the reasons each one is
  * conservative). The outcome, the digest and the images used to travel as prose
@@ -41,6 +42,14 @@ import { formatWhen, shortHash } from "./history";
  *     (`internal/api`'s `History`), human or agent, so every entry reads
  *     "unattributed" and the note says why rather than guessing. That
  *     attribution is #74's work.
+ *  3. **Some rows are only a revision, and say so.** The list now runs past the
+ *     bounded history the cluster keeps into the registry's tag list, which is
+ *     the record (ADR-0028 decision 4, #241). A `beyondWindow` entry carries
+ *     one fact — this revision exists and can still be restored — so its whole
+ *     meta line is replaced by a sentence saying nothing else was recorded.
+ *     Rendering it like any other row would print an absent outcome and an
+ *     absent timestamp beside "unattributed" and let a reader take the blanks
+ *     for a deployment that had none.
  *
  * # The two actions are links, not copies
  *
@@ -173,9 +182,7 @@ export function HistoryPage() {
                   key={entry.revision}
                   entry={entry}
                   base={base}
-                  live={
-                    liveRevision !== "" && entry.revision === liveRevision
-                  }
+                  live={liveRevision !== "" && entry.revision === liveRevision}
                   livePhase={livePhase}
                   // The rollback screen disables its newest entry — restoring
                   // the revision you are already on is not a rollback — so the
@@ -206,8 +213,8 @@ export function HistoryPage() {
               kelson does not record who deployed yet, human or agent (
               <a href="https://github.com/dafrie/kelson/issues/74">#74</a>).
               There is no commit or pull-request link either: a revision is an
-              OCI artifact in a registry, not a commit in a repository, so
-              there is no forge to point at.
+              OCI artifact in a registry, not a commit in a repository, so there
+              is no forge to point at.
             </p>
           </div>
         </section>
@@ -236,11 +243,18 @@ function Revision({
   const when = formatWhen(entry.committedAt);
 
   return (
-    <li className={live ? "k-timeline__item k-timeline__item--live" : "k-timeline__item"}>
+    <li
+      className={
+        live ? "k-timeline__item k-timeline__item--live" : "k-timeline__item"
+      }
+    >
       <div className="k-timeline__head">
         {/* The revision id is already short — <generation>-<hash8>
             (ADR-0028 decision 2) — so it needs no further abbreviation. */}
         <Copyable value={entry.revision} className="k-timeline__rev" />
+        {entry.beyondWindow ? (
+          <span className="k-chip k-mono">registry only</span>
+        ) : null}
         {live ? (
           <>
             <span className="k-chip k-mono k-timeline__live">deployed now</span>
@@ -252,35 +266,50 @@ function Revision({
         ) : null}
       </div>
 
-      <div className="k-timeline__meta k-mono">
-        {when !== "" ? <span>{when}</span> : null}
-        {/* The recorded outcome is prefixed rather than shown as a pill, so it
+      {/* A revision the cluster's bounded history has forgotten (#241). The
+          registry's tag list confirms it exists and holds nothing else about
+          it, so the whole meta line below — which would otherwise print
+          "unattributed" beside four absent facts — is replaced by the sentence
+          that says the record is thin rather than the deployment featureless.
+          It is still restorable: the artifact is immutable. */}
+      {entry.beyondWindow ? (
+        <div className="k-timeline__meta k-mono">
+          <span title="older than the history kept in Environment.status; confirmed against the registry's tag list (ADR-0028 decision 4)">
+            only the registry remembers this revision — nothing recorded when it
+            was published, which images it ran, or how that deployment ended
+          </span>
+        </div>
+      ) : (
+        <div className="k-timeline__meta k-mono">
+          {when !== "" ? <span>{when}</span> : null}
+          {/* The recorded outcome is prefixed rather than shown as a pill, so it
             cannot be mistaken for the live one above it: it says how that
             deployment ended, not how it is. */}
-        {entry.outcome !== "" ? (
-          <span title="the delivery phase the controller recorded for this revision; it is frozen once a newer revision takes over">
-            recorded {entry.outcome.toLowerCase()}
+          {entry.outcome !== "" ? (
+            <span title="the delivery phase the controller recorded for this revision; it is frozen once a newer revision takes over">
+              recorded {entry.outcome.toLowerCase()}
+            </span>
+          ) : null}
+          {entry.specHash !== "" ? (
+            <span title={entry.specHash}>spec {shortHash(entry.specHash)}</span>
+          ) : null}
+          {entry.digest !== "" ? (
+            <span title={entry.digest}>artifact {shortHash(entry.digest)}</span>
+          ) : null}
+          <span
+            className={
+              entry.author === "" ? "k-timeline__unattributed" : undefined
+            }
+            title={
+              entry.author === ""
+                ? "kelson does not record who deployed yet. Agent and human identities are not recorded yet (#74)."
+                : entry.author
+            }
+          >
+            {entry.author === "" ? "unattributed" : entry.author}
           </span>
-        ) : null}
-        {entry.specHash !== "" ? (
-          <span title={entry.specHash}>spec {shortHash(entry.specHash)}</span>
-        ) : null}
-        {entry.digest !== "" ? (
-          <span title={entry.digest}>artifact {shortHash(entry.digest)}</span>
-        ) : null}
-        <span
-          className={
-            entry.author === "" ? "k-timeline__unattributed" : undefined
-          }
-          title={
-            entry.author === ""
-              ? "kelson does not record who deployed yet. Agent and human identities are not recorded yet (#74)."
-              : entry.author
-          }
-        >
-          {entry.author === "" ? "unattributed" : entry.author}
-        </span>
-      </div>
+        </div>
+      )}
 
       {/* Each image under the component that resolved it, which is what the
           controller recorded (ADR-0028 decision 4). A component name is absent

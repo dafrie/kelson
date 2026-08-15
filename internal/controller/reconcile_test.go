@@ -101,15 +101,42 @@ func TestRollbackPinsAndSuspendsRendering(t *testing.T) {
 	}
 }
 
+// fakeRevisions is the registry's tag list, without a registry.
+type fakeRevisions struct {
+	revisions []string
+	digests   map[string]string
+	err       error
+	resolved  []string
+}
+
+func (f *fakeRevisions) Revisions(context.Context, string, string) ([]string, error) {
+	return f.revisions, f.err
+}
+
+func (f *fakeRevisions) Resolve(_ context.Context, _, _, revision string) (string, bool, error) {
+	f.resolved = append(f.resolved, revision)
+	if f.err != nil {
+		return "", false, f.err
+	}
+	for _, r := range f.revisions {
+		if r == revision {
+			return f.digests[revision], true, nil
+		}
+	}
+	return "", false, nil
+}
+
 // TestRollbackToAnUnknownRevisionIsRefused: kelson will not point an
-// OCIRepository at a tag it cannot confirm it published.
+// OCIRepository at a tag neither the mirror nor the registry can confirm it
+// published.
 func TestRollbackToAnUnknownRevisionIsRefused(t *testing.T) {
 	env := deliveredEnvironment()
 	env.Annotations = map[string]string{v1alpha1.AnnotationRollbackTo: "3-deadbeef"}
 
 	spy := &spyDeliverer{}
 	c := newClient(t, validProject(), env)
-	r := &EnvironmentReconciler{Client: c, Profiles: StaticProfileSource{}, Delivery: spy}
+	record := &fakeRevisions{revisions: []string{"7-1a2b3c4d", "6-9f0a1b2c"}}
+	r := &EnvironmentReconciler{Client: c, Profiles: StaticProfileSource{}, Delivery: spy, Revisions: record}
 
 	result, err := r.Reconcile(context.Background(), request("production"))
 	if err != nil {
@@ -125,10 +152,102 @@ func TestRollbackToAnUnknownRevisionIsRefused(t *testing.T) {
 	if condition.Reason != v1alpha1.ReasonRollbackTargetUnknown {
 		t.Fatalf("Ready reason = %q, want %q", condition.Reason, v1alpha1.ReasonRollbackTargetUnknown)
 	}
-	// The window is the answer, and the message has to say so — a correct
-	// target older than twenty entries looks identical to a typo otherwise.
-	if !strings.Contains(condition.Message, "6-9f0a1b2c") || !strings.Contains(condition.Message, "registry query") {
-		t.Errorf("the refusal does not say what is known or where else to look: %q", condition.Message)
+	// Both places have to be named. A refusal that mentioned only the bounded
+	// mirror would read as "kelson forgot" when the point is that the record
+	// was asked too and does not hold it either.
+	if !strings.Contains(condition.Message, "6-9f0a1b2c") ||
+		!strings.Contains(condition.Message, "the registry holds") {
+		t.Errorf("the refusal does not say what is known or where else was asked: %q", condition.Message)
+	}
+}
+
+// TestRollbackWithNoRegistryConfiguredSaysSo: a controller with no registry can
+// see only the window, and the one thing it must not do is report a revision it
+// never looked for as one that does not exist.
+func TestRollbackWithNoRegistryConfiguredSaysSo(t *testing.T) {
+	env := deliveredEnvironment()
+	env.Annotations = map[string]string{v1alpha1.AnnotationRollbackTo: "3-deadbeef"}
+
+	c := newClient(t, validProject(), env)
+	r := &EnvironmentReconciler{Client: c, Profiles: StaticProfileSource{}, Delivery: &spyDeliverer{}}
+
+	if _, err := r.Reconcile(context.Background(), request("production")); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	condition := ready(t, readEnvironment(t, c, "production").Status.Conditions)
+	if condition.Reason != v1alpha1.ReasonRollbackTargetUnknown {
+		t.Fatalf("Ready reason = %q, want %q", condition.Reason, v1alpha1.ReasonRollbackTargetUnknown)
+	}
+	if !strings.Contains(condition.Message, "--registry") {
+		t.Errorf("the refusal does not say the record was never checked: %q", condition.Message)
+	}
+}
+
+// TestRollbackReachesPastTheWindow is issue #241: the mirror is bounded at
+// twenty entries and the registry holds every artifact ever published, so a
+// revision that aged out is still a pointer move.
+func TestRollbackReachesPastTheWindow(t *testing.T) {
+	env := deliveredEnvironment()
+	env.Annotations = map[string]string{v1alpha1.AnnotationRollbackTo: "2-0badc0de"}
+
+	spy := &spyDeliverer{outcome: Outcome{
+		Revision: "2-0badc0de", Phase: v1alpha1.PhaseHealthy, RolledBack: true,
+	}}
+	c := newClient(t, validProject(), env)
+	record := &fakeRevisions{
+		revisions: []string{"7-1a2b3c4d", "6-9f0a1b2c", "2-0badc0de"},
+		digests:   map[string]string{"2-0badc0de": "sha256:ccc"},
+	}
+	r := &EnvironmentReconciler{Client: c, Profiles: StaticProfileSource{}, Delivery: spy, Revisions: record}
+
+	if _, err := r.Reconcile(context.Background(), request("production")); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if spy.got.PinnedTo != "2-0badc0de" {
+		t.Fatalf("the deliverer was not told to pin the aged-out revision: %q", spy.got.PinnedTo)
+	}
+	// The digest comes back from the registry, so a rollback past the window
+	// pins the bytes exactly as one inside it does.
+	if spy.got.PinnedDigest != "sha256:ccc" {
+		t.Errorf("PinnedDigest = %q, want the digest the registry resolved", spy.got.PinnedDigest)
+	}
+
+	condition := ready(t, readEnvironment(t, c, "production").Status.Conditions)
+	if condition.Reason != v1alpha1.ReasonRolledBack {
+		t.Fatalf("Ready reason = %q, want %q", condition.Reason, v1alpha1.ReasonRolledBack)
+	}
+	// And the status says what it cannot say. An aged-out revision has no
+	// recorded outcome, timestamp or image list anywhere, and a message that
+	// read like any other rollback would leave a reader believing kelson still
+	// knows how that deployment went.
+	for _, want := range []string{"older than", "cannot say"} {
+		if !strings.Contains(condition.Message, want) {
+			t.Errorf("Ready message does not say what is unknown (%q): %q", want, condition.Message)
+		}
+	}
+}
+
+// TestRollbackDoesNotTurnAnUnreadableRegistryIntoAMissingRevision: "kelson
+// could not look" and "it is not there" are different answers, and only one of
+// them is the operator's cue to stop looking.
+func TestRollbackDoesNotTurnAnUnreadableRegistryIntoAMissingRevision(t *testing.T) {
+	env := deliveredEnvironment()
+	env.Annotations = map[string]string{v1alpha1.AnnotationRollbackTo: "2-0badc0de"}
+
+	c := newClient(t, validProject(), env)
+	record := &fakeRevisions{err: newDeliveryError(v1alpha1.ReasonRegistryUnreachable,
+		"reading the revisions of ghcr.io/acme/kelson/shop-production", nil)}
+	r := &EnvironmentReconciler{Client: c, Profiles: StaticProfileSource{}, Delivery: &spyDeliverer{}, Revisions: record}
+
+	// RegistryUnreachable takes controller-runtime's backoff, which is an error
+	// return — the reconcile is retried rather than settling on a verdict about
+	// a registry that never answered.
+	if _, err := r.Reconcile(context.Background(), request("production")); err == nil {
+		t.Fatal("an unreadable registry settled without an error return")
+	}
+	condition := ready(t, readEnvironment(t, c, "production").Status.Conditions)
+	if condition.Reason != v1alpha1.ReasonRegistryUnreachable {
+		t.Errorf("Ready reason = %q, want %q", condition.Reason, v1alpha1.ReasonRegistryUnreachable)
 	}
 }
 
