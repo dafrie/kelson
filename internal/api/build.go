@@ -638,6 +638,12 @@ func previewRepositories(spec decoded) []string {
 // did and what would have" — because a pipeline whose report silently did
 // nothing is the failure mode the field exists to prevent. The empty case
 // therefore says what is missing rather than saying nothing.
+//
+// It is the one wire surface in this package that carries plane error text on a
+// *successful* response, so it goes through the known-value scrubber on the way
+// out (issue #117). Errors are scrubbed in errors.go at their one boundary;
+// this string never reaches that boundary, and a push refused by a registry is
+// exactly the text a resolved credential could turn up in.
 func reportMessage(spec decoded, pr string, triggered, notes []string) string {
 	var clauses []string
 	switch {
@@ -654,7 +660,7 @@ func reportMessage(spec decoded, pr string, triggered, notes []string) string {
 			"block to the environment whose pull requests should become previews (ADR-0017)",
 			pr, spec.project.Metadata.Name))
 	}
-	return strings.Join(append(clauses, notes...), "; ")
+	return redact.Scrub(strings.Join(append(clauses, notes...), "; "))
 }
 
 // sameRepository reports whether two repository references name one repository.
