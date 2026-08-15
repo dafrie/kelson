@@ -41,10 +41,10 @@ import "./LogsPage.css";
  * preselects one: that is the link the project page's component list carries
  * (#214), so pressing a component's Logs arrives at that component's logs.
  *
- * The selector's wire field is still `application`, and so is the label its
- * pods carry: ADR-0014 renamed the authoring word and deliberately left
- * `kelson.dev/application` alone (docs/model.md), so the request that goes out
- * spells it the way the cluster does while the screen says what the model says.
+ * The selector's wire field is still `application`: ADR-0032 finished the
+ * label rename (pods now carry `kelson.dev/component`) but deliberately left
+ * v1alpha1 field names alone (its decision D), so the request spells the wire
+ * word while the screen says what the model says.
  *
  * The bounds rules are the engine's and are not duplicated here: a query must
  * carry tail, since or around, and around and tail are mutually exclusive. The
