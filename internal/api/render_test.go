@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -11,9 +12,9 @@ import (
 	"connectrpc.com/connect"
 
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
+	"github.com/dafrie/kelson/internal/artifact"
 	"github.com/dafrie/kelson/internal/clusterprofile"
 	"github.com/dafrie/kelson/internal/controlstore"
-	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/diff"
 )
 
@@ -382,34 +383,250 @@ func TestDiffNoFrom(t *testing.T) {
 	}
 }
 
-// TestDiffFromRevisionIsGated is #162's answer today. The before side was the
-// bytes revision N actually rendered, read from the rendered-history store, and
-// ADR-0027 decision 7 deleted the store.
-//
-// The refusal is not a downgrade. Re-rendering the old spec would answer a
-// different question — what that spec produces under today's renderer and
-// ClusterProfile — and the refusal names the two rungs that are unaffected, so
-// a caller is redirected rather than stranded.
-func TestDiffFromRevisionIsGated(t *testing.T) {
-	connector, _ := connectorFor(nil)
-	c := serve(t, Options{Delivery: connector})
+// The revision half of Diff (issue #247, #162's question finally answered):
+// the before side is the bytes revision N actually published, pulled out of the
+// registry, and never the old spec re-rendered — which would answer what that
+// spec produces under today's renderer and ClusterProfile instead.
 
-	_, err := c.render.Diff(context.Background(), connect.NewRequest(&kelsonv1alpha1.DiffRequest{
-		Spec:         inlineSpec(projectDocV2, map[string]string{"development": developmentDoc}),
+// fakeArtifacts is the registry's record with its bytes: a [RevisionLister]
+// that is also a [RevisionFetcher].
+type fakeArtifacts struct {
+	// files is what each revision recorded, keyed by revision.
+	files map[string][]artifact.File
+	// digests is what each revision's artifact is pinned to, and asked records
+	// the digest each Fetch was given — which is how "the recorded digest
+	// travelled" is asserted rather than assumed.
+	digests map[string]string
+	asked   map[string]string
+	err     error
+}
+
+func newFakeArtifacts() *fakeArtifacts {
+	return &fakeArtifacts{
+		files:   map[string][]artifact.File{},
+		digests: map[string]string{},
+		asked:   map[string]string{},
+	}
+}
+
+func (f *fakeArtifacts) Revisions(context.Context, string, string) ([]string, error) {
+	revisions := make([]string, 0, len(f.files))
+	for revision := range f.files {
+		revisions = append(revisions, revision)
+	}
+	slices.Sort(revisions)
+	return revisions, f.err
+}
+
+func (f *fakeArtifacts) Resolve(_ context.Context, _, _, revision string) (string, bool, error) {
+	if f.err != nil {
+		return "", false, f.err
+	}
+	_, ok := f.files[revision]
+	return f.digests[revision], ok, nil
+}
+
+func (f *fakeArtifacts) Fetch(_ context.Context, _, _, revision, digest string) (artifact.Pulled, bool, error) {
+	f.asked[revision] = digest
+	if f.err != nil {
+		return artifact.Pulled{}, false, f.err
+	}
+	files, ok := f.files[revision]
+	if !ok {
+		return artifact.Pulled{}, false, nil
+	}
+	return artifact.Pulled{Digest: f.digests[revision], Files: files}, true, nil
+}
+
+// recordedSet is a published revision's flat directory of rendered manifests,
+// in the shape internal/artifact's ManifestFiles writes it.
+func recordedSet(docs ...string) []artifact.File {
+	files := make([]artifact.File, 0, len(docs))
+	for i, doc := range docs {
+		files = append(files, artifact.File{Path: fmt.Sprintf("%03d-resource.yaml", i+1), Data: []byte(doc)})
+	}
+	return files
+}
+
+const retiredNamespace = `apiVersion: v1
+kind: Namespace
+metadata:
+  name: retired
+`
+
+// TestDiffAgainstARevisionComparesItsRecordedBytes: the comparison is against
+// what that revision rendered, so a resource it held and the current render
+// does not is a removal — a fact no re-render of the old spec could produce.
+func TestDiffAgainstARevisionComparesItsRecordedBytes(t *testing.T) {
+	record := newFakeArtifacts()
+	record.files["7-a1b2c3d4"] = recordedSet(retiredNamespace)
+	c := serve(t, Options{Revisions: record})
+
+	res, err := c.render.Diff(context.Background(), connect.NewRequest(&kelsonv1alpha1.DiffRequest{
+		Spec:         inlineSpec(projectDoc, map[string]string{"development": developmentDoc}),
 		Environment:  "development",
 		Profile:      profileRef(),
-		FromRevision: "rev-00000001",
+		FromRevision: "7-a1b2c3d4",
+	}))
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	if got := res.Msg.GetExitSemantics(); got != exitSemanticsDiff {
+		t.Errorf("exit_semantics = %d, want %d", got, exitSemanticsDiff)
+	}
+	body := string(res.Msg.GetDiffJson())
+	if !strings.Contains(body, `"op": "removed"`) || !strings.Contains(body, `"name": "retired"`) {
+		t.Errorf("the recorded revision's own resource is not reported as removed:\n%s", body)
+	}
+	if !strings.Contains(body, `"level": "rendered"`) {
+		t.Errorf("level = not rendered, and a revision comparison is offline:\n%s", body)
+	}
+}
+
+// A revision that has aged out of the twenty-entry mirror is still in the
+// registry, and the diff serves it — the same posture rollback takes (ADR-0028
+// decision 4). The mirror is consulted for the digest, never for permission.
+func TestDiffAgainstARevisionTheMirrorHasForgotten(t *testing.T) {
+	record := newFakeArtifacts()
+	record.files["1-0badc0de"] = recordedSet(retiredNamespace)
+	c := serve(t, Options{Revisions: record})
+
+	if _, err := c.render.Diff(context.Background(), connect.NewRequest(&kelsonv1alpha1.DiffRequest{
+		Spec:         inlineSpec(projectDoc, map[string]string{"development": developmentDoc}),
+		Environment:  "development",
+		Profile:      profileRef(),
+		FromRevision: "1-0badc0de",
+	})); err != nil {
+		t.Fatalf("Diff against an aged-out revision: %v", err)
+	}
+	if digest, ok := record.asked["1-0badc0de"]; !ok || digest != "" {
+		t.Errorf("fetched with digest %q, want the pull to proceed with no recorded digest to cross-check", digest)
+	}
+}
+
+// Inside the window the mirror knows what bytes that revision was published as,
+// and the pull is given them: a tag is a pointer and a digest is the content,
+// so checking the second against the first is what makes this a comparison
+// against what was published rather than against whatever the tag names today
+// (ADR-0028 decision 4).
+func TestDiffAgainstARevisionCarriesTheRecordedDigest(t *testing.T) {
+	record := newFakeArtifacts()
+	record.files["3-9f0a1b2c"] = recordedSet(retiredNamespace)
+	c := serve(t, Options{Environments: newFakeEnvironments(twoRevisions()), Revisions: record})
+
+	if _, err := c.render.Diff(context.Background(), connect.NewRequest(&kelsonv1alpha1.DiffRequest{
+		Spec:         inlineSpec(projectDoc, map[string]string{"development": developmentDoc}),
+		Environment:  "development",
+		Profile:      profileRef(),
+		FromRevision: "3-9f0a1b2c",
+	})); err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	if got := record.asked["3-9f0a1b2c"]; got != "sha256:deadbeef" {
+		t.Errorf("fetched with digest %q, want the one status.history recorded", got)
+	}
+}
+
+// Something that is not a revision at all is refused before the registry is
+// asked, naming the grammar rather than the absence.
+func TestDiffAgainstSomethingThatIsNotARevision(t *testing.T) {
+	record := newFakeArtifacts()
+	c := serve(t, Options{Revisions: record})
+
+	_, err := c.render.Diff(context.Background(), connect.NewRequest(&kelsonv1alpha1.DiffRequest{
+		Spec:         inlineSpec(projectDoc, map[string]string{"development": developmentDoc}),
+		Environment:  "development",
+		Profile:      profileRef(),
+		FromRevision: "main",
+	}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("code = %v, want invalid_argument (%v)", connect.CodeOf(err), err)
+	}
+	if len(record.asked) != 0 {
+		t.Errorf("the registry was asked about %v, want nothing", record.asked)
+	}
+}
+
+// A revision in neither the mirror nor the registry is the caller's argument
+// being wrong, and the refusal names where the rest of the record is.
+func TestDiffAgainstAnUnknownRevisionIsInvalidArgument(t *testing.T) {
+	c := serve(t, Options{Revisions: newFakeArtifacts()})
+
+	_, err := c.render.Diff(context.Background(), connect.NewRequest(&kelsonv1alpha1.DiffRequest{
+		Spec:         inlineSpec(projectDoc, map[string]string{"development": developmentDoc}),
+		Environment:  "development",
+		Profile:      profileRef(),
+		FromRevision: "9-deadbeef",
+	}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("code = %v, want invalid_argument (%v)", connect.CodeOf(err), err)
+	}
+	if !strings.Contains(err.Error(), "9-deadbeef") {
+		t.Errorf("the refusal does not name the revision: %v", err)
+	}
+}
+
+// A registry that could not be read is this server's dependency failing.
+// Reporting it as an invalid argument would tell a caller their revision is
+// gone on the strength of a registry that never answered.
+func TestDiffAgainstARevisionIsUnavailableWhenTheRegistryIsNot(t *testing.T) {
+	record := newFakeArtifacts()
+	record.err = errors.New("dial tcp: no route to host")
+	c := serve(t, Options{Revisions: record})
+
+	_, err := c.render.Diff(context.Background(), connect.NewRequest(&kelsonv1alpha1.DiffRequest{
+		Spec:         inlineSpec(projectDoc, map[string]string{"development": developmentDoc}),
+		Environment:  "development",
+		Profile:      profileRef(),
+		FromRevision: "7-a1b2c3d4",
+	}))
+	if connect.CodeOf(err) != connect.CodeUnavailable {
+		t.Fatalf("code = %v, want unavailable (%v)", connect.CodeOf(err), err)
+	}
+}
+
+// Bytes that do not match the digest naming them are neither a bad request nor
+// a transient failure: no diff may be computed from them, and the refusal names
+// both digests so the reader can see which two values disagree.
+func TestDiffAgainstARevisionRefusesUnverifiedBytes(t *testing.T) {
+	record := newFakeArtifacts()
+	record.err = &artifact.IntegrityError{
+		Doing:  "pulling ghcr.io/acme/kelson/hello-development:7-a1b2c3d4",
+		Want:   "sha256:recorded",
+		Got:    "sha256:served",
+		Source: "the digest kelson recorded for this revision",
+	}
+	c := serve(t, Options{Revisions: record})
+
+	_, err := c.render.Diff(context.Background(), connect.NewRequest(&kelsonv1alpha1.DiffRequest{
+		Spec:         inlineSpec(projectDoc, map[string]string{"development": developmentDoc}),
+		Environment:  "development",
+		Profile:      profileRef(),
+		FromRevision: "7-a1b2c3d4",
+	}))
+	if connect.CodeOf(err) != connect.CodeDataLoss {
+		t.Fatalf("code = %v, want data_loss (%v)", connect.CodeOf(err), err)
+	}
+	for _, want := range []string{"sha256:recorded", "sha256:served"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %s: %v", want, err)
+		}
+	}
+}
+
+// A server with no registry says so, and says it as Unimplemented: a seam this
+// build was not wired with is not a request the caller can fix by editing.
+func TestDiffAgainstARevisionWithoutARegistry(t *testing.T) {
+	c := serve(t, Options{})
+
+	_, err := c.render.Diff(context.Background(), connect.NewRequest(&kelsonv1alpha1.DiffRequest{
+		Spec:         inlineSpec(projectDoc, map[string]string{"development": developmentDoc}),
+		Environment:  "development",
+		Profile:      profileRef(),
+		FromRevision: "7-a1b2c3d4",
 	}))
 	if connect.CodeOf(err) != connect.CodeUnimplemented {
 		t.Fatalf("code = %v, want unimplemented (%v)", connect.CodeOf(err), err)
-	}
-	if !hasCode(detailCodes(err), string(delivery.ErrNotImplemented)) {
-		t.Errorf("details = %v, want %s", detailCodes(err), delivery.ErrNotImplemented)
-	}
-	for _, want := range []string{"rev-00000001", "#224", "dry_run=SERVER"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the refusal does not mention %q: %v", want, err)
-		}
 	}
 }
 
