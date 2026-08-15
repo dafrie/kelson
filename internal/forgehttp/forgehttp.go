@@ -33,27 +33,41 @@
 // because the app-manifest flow creates a connection *before* the app is
 // installed and nothing else can learn that number (ADR-0033 decision 2 step 3).
 //
-// # What is not gated, and by what
+// # What is gated, and by what
 //
-// The webhook endpoint authenticates its caller by HMAC over the body, against
-// the connections this instance holds — that is the whole gate, it is
-// constant-time, and a delivery that verifies against nothing is refused with
-// no state change and nothing about the secret material in the log.
+// Four endpoints and three different gates, and the differences are the design
+// rather than an accident of what was easy to mount.
 //
-// The manifest endpoints are *not* behind kelson's shared password. The auth
-// gate in internal/api protects `/kelson.v1alpha1.*` and passes everything else
-// (that is what lets the UI load before anyone can log in), and it exposes no
-// per-request check this package could call. Under the interim trust model
-// (ADR-0013 §3: loopback, or a password behind a TLS-terminating proxy) reaching
-// this server unauthenticated is already the exposure #84 owns — but a reader
-// should know the difference rather than assume the password covers this. The
-// state parameter below is CSRF protection for the round trip, not
-// authentication of the person taking it.
+// The **webhook** authenticates its caller by HMAC over the body, against the
+// connections this instance holds — that is the whole gate, it is constant-time,
+// and a delivery that verifies against nothing is refused with no state change
+// and nothing about the secret material in the log. It is not behind kelson's
+// own credential and must not be: GitHub holds no kelson session, and the shared
+// secret it does hold is the per-connection webhook secret this check reads.
+//
+// The **manifest session** endpoint is behind kelson's credential, and behind
+// exactly the one the RPCs are (issue #248): the same header, the same
+// principals, the same code, reached through the [Authenticator] that
+// cmd/kelson-server injects at [Handler.Register]. It mints nothing but a start
+// URL.
+//
+// **Manifest start** requires the one-time ticket that URL carries (ticket.go)
+// and refuses without it. The two-step exists because the browser reaches
+// /start by top-level navigation, which carries no header a fetch would have
+// added and must never carry a credential in its query. The ticket is what
+// survives that hop: two minutes, one use, no identity, worthless once spent.
+//
+// The **manifest callback** takes no ticket and needs none. GitHub is what calls
+// it, carrying the one-time code, and the authentication of that round trip is
+// the state cookie /start set — a callback arriving at a browser that did not
+// start a flow here has nothing to match and is refused (manifest.go). Requiring
+// a ticket there would be requiring one of GitHub, which has none.
 package forgehttp
 
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -76,6 +90,11 @@ const (
 
 	// WebhookPath receives GitHub deliveries.
 	WebhookPath = "/forge/github/webhook"
+
+	// ManifestSessionPath mints the one-time ticket ManifestStartPath requires.
+	// It is the authenticated door into the flow, and the only endpoint here the
+	// UI calls with its normal transport rather than by navigating to.
+	ManifestSessionPath = "/forge/github/manifest/session"
 
 	// ManifestStartPath begins the app-manifest flow.
 	ManifestStartPath = "/forge/github/manifest/start"
@@ -172,10 +191,38 @@ type Options struct {
 	Now func() int64
 }
 
+// Authenticator applies kelson-server's own credential check to one request.
+// The returned string is a refusal message and is empty exactly when the
+// request carries a credential the server accepts.
+//
+// It is a function rather than an interface or an imported type so that this
+// package keeps no dependency on internal/api. The direction matters: the RPC
+// plane gets no cluster client by design (the `api` depguard rule says so, and
+// the stores are the seam that enforces it), while this package holds two — so
+// an import edge either way would hand one plane the other's reach in a lint
+// rule that only sees direct imports. A stdlib-shaped func crosses the gap with
+// nothing attached, and it is what keeps this package testable with a literal.
+//
+// [github.com/dafrie/kelson/internal/api.Auth.CheckRequest] is the only
+// implementation, and cmd/kelson-server is the only place the two meet.
+type Authenticator func(r *http.Request) (refusal string)
+
 // Handler serves the forge endpoints.
 type Handler struct {
 	opts Options
 	log  *slog.Logger
+
+	// tickets is this process's authority over the one-time tokens
+	// ManifestStartPath requires (ticket.go).
+	tickets *tickets
+
+	// authenticate gates ManifestSessionPath. It arrives at Register rather than
+	// in Options because kelson-server cannot build it any earlier: the gate is
+	// made from the agent store this Handler's own plane creates, so the mount
+	// is the first moment both exist. Nil is a wiring mistake and is refused as
+	// one — never treated as "no authentication configured", which is a
+	// different fact that [Authenticator] itself reports.
+	authenticate Authenticator
 }
 
 // New returns a Handler. A resolver is required; everything else degrades to a
@@ -189,15 +236,27 @@ func New(opts Options) (*Handler, error) {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	return &Handler{opts: opts, log: log}, nil
+	tickets, err := newTickets()
+	if err != nil {
+		return nil, fmt.Errorf("generating the manifest ticket key: %w", err)
+	}
+	return &Handler{opts: opts, log: log, tickets: tickets}, nil
 }
 
-// Register mounts the three routes on a mux.
+// Register mounts the four routes on a mux, behind the credential check the
+// caller hands in.
+//
+// The check is a parameter and not an option because it is a property of the
+// mount: whoever puts this surface on a mux is the one that knows what gates the
+// rest of that mux, and a signature that cannot be satisfied without deciding is
+// better than a field that defaults to open (issue #248).
 //
 // The patterns carry their methods, so a GET to the webhook and a POST to the
 // manifest start are 405s from the mux rather than handlers that have to check.
-func (h *Handler) Register(mux *http.ServeMux) {
+func (h *Handler) Register(mux *http.ServeMux, authenticate Authenticator) {
+	h.authenticate = authenticate
 	mux.HandleFunc("POST "+WebhookPath, h.webhook)
+	mux.HandleFunc("POST "+ManifestSessionPath, h.manifestSession)
 	mux.HandleFunc("GET "+ManifestStartPath, h.manifestStart)
 	mux.HandleFunc("GET "+ManifestCallbackPath, h.manifestCallback)
 }
@@ -227,9 +286,11 @@ func (h *Handler) baseURL(r *http.Request) string {
 }
 
 // writeJSON answers with a small object. Every response body this package
-// writes is one of these: a browser never reads them (it is redirected), and
-// what does read them is GitHub's delivery log and whoever is debugging why a
-// preview did not update.
+// writes is one of these, and three kinds of reader see them: GitHub's delivery
+// log, whoever is debugging why a preview did not update, and — for the ticket
+// refusals alone (ticket.go) — a person whose browser landed on /start without
+// a live ticket. That last one is why those messages are sentences saying what
+// to do next rather than error codes.
 func writeJSON(w http.ResponseWriter, status int, body map[string]any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/dafrie/kelson/internal/build"
 	"github.com/dafrie/kelson/internal/controlstore"
 	"github.com/dafrie/kelson/internal/forgeconn"
+	"github.com/dafrie/kelson/internal/forgehttp"
 	"github.com/dafrie/kelson/internal/model"
 	"github.com/dafrie/kelson/internal/version"
 	"github.com/dafrie/kelson/internal/webui"
@@ -621,5 +623,227 @@ func TestForgeStatusesReportsABrokenResolution(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "one") || !strings.Contains(err.Error(), "two") {
 		t.Errorf("the failure does not name the tied connections: %v", err)
+	}
+}
+
+// --- the manifest flow's gate (issue #248) ---------------------------------
+//
+// The ship-blocker: /forge/github/manifest/start used to be reachable by anyone
+// who could reach the port, because the auth middleware gates
+// `/kelson.v1alpha1.*` and passes everything else. These tests drive the real
+// mux — the same newMux the binary serves — because that is where the claim
+// lives: internal/forgehttp can assert that it refuses a start without a
+// ticket, but only this file can assert that *this server's own credential* is
+// what mints one.
+
+// stubConnections and stubSecrets exist so the manifest endpoints are enabled;
+// nil stores disable them. No test below reaches GitHub, so nothing is ever
+// recorded through them.
+type stubConnections struct{}
+
+func (stubConnections) List(context.Context) ([]controlstore.StoredConnection, error) {
+	return nil, nil
+}
+
+func (stubConnections) Get(context.Context, string) (controlstore.StoredConnection, error) {
+	return controlstore.StoredConnection{}, nil
+}
+
+func (stubConnections) Create(context.Context, string, model.GitConnectionSpec, controlstore.CreateConnectionOptions) (controlstore.StoredConnection, error) {
+	return controlstore.StoredConnection{}, nil
+}
+
+func (stubConnections) RecordInstallation(context.Context, string, int64) (controlstore.StoredConnection, error) {
+	return controlstore.StoredConnection{}, nil
+}
+
+type stubSecrets struct{}
+
+func (stubSecrets) Write(context.Context, string, map[string][]byte) error { return nil }
+
+// forgeServer is the binary's mux with the forge surface mounted, over
+// httptest. The clock is the one tickets are minted and checked against.
+func forgeServer(t *testing.T, auth *api.Auth, now func() int64) *httptest.Server {
+	t.Helper()
+	forge, err := forgehttp.New(forgehttp.Options{
+		Sources:     &forgeconn.Resolver{},
+		Connections: stubConnections{},
+		Secrets:     stubSecrets{},
+		ExternalURL: "https://kelson.acme.com",
+		Now:         now,
+	})
+	if err != nil {
+		t.Fatalf("forgehttp.New: %v", err)
+	}
+	srv := httptest.NewServer(newMux(&serverPlane{
+		api:     api.New(api.Options{}),
+		sources: &forgeconn.Resolver{},
+		forge:   forge,
+	}, auth))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// mintTicket posts to the session endpoint with the given bearer credential and
+// returns the status and the start URL it named.
+func mintTicket(t *testing.T, srv *httptest.Server, password string) (int, string) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, srv.URL+forgehttp.ManifestSessionPath, nil)
+	if err != nil {
+		t.Fatalf("building the session request: %v", err)
+	}
+	if password != "" {
+		req.Header.Set("Authorization", "Bearer "+password)
+	}
+	res, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("POST %s: %v", forgehttp.ManifestSessionPath, err)
+	}
+	defer res.Body.Close() //nolint:errcheck // read-only handle
+	var body struct {
+		StartURL string `json:"startUrl"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+		t.Fatalf("decoding the session response: %v", err)
+	}
+	return res.StatusCode, body.StartURL
+}
+
+// navigate fetches a path the way a browser would reach it — a top-level GET
+// with no Authorization header — and does not follow redirects, so a status
+// code is the answer rather than whatever it points at.
+func navigate(t *testing.T, srv *httptest.Server, path string) (int, string) {
+	t.Helper()
+	client := *srv.Client()
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	res, err := client.Get(srv.URL + path)
+	if err != nil {
+		t.Fatalf("GET %s: %v", path, err)
+	}
+	defer res.Body.Close() //nolint:errcheck // read-only handle
+	raw, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("reading %s: %v", path, err)
+	}
+	return res.StatusCode, string(raw)
+}
+
+// The gate itself: on a server with a password the session endpoint takes the
+// same credential an RPC takes, through the same check.
+func TestManifestSessionTakesTheSameCredentialAsAnRPC(t *testing.T) {
+	auth, err := api.NewAuth("hunter2")
+	if err != nil {
+		t.Fatalf("api.NewAuth: %v", err)
+	}
+	srv := forgeServer(t, auth, nil)
+
+	if status, startURL := mintTicket(t, srv, ""); status != http.StatusUnauthorized || startURL != "" {
+		t.Fatalf("an unauthenticated session = %d (%q), want 401 and no start URL", status, startURL)
+	}
+	if status, _ := mintTicket(t, srv, "wrong-password"); status != http.StatusUnauthorized {
+		t.Fatalf("a wrong password = %d, want 401", status)
+	}
+
+	status, startURL := mintTicket(t, srv, "hunter2")
+	if status != http.StatusOK {
+		t.Fatalf("an authenticated session = %d, want 200", status)
+	}
+	if !strings.HasPrefix(startURL, forgehttp.ManifestStartPath+"?ticket=") {
+		t.Fatalf("startUrl = %q, want %s carrying a ticket", startURL, forgehttp.ManifestStartPath)
+	}
+}
+
+// The two-step end to end: the ticket an authenticated fetch minted is what the
+// top-level navigation carries, it renders the manifest form GitHub's flow
+// needs, and it is dead immediately afterwards.
+func TestManifestStartAcceptsAMintedTicketExactlyOnce(t *testing.T) {
+	auth, err := api.NewAuth("hunter2")
+	if err != nil {
+		t.Fatalf("api.NewAuth: %v", err)
+	}
+	srv := forgeServer(t, auth, nil)
+
+	_, startURL := mintTicket(t, srv, "hunter2")
+
+	status, body := navigate(t, srv, startURL)
+	if status != http.StatusOK {
+		t.Fatalf("the minted ticket = %d, want the manifest form: %s", status, body)
+	}
+	// The existing flow, unchanged behind the gate: an auto-submitting form
+	// posting the manifest to GitHub's app-creation endpoint.
+	for _, want := range []string{`method="post"`, "https://github.com/settings/apps/new", `name="manifest"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the manifest form must contain %q\n%s", want, body)
+		}
+	}
+
+	status, body = navigate(t, srv, startURL)
+	if status != http.StatusGone {
+		t.Fatalf("the second use = %d, want 410: %s", status, body)
+	}
+	if strings.Contains(body, "settings/apps/new") {
+		t.Error("a spent ticket still rendered the manifest form")
+	}
+}
+
+// Navigating straight to /start — a bookmark, a shared link, a stranger who can
+// reach the port — is refused. This is the ship-blocker's acceptance.
+func TestManifestStartRefusesAnUnticketedNavigation(t *testing.T) {
+	auth, err := api.NewAuth("hunter2")
+	if err != nil {
+		t.Fatalf("api.NewAuth: %v", err)
+	}
+	srv := forgeServer(t, auth, nil)
+
+	status, body := navigate(t, srv, forgehttp.ManifestStartPath)
+	if status != http.StatusUnauthorized {
+		t.Fatalf("an unticketed start = %d, want 401: %s", status, body)
+	}
+	if strings.Contains(body, "settings/apps/new") {
+		t.Error("an unticketed start rendered the manifest form")
+	}
+}
+
+// movableClock is what an expiry test needs from forgehttp's injected clock: a
+// source read on every call, so advancing the field moves time. A bound method
+// value on a time.Time (clock.Unix) would freeze the reading where it was bound.
+type movableClock struct{ at time.Time }
+
+func (c *movableClock) unix() int64 { return c.at.Unix() }
+
+// A ticket is a click's worth of time. One held past it is refused even though
+// a real session minted it and nobody used it.
+func TestManifestTicketExpiresThroughTheMux(t *testing.T) {
+	auth, err := api.NewAuth("hunter2")
+	if err != nil {
+		t.Fatalf("api.NewAuth: %v", err)
+	}
+	clock := &movableClock{at: time.Now()}
+	srv := forgeServer(t, auth, clock.unix)
+
+	_, startURL := mintTicket(t, srv, "hunter2")
+	clock.at = clock.at.Add(3 * time.Minute)
+
+	if status, body := navigate(t, srv, startURL); status != http.StatusGone {
+		t.Fatalf("an expired ticket = %d, want 410: %s", status, body)
+	}
+}
+
+// A server with no password: the RPCs are open, so the session endpoint is too
+// — it is the same check and it says so. What still holds is the ticket, because
+// /start's requirement is unconditional rather than a function of the posture
+// the operator chose.
+func TestManifestFlowOnAServerWithoutAPassword(t *testing.T) {
+	srv := forgeServer(t, openAuth(t), nil)
+
+	status, startURL := mintTicket(t, srv, "")
+	if status != http.StatusOK {
+		t.Fatalf("session on an open server = %d, want 200", status)
+	}
+	if status, _ := navigate(t, srv, forgehttp.ManifestStartPath); status != http.StatusUnauthorized {
+		t.Errorf("an unticketed start on an open server = %d, want it refused anyway", status)
+	}
+	if status, body := navigate(t, srv, startURL); status != http.StatusOK {
+		t.Errorf("the minted ticket = %d, want the manifest form: %s", status, body)
 	}
 }

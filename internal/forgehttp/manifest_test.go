@@ -34,13 +34,36 @@ func manifestHandler(t *testing.T, conns *fakeConnections, secrets *fakeSecrets,
 	})
 }
 
+// startFlow begins a flow the way the UI does: mint a ticket at the
+// authenticated session endpoint, then navigate to the start URL it names. Every
+// manifest test goes through the gate because the flow itself now does.
 func startFlow(t *testing.T, h *Handler, query string) *httptest.ResponseRecorder {
 	t.Helper()
-	target := ManifestStartPath
+	target := startURL(t, h)
 	if query != "" {
-		target += "?" + query
+		target += "&" + query
 	}
 	return serve(h, httptest.NewRequest(http.MethodGet, target, nil))
+}
+
+// startURL is the session endpoint's answer: a relative /start URL carrying one
+// live ticket.
+func startURL(t *testing.T, h *Handler) string {
+	t.Helper()
+	rec := serve(h, httptest.NewRequest(http.MethodPost, ManifestSessionPath, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST %s = %d, want a start URL: %s", ManifestSessionPath, rec.Code, rec.Body.String())
+	}
+	var body struct {
+		StartURL string `json:"startUrl"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decoding the session response: %v", err)
+	}
+	if !strings.HasPrefix(body.StartURL, ManifestStartPath+"?") {
+		t.Fatalf("startUrl = %q, want %s carrying a ticket", body.StartURL, ManifestStartPath)
+	}
+	return body.StartURL
 }
 
 // Start renders the auto-submitting form GitHub's manifest flow requires: the
@@ -102,7 +125,7 @@ func TestManifestStartHonoursTheOrganisation(t *testing.T) {
 func TestManifestStartRefusesALoopbackURL(t *testing.T) {
 	h := manifestHandler(t, newFakeConnections(), newFakeSecrets(), "")
 
-	rec := serve(h, httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8420"+ManifestStartPath, nil))
+	rec := serve(h, httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8420"+startURL(t, h), nil))
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, want a redirect back to the connections page", rec.Code)
 	}
