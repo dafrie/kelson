@@ -731,8 +731,11 @@ not a data service kelson manages. See [Secrets](#secrets-references-never-liter
 > "Revisit when" predicted this exact resolution. The shape below is what #227 has to honour, and is
 > kept for that reason.
 >
-> **Transition ([#224](https://github.com/dafrie/kelson/issues/224)).** Until R1 lands, the direct
-> adapter still implements the barrier as described here, in the mode that is being deleted.
+> **Nothing renders it today.** The Job, its ServiceAccount and the direct-mode gate that used to
+> refuse the field outside `delivery.mode: direct` are all deleted
+> ([#234](https://github.com/dafrie/kelson/issues/234)); a document carrying `release:` is refused at
+> validation and never reaches the renderer. Everything below is written as the contract, in the
+> present tense it will be true in again — read it as the specification #227 implements.
 
 A `release:` command runs to completion, and successfully, **before the revision's workloads roll**.
 It is where database migrations go.
@@ -764,6 +767,7 @@ business.
 
 One `ServiceAccount` (the component's own, moved here from its workload group because the Job's pod
 names it) and one `Job`, placed **after the data services and the charts, and before every workload**.
+(Rendered *when #227 lands*: today the field is refused and nothing is emitted for it.)
 The Job carries the component's image, the component's whole environment — bindings and secret
 references included, so the migration reads exactly the `DATABASE_URL` the application reads —
 `restartPolicy: Never`, `backoffLimit: 2` and the `activeDeadlineSeconds` your `timeout` resolves to.

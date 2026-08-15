@@ -64,16 +64,15 @@ const (
 	// delivery-mode gate ADR-0016 decision 4 took for charts, citing it
 	// deliberately as that decision requires.
 	ErrPreviewsRequireFlux = "render/previews-require-flux"
-	// ErrReleaseRequiresDirect: a component declares a release command and the
-	// environment's delivery mode is not direct. A release command is a Job that
-	// must FINISH before the workloads roll, and only the mode where kelson owns
-	// the apply can stop between two resources to wait for it. Rendering it into
-	// a Flux path would produce a migration that runs beside the rollout rather
-	// than before it — see ADR-0019 and internal/renderer/release.go.
-	ErrReleaseRequiresDirect = "render/release-requires-direct"
-	// ErrReleaseName: release-<component>-<spec hash> is too long for a
-	// Kubernetes object name.
-	ErrReleaseName = "render/release-name-too-long"
+
+	// The two release codes — `render/release-requires-direct` and
+	// `render/release-name-too-long` — are gone with the release Job itself
+	// (ADR-0028 decision 8). The first refused a delivery mode that no longer
+	// exists; the second could only be reached by rendering a Job the renderer
+	// no longer renders. `components[].release` is refused one plane earlier
+	// now, as schema/not-implemented from internal/model's gate table, so a
+	// resolved spec that reaches this package never carries one (#227).
+
 	// ErrPreviewName: <project>-<environment> leaves no room for the
 	// per-preview namespace derived from it (<project>-<environment>-pr<id>,
 	// a DNS-1123 label).

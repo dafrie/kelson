@@ -1410,15 +1410,17 @@ func (v *validator) workloadComponent(
 // release validates a component's release-command hook (issue #104): the kinds
 // it applies to, the command it must name, and the timeout's grammar.
 //
-// What is *not* checked here is the delivery mode. A release hook renders in
-// direct mode only, and that refusal lives in the renderer for the reason the
-// helm and previews gates do: the mode is an Environment's, and a Project
-// document is valid on its own terms against every environment it will ever
-// meet (internal/renderer/release.go, ADR-0019).
+// The hook is *gated* (ADR-0028 decision 8): the plane that waited for the Job
+// is deleted, so the field renders nothing and the gate table refuses it by
+// name. The shape checks below still run, for the reason [validator.tools]
+// gives — the gate is about what kelson implements, not about what the author
+// wrote, and an author who fixes the shape should not meet a second problem in
+// it the day #227 lands.
 func (v *validator) release(field string, c Component, kind ComponentKind) {
 	if c.Release == nil {
 		return
 	}
+	v.gate("$.spec.components[].release", field+".release")
 	if kind == ComponentCron {
 		v.err(ErrMutuallyExclusive, field+".release",
 			fmt.Sprintf("component %q has kind %q, and a release command runs once per deploy", c.Name, kind),

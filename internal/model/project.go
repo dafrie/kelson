@@ -349,7 +349,13 @@ type Component struct {
 	// a release command runs at deploy time. Data components and charts refuse
 	// it for the reason they refuse every workload field — what they run is
 	// their operator's business (ADR-0005).
-	Release *Release `yaml:"release,omitempty" json:"release,omitempty" jsonschema:"description=command run to completion before this revision's workloads roll — direct delivery mode only"`
+	//
+	// It is validated and then refused (schema/not-implemented) until the
+	// two-Kustomization `dependsOn` split gives Flux the barrier the deleted
+	// direct adapter used to provide (ADR-0028 decision 8, issue #227). Order
+	// in a rendered set is not a wait, so rendering the Job anyway would run
+	// the migration beside the rollout instead of before it.
+	Release *Release `yaml:"release,omitempty" json:"release,omitempty" jsonschema:"description=command run to completion before this revision's workloads roll; refused until issue #227"`
 
 	// Tools is the tool subset an agent component may call — the per-agent
 	// capability policy ADR-0014 records as mandatory practice for this
