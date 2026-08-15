@@ -38,8 +38,9 @@ Follow-ups, deliberately out of the three phases:
 [#231](https://github.com/dafrie/kelson/issues/231) tenancy ·
 [#232](https://github.com/dafrie/kelson/issues/232) multi-cluster ·
 [#233](https://github.com/dafrie/kelson/issues/233) agent/audit stores as CRDs ·
-[#234](https://github.com/dafrie/kelson/issues/234) the label rename and the `delivery:` block removal,
-kept as one behaviour-change PR.
+[#234](https://github.com/dafrie/kelson/issues/234) the `delivery:` block removal — the label rename it
+was paired with landed with [ADR-0032](adr/0032-finish-the-component-rename.md), so what remained was
+the spec vocabulary and the four renderer mode gates.
 
 The milestone tables below are kept as written, with the rows the rebuild absorbs annotated rather than
 deleted: what was built and why it was replaced is the part worth keeping.

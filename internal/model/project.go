@@ -322,7 +322,7 @@ type Component struct {
 	//
 	// They are plain configuration and nothing else. Unlike a `Secret` kelson
 	// renders, a HelmRelease is not redacted anywhere — its values appear in
-	// every diff, in the rendered output and in the delivery repository — so a
+	// every diff, in the rendered output and in the published artifact — so a
 	// credential written here is a credential published there. Secret material
 	// belongs in ValuesFrom, against a Secret somebody else manages (ADR-0009,
 	// docs/model.md). Nothing enforces that in v0 beyond saying so: kelson does
@@ -349,7 +349,13 @@ type Component struct {
 	// a release command runs at deploy time. Data components and charts refuse
 	// it for the reason they refuse every workload field — what they run is
 	// their operator's business (ADR-0005).
-	Release *Release `yaml:"release,omitempty" json:"release,omitempty" jsonschema:"description=command run to completion before this revision's workloads roll — direct delivery mode only"`
+	//
+	// It is validated and then refused (schema/not-implemented) until the
+	// two-Kustomization `dependsOn` split gives Flux the barrier the deleted
+	// direct adapter used to provide (ADR-0028 decision 8, issue #227). Order
+	// in a rendered set is not a wait, so rendering the Job anyway would run
+	// the migration beside the rollout instead of before it.
+	Release *Release `yaml:"release,omitempty" json:"release,omitempty" jsonschema:"description=command run to completion before this revision's workloads roll; refused until issue #227"`
 
 	// Tools is the tool subset an agent component may call — the per-agent
 	// capability policy ADR-0014 records as mandatory practice for this
@@ -473,7 +479,6 @@ type Overlay struct {
 // ProjectDefaults are Project-level fallbacks for Environment concerns;
 // an explicit Environment value always wins (rule P4).
 type ProjectDefaults struct {
-	DeliveryMode DeliveryMode   `yaml:"deliveryMode,omitempty" json:"deliveryMode,omitempty"`
-	Policy       *Policy        `yaml:"policy,omitempty" json:"policy,omitempty"`
-	Secrets      *SecretBackend `yaml:"secrets,omitempty" json:"secrets,omitempty"`
+	Policy  *Policy        `yaml:"policy,omitempty" json:"policy,omitempty"`
+	Secrets *SecretBackend `yaml:"secrets,omitempty" json:"secrets,omitempty"`
 }

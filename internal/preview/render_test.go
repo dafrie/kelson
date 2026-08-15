@@ -35,10 +35,6 @@ func testEnvironment() *model.Environment {
 			Project:   "checkout",
 			Namespace: "checkout-staging",
 			Routing:   &model.Routing{DomainSuffix: "staging.acme.run", GatewayClass: "envoy"},
-			Delivery: &model.Delivery{
-				Mode: model.DeliveryFlux,
-				Git:  &model.GitTarget{Repo: "git@github.com:acme/deploy.git", Path: "checkout/staging"},
-			},
 			Previews: &model.Previews{
 				Provider:  model.PreviewGitHub,
 				Repo:      "https://github.com/acme/checkout",
@@ -261,11 +257,6 @@ func TestRenderRefusals(t *testing.T) {
 			name:   "no artifact repository",
 			mutate: func(o *preview.Options) { o.Environment.Spec.Previews.Artifacts.Repository = "" },
 			reason: preview.ReasonNoArtifactRepository,
-		},
-		{
-			name:   "not flux mode",
-			mutate: func(o *preview.Options) { o.Environment.Spec.Delivery = &model.Delivery{Mode: model.DeliveryDirect} },
-			reason: preview.ReasonRequiresFlux,
 		},
 		{
 			name:   "change request is not a number",

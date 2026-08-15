@@ -442,7 +442,7 @@
                 "required": [
                   "command"
                 ],
-                "description": "command run to completion before this revision's workloads roll — direct delivery mode only"
+                "description": "command run to completion before this revision's workloads roll; refused until issue #227"
               },
               "tools": {
                 "items": {
@@ -463,9 +463,6 @@
         },
         "defaults": {
           "properties": {
-            "deliveryMode": {
-              "type": "string"
-            },
             "policy": {
               "properties": {
                 "agents": {

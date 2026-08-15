@@ -55,43 +55,6 @@
           "additionalProperties": false,
           "type": "object"
         },
-        "delivery": {
-          "properties": {
-            "mode": {
-              "type": "string",
-              "enum": [
-                "direct",
-                "flux"
-              ]
-            },
-            "git": {
-              "properties": {
-                "repo": {
-                  "type": "string",
-                  "description": "git URL of the deployment repository"
-                },
-                "branch": {
-                  "type": "string",
-                  "default": "main"
-                },
-                "path": {
-                  "type": "string",
-                  "description": "directory within the repo for rendered manifests"
-                }
-              },
-              "additionalProperties": false,
-              "type": "object",
-              "required": [
-                "repo"
-              ]
-            }
-          },
-          "additionalProperties": false,
-          "type": "object",
-          "required": [
-            "mode"
-          ]
-        },
         "policy": {
           "properties": {
             "agents": {

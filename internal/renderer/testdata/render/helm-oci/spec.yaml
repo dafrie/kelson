@@ -35,8 +35,3 @@ metadata:
 spec:
   project: checkout
   namespace: checkout-staging
-  delivery:
-    mode: flux
-    git:
-      repo: git@github.com:acme/deploy.git
-      path: checkout/staging

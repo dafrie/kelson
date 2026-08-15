@@ -70,40 +70,16 @@ func secretBackendSupported(resolved *model.Resolved) Errors {
 	}}
 }
 
-// sopsRequiresFlux is the sops backend's delivery-mode gate.
+// The sops backend's delivery-mode gate — `render/sops-requires-flux`, the
+// third instance of ADR-0016 decision 4's shape — is deleted (ADR-0028
+// decision 8). It refused the backend outside flux mode because direct mode had
+// no decryptor; the mode it refused does not exist.
 //
-// The backend's whole mechanism is a decryption step that belongs to
-// kustomize-controller: the encrypted Secret lives in the delivery repository
-// and Flux turns it into a Secret in the cluster on the way in. Direct mode
-// has no decryptor and no repository — kelson would apply the workloads and
-// nothing would ever create the Secret their references name, so every pod
-// would fail at start against a Secret that exists only as ciphertext in a
-// directory nobody applied.
-//
-// It is the third instance of the same gate (charts, ADR-0016 decision 4;
-// previews, ADR-0017 decision 5), decided in the same place and for the same
-// reason: from spec data alone, before anything is emitted, so the same
-// document renders the same way against every cluster.
-//
-// The git target is not checked here. `delivery.mode: flux` already requires
-// one (semantic/git-target-missing, internal/model), so a second check would
-// only be a second spelling of an error the author has already been given.
-func sopsRequiresFlux(resolved *model.Resolved) Errors {
-	env := resolved.Environment
-	if env.Secrets.Backend != model.SecretsSOPS || env.Mode == model.DeliveryFlux {
-		return nil
-	}
-	return Errors{{
-		Code: ErrSOPSRequiresFlux,
-		Message: "environment " + quoted(env.Name) + " selects secret backend " +
-			quoted(string(model.SecretsSOPS)) + ", which is decrypted in-cluster by Flux, but its delivery mode is " +
-			quoted(string(env.Mode)),
-		Remediation: "set delivery.mode: flux on this environment, or use backend: cluster and write the Secret " +
-			"with `kelson secret set`. SOPS keeps the value in the delivery repository and kustomize-controller " +
-			"decrypts it on the way into the cluster; direct mode has no decryptor, so the encrypted file would " +
-			"stay encrypted and every reference to it would fail at pod start (ADR-0022)",
-	}}
-}
+// The mechanism it protected is intact and is now unconditional: the encrypted
+// Secret ships inside the published artifact and kustomize-controller decrypts
+// it through the `spec.decryption` block of the Kustomization kelson itself
+// writes (ADR-0028 decision 7), which is why ADR-0022's "committed but never
+// decrypted" failure mode is unreachable rather than merely refused.
 
 // SOPSDecryptionBlock is the Kustomization stanza a sops environment needs,
 // rendered at the given indentation:
@@ -120,14 +96,10 @@ func sopsRequiresFlux(resolved *model.Resolved) Errors {
 // `secrets.ageKeySecret`, defaulted during resolution so nothing here has to
 // decide what an empty one means.
 //
-// It is exported for the reason [PreviewsRequireFlux] is: a caller that only
-// needs to *state* the requirement must get the identical text the renderer
-// emits. kelson writes exactly one Kustomization itself — the per-preview one
-// in the ResourceSet template — and the environment's own Kustomization is the
-// operator's, in the cluster's bootstrap path. `kelson secret set` prints this
-// block so the operator's half of the setup is a copy rather than a
-// paraphrase, and a paraphrase that drifted from this function is exactly how
-// "it committed but never decrypted" happens.
+// It is exported because a caller that only needs to *state* the requirement
+// must get the identical text the renderer emits: `kelson secret set` prints
+// this block, and a paraphrase that drifted from this function is exactly how
+// "it was encrypted but never decrypted" happens.
 func SOPSDecryptionBlock(ageKeySecret, indent string) string {
 	if ageKeySecret == "" {
 		ageKeySecret = model.DefaultAgeKeySecret

@@ -40,14 +40,7 @@ func componentManifests(
 		specHash:    hash,
 	}
 
-	var out []Manifest
-	if c.Release == nil {
-		// A component with a release hook has already had its ServiceAccount
-		// emitted, with the Job that runs under it: the Job is applied before
-		// every workload, and a pod naming a ServiceAccount that does not exist
-		// yet is refused rather than queued (internal/renderer/release.go).
-		out = append(out, serviceAccount(prov))
-	}
+	out := []Manifest{serviceAccount(prov)}
 	if c.Kind == model.ComponentService {
 		out = append(out, service(c, prov))
 	}

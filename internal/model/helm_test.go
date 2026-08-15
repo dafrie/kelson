@@ -315,9 +315,6 @@ kind: Environment
 metadata: {name: prod}
 spec:
   project: shop
-  delivery:
-    mode: flux
-    git: {repo: "git@github.com:acme/deploy.git"}
 `)
 	resolved, errs := Resolve(p, e)
 	if len(errs) > 0 {
@@ -336,9 +333,6 @@ spec:
 	}
 	if len(c.ValuesFrom) != 2 || c.ValuesFrom[0].ConfigMapRef != "defaults" || c.ValuesFrom[1].SecretRef != "creds" {
 		t.Errorf("valuesFrom must keep spec order, got %+v", c.ValuesFrom)
-	}
-	if resolved.Environment.Mode != DeliveryFlux {
-		t.Errorf("mode = %q; the renderer's gate reads it from here", resolved.Environment.Mode)
 	}
 }
 

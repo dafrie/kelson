@@ -30,5 +30,3 @@ metadata:
 spec:
   project: checkout
   namespace: checkout-production
-  delivery:
-    mode: direct

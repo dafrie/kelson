@@ -3,9 +3,11 @@ kind: Environment
 metadata:
   name: production
 
-# Flux mode. The policy that would have agents propose pull requests here
-# returns with M7, SOPS-encrypted secrets with M8 and the HA database preset
-# with M9; kelson rejects unimplemented fields rather than ignoring them (#141).
+# The same Project again, with the replica floor, the resource requests and the
+# env override this environment needs (P1, P2, P3). The policy that would have
+# agents propose pull requests here returns with M7, SOPS-encrypted secrets with
+# M8 and the HA database preset with M9; kelson rejects unimplemented fields
+# rather than ignoring them (#141).
 spec:
   project: billing
   namespace: billing-prod
@@ -14,13 +16,6 @@ spec:
     domainSuffix: billing.acme.com
     gatewayClass: envoy
     tls: true
-
-  delivery:
-    mode: flux
-    git:
-      repo: git@github.com:acme/billing-deploy.git
-      branch: main
-      path: billing/production
 
   components:
     - name: api

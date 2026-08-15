@@ -44,9 +44,6 @@ kind: Environment
 metadata: {name: production}
 spec:
   project: checkout
-  delivery:
-    mode: flux
-    git: {repo: https://example.test/deploy.git, path: clusters/prod}
   secrets:
 ` + secrets
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {

@@ -423,8 +423,6 @@ kind: Environment
 metadata: {name: prod}
 spec:
   project: shop
-  delivery:
-    mode: github
   components:
     - {name: warehouse, preset: small}
     - name: web
@@ -434,15 +432,12 @@ spec:
     - name: api
       replicas: {min: 2}
 `))
-	if !slices.Contains(errs.Codes(), ErrInvalidEnum) {
-		t.Fatalf("delivery mode github must be caught at decode, got:\n%v", errs)
-	}
-	// Decode is otherwise clean: any remaining gate (issue #141) is expected,
-	// everything else would be a shape complaint this document should not
-	// produce.
+	// Decode is clean: any gate (issue #141) is expected, everything else would
+	// be a shape complaint this document should not produce. The cross-document
+	// errors below are the point, and they are not reachable at decode.
 	for _, e := range errs {
-		if e.Code != ErrInvalidEnum && e.Code != ErrNotImplemented {
-			t.Fatalf("decode must be otherwise clean, got:\n%v", errs)
+		if e.Code != ErrNotImplemented {
+			t.Fatalf("decode must be clean, got:\n%v", errs)
 		}
 	}
 	p := docs[0].(*Project)
@@ -450,7 +445,6 @@ spec:
 
 	envErrs := ValidateEnvironment(e, p)
 	want := []Code{
-		ErrInvalidEnum,       // delivery mode github
 		ErrUnknownServiceKey, // tls is not a postgres key
 		ErrUnknownComponent,  // warehouse and api are not in the project
 	}
@@ -539,36 +533,11 @@ spec:
 	}
 }
 
-func TestDeliveryModes(t *testing.T) {
-	mk := func(delivery string) *Environment {
-		docs, _ := DecodeDocuments([]byte(`
-apiVersion: kelson.dev/v1alpha1
-kind: Environment
-metadata: {name: e}
-spec:
-  project: p
-` + delivery))
-		return docs[0].(*Environment)
-	}
-	// flux without git is an error
-	errs := ValidateEnvironment(mk(`
-  delivery: {mode: flux}`), nil)
-	if !slices.Contains(errs.Codes(), ErrGitTargetMissing) {
-		t.Errorf("flux without git must fail, got %v", errs)
-	}
-	// direct with git is an error
-	errs = ValidateEnvironment(mk(`
-  delivery: {mode: direct, git: {repo: r}}`), nil)
-	if !slices.Contains(errs.Codes(), ErrMutuallyExclusive) {
-		t.Errorf("direct with git must fail, got %v", errs)
-	}
-	// flux with git is fine
-	errs = ValidateEnvironment(mk(`
-  delivery: {mode: flux, git: {repo: git@github.com:a/b.git}}`), nil)
-	if len(errs) != 0 {
-		t.Errorf("flux with git must be valid, got %v", errs)
-	}
-}
+// TestDeliveryModes is gone with the modes it exercised: flux-without-git,
+// direct-with-git and the enum behind both were the `delivery:` block's whole
+// validation surface, and the block is deleted (ADR-0028 decision 9). An
+// environment that still writes one is refused by the decoder — see
+// TestRetiredDeliveryBlockIsRefusedWithItsStory in resolve_test.go.
 
 func TestWorkloadDerivationRules(t *testing.T) {
 	// schedule + domains is mutually exclusive (cron jobs are not routed).

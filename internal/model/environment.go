@@ -1,10 +1,14 @@
 package model
 
 // Environment is where a Project runs and what differs there: target,
-// routing, delivery mode, policy, secret backend, and per-Component
-// overrides (issue #25). Environments are scoped to a Project by reference
-// (spec.project); everything precedence-related is defined by rules P1–P6 in
-// docs/model.md.
+// routing, policy, secret backend, and per-Component overrides (issue #25).
+// Environments are scoped to a Project by reference (spec.project); everything
+// precedence-related is defined by rules P1–P6 in docs/model.md.
+//
+// What an Environment deliberately does *not* carry is how it is delivered.
+// There is one spine — render, publish an OCI artifact, let Flux reconcile it
+// (ADR-0028) — so there is no adapter to select and no `delivery:` block to
+// write.
 type Environment struct {
 	TypeMeta `yaml:",inline"`
 	Metadata ObjectMeta      `yaml:"metadata" json:"metadata" jsonschema:"required"`
@@ -22,14 +26,12 @@ type EnvironmentSpec struct {
 	// Namespace is the target namespace; default "<project>-<environment>".
 	Namespace string `yaml:"namespace,omitempty" json:"namespace,omitempty"`
 
-	Routing  *Routing       `yaml:"routing,omitempty" json:"routing,omitempty"`
-	Delivery *Delivery      `yaml:"delivery,omitempty" json:"delivery,omitempty"`
-	Policy   *Policy        `yaml:"policy,omitempty" json:"policy,omitempty"`
-	Secrets  *SecretBackend `yaml:"secrets,omitempty" json:"secrets,omitempty"`
+	Routing *Routing       `yaml:"routing,omitempty" json:"routing,omitempty"`
+	Policy  *Policy        `yaml:"policy,omitempty" json:"policy,omitempty"`
+	Secrets *SecretBackend `yaml:"secrets,omitempty" json:"secrets,omitempty"`
 
 	// Previews declares that this environment spawns a child environment per
-	// open pull request (ADR-0017). It is available in Flux mode only, the
-	// same gate shape `kind: helm` carries.
+	// open pull request (ADR-0017).
 	Previews *Previews `yaml:"previews,omitempty" json:"previews,omitempty"`
 
 	// AutoDeploy opts this environment into following its components' sources:
@@ -148,29 +150,6 @@ type ComponentOverride struct {
 	// (rule P5): `shared` in development, `ha-small` in production, from one
 	// Project spec.
 	Preset ServicePreset `yaml:"preset,omitempty" json:"preset,omitempty" jsonschema:"enum=shared,enum=small,enum=ha-small,enum=ha-medium,enum=branch,description=data components only"`
-}
-
-type DeliveryMode string
-
-const (
-	DeliveryDirect DeliveryMode = "direct"
-	DeliveryFlux   DeliveryMode = "flux"
-)
-
-// Delivery selects the adapter for this Environment (ADR-0001). All adapters
-// consume identical rendered output; they differ only in who calls apply.
-type Delivery struct {
-	Mode DeliveryMode `yaml:"mode" json:"mode" jsonschema:"required,enum=direct,enum=flux"`
-
-	// Git configures where rendered manifests are committed. Required for
-	// flux (semantic/git-target-missing); meaningless for direct.
-	Git *GitTarget `yaml:"git,omitempty" json:"git,omitempty"`
-}
-
-type GitTarget struct {
-	Repo   string `yaml:"repo" json:"repo" jsonschema:"required,description=git URL of the deployment repository"`
-	Branch string `yaml:"branch,omitempty" json:"branch,omitempty" jsonschema:"default=main"`
-	Path   string `yaml:"path,omitempty" json:"path,omitempty" jsonschema:"description=directory within the repo for rendered manifests"`
 }
 
 // AgentMode governs what agents may do unsupervised in this Environment

@@ -147,7 +147,7 @@ spec:
                           - ha-medium
                           - branch
                       release:
-                        description: command run to completion before this revision's workloads roll — direct delivery mode only
+                        description: 'command run to completion before this revision''s workloads roll; refused until issue #227'
                         type: object
                         required:
                           - command
@@ -229,8 +229,6 @@ spec:
                 defaults:
                   type: object
                   properties:
-                    deliveryMode:
-                      type: string
                     policy:
                       type: object
                       properties:

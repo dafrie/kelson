@@ -97,6 +97,21 @@ var notImplementedFields = []notImplemented{
 		TrackedBy: "milestone M11 · Teams, RBAC & multi-tenancy",
 	},
 	{
+		Kind: KindProject,
+		Path: "$.spec.components[].release",
+		What: "release-command hooks",
+		// This row arrives from the *renderer* rather than from a milestone that
+		// has not started (ADR-0028 decision 8). A release hook rendered a Job
+		// ahead of the workloads and the direct adapter waited for it; that
+		// adapter is deleted, and order alone does not wait — a Job applied
+		// before a Deployment says nothing about the Job having finished
+		// (issue #89). Rendering it anyway would run migrations *beside* the
+		// rollout instead of before it, which is the quiet half-success this
+		// table exists to prevent, so the field is validated and refused until
+		// the two-Kustomization dependsOn split gives Flux the barrier.
+		TrackedBy: "issue #227 (the Flux-native replacement for #104's direct-mode Job)",
+	},
+	{
 		Kind:      KindEnvironment,
 		Path:      "$.spec.cluster",
 		What:      "multi-cluster targeting",

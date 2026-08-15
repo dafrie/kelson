@@ -36,11 +36,6 @@ spec:
   routing:
     domainSuffix: staging.acme.run
     gatewayClass: envoy
-  delivery:
-    mode: flux
-    git:
-      repo: git@github.com:acme/deploy.git
-      path: checkout/staging
   previews:
     provider: github
     # The SOURCE repository — where the pull requests are. It is deliberately

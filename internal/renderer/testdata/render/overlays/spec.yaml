@@ -31,11 +31,6 @@ spec:
   routing:
     domainSuffix: acme.com
     gatewayClass: envoy
-  delivery:
-    mode: flux
-    git:
-      repo: git@github.com:acme/streaming-deploy.git
-      path: streaming/production
   components:
     - name: transcoder
       replicas: { min: 2, max: 8 }

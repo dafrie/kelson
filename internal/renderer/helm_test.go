@@ -9,14 +9,17 @@ import (
 
 // Helm-component rendering (ADR-0016 decision 4). The rendered shapes are
 // pinned by the golden fixtures under testdata/render/helm-*; these tests pin
-// what a golden file cannot hold — the delivery-mode gate and its refusal, the
-// ownership boundary, and the two ways a name or a source can be wrong.
+// what a golden file cannot hold — the ownership boundary and the two ways a
+// name or a source can be wrong.
+//
+// The delivery-mode gate that used to be pinned here is deleted (ADR-0028
+// decision 8): it refused a chart outside `delivery.mode: flux`, and Flux is
+// the only path there is. What survives of it is TestHelmIgnoresProfile — the
+// half that was never about the mode.
 
-// chartFixture is the standard fixture with one helm component, in an
-// environment whose delivery mode is flux — the only mode a chart renders in.
+// chartFixture is the standard fixture with one helm component.
 func chartFixture(chart model.ResolvedChart) *model.Resolved {
 	r := resolvedFixture()
-	r.Environment.Mode = model.DeliveryFlux
 	r.Charts = []model.ResolvedChart{chart}
 	return r
 }
@@ -30,68 +33,15 @@ func repositoryChart() model.ResolvedChart {
 	}
 }
 
-// TestHelmRequiresFluxMode is the gate of ADR-0016 decision 4. Direct mode has
-// no helm-controller to delegate to, so a HelmRelease applied there is a
-// manifest that does nothing — and kelson refuses rather than emitting it.
-func TestHelmRequiresFluxMode(t *testing.T) {
-	for _, mode := range []model.DeliveryMode{model.DeliveryDirect, ""} {
-		r := chartFixture(repositoryChart())
-		r.Environment.Mode = mode
-		_, err := Render(r, gatewayProfile(), nil)
-		if err == nil {
-			t.Fatalf("mode %q rendered a HelmRelease nothing would reconcile", mode)
-		}
-		errs, ok := err.(Errors)
-		if !ok || len(errs) != 1 {
-			t.Fatalf("mode %q: expected one structured error, got %#v", mode, err)
-		}
-		e := errs[0]
-		if e.Code != ErrHelmRequiresFlux {
-			t.Errorf("mode %q: code = %q, want %q", mode, e.Code, ErrHelmRequiresFlux)
-		}
-		if e.Component != "ingress" {
-			t.Errorf("mode %q: the error must name the component, got %q", mode, e.Component)
-		}
-		if !strings.Contains(e.Message, string(mode)) && mode != "" {
-			t.Errorf("mode %q: the message must name the mode: %s", mode, e.Message)
-		}
-		for _, want := range []string{"delivery.mode: flux", "ADR-0016"} {
-			if !strings.Contains(e.Remediation, want) {
-				t.Errorf("mode %q: remediation must contain %q: %s", mode, want, e.Remediation)
-			}
-		}
-	}
-}
-
-// TestHelmGateReportsEveryComponent: one run should list all the work, the way
-// unresolved images do. Fixing one component and re-running to find the next is
-// the loop this avoids.
-func TestHelmGateReportsEveryComponent(t *testing.T) {
-	r := chartFixture(repositoryChart())
-	r.Environment.Mode = model.DeliveryDirect
-	second := repositoryChart()
-	second.Name = "cert-manager"
-	r.Charts = append(r.Charts, second)
-
-	_, err := Render(r, gatewayProfile(), nil)
-	errs, ok := err.(Errors)
-	if !ok || len(errs) != 2 {
-		t.Fatalf("expected one error per helm component, got %#v", err)
-	}
-	if errs[0].Component != "ingress" || errs[1].Component != "cert-manager" {
-		t.Fatalf("errors must follow spec order: %v", errs)
-	}
-}
-
-// TestHelmGateIgnoresProfile is the other half of the gate's contract: it is
-// decided from spec data alone. A cluster with no helm-controller detected
-// still renders — whether the controller is installed is a capability finding
-// (internal/clusterprofile/helm), not a rendering decision, or the same
-// document would render differently against two clusters.
-func TestHelmGateIgnoresProfile(t *testing.T) {
+// TestHelmIgnoresProfile: a chart is rendered from spec data alone. A cluster
+// with no helm-controller detected still renders — whether the controller is
+// installed is a capability finding (internal/clusterprofile/helm), not a
+// rendering decision, or the same document would render differently against two
+// clusters.
+func TestHelmIgnoresProfile(t *testing.T) {
 	ms, err := Render(chartFixture(repositoryChart()), gatewayProfile(), nil)
 	if err != nil {
-		t.Fatalf("a flux-mode chart must render against any profile: %v", err)
+		t.Fatalf("a chart must render against any profile: %v", err)
 	}
 	if !hasKind(ms, "HelmRelease") {
 		t.Fatalf("no HelmRelease in %v", kinds(ms))
