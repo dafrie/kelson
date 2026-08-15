@@ -220,6 +220,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err := (&controller.ProjectReconciler{Client: mgr.GetClient()}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("registering the project reconciler: %w", err)
 	}
+	// The instance's declared sources (ADR-0035 decision 2). Validation and a
+	// condition, nothing else: a GitSource holds no credential, publishes
+	// nothing and is not deployed from, so there is no delivery half here and
+	// deliberately no Reachable — that question belongs to the connection that
+	// serves the repository.
+	if err := (&controller.GitSourceReconciler{Client: mgr.GetClient()}).SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("registering the git source reconciler: %w", err)
+	}
 	// The previews credential (ADR-0033 decision 4). It rides a *direct* client
 	// rather than the manager's, for the reason controller.ClientSecrets states:
 	// reading Secrets and GitConnections through the manager's cache would start
