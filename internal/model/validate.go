@@ -1966,6 +1966,13 @@ func workloadOverrideFields(ov ComponentOverride) []string {
 	if ov.Image != "" {
 		set = append(set, "image")
 	}
+	// The marker qualifies an image, so it belongs to exactly the kinds an
+	// image does: a data component runs what its operator runs and a chart runs
+	// what helm-controller installs, and neither has an image for tracking to
+	// advance (ADR-0036 decision 5).
+	if ov.ImageTracked {
+		set = append(set, "imageTracked")
+	}
 	if ov.Replicas != nil {
 		set = append(set, "replicas")
 	}

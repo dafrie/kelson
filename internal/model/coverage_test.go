@@ -176,6 +176,7 @@ var renderedFields = map[string]map[string]string{
 		"$.spec.components[].env.*.secret":              "renderer: secretKeyRef name — the Secret the author names, never read by kelson (ADR-0018)",
 		"$.spec.components[].env.*.key":                 "renderer: secretKeyRef key within that Secret (ADR-0018)",
 		"$.spec.components[].autoDeploy":                "resolve → Resolved.AutoDeploy: this component's own tracking answer, which beats the environment's (ADR-0036 decision 1)",
+		"$.spec.components[].imageTracked":              "resolve → Resolved.ImagePins: the image named here is a starting point rather than a hold, so the stale set may still move it and internal/api's trigger overwrites it on the next push (ADR-0036 decision 5)",
 		"$.spec.components[].preset":                    "resolve P5 → renderer: the per-environment CNPG topology",
 
 		"$.spec.overlays[].patch":    "renderer: strategic-merge patch against rendered resources",

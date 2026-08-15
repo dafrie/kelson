@@ -64,7 +64,14 @@ func resolveTracking(r *Resolved, c Component, ov ComponentOverride, environment
 	// for it (rule P3), which is exactly the mechanism by which a build moves a
 	// component; the two inner scopes beat `--image`, so they are the ones that
 	// hold a component still.
-	if ov.Image != "" || c.Image != "" {
+	//
+	// Unless the override marks the image as tracked, which is ADR-0036
+	// decision 5: a marked image renders as any other does — nothing here
+	// touches [ResolvedComponent.Image] and rule P3 is untouched — but it is a
+	// starting point rather than a hold, so it is left out of the pins and the
+	// stale set may move it. The marker is the innermost scope's answer to the
+	// question this list asks, so it cancels the component's own `image:` too.
+	if !ov.ImageTracked && (ov.Image != "" || c.Image != "") {
 		r.ImagePins = append(r.ImagePins, c.Name)
 	}
 }
@@ -79,9 +86,9 @@ func (r *Resolved) AutoDeploys(component string) bool {
 
 // ImagePinned reports whether an image the spec names holds this component
 // still — the environment's per-component pin (ADR-0016) or the component's own
-// image. Such a component never auto-deploys regardless of the flag, and a
-// trigger path that was asked to move it says so rather than moving it
-// (ADR-0036 decisions 2 and 3).
+// image, in neither case marked `imageTracked`. Such a component never
+// auto-deploys regardless of the flag, and a trigger path that was asked to
+// move it says so rather than moving it (ADR-0036 decisions 2, 3 and 5).
 func (r *Resolved) ImagePinned(component string) bool {
 	return slices.Contains(r.ImagePins, component)
 }
@@ -102,7 +109,10 @@ func (r *Resolved) ImagePinned(component string) bool {
 //   - it tracks ([Resolved.AutoDeploy]);
 //   - no image pin holds it ([Resolved.ImagePins]): a pinned component ignores
 //     everything, which is the promotion posture ADR-0016 established and
-//     ADR-0036 decision 2 restates rather than reopens.
+//     ADR-0036 decision 2 restates rather than reopens. An image the override
+//     marks `imageTracked` is not such a pin — it names where the component
+//     starts, not that it stays there (decision 5), which is what lets a
+//     second push move a component the first one moved.
 //
 // An empty answer is the ordinary case, and it means this environment does
 // nothing — silently, because a push to a repository an environment happens to

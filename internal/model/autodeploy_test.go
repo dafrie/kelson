@@ -234,6 +234,170 @@ func TestUntrackedSpecsCarryNeitherKey(t *testing.T) {
 	}
 }
 
+// --- the marker (ADR-0036 decision 5) ----------------------------------------
+
+// markedProject carries an image at each of the three scopes rule P3 chains, so
+// a case can say which one the marker is being asked about.
+const markedProject = `
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata: {name: checkout}
+spec:
+  image: ghcr.io/acme/checkout:1
+  sources:
+    - {name: app, git: https://github.com/acme/checkout, ref: main}
+  components:
+    - {name: web, port: 8080, source: app}
+    - {name: worker, source: app, image: ghcr.io/acme/worker:1.4.0}
+`
+
+const trackedDigest = "ghcr.io/acme/checkout@sha256:9f6ad2c1"
+
+// TestMarkedPinHoldsAComponentAtARevisionNotStill is decision 5 whole, in the
+// terms the decision states it: a marked pin renders like any pin, is not in
+// ImagePins, and does not keep the component out of the stale set. An unmarked
+// one keeps decision 2's meaning untouched beside it.
+func TestMarkedPinHoldsAComponentAtARevisionNotStill(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		override  string
+		wantPins  []string
+		wantStale []string
+		wantImage string
+	}{
+		{
+			name:      "an unmarked pin freezes tracking",
+			override:  "    - {name: web, image: '" + trackedDigest + "'}\n",
+			wantPins:  []string{"web", "worker"},
+			wantStale: nil,
+			wantImage: trackedDigest,
+		},
+		{
+			name:      "a marked pin renders as a pin and still moves",
+			override:  "    - {name: web, image: '" + trackedDigest + "', imageTracked: true}\n",
+			wantPins:  []string{"worker"},
+			wantStale: []string{"web"},
+			wantImage: trackedDigest,
+		},
+		{
+			// The marker is the innermost scope's answer to "does an image hold
+			// this component still here", so it beats the component's own image
+			// as well as the override's. The alternative is a marker that
+			// resolves into nothing under a component that carries one.
+			name:      "the marker cancels the component's own image too",
+			override:  "    - {name: worker, imageTracked: true}\n",
+			wantPins:  nil,
+			wantStale: []string{"web", "worker"},
+			wantImage: "ghcr.io/acme/checkout:1",
+		},
+		{
+			// image-plus-marker, written by hand: "start here, and let tracking
+			// advance it" (decision 5's third bullet).
+			name:      "an author writes the marker over the component's image",
+			override:  "    - {name: worker, image: '" + trackedDigest + "', imageTracked: true}\n",
+			wantPins:  nil,
+			wantStale: []string{"web", "worker"},
+			wantImage: "ghcr.io/acme/checkout:1",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, e := loadPairUnvalidated(t, markedProject,
+				trackingEnv("  autoDeploy: true\n  components:\n"+tc.override))
+			r := resolved(t, p, e)
+
+			if !slices.Equal(r.ImagePins, tc.wantPins) {
+				t.Errorf("ImagePins = %v, want %v", r.ImagePins, tc.wantPins)
+			}
+			got := r.StaleComponents("https://github.com/acme/checkout", "main")
+			if !slices.Equal(got, tc.wantStale) {
+				t.Errorf("stale set = %v, want %v", got, tc.wantStale)
+			}
+			// Rule P3 is untouched: whatever the marker says about tracking, the
+			// revision the spec names is the revision that runs.
+			for _, c := range r.Components {
+				if c.Name == "web" && c.Image != tc.wantImage {
+					t.Errorf("web renders %s, want %s: the marker must change no rendered byte", c.Image, tc.wantImage)
+				}
+			}
+		})
+	}
+}
+
+// TestMarkerOnAnUnbuildableKindIsRefused: the marker qualifies an image, so it
+// is held to the kinds that have one — the same refusal an image on a database
+// gets, rather than a field that resolves into nothing (issue #141).
+func TestMarkerOnAnUnbuildableKindIsRefused(t *testing.T) {
+	docs, _ := DecodeDocuments([]byte(`
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata: {name: shop}
+spec:
+  image: ghcr.io/acme/shop:2
+  components:
+    - {name: db, kind: postgres}
+    - {name: web, port: 8080}
+---
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata: {name: prod}
+spec:
+  project: shop
+  components:
+    - {name: db, imageTracked: true}
+`))
+	errs := ValidateEnvironment(docs[1].(*Environment), docs[0].(*Project))
+	var refused *Error
+	for i := range errs {
+		if errs[i].Code == ErrMutuallyExclusive && strings.HasSuffix(errs[i].Field, ".imageTracked") {
+			refused = &errs[i]
+		}
+	}
+	if refused == nil {
+		t.Fatalf("imageTracked on a data component must be refused, got:\n%v", errs)
+	}
+	if !strings.Contains(refused.Remediation, "preset") {
+		t.Errorf("the refusal must point at what a data component *can* be overridden with: %s", refused.Remediation)
+	}
+}
+
+// TestTheMarkerRetagsOnlyWhatUsesIt is this slice's half of the disclosure the
+// ADR-0035 and ADR-0036 slices each made: the field is spec, so it reaches the
+// artifact tag, and what has to be true is that it reaches it *once* and only
+// for a document that writes it.
+//
+// It travels through ImagePins rather than as a key of its own, which is the
+// whole of the identity story: an environment that marks a pin drops a name from
+// that list, publishes one new revision, and then stays put.
+func TestTheMarkerRetagsOnlyWhatUsesIt(t *testing.T) {
+	hash := func(t *testing.T, override string) string {
+		t.Helper()
+		p, e := loadPairUnvalidated(t, markedProject, trackingEnv("  autoDeploy: true\n"+override))
+		sum, err := SpecHash(resolved(t, p, e))
+		if err != nil {
+			t.Fatalf("SpecHash: %v", err)
+		}
+		return sum
+	}
+
+	unmarked := hash(t, "  components:\n    - {name: web, image: '"+trackedDigest+"'}\n")
+	marked := hash(t, "  components:\n    - {name: web, image: '"+trackedDigest+"', imageTracked: true}\n")
+	if unmarked == marked {
+		t.Error("marking a pin must move the spec hash: it changes what a push does to this environment")
+	}
+
+	// And a document that does not write it hashes exactly as it did before the
+	// field existed — the one-time re-tag is paid by the environments that opt
+	// in, and by nothing else.
+	p, e := loadPairUnvalidated(t, markedProject, trackingEnv(""))
+	blob, err := json.Marshal(resolved(t, p, e))
+	if err != nil {
+		t.Fatalf("marshalling the resolved spec: %v", err)
+	}
+	if strings.Contains(string(blob), "imageTracked") {
+		t.Errorf("the marker must never marshal into a resolved spec of its own: %s", blob)
+	}
+}
+
 // TestStaleSetFollowsTheBinding is decision 2's routing half: a push moves what
 // is bound to the repository that moved, and nothing else. There is no
 // per-component ref field that could disagree with the binding (ADR-0035).

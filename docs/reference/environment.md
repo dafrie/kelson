@@ -40,6 +40,7 @@ This reference is **generated** from the committed JSON Schema [`schema/environm
 | `autoDeploy` | boolean | no |  | workloads only; follow this component's source here — it overrides the environment's own setting (ADR-0036) |
 | `env` | map of one of: string, object {from}, object {secret, key} | no |  |  |
 | `image` | string | no |  | pins this component's image in this environment only; the promotion primitive (rule P3) |
+| `imageTracked` | boolean | no |  | workloads only; the image named here is a starting point rather than a hold — tracking may still advance it and the trigger overwrites it on the next push (ADR-0036 decision 5) |
 | `name` | string | yes |  |  |
 | `preset` | string enum `"shared"`, `"small"`, `"ha-small"`, `"ha-medium"`, `"branch"` | no |  | data components only |
 | `replicas` | object | no |  |  |

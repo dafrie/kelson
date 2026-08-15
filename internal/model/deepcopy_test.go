@@ -64,10 +64,11 @@ func richEnvironment() *EnvironmentSpec {
 		Secrets:    &SecretBackend{Backend: SecretsSOPS, AgeRecipients: []string{"age1abc"}},
 		Components: []ComponentOverride{
 			{
-				Name:     "web",
-				Image:    "ghcr.io/acme/app@sha256:deadbeef",
-				Replicas: &Replicas{Min: 3, Max: 9},
-				Env:      map[string]EnvValue{"FEATURE": {Literal: "on"}},
+				Name:         "web",
+				Image:        "ghcr.io/acme/app@sha256:deadbeef",
+				ImageTracked: true,
+				Replicas:     &Replicas{Min: 3, Max: 9},
+				Env:          map[string]EnvValue{"FEATURE": {Literal: "on"}},
 			},
 			{Name: "worker", AutoDeploy: ptr(false)},
 			{Name: "db", Preset: PresetHASmall},

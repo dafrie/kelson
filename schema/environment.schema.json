@@ -282,6 +282,10 @@
                 "type": "string",
                 "description": "pins this component's image in this environment only; the promotion primitive (rule P3)"
               },
+              "imageTracked": {
+                "type": "boolean",
+                "description": "workloads only; the image named here is a starting point rather than a hold — tracking may still advance it and the trigger overwrites it on the next push (ADR-0036 decision 5)"
+              },
               "replicas": {
                 "properties": {
                   "min": {
