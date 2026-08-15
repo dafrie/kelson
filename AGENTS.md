@@ -5,6 +5,10 @@ testing and commit conventions, and applies to you unchanged. This file covers w
 doesn't: where things live, how parallel agents share the repo, and the mistakes this project has
 actually made.
 
+If you are **coordinating** rather than implementing — driving the backlog, delegating to several
+agents at once — read [agents/architect.md](agents/architect.md) instead of picking up a task
+yourself. [agents/](agents/) also holds the role definitions and the task-brief template.
+
 ## Source of truth for project state
 
 **GitHub issues and milestones, not the prose in this repo.** README.md and CONTRIBUTING.md describe
@@ -66,7 +70,9 @@ markdown links fail the site build. See [website/README.md](website/README.md).
 
 ## Parallel agents
 
-Multiple agents often work this repo at once. The protocol:
+Multiple agents often work this repo at once. The coordinator's side of this is
+[agents/architect.md](agents/architect.md); a task brief is written from
+[agents/task-brief.md](agents/task-brief.md). The protocol:
 
 - **One worktree per agent.** `git worktree add -b ag/<slug> ../kelson-wt-<slug> main`. Never two
   agents in the same working directory.
