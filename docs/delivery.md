@@ -61,7 +61,9 @@ cannot differ from what this controller pushed — a kelson tag is written once
 and never rewritten, but a registry is a shared system with mirrors, retention
 policies and operators in it, and "cannot differ" is worth more than "should not
 differ". The digest is unknown in exactly one case: a rollback to a
-`status.history` entry that carries none, which is a tag-only pin.
+`status.history` entry that carries none, which is a tag-only pin. A rollback to
+a revision the mirror has forgotten resolves its digest from the registry, so it
+pins both halves like any other.
 
 `wait: true` is the load-bearing one. kustomize-controller assesses the health
 of everything it applied and only then reports `Ready`, so **`Ready` means
@@ -128,9 +130,10 @@ whether anything is going to happen next without them.
 | `RegistryNotConfigured` | the controller was started without `--registry` | status only; nothing changes on its own |
 | `ArtifactRefInvalid` | the prefix, the names or the generation do not make a repository and a tag | status only |
 | `NameConflict` | a live object of that name belongs to a different environment namespace | status only, and **nothing is written** |
-| `RollbackTargetUnknown` | `kelson.dev/rollback-to` names a revision not in `status.history` | status only |
+| `RollbackTargetUnknown` | `kelson.dev/rollback-to` names a revision that is in neither `status.history` nor the registry's tag list | status only |
 | `RegistryUnreachable` | the registry never answered | error return → controller-runtime's exponential backoff |
-| `PushDenied` | the registry answered and said no | retries in 5m; a credential is an operator's to fix, and retrying into a rate limit helps nobody |
+| `PushDenied` | the registry answered a push and said no | retries in 5m; a credential is an operator's to fix, and retrying into a rate limit helps nobody |
+| `RegistryReadDenied` | the registry answered a *read* and said no — listing tags and resolving a rollback target need pull scope, not only push | retries in 5m; reported as itself so "kelson may not look" is never recorded as "that revision does not exist" |
 | `FluxApplyForbidden` | the API server refused the write | retries in 5m; RBAC is an operator's to grant |
 | `FieldManagerConflict` | a server-side apply conflicted despite `ForceOwnership` | retries in 5m; something structural is contended |
 
@@ -167,8 +170,8 @@ tracking your spec).
 
 | Verb | Mechanism |
 |---|---|
-| history | the registry's tag list. `Environment.status.history[]` mirrors the most recent 20 (revision, digest, spec hash, timestamp, the image each component resolved to, outcome) for humans and the API; the record is the registry, and a query past the window is a registry query. An entry is written only on a **new** publish, deduped by revision, and the newest entry's `outcome` is refreshed while it is the current revision and frozen once a newer one takes its place — so an old entry says how that deployment *ended*, not what it looked like one second in |
-| rollback | the annotation `kelson.dev/rollback-to: <revision>` on the `Environment`. The controller repoints the `OCIRepository` at that immutable tag and **suspends re-render** — steps 3 and 4 do not run — so the current spec cannot be republished over what you just rolled back to. Two things resume tracking and only two: removing the annotation, or editing the spec. The state is visible: `Progressing=False`, `reason: RollbackPinned`, naming both ways out |
+| history | the registry's tag list. `Environment.status.history[]` mirrors the most recent 20 (revision, digest, spec hash, timestamp, the image each component resolved to, outcome) for humans and the API; the record is the registry, and `kelson history` pages past the window into it — those revisions arrive marked `beyond_window`, carrying the one fact the registry has (this revision exists) and nothing else, because when it was published, what it ran and how it ended were observations of a cluster. An entry is written only on a **new** publish, deduped by revision, and the newest entry's `outcome` is refreshed while it is the current revision and frozen once a newer one takes its place — so an old entry says how that deployment *ended*, not what it looked like one second in |
+| rollback | the annotation `kelson.dev/rollback-to: <revision>` on the `Environment`, naming any revision the mirror **or the registry** can confirm — an aged-out one is the same pointer move, and the status says kelson cannot describe it. The controller repoints the `OCIRepository` at that immutable tag and **suspends re-render** — steps 3 and 4 do not run — so the current spec cannot be republished over what you just rolled back to. Two things resume tracking and only two: removing the annotation, or editing the spec. The state is visible: `Progressing=False`, `reason: RollbackPinned`, naming both ways out |
 | promotion | an authoring change, not a delivery operation: patch the target Environment's per-component image pin, stamped `kelson.dev/promoted-from: <env>@<revision>`, then reconcile normally ([the model](model.md#promotion)) |
 
 Rollback stops being a replay. Nothing re-renders, nothing re-applies from a
@@ -286,6 +289,15 @@ environment, immutably, and that *is* the history — nothing stores rendered ma
 and the 1 MiB ConfigMap budget of [ADR-0013](adr/0013-server-state-and-api-v0.md) §1 stops being
 arithmetic the code has to do. `Environment.status.history[]` is a bounded mirror of the most recent 20
 entries for the CLI, the UI and the API to read in one call.
+
+The mirror is not the ceiling. `kelson history` lists the registry's tag list past the window and
+`kelson rollback --to` restores anything in it ([#241](https://github.com/dafrie/kelson/issues/241)):
+both processes read the record through the same `--registry` and `--registry-config`, and the
+credential needs pull scope as well as push. What the registry cannot give back is everything the
+mirror held beside the tag — when a revision was published, which images it ran, how that deployment
+ended — because those were observations of a cluster. An aged-out revision therefore arrives marked
+as one kelson can restore exactly and cannot describe, in the CLI, in the UI and in the rollback
+preview, rather than as a row of blanks.
 
 The cost, stated where it matters: **a lifecycle policy on your registry is now a data-retention
 policy on kelson's history**, and nothing in kelson says so at the point where you set it.
