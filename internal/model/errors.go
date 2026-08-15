@@ -32,9 +32,25 @@ const (
 	// outliving it: kelson is pre-alpha and a code whose noun no longer exists
 	// in the spec is worse than a breaking rename.
 	ErrUnknownComponent Code = "ref/unknown-component"
+	// ErrUnknownSource marks a component bound to a source name nothing in
+	// scope declares (ADR-0035 decision 3). It is a resolution refusal rather
+	// than a validation one, and deliberately: the scope is the Project's own
+	// list *and* the GitSources the instance offers, and a document cannot see
+	// the second half — so a name validate.go cannot find may still be a global
+	// source, and only the plane holding the global list can say. The error
+	// lists what was in scope when it looked.
+	ErrUnknownSource    Code = "ref/unknown-source"
 	ErrSecretLiteral    Code = "secret/literal"
 	ErrNoImageSource    Code = "semantic/no-image-source"
 	ErrGitTargetMissing Code = "semantic/git-target-missing"
+	// ErrNoDefaultSource marks a component that names no source in a Project
+	// that declares several and names no default (ADR-0035 decision 3). It is
+	// its own code rather than schema/missing-required because `source:` is
+	// optional everywhere else and becomes required only in this shape, which is
+	// the same reason semantic/git-target-missing is not spelled
+	// schema/missing-required either. The remediation names the candidates:
+	// picking the first entry of a list is not a decision an author made.
+	ErrNoDefaultSource Code = "semantic/no-default-source"
 	// ErrAuthProviderMismatch marks an auth shape the connection's provider
 	// cannot use — today, `githubApp` on anything but `provider: github`
 	// (ADR-0033). It is a semantic code rather than schema/mutually-exclusive

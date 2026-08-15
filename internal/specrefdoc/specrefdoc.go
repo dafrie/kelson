@@ -139,12 +139,24 @@ func writeObject(b *bytes.Buffer, s *schema, path string, level int) {
 // path for it, and whether there is one. Arrays of objects expand to their
 // item schema with a trailing "[]" on the path; maps whose values are objects
 // do not expand (their shape is described inline in the type column).
+//
+// A union expands when exactly one of its arms is an object — a component's
+// `source:`, whose other arm is a plain source name (ADR-0035). Its fields are
+// as authorable as any other object's, and dropping them would leave the only
+// fields in this reference with no description of their own. A union with two
+// object arms does not expand: both arms would want the same heading, and the
+// `one of: object {…}` naming in the type column is what distinguishes them.
 func nestedObject(s *schema, parent, name string) (*schema, string, bool) {
 	path := name
 	if parent != "" {
 		path = parent + "." + name
 	}
 	switch {
+	case len(s.OneOf) > 0:
+		if arm, ok := soleObjectArm(s.OneOf); ok {
+			return arm, path, true
+		}
+		return nil, "", false
 	case s.Type == "array" && s.Items != nil && len(s.Items.Properties) > 0:
 		return s.Items, path + "[]", true
 	case s.Type == "object" && len(s.Properties) > 0 && !isMap(s):
@@ -152,6 +164,21 @@ func nestedObject(s *schema, parent, name string) (*schema, string, bool) {
 	default:
 		return nil, "", false
 	}
+}
+
+// soleObjectArm returns the union's one object arm, if it has exactly one.
+func soleObjectArm(arms []*schema) (*schema, bool) {
+	var found *schema
+	for _, arm := range arms {
+		if len(arm.Properties) == 0 {
+			continue
+		}
+		if found != nil {
+			return nil, false
+		}
+		found = arm
+	}
+	return found, found != nil
 }
 
 // typeString renders the type column for a field: JSON type, enum values,
@@ -188,17 +215,25 @@ func typeString(s *schema, _ string) string {
 	return strings.Join(parts, " ")
 }
 
-// oneOfArm names one arm of a union. An object arm is named by its required
-// keys — `object {secret, key}` — because a union of two object arms otherwise
-// reads as "object, object", which tells an author nothing about which one they
-// are choosing between. The required keys are exactly what distinguishes them:
-// an environment value is a string, a `{from}` binding, or a `{secret, key}`
-// reference.
+// oneOfArm names one arm of a union. An object arm is named by its keys —
+// `object {secret, key}` — because a union of two object arms otherwise reads
+// as "object, object", which tells an author nothing about which one they are
+// choosing between. Its required keys are what distinguishes an environment
+// value's two mapping forms; an arm that requires nothing is named by every key
+// it has, which is what a chart source is (exactly one of `repository`, `oci`,
+// so neither is required and both are the point).
 func oneOfArm(s *schema) string {
-	if s.Type == "object" && len(s.Required) > 0 {
-		return "object {" + strings.Join(s.Required, ", ") + "}"
+	if s.Type != "object" {
+		return typeString(s, "")
 	}
-	return typeString(s, "")
+	keys := s.Required
+	if len(keys) == 0 {
+		keys = sortedKeys(s.Properties)
+	}
+	if len(keys) == 0 {
+		return typeString(s, "")
+	}
+	return "object {" + strings.Join(keys, ", ") + "}"
 }
 
 // constraints renders length/range/pattern/format bounds, if any.

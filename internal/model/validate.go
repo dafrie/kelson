@@ -855,10 +855,53 @@ func (v *validator) delivery(field string, d *Delivery) {
 	}
 }
 
+// sourceScope is what the component checks need to know about the sources the
+// Project declares: which names a component may bind to, whether one of them is
+// the default a component that names none would get, and whether anything is
+// built here at all.
+//
+// It is passed down rather than re-derived per component because the two
+// questions it answers — "is this name spelled like one of ours" and "is there a
+// default" — are properties of the document, and asking them once is what keeps
+// the missing-default error able to name the candidates.
+type sourceScope struct {
+	// names are the declared source names, in spec order.
+	names []string
+	// hasDefault reports whether a component that names no source gets one.
+	hasDefault bool
+	// builds reports whether the Project's build strategy is anything but
+	// `none`. Nothing binds a source in a project that builds nothing.
+	builds bool
+	// image is the Project's *authored* `image:`, not the "(built from source)"
+	// marker the no-image-source check works with. A component covered by a
+	// shared pre-built image is not built and therefore needs no binding, and
+	// the marker cannot tell that case from the one this scope exists to refuse.
+	image string
+}
+
+// needsDefault reports the case ADR-0035 decision 3 refuses: a component that
+// would be built from a source, naming none, in a Project that declares several
+// and names no `default`. Picking the first entry would make a list's order a
+// decision nobody took.
+//
+// A component with an image of its own — or a Project image it inherits — is not
+// built and therefore needs no binding, which is why the image is part of the
+// question rather than a separate one.
+func (s sourceScope) needsDefault(c Component, kind ComponentKind) bool {
+	return s.builds && !s.hasDefault && len(s.names) > 1 &&
+		kind.IsWorkload() && c.SourceName() == "" && c.Image == "" && s.image == ""
+}
+
 // components validates the one leaf list of ADR-0014. The kind decides which
 // half of the rules a component is held to; a field belonging to the other
 // half is an error, never a no-op (issue #141).
-func (v *validator) components(field string, comps []Component, services map[string]Component, projectImage string) {
+func (v *validator) components(
+	field string,
+	comps []Component,
+	services map[string]Component,
+	projectImage string,
+	sources sourceScope,
+) {
 	seen := map[string]int{}
 	for i, c := range comps {
 		f := fmt.Sprintf("%s[%d]", field, i)
@@ -882,8 +925,33 @@ func (v *validator) components(field string, comps []Component, services map[str
 			v.chartComponent(f, c, kind)
 			continue
 		}
-		v.workloadComponent(f, c, kind, services, projectImage)
+		v.workloadComponent(f, c, kind, services, projectImage, sources)
 	}
+}
+
+// componentSourceName checks the binding arm of `source:` on a component that
+// can build (ADR-0035 decision 3): that the name is spelled like one, and that
+// a component needing a default has one.
+//
+// What it does *not* check is that the name resolves. The scope is the
+// Project's list and the GitSources the instance offers, and a document can only
+// see the first half — so a name nothing local declares may still be a global
+// source, and refusing here would refuse a legal spec. That refusal belongs to
+// the resolver, which holds both halves and lists them (ref/unknown-source).
+func (v *validator) componentSourceName(field string, c Component, kind ComponentKind, sources sourceScope) {
+	if name := c.SourceName(); name != "" {
+		v.name(field+".source", name, "source")
+		return
+	}
+	if !sources.needsDefault(c, kind) {
+		return
+	}
+	v.err(ErrNoDefaultSource, field+".source",
+		fmt.Sprintf("component %q names no source, and project sources declare %d of them with none named %q",
+			c.Name, len(sources.names), DefaultSourceName),
+		fmt.Sprintf("set source: to one of: %s — or rename one of them to %s, which is what a component "+
+			"that names no source builds from. kelson refuses to pick for you: the order of a list is not "+
+			"a decision (ADR-0035)", strings.Join(sources.names, ", "), DefaultSourceName))
 }
 
 // componentKind resolves a component's kind and reports the ways a written
@@ -1075,7 +1143,19 @@ func (v *validator) chartSource(field string, c Component) {
 			"set source.repository to a classic Helm repository URL, or source.oci to an OCI registry URL")
 		return
 	}
-	repo, oci := c.Source.Repository, c.Source.OCI
+	// The other arm of the union: a bare name is a build binding, and a chart is
+	// fetched rather than built (componentsource.go, ADR-0035 decision 3).
+	if chart := c.ChartSourceOf(); chart == nil {
+		v.err(ErrMutuallyExclusive, field+".source",
+			fmt.Sprintf("component %q has kind %q and names source %q, which is a source to build from",
+				c.Name, ComponentHelm, c.SourceName()),
+			"a helm component is not built from a repository — it installs a published chart. Write where "+
+				"the chart is fetched from instead: source: {repository: <Helm repository URL>} or "+
+				"source: {oci: <OCI registry URL>} (ADR-0016). A source name binds a component kelson "+
+				"builds (ADR-0035)")
+		return
+	}
+	repo, oci := c.Source.Chart.Repository, c.Source.Chart.OCI
 	switch {
 	case repo == "" && oci == "":
 		v.err(ErrMissingRequired, field+".source",
@@ -1178,8 +1258,19 @@ func (v *validator) chartOnlyFields(field string, c Component, kind ComponentKin
 	if c.ChartVersion != "" {
 		set = append(set, "chartVersion")
 	}
-	if c.Source != nil {
+	// Only the chart arm of `source:` is a helm field. The other arm is a source
+	// name, which is meaningful on every kind that builds — and refused on the
+	// data kinds separately, because what a database runs is its operator's
+	// (componentsource.go, ADR-0035 decision 3).
+	if c.ChartSourceOf() != nil {
 		set = append(set, "source")
+	}
+	if kind.IsData() && c.SourceName() != "" {
+		v.err(ErrMutuallyExclusive, field+".source",
+			fmt.Sprintf("component %q has kind %q, which runs an operator's image rather than one kelson builds",
+				c.Name, kind),
+			"remove source; a data component has no build, so a repository to build it from names nothing. "+
+				"Bind a workload to it with {from: {service: "+c.Name+", key: uri}} (ADR-0005, ADR-0035)")
 	}
 	if len(c.Values) > 0 {
 		set = append(set, "values")
@@ -1252,6 +1343,7 @@ func (v *validator) workloadComponent(
 	kind ComponentKind,
 	services map[string]Component,
 	projectImage string,
+	sources sourceScope,
 ) {
 	if c.Port != 0 && (c.Port < 1 || c.Port > 65535) {
 		v.err(ErrOutOfRange, field+".port",
@@ -1297,15 +1389,21 @@ func (v *validator) workloadComponent(
 	}
 	v.release(field, c, kind)
 	v.chartOnlyFields(field, c, kind)
+	v.componentSourceName(field, c, kind, sources)
 	v.imageRef(field+".image", c.Image)
 	v.replicas(field+".replicas", c.Replicas)
 	v.resources(field+".resources", c.Resources)
 	v.envMap(field+".env", c.Env, services)
 
-	if c.Image == "" && projectImage == "" {
+	// A component that names a source has an image source even when the Project
+	// declares none: the name may be a GitSource the instance offers, which this
+	// document cannot see (ADR-0035 decision 3). Whether it resolves is the
+	// resolver's refusal, not this one's.
+	if c.Image == "" && projectImage == "" && c.SourceName() == "" {
 		v.err(ErrNoImageSource, field,
 			fmt.Sprintf("component %q has no image source", c.Name),
-			"set image on the component or the Project, or configure spec.source + spec.build with a strategy other than none")
+			"set image on the component or the Project, name a source with source: <name>, or configure "+
+				"spec.source (or spec.sources) + spec.build with a strategy other than none")
 	}
 }
 
@@ -1376,6 +1474,85 @@ func (v *validator) tools(field string, tools []string) {
 	}
 }
 
+// projectSources validates what a Project declares its components may build
+// from, in either spelling, and returns the scope the component checks are held
+// to (ADR-0035 decision 1).
+//
+// Everything here is answerable from the document: the two spellings are one
+// list, so writing both is a refusal; a name is what a component binds to, so it
+// must be unique and spelled like a name. What is deliberately *not* answered
+// here is whether a repository exists or can be reached — that needs a network,
+// and validation has none (ADR-0001).
+func (v *validator) projectSources(s *ProjectSpec) sourceScope {
+	scope := sourceScope{builds: s.Build == nil || s.Build.Strategy != BuildNone, image: s.Image}
+
+	if s.Source != nil && len(s.Sources) > 0 {
+		v.err(ErrMutuallyExclusive, "$.spec.sources",
+			"the Project declares both spec.source and spec.sources, which are one list written two ways",
+			"keep spec.sources and move the singular block into it as an entry named "+DefaultSourceName+
+				" — `sources: [{name: "+DefaultSourceName+", git: <url>, ref: <ref>}, …]` — or delete "+
+				"spec.sources and keep the shorthand (ADR-0035 decision 1)")
+	}
+
+	if src := s.Source; src != nil {
+		if src.Name != "" {
+			v.err(ErrMutuallyExclusive, "$.spec.source.name",
+				fmt.Sprintf("the singular spec.source names itself %q, and it is already named %q",
+					src.Name, DefaultSourceName),
+				"remove name; the shorthand declares exactly one source called "+DefaultSourceName+
+					". To choose the name, write the list instead: sources: [{name: "+src.Name+
+					", git: <url>}] (ADR-0035 decision 1)")
+		}
+		v.source("$.spec.source", *src, false)
+	}
+
+	seen := map[string]int{}
+	for i, src := range s.Sources {
+		f := fmt.Sprintf("$.spec.sources[%d]", i)
+		v.source(f, src, true)
+		if src.Name == "" {
+			continue
+		}
+		if prev, dup := seen[src.Name]; dup {
+			v.err(ErrDuplicateName, f+".name",
+				fmt.Sprintf("duplicate source name %q (first at sources[%d])", src.Name, prev),
+				"source names must be unique within the Project: a component binds to one by name, "+
+					"and two entries answering to it means the binding names nothing in particular")
+			continue
+		}
+		seen[src.Name] = i
+	}
+
+	for _, src := range s.EffectiveSources() {
+		scope.names = append(scope.names, src.Name)
+	}
+	_, scope.hasDefault = s.DefaultSource()
+	return scope
+}
+
+// source validates one declared source in either spelling. `named` says whether
+// this one carries its own name — a list entry does, and the shorthand is named
+// by definition.
+func (v *validator) source(field string, src Source, named bool) {
+	if named {
+		v.name(field+".name", src.Name, "source")
+	}
+	if src.Git == "" {
+		v.err(ErrMissingRequired, field+".git",
+			trimRoot(field)+".git is required",
+			"set "+trimRoot(field)+".git to the repository URL, or remove the source and use pre-built images")
+	}
+	if src.Connection != "" {
+		// No gate any more: the server resolves this to a credential and
+		// projects it into the build pod's clone (ADR-0033 decisions 4 and 5,
+		// internal/forgeconn). What is still not checked here is that the
+		// connection *exists* — that is cluster state, and validation
+		// deliberately has none (ADR-0001); a name nothing matches is a
+		// resolution refusal naming this field.
+		v.name(field+".connection", src.Connection, "connection")
+	}
+}
+
 func validateProject(p *Project, v *validator) {
 	v.name("$.metadata.name", p.Metadata.Name, "project")
 
@@ -1390,22 +1567,7 @@ func validateProject(p *Project, v *validator) {
 	// reference a data component declared further down the same list.
 	services := dataComponents(s.Components)
 
-	if s.Source != nil {
-		if s.Source.Git == "" {
-			v.err(ErrMissingRequired, "$.spec.source.git",
-				"source.git is required when source is set",
-				"set source.git to the repository URL, or remove source and use pre-built images")
-		}
-		if s.Source.Connection != "" {
-			// No gate any more: the server resolves this to a credential and
-			// projects it into the build pod's clone (ADR-0033 decisions 4 and
-			// 5, internal/forgeconn). What is still not checked here is that the
-			// connection *exists* — that is cluster state, and validation
-			// deliberately has none (ADR-0001); a name nothing matches is a
-			// resolution refusal naming this field.
-			v.name("$.spec.source.connection", s.Source.Connection, "connection")
-		}
-	}
+	sources := v.projectSources(s)
 	if s.Build != nil {
 		switch s.Build.Strategy {
 		case "", BuildAuto, BuildDockerfile, BuildBuildpacks, BuildNone:
@@ -1433,13 +1595,13 @@ func validateProject(p *Project, v *validator) {
 		}
 	}
 	projectImage := s.Image
-	if s.Source != nil && (s.Build == nil || s.Build.Strategy != BuildNone) {
+	if len(sources.names) > 0 && sources.builds {
 		projectImage = "(built from source)"
 	}
 
 	v.imageRef("$.spec.image", s.Image)
 	v.envMap("$.spec.env", s.Env, services)
-	v.components("$.spec.components", s.Components, services, projectImage)
+	v.components("$.spec.components", s.Components, services, projectImage, sources)
 
 	if d := s.Defaults; d != nil {
 		switch d.DeliveryMode {

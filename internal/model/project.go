@@ -13,8 +13,26 @@ type Project struct {
 }
 
 type ProjectSpec struct {
+	// Source is the singular spelling, and it is shorthand for a one-entry
+	// Sources list named [DefaultSourceName] (ADR-0035 decision 1). It stays
+	// because it is what almost every project means — one repository, every
+	// component built from it — and because nothing that reads it had to change
+	// when the plural arrived.
+	//
+	// Writing both spellings is a validation error: they are one list written
+	// two ways, and a document that says it twice has not said which.
 	Source *Source `yaml:"source,omitempty" json:"source,omitempty"`
-	Build  *Build  `yaml:"build,omitempty" json:"build,omitempty"`
+
+	// Sources are the repositories this Project declares, each named, for its
+	// components to bind to by name (ADR-0035 decision 1). Declaring a source is
+	// configuration; *using* one is a component's act and is one-to-one.
+	//
+	// A Project may declare none — an image-only project has nothing to build
+	// from — one, or several: a `web` in one repository and a `worker` in
+	// another is the case the singular spelling could not express.
+	Sources []Source `yaml:"sources,omitempty" json:"sources,omitempty" jsonschema:"description=repositories this Project declares for its components to build from; the singular source: is shorthand for one entry named default"`
+
+	Build *Build `yaml:"build,omitempty" json:"build,omitempty"`
 
 	// Image is a pre-built image reference shared by all components.
 	// Component.image overrides it (rule P3).
@@ -37,7 +55,24 @@ type ProjectSpec struct {
 	Overlays []Overlay `yaml:"overlays,omitempty" json:"overlays,omitempty"`
 }
 
+// Source is one repository a Project makes available to its components: where
+// the code is, which ref, and which connection kelson reads it with (ADR-0035
+// decision 1).
+//
+// The same struct is the singular `source:` block and one entry of `sources:`,
+// because they are one concept written at two ceremonies. What differs is the
+// name: an entry in the list carries its own, and the shorthand is
+// [DefaultSourceName] by definition.
 type Source struct {
+	// Name is what a component binds to (`source: app`), and it is required in
+	// the `sources:` list and meaningless in the singular block, which is
+	// already named.
+	//
+	// It is a DNS-1123 label for the reason every other name in the model is:
+	// the same alphabet everywhere means an author never has to ask which of
+	// kelson's names may carry a dot.
+	Name string `yaml:"name,omitempty" json:"name,omitempty" jsonschema:"pattern=^[a-z0-9]([-a-z0-9]*[a-z0-9])?$,maxLength=63,description=DNS-1123 label a component binds to; required in spec.sources and refused on the singular spec.source"`
+
 	Git string `yaml:"git" json:"git" jsonschema:"required,format=uri,description=git URL of the application source"`
 	Ref string `yaml:"ref,omitempty" json:"ref,omitempty" jsonschema:"default=main"`
 
@@ -52,6 +87,52 @@ type Source struct {
 	// error naming both rather than a silent pick — and it is what disambiguates
 	// them.
 	Connection string `yaml:"connection,omitempty" json:"connection,omitempty" jsonschema:"description=name of the GitConnection to authenticate with; resolved by host match against the instance's connections when omitted"`
+}
+
+// DefaultSourceName is the name of the source a component binds to when it
+// names none, and the name the singular `source:` block declares (ADR-0035
+// decision 3).
+//
+// It is a name rather than a position because a list order is not a decision: a
+// project declaring several sources and no `default` is refused rather than
+// silently built from whichever entry happens to be first.
+const DefaultSourceName = "default"
+
+// EffectiveSources is the source list this Project declares, with the singular
+// spelling expanded into the one-entry list it is shorthand for. It is the
+// scope a component's `source:` name is resolved against before the instance's
+// (ADR-0035 decision 3).
+//
+// Both spellings at once is a validation error, so the two branches below are
+// exclusive on any document that validated.
+func (s ProjectSpec) EffectiveSources() []Source {
+	if len(s.Sources) > 0 {
+		return s.Sources
+	}
+	if s.Source != nil {
+		one := *s.Source
+		one.Name = DefaultSourceName
+		return []Source{one}
+	}
+	return nil
+}
+
+// DefaultSource is the source a component that names none builds from: the sole
+// entry when there is exactly one — a list of one is not a decision — else the
+// entry named [DefaultSourceName]. It reports false when the Project declares
+// several and names no default, which is the case validation refuses for any
+// component that would have needed it (ADR-0035 decision 3).
+func (s ProjectSpec) DefaultSource() (Source, bool) {
+	list := s.EffectiveSources()
+	if len(list) == 1 {
+		return list[0], true
+	}
+	for _, src := range list {
+		if src.Name == DefaultSourceName {
+			return src, true
+		}
+	}
+	return Source{}, false
 }
 
 type BuildStrategy string
@@ -226,9 +307,15 @@ type Component struct {
 	// nothing at all.
 	ChartVersion string `yaml:"chartVersion,omitempty" json:"chartVersion,omitempty" jsonschema:"description=helm components only; the exact chart version — required because an unpinned chart is not reproducible"`
 
-	// Source is where the chart comes from: exactly one of a classic Helm
-	// repository or an OCI registry.
-	Source *ChartSource `yaml:"source,omitempty" json:"source,omitempty" jsonschema:"description=helm components only; exactly one of repository or oci"`
+	// Source is what this component's code or chart comes from, and it is two
+	// fields on one key because two decisions landed there (componentsource.go):
+	// a *name* binds a buildable component to one of the Project's or the
+	// instance's declared sources (ADR-0035 decision 3), and a *mapping* names
+	// where a `kind: helm` component's chart is fetched from (ADR-0016).
+	//
+	// The kind decides which arm is meaningful, and the other one is refused
+	// rather than ignored (issue #141).
+	Source *ComponentSource `yaml:"source,omitempty" json:"source,omitempty" jsonschema:"description=a source name for a buildable component (ADR-0035) or the chart source of a helm component — exactly one of repository or oci (ADR-0016)"`
 
 	// Values are the chart's values, written verbatim into the HelmRelease's
 	// spec.values.

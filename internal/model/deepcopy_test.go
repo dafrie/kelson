@@ -35,7 +35,7 @@ func richProject() *ProjectSpec {
 			},
 			{
 				Name: "grafana", Kind: ComponentHelm, Chart: "grafana", ChartVersion: "8.0.0",
-				Source: &ChartSource{Repository: "https://grafana.github.io/helm-charts"},
+				Source: &ComponentSource{Chart: &ChartSource{Repository: "https://grafana.github.io/helm-charts"}},
 				Values: map[string]any{
 					"replicas": 2,
 					"ingress":  map[string]any{"enabled": true, "hosts": []any{"g.example.test"}},
