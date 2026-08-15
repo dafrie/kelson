@@ -210,7 +210,9 @@ first, then the detail:
   cluster — and, on a server started with `--password`, authenticate the same way `kelson-mcp` does:
   `--password`/`$KELSON_PASSWORD` or `--token`/`$KELSON_AGENT_TOKEN`.
 - **Web and other API clients get one shared password.** Set `--password` (or `KELSON_PASSWORD`) and
-  every `kelson.v1alpha1.*` route requires it.
+  every `kelson.v1alpha1.*` route requires it — as does the one non-RPC endpoint that starts a
+  privileged action, `POST /forge/github/manifest/session`
+  ([Forge connections](#forge-connections-the-github-app-webhooks-and-the-connect-flow)).
 - **A username is a display name, not an identity.** The login form asks for one and the UI shows it,
   but nothing checks it and nothing authorizes on it. Per-project team auth over OIDC is the real
   design, and it is later.
@@ -739,14 +741,15 @@ environment's previews.
 
 ## Forge connections: the GitHub App, webhooks and the connect flow
 
-Three endpoints under `/forge/*` (`internal/forgehttp`) are kelson-server's forge-facing surface:
-`POST /forge/github/webhook` receives GitHub's deliveries, and `GET /forge/github/manifest/start` /
-`GET /forge/github/manifest/callback` are the two ends of the "Connect GitHub" flow the UI's
-Connections page starts. Neither is an RPC — a webhook body is signed by somebody else's HMAC and
-shaped by GitHub's schema, and the manifest flow is three browser redirects and a form — so both are
-plain handlers registered directly on the mux, the same way `/healthz` and `/auth/*` are
-([ADR-0033](adr/0033-git-connections.md), [ADR-0034](adr/0034-forge-driven-delivery.md) decisions 1
-and 2, tracked on [#248](https://github.com/dafrie/kelson/issues/248)).
+Four endpoints under `/forge/*` (`internal/forgehttp`) are kelson-server's forge-facing surface:
+`POST /forge/github/webhook` receives GitHub's deliveries, and `POST /forge/github/manifest/session`,
+`GET /forge/github/manifest/start` and `GET /forge/github/manifest/callback` are the three parts of
+the "Connect GitHub" flow the UI's Connections page starts. None is an RPC — a webhook body is signed
+by somebody else's HMAC and shaped by GitHub's schema, and the manifest flow is browser redirects and
+a form — so all are plain handlers registered directly on the mux, the same way `/healthz` and
+`/auth/*` are ([ADR-0033](adr/0033-git-connections.md),
+[ADR-0034](adr/0034-forge-driven-delivery.md) decisions 1 and 2, tracked on
+[#248](https://github.com/dafrie/kelson/issues/248)).
 
 ### `--external-url`: the address GitHub is told to use
 
@@ -804,9 +807,29 @@ A poke that fails is logged and named in the response body's `failed` list, neve
 redelivery exists for its own transient failures, not kelson's. The one exception is the `installation`
 write, which does answer `500` on failure so GitHub redelivers the one fact nothing else can recover.
 
-### Connect GitHub: `/forge/github/manifest/start` and `/callback`
+### Connect GitHub: `/forge/github/manifest/session`, `/start` and `/callback`
 
-"Connect GitHub" in the UI is `GET /forge/github/manifest/start`, which begins GitHub's
+"Connect GitHub" in the UI is two steps, because the flow crosses from a fetch to a navigation.
+First the UI **calls** `POST /forge/github/manifest/session` with its normal authenticated transport;
+the server answers `{"startUrl": "/forge/github/manifest/start?ticket=<opaque>"}`. Then the browser
+**navigates** to that URL, which is a full page load, because what comes back is a form that posts
+itself to github.com.
+
+The split exists because a navigation carries no `Authorization` header and kelson's credential must
+never appear in a URL. The ticket is what crosses the gap: it is minted server-side (an HMAC over a
+random nonce and an expiry, under a key made at startup and never written down), lives **two
+minutes**, works **once**, and names nobody. It is not a credential and cannot become one — a spent
+or stale ticket buys its holder nothing, which is what makes it safe in a query string. The key dying
+with the process is the same trade session tokens take ([ADR-0013](adr/0013-server-state-and-api-v0.md)
+§1): a restart costs a user one more click of Connect GitHub, and no ticket table exists to lose.
+
+`GET /forge/github/manifest/start` requires a live ticket and spends it. Without one it answers `401`
+with a body saying the address cannot be opened directly; with a spent or expired one it answers
+`410`, because re-presenting that ticket will never work and a `401` would suggest otherwise. Neither
+refusal redirects — a status code is the answer, so "not signed in" is distinguishable from
+"cancelled on GitHub". Once the ticket is spent, the flow proceeds exactly as below.
+
+`GET /forge/github/manifest/start` then begins GitHub's
 [app-manifest flow](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest):
 kelson builds a manifest — named after this instance's host, or `?name=` to override when that name is
 already taken — naming this instance's webhook (`<base>/forge/github/webhook`) and callback
@@ -831,21 +854,30 @@ against GitHub's echoed value in constant time on the callback. That makes the c
 a third party — a code delivered to a browser that never started a flow here is refused — but it is
 CSRF protection for the round trip, **not authentication of the person taking it**.
 
-**Both endpoints sit outside the shared-password gate, honestly stated.** The auth middleware in
-[Who may reach it](#who-may-reach-it) wraps only `/kelson.v1alpha1.*`; `/forge/*` is registered on the
-mux the same way `/healthz` and `/auth/*` are, unprotected by it. That is right for the webhook (its
-gate is the HMAC above) and is a stated gap for the manifest endpoints: under today's interim trust
-model (loopback, or a password behind a TLS-terminating proxy — [ADR-0013](adr/0013-server-state-and-api-v0.md)
-§3) anyone who can reach the port can start or complete a GitHub App connect flow. Authenticating this
-pair against the shared password or an agent identity is a flagged follow-up, tracked on
-[#248](https://github.com/dafrie/kelson/issues/248) alongside the rest of the threat model
-[#84](https://github.com/dafrie/kelson/issues/84) owns.
+**`/forge/*` sits outside the shared-password gate's prefix and carries its own gate instead.** The
+auth middleware in [Who may reach it](#who-may-reach-it) wraps only `/kelson.v1alpha1.*`; `/forge/*`
+is registered on the mux the same way `/healthz` and `/auth/*` are, so the middleware passes it
+through. Each endpoint therefore states what authenticates it:
+
+| Endpoint | Authenticated by |
+|---|---|
+| `POST /forge/github/webhook` | HMAC over the body, against the webhook secrets this instance holds. Not kelson's credential, and it must not be: GitHub holds no kelson session. |
+| `POST /forge/github/manifest/session` | **kelson's own credential, exactly as an RPC is** — the same header, the same principals, the same code. `internal/api` exports `Auth.CheckRequest` for it and `cmd/kelson-server` injects that check when it mounts the surface. |
+| `GET /forge/github/manifest/start` | The one-time ticket the session endpoint minted (above). |
+| `GET /forge/github/manifest/callback` | The `state` cookie `/start` set. GitHub is the caller and holds no ticket; binding the redirect to the browser that started the flow is the authentication available, and it is the right one. |
+
+This closes the gap [#248](https://github.com/dafrie/kelson/issues/248) flagged: reaching the port no
+longer lets a stranger start a GitHub App connect flow. It does not change the rest of the interim
+trust model — loopback, or a password behind a TLS-terminating proxy
+([ADR-0013](adr/0013-server-state-and-api-v0.md) §3) — which
+[#84](https://github.com/dafrie/kelson/issues/84) still owns.
 
 ## Where the code lives
 
 - `cmd/kelson-server` — flags (including `--external-url`), the mux, the bind check.
 - `internal/forgehttp` — the `/forge/*` surface: the webhook listener (`webhook.go`), the GitHub App
-  manifest flow (`manifest.go`), and the shared routing and `baseURL` derivation (`forgehttp.go`).
+  manifest flow (`manifest.go`), the one-time tickets that gate its start (`ticket.go`), and the
+  shared routing, the injected credential check and the `baseURL` derivation (`forgehttp.go`).
 - `internal/webui` — the embedded web UI, the SPA fallback and the placeholder.
 - `cmd/kelson` — `kelson agent create|list|revoke` (`agent.go`), which writes to the cluster.
 - `internal/api` — the ConnectRPC handlers (`api.go`), the credential gate (`auth.go`), the principal
