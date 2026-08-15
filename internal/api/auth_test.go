@@ -405,6 +405,60 @@ func TestThePasswordCompareIsConstantTime(t *testing.T) {
 	}
 }
 
+// CheckRequest is what a handler mounted outside the middleware's prefix asks
+// (issue #248: the GitHub App manifest flow). The property that matters is that
+// it is the *same* answer the middleware gives — a second, drifting copy of
+// "is this caller authenticated" is exactly what exporting one check avoids.
+func TestCheckRequestMatchesTheGate(t *testing.T) {
+	srv, auth := gated(t, testPassword)
+
+	for _, tc := range []struct {
+		name   string
+		mutate func(*http.Request)
+	}{
+		{name: "no credential", mutate: nil},
+		{name: "the password as a bearer token", mutate: header("Authorization", "Bearer "+testPassword)},
+		{name: "a wrong password", mutate: header("Authorization", "Bearer nope")},
+		{name: "an agent token on a server with no agent store", mutate: header("Authorization", "Bearer kagt.whatever")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res := do(t, srv, http.MethodPost, apiPathPrefix+"RenderService/Render", "", tc.mutate)
+			res.Body.Close() //nolint:errcheck // read-only handle
+			allowedByTheRPC := res.StatusCode != http.StatusUnauthorized
+
+			req, err := http.NewRequest(http.MethodPost, "/forge/github/manifest/session", nil)
+			if err != nil {
+				t.Fatalf("building the request: %v", err)
+			}
+			if tc.mutate != nil {
+				tc.mutate(req)
+			}
+			refusal := auth.CheckRequest(req)
+
+			if allowed := refusal == ""; allowed != allowedByTheRPC {
+				t.Errorf("CheckRequest allowed = %v (%q), but the RPC route answered %d", allowed, refusal, res.StatusCode)
+			}
+		})
+	}
+}
+
+// A server with no password and no agent store leaves the RPCs open, so the
+// check has nothing to refuse either. The endpoints that call it are gated by
+// their own second factor (a one-time ticket, in forgehttp), not by this.
+func TestCheckRequestIsOpenWhenAuthenticationIsDisabled(t *testing.T) {
+	auth, err := NewAuth("")
+	if err != nil {
+		t.Fatalf("NewAuth: %v", err)
+	}
+	req, err := http.NewRequest(http.MethodPost, "/forge/github/manifest/session", nil)
+	if err != nil {
+		t.Fatalf("building the request: %v", err)
+	}
+	if refusal := auth.CheckRequest(req); refusal != "" {
+		t.Errorf("CheckRequest refused %q on a server whose RPCs are open", refusal)
+	}
+}
+
 func header(name, value string) func(*http.Request) {
 	return func(r *http.Request) { r.Header.Set(name, value) }
 }

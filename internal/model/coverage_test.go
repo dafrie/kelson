@@ -34,12 +34,29 @@ var renderedFields = map[string]map[string]string{
 		"$.kind":          "decode: selects the document type",
 		"$.metadata.name": "renderer: project label and resource naming",
 
+		"$.spec.source.name":       "model/validate: refused — the singular spelling is already named `default`, and choosing a name means writing the list (ADR-0035 decision 1)",
 		"$.spec.source.git":        "internal/build: clone URL (build.Request.SourceURL)",
 		"$.spec.source.ref":        "internal/build: checkout ref (build.Request.SourceRef)",
 		"$.spec.source.connection": "internal/forgeconn: which GitConnection the ref resolution and the build pod's clone authenticate with (ADR-0033 decision 4)",
-		"$.spec.build.strategy":    "internal/build/detect: strategy selection",
-		"$.spec.build.dockerfile":  "internal/build/detect: Dockerfile path",
-		"$.spec.build.by":          "internal/api: BuildService.ReportBuild acts on a CI report only for `ci` — it renders and publishes the change request's preview — and declines one for `kelson`, whose images come from kelson's own build plane (ADR-0034 decision 3)",
+
+		// The plural spelling and the per-component binding, ADR-0035 decisions
+		// 1 and 3. What consumes them today is model/resolve: each entry becomes
+		// a component binding in Resolved.Sources, which is hashed into the
+		// artifact tag, and a name in neither scope is refused
+		// (ref/unknown-source). The build plane clones per binding in the slice
+		// that follows this one (#239); until it does, no document can be built
+		// from the wrong repository by mistake — a project using the plural
+		// spelling has no spec.source for the build plane to fall back to, so it
+		// refuses with build/no-source rather than building something else, and
+		// a name that resolves nowhere never reaches a build at all.
+		"$.spec.sources[].name":       "model/resolve: the name a component binds to; the binding lands in Resolved.Sources and the build plane clones per component (ADR-0035 decisions 1 and 4, #239)",
+		"$.spec.sources[].git":        "model/resolve: the clone URL of the bound source (Resolved.Sources[].source.git)",
+		"$.spec.sources[].ref":        "model/resolve: the checkout ref of the bound source — per source rather than per project (Resolved.Sources[].source.ref)",
+		"$.spec.sources[].connection": "model/resolve: which GitConnection this source's clone authenticates with, carried per binding (ADR-0033 decision 4, ADR-0035 decision 1)",
+
+		"$.spec.build.strategy":   "internal/build/detect: strategy selection",
+		"$.spec.build.dockerfile": "internal/build/detect: Dockerfile path",
+		"$.spec.build.by":         "internal/api: BuildService.ReportBuild acts on a CI report only for `ci` — it renders and publishes the change request's preview — and declines one for `kelson`, whose images come from kelson's own build plane (ADR-0034 decision 3)",
 
 		"$.spec.image":              "renderer: container image, and the P3 fallback for components",
 		"$.spec.env.*":              "renderer: container env (literal form)",
@@ -52,6 +69,7 @@ var renderedFields = map[string]map[string]string{
 		"$.spec.components[].kind":                      "model: selects workload, data or chart rendering, and which operator a component delegates to (postgres → CloudNativePG, valkey → the Valkey operator, helm → helm-controller)",
 		"$.spec.components[].chart":                     "renderer: HelmRelease chart name (kind: helm)",
 		"$.spec.components[].chartVersion":              "renderer: HelmRelease chart version pin, and the OCIRepository tag (kind: helm)",
+		"$.spec.components[].source":                    "model/resolve: the name arm of the union — which declared source this component builds from, bound into Resolved.Sources (ADR-0035 decision 3)",
 		"$.spec.components[].source.repository":         "renderer: HelmRepository url (kind: helm)",
 		"$.spec.components[].source.oci":                "renderer: OCIRepository url (kind: helm)",
 		"$.spec.components[].values.*":                  "renderer: HelmRelease spec.values, verbatim (kind: helm)",
@@ -424,6 +442,16 @@ func walkFieldPaths(t reflect.Type, path string, out *[]string, stack []reflect.
 		*out = append(*out, path)
 		walkFieldPaths(reflect.TypeOf(ServiceBinding{}), path+".from", out, stack)
 		walkFieldPaths(reflect.TypeOf(SecretRef{}), path, out, stack)
+		return
+	}
+
+	// ComponentSource is the other union with a custom unmarshaller and no yaml
+	// tags: a scalar is a source name (ADR-0035) and a mapping is a chart source
+	// (ADR-0016). Both arms are spec surface, and the scalar one is a leaf at
+	// the key itself, exactly as an env value's plain-string arm is.
+	if t == reflect.TypeOf(ComponentSource{}) {
+		*out = append(*out, path)
+		walkFieldPaths(reflect.TypeOf(ChartSource{}), path, out, stack)
 		return
 	}
 

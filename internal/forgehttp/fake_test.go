@@ -239,11 +239,23 @@ func resolverOver(store *fakeStore) *forgeconn.Resolver {
 func bytesReader(b []byte) io.Reader { return bytes.NewReader(b) }
 
 // serve runs one request through the registered routes, which is what proves
-// the method-scoped patterns as well as the handlers.
+// the method-scoped patterns as well as the handlers. The credential check is
+// the permissive one — these tests are about the forge endpoints, and the tests
+// that are about the gate hand in their own (serveGated) or drive the real
+// server's (cmd/kelson-server/main_test.go).
 func serve(h *Handler, req *http.Request) *httptest.ResponseRecorder {
+	return serveGated(h, req, allowAll)
+}
+
+// serveGated is serve with a stated credential check.
+func serveGated(h *Handler, req *http.Request, authenticate Authenticator) *httptest.ResponseRecorder {
 	mux := http.NewServeMux()
-	h.Register(mux)
+	h.Register(mux, authenticate)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	return rec
 }
+
+// allowAll is the check a server with neither a password nor an agent store
+// applies: internal/api answers every request with no refusal, and so does this.
+func allowAll(*http.Request) string { return "" }

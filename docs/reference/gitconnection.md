@@ -7,7 +7,7 @@ This reference is **generated** from the committed JSON Schema [`schema/gitconne
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `apiVersion` | string | yes |  |  |
-| `kind` | string enum `"Project"`, `"Environment"`, `"GitConnection"` | yes |  |  |
+| `kind` | string enum `"Project"`, `"Environment"`, `"GitConnection"`, `"GitSource"` | yes |  |  |
 | `metadata` | object | yes |  |  |
 | `spec` | object | yes |  |  |
 
@@ -51,5 +51,5 @@ This reference is **generated** from the committed JSON Schema [`schema/gitconne
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `kind` | string enum `"instance"`, `"user"`, `"team"` | yes |  | who may edit this connection; only instance is enforced today |
+| `kind` | string enum `"instance"`, `"user"`, `"team"` | yes |  | who may edit this document; only instance is enforced today |
 | `name` | string | no |  | the owning principal; required when kind is user or team and refused when it is instance |

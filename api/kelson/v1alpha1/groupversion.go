@@ -39,6 +39,7 @@ func addKnownTypes(s *runtime.Scheme) error {
 		&Project{}, &ProjectList{},
 		&Environment{}, &EnvironmentList{},
 		&GitConnection{}, &GitConnectionList{},
+		&GitSource{}, &GitSourceList{},
 	)
 	metav1.AddToGroupVersion(s, GroupVersion)
 	return nil

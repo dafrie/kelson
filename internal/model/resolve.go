@@ -27,17 +27,13 @@ const ImageUnresolved = "@"
 type Resolved struct {
 	Project string
 
-	// Source is the Project's `source:` block, carried through so a plane
-	// holding a resolved spec can resolve its git connection the way the server
-	// does (ADR-0033 decision 4). Nil for a project that deploys a pre-built
-	// image and has no source at all.
-	//
-	// It carries the two fields *resolution* needs and not the ref: which
-	// repository, and which connection the author named for it. Without them
-	// the preview materializer could only match by host, so an instance holding
-	// two connections for one forge had no way to say which credential its
-	// previews act as — the override existed in the spec and stopped at the
-	// server.
+	// Source is the Project's *default* source: what a component that names none
+	// builds from (ADR-0035 decision 3), carried through so a plane holding a
+	// resolved spec can resolve its git connection the way the server does
+	// (ADR-0033 decision 4). Nil for a project that deploys a pre-built image
+	// and declares no source at all — and for one that declares several and
+	// names no default, which is legal exactly while every component that builds
+	// names its own.
 	//
 	// It carries an explicit json tag with omitempty where its siblings carry
 	// none, for the reason [ResolvedComponent.Release] does: this struct is
@@ -46,6 +42,27 @@ type Resolved struct {
 	// A project that *does* have a source republishes once, which is correct —
 	// where kelson reads the code from is part of what a revision is.
 	Source *ResolvedSource `json:"source,omitempty"`
+
+	// Sources are the per-component bindings: which source each component's code
+	// lives in, in spec order (ADR-0035 decision 3). It is empty for a project
+	// that declares no source at all.
+	//
+	// A binding says where the code is, not that a build is due. A component
+	// pinned to an already-built image still has one — its code did not move,
+	// and the union of its project's bound repositories is what webhook and
+	// preview matching are asked about (ADR-0035 decision 4). Whether anything
+	// is built from it is the image chain's answer (rule P3) and the build
+	// plane's. Kinds that build nothing at all — data components and charts —
+	// have no entry, because there is no code of ours in them to place.
+	//
+	// They live on the envelope rather than on [ResolvedComponent] deliberately.
+	// Nothing about a source reaches a manifest — ADR-0035 decision 4 leaves
+	// delivery unchanged, and the renderer never reads one — so a binding on the
+	// component would enter `kelson.dev/spec-hash`, the per-resource annotation,
+	// and churn every workload in every cluster over a field that changes no
+	// rendered byte. Here it enters the artifact tag instead, which is the right
+	// scope: the *revision* is what a repository and a ref are part of.
+	Sources []ResolvedComponentSource `json:"sources,omitempty"`
 
 	Environment  ResolvedEnvironment
 	Components   []ResolvedComponent
@@ -58,16 +75,50 @@ type Resolved struct {
 	Overlays []Overlay
 }
 
-// ResolvedSource is where a project's code lives and which connection kelson
-// reads it with. Nothing resolves into it — `source:` has no per-environment
-// override and no default chain — so it is the Project's own two values,
-// carried rather than computed.
+// ResolvedSource is one source after binding: where the code lives, at which
+// ref, and which connection kelson reads it with.
+//
+// There is no per-environment override and no default chain over a source's
+// *fields* — what resolution decides is which declared source a component gets,
+// not what is in it — so the values are carried rather than computed.
 type ResolvedSource struct {
+	// Name is the source's name: an entry of the Project's list, a GitSource the
+	// instance declares, or [DefaultSourceName] for the singular spelling. It is
+	// carried so a consumer can say *which* source it built from, and so a
+	// shadowed global name is legible as the local one that won.
+	Name string `json:"name,omitempty"`
+
 	Git string `json:"git"`
-	// Connection is `source.connection`: the GitConnection the author named,
-	// or empty for the host match that is the common case (ADR-0033
-	// decision 4).
+
+	// Ref is the branch, tag or commit this source is read at (ADR-0035
+	// decision 1). It is per source rather than per project, which is the whole
+	// of what "a source" adds over a repository URL.
+	Ref string `json:"ref,omitempty"`
+
+	// Connection is `connection`: the GitConnection the author named, or empty
+	// for the host match that is the common case (ADR-0033 decision 4).
 	Connection string `json:"connection,omitempty"`
+}
+
+// ResolvedComponentSource is one component's binding: which component, and the
+// source its code lives in.
+type ResolvedComponentSource struct {
+	Component string         `json:"component"`
+	Source    ResolvedSource `json:"source"`
+}
+
+// SourceFor returns the source a component's code lives in, or nil for one
+// bound to none. It is how a plane holding a resolved spec asks the question
+// ADR-0035 decision 4 puts to the build plane — clone *this* component's
+// repository at *this* component's ref — without re-deriving the binding from
+// the document and getting a different answer.
+func (r *Resolved) SourceFor(component string) *ResolvedSource {
+	for i := range r.Sources {
+		if r.Sources[i].Component == component {
+			return &r.Sources[i].Source
+		}
+	}
+	return nil
 }
 
 type ResolvedEnvironment struct {
@@ -198,11 +249,29 @@ type ResolvedChart struct {
 // Resolve validates the (Project, Environment) pair and returns the effective
 // spec with all precedence rules applied. Any validation error aborts
 // resolution — a spec that does not validate does not render.
-func Resolve(p *Project, e *Environment) (*Resolved, Errors) {
+//
+// `globals` are the sources the instance offers to every project — the
+// GitSources of ADR-0035 decision 2, passed in rather than read. Resolution is
+// a pure function of what it is given, exactly as rendering is of its
+// ClusterProfile (ADR-0001, ADR-0029): the planes with cluster access list the
+// GitSources and hand them here, and `kelson render` against a file with none is
+// a resolution against an empty global tier rather than a resolution that went
+// looking for one.
+//
+// It is variadic so that the caller with nothing global to say says nothing —
+// the shape [ValidateSet] already uses for its environments. A component naming
+// a source that is in neither the project's list nor `globals` is refused with
+// ref/unknown-source listing both, so a forgotten list is an error naming what
+// was in scope and never a silently different build.
+func Resolve(p *Project, e *Environment, globals ...Source) (*Resolved, Errors) {
 	if errs := ValidateSet(p, e); len(errs) > 0 {
 		return nil, errs
 	}
-	return resolve(p, e), nil
+	r, errs := resolve(p, e, globals)
+	if len(errs) > 0 {
+		return nil, errs
+	}
+	return r, nil
 }
 
 // resolve applies the precedence rules without validating. It is split out
@@ -213,7 +282,7 @@ func Resolve(p *Project, e *Environment) (*Resolved, Errors) {
 // components and their P5 preset override left the gate table when the
 // renderer began emitting CloudNativePG resources (issue #89), and nothing
 // here changed.
-func resolve(p *Project, e *Environment) *Resolved {
+func resolve(p *Project, e *Environment, globals []Source) (*Resolved, Errors) {
 	r := &Resolved{Project: p.Metadata.Name}
 
 	// Environment identity and target.
@@ -225,9 +294,7 @@ func resolve(p *Project, e *Environment) *Resolved {
 	r.Environment.Cluster = e.Spec.Cluster
 	r.Environment.Namespace = ns
 
-	if src := p.Spec.Source; src != nil {
-		r.Source = &ResolvedSource{Git: src.Git, Connection: src.Connection}
-	}
+	bindErrs := resolveSources(p, r, globals)
 
 	if routing := e.Spec.Routing; routing != nil {
 		r.Environment.Routing.DomainSuffix = routing.DomainSuffix
@@ -289,7 +356,12 @@ func resolve(p *Project, e *Environment) *Resolved {
 	for _, ov := range e.Spec.Components {
 		overrides[ov.Name] = ov
 	}
-	builtFromSource := p.Spec.Source != nil && (p.Spec.Build == nil || p.Spec.Build.Strategy != BuildNone)
+	// Whether a component's image comes from a build is now a per-component
+	// question, because its source is (ADR-0035 decision 3): it is built when
+	// something bound it to a source and the project's strategy is not `none`.
+	// For the single-source project that is every workload, which is what it was
+	// before this became a question at all.
+	builds := p.Spec.Build == nil || p.Spec.Build.Strategy != BuildNone
 	for _, c := range p.Spec.Components {
 		switch kind := c.EffectiveKind(); {
 		case kind.IsData():
@@ -297,11 +369,110 @@ func resolve(p *Project, e *Environment) *Resolved {
 		case kind.IsChart():
 			r.Charts = append(r.Charts, resolveChart(c))
 		default:
+			builtFromSource := builds && r.SourceFor(c.Name) != nil
 			r.Components = append(r.Components, resolveComponent(p, r, c, overrides[c.Name], builtFromSource))
 		}
 	}
 
-	return r
+	return r, bindErrs
+}
+
+// resolveSources binds every workload component to the source its code lives
+// in, and records the Project's default (ADR-0035 decision 3).
+//
+// Resolution order is the project's own list, then the instance's: a
+// project-local name shadows a global one, which is the same instinct as the
+// P1–P3 precedence rules — the innermost scope wins. Shadowing rather than
+// clashing is deliberate (ADR-0035): a global name is a convenience, not a
+// claim, and a project must be able to redefine `tools` without asking the
+// instance.
+//
+// A name in neither scope is refused here rather than in validate.go, because
+// only here is the second half of the scope in hand. The refusal lists what was
+// in scope, both halves labelled, so "I forgot to declare it" and "the instance
+// does not offer it" are told apart without a second lookup.
+func resolveSources(p *Project, r *Resolved, globals []Source) Errors {
+	scope := make(map[string]Source, len(globals)+len(p.Spec.Sources))
+	var globalNames []string
+	for _, g := range globals {
+		if g.Name == "" {
+			continue
+		}
+		if _, dup := scope[g.Name]; !dup {
+			globalNames = append(globalNames, g.Name)
+		}
+		scope[g.Name] = g
+	}
+	local := p.Spec.EffectiveSources()
+	localNames := make([]string, 0, len(local))
+	for _, src := range local {
+		scope[src.Name] = src // project shadows global
+		localNames = append(localNames, src.Name)
+	}
+
+	if def, ok := p.Spec.DefaultSource(); ok {
+		bound := resolvedSource(def)
+		r.Source = &bound
+	}
+
+	var errs Errors
+	for i, c := range p.Spec.Components {
+		if !c.EffectiveKind().IsWorkload() {
+			continue
+		}
+		name := c.SourceName()
+		if name == "" {
+			if r.Source == nil {
+				continue // an image-only component: nothing to bind
+			}
+			r.Sources = append(r.Sources, ResolvedComponentSource{Component: c.Name, Source: *r.Source})
+			continue
+		}
+		src, ok := scope[name]
+		if !ok {
+			errs = append(errs, sourceNotInScope(p, i, c, localNames, globalNames))
+			continue
+		}
+		r.Sources = append(r.Sources, ResolvedComponentSource{Component: c.Name, Source: resolvedSource(src)})
+	}
+	return errs
+}
+
+// resolvedSource carries one declared source into its resolved form. It exists
+// so the default binding and a named one are built in one place: two copies
+// would eventually disagree about what an empty ref means.
+//
+// The two structs are field-identical, so the conversion is the whole function:
+// a binding *is* a declared source, with nothing computed on the way through —
+// which is the same claim [ResolvedSource]'s doc comment makes. A field added to
+// one and not the other stops compiling here rather than going quietly missing.
+func resolvedSource(src Source) ResolvedSource { return ResolvedSource(src) }
+
+// sourceNotInScope is the refusal of a component bound to a name nothing
+// declares. It names both halves of the scope it searched, because the fix
+// differs: declare it on the Project, or ask for a GitSource on the instance.
+func sourceNotInScope(p *Project, index int, c Component, local, globals []string) Error {
+	e := Error{
+		Code:     ErrUnknownSource,
+		Resource: fmt.Sprintf("%s/%s", KindProject, p.Metadata.Name),
+		Field:    fmt.Sprintf("$.spec.components[%d].source", index),
+		Message: fmt.Sprintf("component %q builds from source %q, which neither project %q nor this instance declares",
+			c.Name, c.SourceName(), p.Metadata.Name),
+		Remediation: fmt.Sprintf("declare it under spec.sources, or bind to one that is in scope. "+
+			"This project declares: %s. This instance offers: %s (ADR-0035 decision 3)",
+			nameList(local), nameList(globals)),
+		DocsURL: docsURL(ErrUnknownSource),
+	}
+	return e
+}
+
+// nameList renders a scope for a remediation, saying "nothing" rather than
+// printing an empty list — an author reading "in scope: " learns nothing.
+func nameList(names []string) string {
+	if len(names) == 0 {
+		return "nothing"
+	}
+	return strings.Join(names, ", ")
 }
 
 // EffectivePolicy is the P4 chain for `policy:` alone: the Environment's block
@@ -390,8 +561,8 @@ func resolveChart(c Component) ResolvedChart {
 		Values:     c.Values,
 		ValuesFrom: c.ValuesFrom,
 	}
-	if c.Source != nil {
-		rc.Source = *c.Source
+	if chart := c.ChartSourceOf(); chart != nil {
+		rc.Source = *chart
 	}
 	return rc
 }

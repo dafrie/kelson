@@ -30,8 +30,11 @@ import (
 // party — a code delivered to a browser that did not start a flow here is
 // refused — which is CSRF protection for the round trip.
 //
-// It is not authentication of the person taking it. See this package's doc for
-// why, and for what would have to change in internal/api to make it one.
+// It is not authentication of the person taking it, and it does not have to be
+// any more: the flow can only be *started* by a caller holding a ticket minted
+// for an authenticated session (ticket.go, issue #248), so the question the
+// state parameter answers is narrower than it once was — not "who is this" but
+// "is this the browser that started the flow this code belongs to".
 //
 // The cookie carries the forge host and the app name beside the state, because
 // the callback needs both to complete the exchange and neither is in GitHub's
@@ -64,6 +67,52 @@ type flowState struct {
 	Expires int64 `json:"e"`
 }
 
+// manifestSession handles POST /forge/github/manifest/session: the
+// authenticated door into the manifest flow (issue #248).
+//
+// It is the only endpoint here the UI *calls* rather than navigates to, which
+// is the whole point — a fetch carries the UI's credential and a navigation
+// does not. The response is the URL to navigate to, carrying a ticket that
+// authorizes one GET of /start and expires in two minutes (ticket.go).
+//
+// It reports nothing about this server beyond "you are allowed to start": the
+// checks that decide whether a flow can actually complete belong to /start,
+// where a spent ticket has already proved the caller was authenticated.
+func (h *Handler) manifestSession(w http.ResponseWriter, r *http.Request) {
+	if h.authenticate == nil {
+		// A Handler registered without a check. Fail closed and say so plainly:
+		// this is a wiring bug in the binary, not a state a caller can fix, and
+		// treating it as "authentication is off" would be the exact hole this
+		// endpoint exists to close.
+		h.log.Error("the forge surface was registered without an authentication check; refusing to mint manifest tickets")
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"code":    "misconfigured",
+			"message": "this server was built without an authentication check for the GitHub connect flow, so it cannot start one",
+		})
+		return
+	}
+	if refusal := h.authenticate(r); refusal != "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"code": "unauthenticated", "message": refusal})
+		return
+	}
+	ticket, err := h.tickets.mint(h.now())
+	if err != nil {
+		h.log.Error("could not mint a manifest ticket", "error", err.Error())
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"code":    "ticket",
+			"message": "this server could not generate a one-time ticket for the GitHub connect flow",
+		})
+		return
+	}
+	// A relative URL, and relative on purpose: it is this same origin, and a
+	// server that guessed an absolute one would guess it from the same headers
+	// baseURL warns about. The UI navigates to it; extra flow parameters
+	// (?host=, ?org=, ?name=) are the UI's to append and /start still reads them.
+	writeJSON(w, http.StatusOK, map[string]any{
+		"startUrl": ManifestStartPath + "?" + ticketParam + "=" + url.QueryEscape(ticket),
+	})
+}
+
 // manifestStart handles GET /forge/github/manifest/start.
 //
 // It answers with an auto-submitting form rather than a redirect because
@@ -71,7 +120,32 @@ type flowState struct {
 // field, and there is no GET spelling of it. The form is the documented shape,
 // and the `noscript` submit button below is what makes the page work for
 // somebody who has scripting off rather than leaving them on a blank screen.
+//
+// The ticket is spent before anything else happens, including before this
+// server says whether it could complete a flow at all: an unauthenticated
+// caller learns nothing here, not even how this instance is configured.
 func (h *Handler) manifestStart(w http.ResponseWriter, r *http.Request) {
+	switch h.tickets.spend(r.URL.Query().Get(ticketParam), h.now()) {
+	case ticketOK:
+	case ticketDead:
+		// Gone rather than Unauthorized: this ticket was real, and it is
+		// finished. Re-presenting it will never work, which is what the code
+		// says and a 401 would not.
+		writeJSON(w, http.StatusGone, map[string]any{
+			"code": "ticket_spent",
+			"message": "this GitHub connect link has already been used or has expired — a link is good for one visit " +
+				"within two minutes. Start again from Connect GitHub in kelson",
+		})
+		return
+	default:
+		writeJSON(w, http.StatusUnauthorized, map[string]any{
+			"code": "unauthenticated",
+			"message": "this address cannot be opened directly: starting a GitHub connect flow needs a one-time link, " +
+				"which kelson issues to a signed-in session. Start again from Connect GitHub in kelson",
+		})
+		return
+	}
+
 	if h.opts.Connections == nil || h.opts.Secrets == nil {
 		redirectToConnections(w, r, map[string]string{
 			"error": "unavailable",

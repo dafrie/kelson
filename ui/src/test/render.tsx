@@ -18,6 +18,9 @@ import { ClientsProvider } from "../api/data";
  *
  * `also` adds sibling routes for a test that navigates — a destination has to
  * exist before a navigation to it can be blocked.
+ *
+ * The returned `router` is what a test reads to assert on the URL itself — a
+ * clear-the-query-params effect, say — rather than only on what rendered.
  */
 export function renderAt(
   transport: Transport,
@@ -29,9 +32,12 @@ export function renderAt(
   const router = createMemoryRouter([{ path: routePath, element }, ...also], {
     initialEntries: [path],
   });
-  return render(
-    <ClientsProvider clients={createClients(transport)}>
-      <RouterProvider router={router} />
-    </ClientsProvider>,
-  );
+  return {
+    router,
+    ...render(
+      <ClientsProvider clients={createClients(transport)}>
+        <RouterProvider router={router} />
+      </ClientsProvider>,
+    ),
+  };
 }
