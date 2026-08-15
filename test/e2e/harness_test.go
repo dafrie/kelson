@@ -18,9 +18,11 @@
 //
 // The CLI as a subprocess, and kubectl as the independent witness. Nothing
 // here imports a Kubernetes client: the command plane's lint allow-list
-// forbids it (.golangci.yml, the `main` depguard rule), and more importantly a
-// test that asserts through the same client the code under test uses is a
-// weaker test than one that asks kubectl.
+// forbids it (.golangci.yml, the `main` and `cli` depguard rules — the latter
+// gets a ConnectRPC client for kelson-server, R2 #225, and neither gets a
+// Kubernetes one), and more importantly a test that asserts through the same
+// client the code under test uses is a weaker test than one that asks
+// kubectl.
 //
 // # Debuggability from logs
 //

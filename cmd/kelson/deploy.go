@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -10,9 +11,12 @@ import (
 	"strings"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
+	"github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1/kelsonv1alpha1connect"
 	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/delivery/kube"
 	"github.com/dafrie/kelson/internal/model"
@@ -20,85 +24,223 @@ import (
 	"github.com/dafrie/kelson/internal/renderer"
 )
 
-// newDeployCmd builds `kelson deploy`, which is gated (issue #224).
+// newDeployCmd builds `kelson deploy` (issue #135, R2 #225): write a spec and
+// follow the controller until it settles.
 //
-// # What was here, and why it is not
+// # Deploying is a write and a watch now (ADR-0028)
 //
-// This command used to render the spec, select the environment's delivery
-// adapter and drive the deployment state machine until it settled. Both
-// adapters are gone: [ADR-0028](docs/adr/0028-delivery-spine.md) deleted the
-// direct applier and the git writer and replaced them with one path —
-// kelson-controller renders, publishes an immutable OCI artifact, and Flux
-// reconciles it — which makes deploying an `Environment` you apply rather than
-// a command you run.
+// There is no local applier any more: kelson-controller reconciles the
+// Environment this command writes — render, publish an immutable OCI
+// artifact, apply the Flux pair — and reports every step on its status
+// (internal/api/deploy.go). So this command is a thin client of
+// DeployService.Deploy: it addresses the spec, previews it (dry_run=RENDER,
+// which touches nothing) so a human confirms a real number rather than a
+// promise, then streams the real deploy's Committed/Transition/Settled events
+// as they arrive.
 //
-// # It refuses by name rather than disappearing
+// # Two ways to address the spec, because the request has one oneof
 //
-// The command stays, and stays wired, because the alternative teaches the wrong
-// thing: `unknown command "deploy"` says kelson never had the verb, and a
-// script that runs it would fail with a usage error indistinguishable from a
-// typo. A structured [delivery.Error] carrying `delivery/not-implemented` and
-// the tracking issue says exactly what happened and when it changes — the same
-// discipline internal/model's gate table applies to a field it cannot render
-// (notimplemented.go).
+// `-f spec.yaml` sends the documents inline, exactly like `render` and
+// `diff`. `--project <name>` deploys a spec already stored on kelson-server —
+// what `kelson promote` just wrote, or what an agent's put_spec stored — with
+// nothing to send but the environment name. resolveSpecRef (specdocs.go) is
+// the one place that resolves which of the two a command meant.
 func newDeployCmd() *cobra.Command {
 	opts := &deployOptions{}
 	cmd := &cobra.Command{
-		Use:   "deploy -f spec.yaml --env <name>",
-		Short: "Make a rendered spec live (rebuilding on the controller — see issue #224)",
-		Long: "Deploy is being rebuilt on the delivery spine (ADR-0028, issue #224) and refuses in the\n" +
-			"meantime.\n\n" +
-			"The path it is being rebuilt on: kelson-controller validates and renders an Environment,\n" +
-			"publishes the rendered set as an immutable OCI artifact, and applies the Flux OCIRepository\n" +
-			"and Kustomization that reconcile it. Deploying becomes applying an Environment resource\n" +
-			"rather than running this command against a spec file.\n\n" +
-			"What still works today, unchanged and offline: `kelson render`, `kelson diff`, `kelson build`,\n" +
-			"`kelson profile`, `kelson explain` and `kelson status` (the workload half — see their help).",
-		Example: "  kelson render -f project.yaml -f production.yaml --env production   # the manifests, offline\n" +
-			"  kelson diff -f project.yaml -f production.yaml --env production     # what would change",
+		Use:   "deploy (-f spec.yaml | --project <name>) --env <name>",
+		Short: "Write a spec and follow the controller until it settles",
+		Long: "Deploy addresses a spec — inline `-f` documents or a `--project` kelson-server already\n" +
+			"holds — writes it, and follows kelson-controller's status until the deployment settles or\n" +
+			"--timeout expires (ADR-0028, issue #225).\n\n" +
+			"There is nothing left to apply directly: the controller renders, publishes an immutable OCI\n" +
+			"artifact and lets Flux reconcile it, so this command only writes the spec and watches. It\n" +
+			"talks to kelson-server, never to the cluster directly — point --server at one, or forward a\n" +
+			"port to it in-cluster (docs/server.md).",
+		Example: "  kelson deploy -f project.yaml -f production.yaml --env production --server http://127.0.0.1:8420\n" +
+			"  kelson deploy --project shop --env production --timeout 10m --yes\n" +
+			"  kelson deploy -f spec.yaml --env development --profile from-cluster",
 		Args: cobra.NoArgs,
-		RunE: func(*cobra.Command, []string) error { return deployUnavailable() },
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runDeploy(cmd, opts)
+		},
 	}
 	f := cmd.Flags()
 	f.StringArrayVarP(&opts.files, "file", "f", nil, "spec YAML file holding Project and/or Environment documents (repeatable)")
-	f.StringVar(&opts.env, "env", "", "name of the Environment to deploy (optional when the input holds exactly one)")
-	f.StringVar(&opts.profile, "profile", "", "ClusterProfile YAML file, or from-cluster to capture a live profile (requires cluster access)")
-	f.StringVar(&opts.kubeconfig, "kubeconfig", "", "path to a kubeconfig (default: $KUBECONFIG, in-cluster credentials, then ~/.kube/config)")
+	f.StringVar(&opts.project, "project", "", "name of a project already stored on kelson-server (alternative to -f)")
+	f.StringVar(&opts.env, "env", "", "name of the Environment to deploy (optional with -f when the input holds exactly one; required with --project)")
+	f.StringVar(&opts.profile, "profile", "", "ClusterProfile YAML file, or from-cluster to capture kelson-server's own cluster (used for the render)")
 	f.StringVar(&opts.image, "image", "", imageFlagUsage)
-	f.DurationVar(&opts.timeout, "timeout", defaultDeployTimeout, "budget for the deployment to reach a healthy phase")
+	f.DurationVar(&opts.timeout, "timeout", defaultDeployTimeout, "budget for the deployment to reach a settled phase")
 	f.BoolVar(&opts.yes, "yes", false, "do not ask for confirmation before applying (already the default when stdin is not a terminal)")
-	cobra.CheckErr(cmd.MarkFlagRequired("file"))
+	addServerFlags(cmd, &opts.server)
 	return cmd
 }
 
-// deployUnavailable is the refusal every deleted apply path shares.
-func deployUnavailable() error {
-	return delivery.NotImplemented("deploy",
-		"kelson cannot apply a rendered set: the direct applier and the git writer were deleted with "+
-			"the old delivery machinery, and the controller that replaces them does not publish yet",
-		"#224")
-}
-
-// defaultDeployTimeout is the budget a deployment gets to reach a healthy
+// defaultDeployTimeout is the budget a deployment gets to reach a settled
 // phase. It matches statemachine.DefaultTimeout so the CLI does not invent a
 // second number for the same question.
 const defaultDeployTimeout = 5 * time.Minute
 
 type deployOptions struct {
-	specInput
+	files   []string
+	project string
+	env     string
+	profile string
+	image   string
 	timeout time.Duration
 	yes     bool
+	server  serverOptions
 }
 
-// --- the observation plane seam ---------------------------------------------
+func runDeploy(cmd *cobra.Command, opts *deployOptions) error {
+	if opts.timeout <= 0 {
+		return fmt.Errorf("--timeout must be positive, got %s", opts.timeout)
+	}
+	ref, env, err := resolveSpecRef(opts.files, opts.project, opts.env)
+	if err != nil {
+		return err
+	}
+	profile, err := inlineProfileRef(opts.profile)
+	if err != nil {
+		return err
+	}
+	client, addr := opts.server.deployClient()
 
-// observationTarget is what an observing command resolved from its spec files:
-// which component model, in which namespace, against which cluster.
+	proposed, err := deployPreview(cmd.Context(), client, ref, env, profile, opts.image, addr)
+	if err != nil {
+		return err
+	}
+
+	out := &printer{w: cmd.OutOrStdout()}
+	out.printf("%s %s/%s: %d resource(s)\n", padPhase("Proposed"), proposed.GetProject(), proposed.GetEnvironment(), proposed.GetResources())
+	if err := out.err; err != nil {
+		return err
+	}
+
+	if !opts.yes && interactive(cmd) {
+		ok, err := confirm(cmd, fmt.Sprintf("Deploy %d resource(s) to %s/%s?", proposed.GetResources(), proposed.GetProject(), proposed.GetEnvironment()))
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("deploy cancelled")
+		}
+	}
+
+	// The stream's own budget is the deployment's --timeout (the server times
+	// its own watch identically, deployBudget in internal/api/deploy.go); the
+	// dial timeout on top is headroom for the request to reach the server at
+	// all, not part of the deployment's own clock.
+	ctx, cancel := context.WithTimeout(cmd.Context(), opts.timeout+dialTimeout)
+	defer cancel()
+	req := connect.NewRequest(&kelsonv1alpha1.DeployRequest{
+		Spec:           ref,
+		Environment:    env,
+		Profile:        profile,
+		Image:          opts.image,
+		TimeoutSeconds: int64(opts.timeout.Seconds()),
+		DryRun:         kelsonv1alpha1.DryRun_DRY_RUN_NONE,
+		IdempotencyKey: newIdempotencyKey(),
+	})
+	stream, err := client.Deploy(ctx, req)
+	if err != nil {
+		return serverError("deploy", addr, err)
+	}
+	defer func() { _ = stream.Close() }()
+
+	var failure *kelsonv1alpha1.Error
+	for stream.Receive() {
+		switch event := stream.Msg().GetEvent().(type) {
+		case *kelsonv1alpha1.DeployResponse_Committed_:
+			out.printf("%s revision %s (%s)\n", padPhase("Committed"), event.Committed.GetRevision(), event.Committed.GetAdapter())
+		case *kelsonv1alpha1.DeployResponse_Transition_:
+			out.printf("%s %s\n", padPhase(event.Transition.GetPhase()), transitionDetail(event.Transition))
+		case *kelsonv1alpha1.DeployResponse_Settled_:
+			out.printf("%s %s\n", padPhase("Settled"), transitionDetail(event.Settled.GetFinal()))
+			failure = event.Settled.GetError()
+		}
+	}
+	if err := stream.Err(); err != nil {
+		return serverError("deploy", addr, err)
+	}
+	if err := out.err; err != nil {
+		return err
+	}
+	if failure != nil {
+		return settledErr(failure)
+	}
+	return nil
+}
+
+// deployPreview runs the offline rung (dry_run=RENDER) to learn what a real
+// deploy would do before asking a human to confirm it: the Proposed event
+// carries the resource count, and the stream ends there having written
+// nothing (internal/api/deploy.go). A confirmation prompt that could only ask
+// "proceed?" with no number behind it would not be a confirmation.
+func deployPreview(ctx context.Context, client kelsonv1alpha1connect.DeployServiceClient, ref *kelsonv1alpha1.SpecRef, env string, profile *kelsonv1alpha1.ProfileRef, image, addr string) (*kelsonv1alpha1.DeployResponse_Proposed, error) {
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+	req := connect.NewRequest(&kelsonv1alpha1.DeployRequest{
+		Spec:        ref,
+		Environment: env,
+		Profile:     profile,
+		Image:       image,
+		DryRun:      kelsonv1alpha1.DryRun_DRY_RUN_RENDER,
+	})
+	stream, err := client.Deploy(ctx, req)
+	if err != nil {
+		return nil, serverError("deploy preview", addr, err)
+	}
+	defer func() { _ = stream.Close() }()
+
+	var proposed *kelsonv1alpha1.DeployResponse_Proposed
+	for stream.Receive() {
+		if p, ok := stream.Msg().GetEvent().(*kelsonv1alpha1.DeployResponse_Proposed_); ok {
+			proposed = p.Proposed
+		}
+	}
+	if err := stream.Err(); err != nil {
+		return nil, serverError("deploy preview", addr, err)
+	}
+	if proposed == nil {
+		return nil, fmt.Errorf("deploy preview: kelson-server at %s sent no proposal", addr)
+	}
+	return proposed, nil
+}
+
+// transitionDetail renders one Transition (or a Settled event's final one) the
+// way the pre-rebuild CLI rendered a statemachine.State: the answer, "stuck"
+// when the engine gave up waiting for progress, and the cause when there is
+// one.
+func transitionDetail(t *kelsonv1alpha1.DeployResponse_Transition) string {
+	if t == nil {
+		return ""
+	}
+	detail := t.GetAnswer()
+	if t.GetStuck() {
+		detail = "stuck"
+	}
+	if c := t.GetCause(); c != nil && c.GetMessage() != "" {
+		detail += ": " + c.GetMessage()
+	}
+	return detail
+}
+
+// padPhase keeps the phase column aligned so a deploy log reads as a
+// sequence, the same alignment the pre-rebuild CLI used.
+func padPhase(phase string) string { return fmt.Sprintf("%-11s", phase) }
+
+// --- the observation plane seam ---------------------------------------------
 //
-// It used to carry a delivery mode, a git target and a local history directory
-// as well, because it also chose an adapter. There is no adapter to choose
-// (ADR-0028 decision 9), so what remains is addressing: the rendered set says
-// which objects to look at, and this says where.
+// status and explain still read the cluster directly rather than through
+// kelson-server (cmd/kelson/status.go's package doc explains why: the
+// workload-health half needs no adapter and no delivery mode, so it never
+// needed this rebuild). What follows is unchanged from before R2 and is what
+// those two commands share.
+
+// observationTarget is what an observing command resolved from its spec
+// files: which component model, in which namespace, against which cluster.
 type observationTarget struct {
 	kubeconfig  string
 	project     string
@@ -116,18 +258,12 @@ type observationPlane struct {
 }
 
 // observationConnector builds the plane for a target. It is the seam the
-// command tests replace (the real one needs a cluster; none of the wiring under
-// test does).
+// command tests replace (the real one needs a cluster; none of the wiring
+// under test does).
 type observationConnector func(observationTarget) (*observationPlane, error)
 
 // connectObservation is the production connector: one cluster connection and a
 // workload probe over it.
-//
-// It used to assemble a delivery registry as well — the direct adapter over a
-// JSONL journal, the flux adapter over a git writer — and that is exactly what
-// ADR-0028 deleted. What survives is the half that reads the cluster and says
-// what it sees, which needs no adapter and no history and is the half the
-// commands below are actually built on.
 func connectObservation(t observationTarget) (*observationPlane, error) {
 	cluster, err := kube.Connect(t.kubeconfig)
 	if err != nil {
@@ -153,8 +289,9 @@ func connectPlane(connect observationConnector, t observationTarget) (*observati
 }
 
 // resolveObservationTarget is the shared front half of `status` and `explain`:
-// load the spec, render it, and derive what to observe. Keeping it in one place
-// is what stops the two commands drifting on what "the current render" means.
+// load the spec, render it, and derive what to observe. Keeping it in one
+// place is what stops the two commands drifting on what "the current render"
+// means.
 //
 // warn takes the profile's version-skew statements (issue #57); nil silences
 // them.

@@ -141,23 +141,23 @@ changed.
 > artifact's layout function — now lives in `internal/artifact`, the publisher
 > the preview pipeline and the spine share (ADR-0028 decision 2).
 >
-> **The controller deploys. The verbs do not, yet.** `kelson-controller` runs
-> all six steps above: applying a `Project` and an `Environment` publishes an
-> artifact, creates the Flux pair and drives `Environment.status` to `Healthy`.
-> Rollback works, as the annotation.
->
-> What is still R2 is the *façade*: `kelson deploy`, `kelson rollback`,
-> `kelson promote`, `DeployService.{Deploy(dry_run=none),Rollback,History,Promote}`
-> and `RenderService.Diff(from_revision)` still refuse with the structured
-> `delivery/not-implemented` code naming #224, because they are written against
-> the deleted stores and are reshaped over the CRs in
-> [#225](https://github.com/dafrie/kelson/issues/225). Until then the spine is
-> driven with `kubectl apply` and read with `kubectl get environment -o yaml`.
+> **The controller deploys, and the CLI verbs deploy through it.**
+> `kelson-controller` runs all six steps above: applying a `Project` and an
+> `Environment` publishes an artifact, creates the Flux pair and drives
+> `Environment.status` to `Healthy`. `DeployService.{Deploy,Status,Rollback,
+> History,Promote}` are reshaped over the CRs — SSA of the spec, an
+> `Environment.status` watch, the `kelson.dev/rollback-to` merge patch, the
+> promotion splice — and `kelson deploy`/`rollback`/`promote`/`history` are
+> ConnectRPC clients of that façade rather than refusing (#225). What has not
+> moved: `RenderService.Diff(from_revision)` still refuses with
+> `delivery/not-implemented` naming #224, because a revision diff needs the
+> rendered-history store ADR-0027 deleted and nothing has replaced it yet.
 > `kelson render`, `kelson diff`, `kelson build`, `kelson profile`,
 > `kelson install`/`uninstall`, the cluster secret backend and the MCP read and
-> dry-run tools are unaffected. `kelson status` and `kelson explain` answer from
-> the observation plane and state, in their output, that the delivery phase is
-> not reported.
+> dry-run tools are unaffected. `kelson status` and `kelson explain` still
+> answer from the observation plane alone and state, in their output, that the
+> delivery phase is not reported — `DeployService.Status` reads it from
+> `Environment.status` now, but neither CLI command calls that RPC yet.
 >
 > The chart's controller RBAC has landed ([#226](https://github.com/dafrie/kelson/issues/226)):
 > `create`/`patch`/`delete` on `source.toolkit.fluxcd.io` `ocirepositories` and

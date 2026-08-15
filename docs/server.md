@@ -26,15 +26,20 @@ always was. `kelson-server` becomes what it should have been: an API over cluste
 a file.
 
 > **Transition (R1/R2, [#224](https://github.com/dafrie/kelson/issues/224) /
-> [#225](https://github.com/dafrie/kelson/issues/225)).** The spec store is CR-backed as of the first
-> deletion slice: `SpecService` reads and writes `Project` and `Environment` custom resources with
-> server-side apply under the field manager `kelson-server`, in the server's own namespace
-> (`internal/controlstore`). The ConfigMap spec store and the ConfigMap history store are gone
-> ([ADR-0027](adr/0027-crd-native-control-plane.md) decision 7), and so are the delivery adapters
-> ([ADR-0028](adr/0028-delivery-spine.md) decision 9): `Deploy`'s applying rung, `Rollback`, `History`,
-> `Promote` and `Diff`'s `from_revision` answer `CodeUnimplemented` with a `delivery/not-implemented`
-> detail naming #224. `Deploy`'s two dry-run rungs, `Status`'s workload verdicts and everything the
-> renderer does are unaffected. The **agent identity and audit records are not** —
+> [#225](https://github.com/dafrie/kelson/issues/225)).** The spec store is CR-backed: `SpecService`
+> reads and writes `Project` and `Environment` custom resources with server-side apply under the field
+> manager `kelson-server`, in the server's own namespace (`internal/controlstore`). The ConfigMap spec
+> store and the ConfigMap history store are gone ([ADR-0027](adr/0027-crd-native-control-plane.md)
+> decision 7), and so are the delivery adapters ([ADR-0028](adr/0028-delivery-spine.md) decision 9).
+> `Deploy`, `Status`, `Rollback`, `History` and `Promote` are reshaped over the CRs — a spec write plus
+> an `Environment.status` watch, a `kelson.dev/rollback-to` merge patch, a bounded history mirror, an
+> image-pin splice — and the CLI (`kelson deploy`/`status` (workload half only, see below)
+> `/rollback`/`promote`/`history`) is a ConnectRPC client of this façade again rather than refusing.
+> What has not moved: `Diff`'s `from_revision` still answers `CodeUnimplemented` with a
+> `delivery/not-implemented` detail naming #224 — a rendered-level diff against a past revision needs
+> the rendered-history store ADR-0027 deleted, and nothing has replaced it yet. `Deploy`'s two dry-run
+> rungs, `Status`'s workload verdicts and everything the renderer does were unaffected throughout. The
+> **agent identity and audit records are not** —
 > they are control-plane records rather than delivery state, and they relocate unchanged to
 > `internal/controlstore` so the package name stops implying they are the server's memory of a
 > deployment. Whether they should also become custom resources is
@@ -118,9 +123,16 @@ This is the **interim** answer, taken with the project owner on 2026-08-13, and 
 smaller than the design issue [#84](https://github.com/dafrie/kelson/issues/84) owns. Three sentences
 first, then the detail:
 
-- **CLI users are already authenticated, by Kubernetes.** `kelson` talks to the cluster directly with
-  your kube context, so the cluster's RBAC is the access control and there is nothing to configure.
-  The server is not in that path at all.
+- **Most of the CLI is already authenticated, by Kubernetes.** `kelson render`, `diff`, `build`,
+  `profile`, `status`, `explain`, `secret`, `agent`, `audit`, `install` and `uninstall` talk to the
+  cluster directly with your kube context, so the cluster's RBAC is the access control and there is
+  nothing to configure. The server is not in their path at all.
+- **`deploy`, `rollback`, `promote` and `history` are the exception: they are `kelson-server` clients**
+  (R2, [#225](https://github.com/dafrie/kelson/issues/225)), the same as the web UI and `kelson-mcp`.
+  Point them at a reachable server with `--server` (or `$KELSON_SERVER`; default
+  `http://127.0.0.1:8420`) — a `kubectl port-forward` is the documented way to reach one installed in a
+  cluster — and, on a server started with `--password`, authenticate the same way `kelson-mcp` does:
+  `--password`/`$KELSON_PASSWORD` or `--token`/`$KELSON_AGENT_TOKEN`.
 - **Web and other API clients get one shared password.** Set `--password` (or `KELSON_PASSWORD`) and
   every `kelson.v1alpha1.*` route requires it.
 - **A username is a display name, not an identity.** The login form asks for one and the UI shows it,
