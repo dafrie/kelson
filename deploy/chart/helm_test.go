@@ -161,6 +161,113 @@ func TestTemplateServerFlags(t *testing.T) {
 	}
 }
 
+// registryConfigPath is where both binaries default --registry-config to and
+// where the chart mounts it for both. It is spelled here so a template that
+// moved one and not the other fails a test rather than an install.
+const registryConfigPath = "/etc/kelson/registry/config.json"
+
+// TestServerMountsTheArtifactPushSecret is ADR-0034 decision 3 at install time:
+// the server publishes preview artifacts itself now, so a chart-installed
+// server needs the same mounted docker config the controller has had. Without
+// it the push is anonymous — which is silent, and fails at the registry rather
+// than at the install.
+func TestServerMountsTheArtifactPushSecret(t *testing.T) {
+	docs := decodeDocs(t, helmTemplate(t, append(authValues, "--set", "server.artifactPushSecret=ghcr-push")...))
+	container := serverContainer(t, docs)
+
+	if !contains(stringsOf(container["args"]), "--registry-config="+registryConfigPath) {
+		t.Errorf("rendered args %v do not point --registry-config at the mount", stringsOf(container["args"]))
+	}
+	mount := namedEntry(container["volumeMounts"], "registry-config")
+	if mount == nil {
+		t.Fatal("no registry-config volumeMount: the flag names a file nothing puts there")
+	}
+	if mount["mountPath"] != filepath.Dir(registryConfigPath) {
+		t.Errorf("registry-config is mounted at %v, not at the directory %s lives in", mount["mountPath"], registryConfigPath)
+	}
+	if mount["readOnly"] != true {
+		t.Error("the credential is mounted writable")
+	}
+
+	volume := namedEntry(serverPodSpec(t, docs)["volumes"], "registry-config")
+	if volume == nil {
+		t.Fatal("the volumeMount names a volume the pod does not declare")
+	}
+	secret, _ := volume["secret"].(map[string]any)
+	if secret["secretName"] != "ghcr-push" {
+		t.Errorf("the volume references %v, not the named Secret", secret["secretName"])
+	}
+	// The projection is the whole trick: a dockerconfigjson Secret's data key is
+	// `.dockerconfigjson`, and what reads it wants a plain `config.json`.
+	items := anySlice(secret["items"])
+	if len(items) != 1 {
+		t.Fatalf("expected one projected key, got %d — an unprojected mount puts the file at the wrong name", len(items))
+	}
+	item, _ := items[0].(map[string]any)
+	if item["key"] != ".dockerconfigjson" || item["path"] != filepath.Base(registryConfigPath) {
+		t.Errorf("the Secret key is projected as %v/%v, not onto %s", item["key"], item["path"], registryConfigPath)
+	}
+}
+
+// TestServerArtifactPushSecretIsOptional keeps the default install unchanged: a
+// registry with no auth (`kelson install registry`'s) takes an anonymous push,
+// and a chart that mounted a Secret nobody named would fail to schedule.
+func TestServerArtifactPushSecretIsOptional(t *testing.T) {
+	docs := decodeDocs(t, helmTemplate(t, authValues...))
+	container := serverContainer(t, docs)
+
+	for _, arg := range stringsOf(container["args"]) {
+		if strings.HasPrefix(arg, "--registry-config") {
+			t.Errorf("--registry-config was rendered with no Secret to mount: %q", arg)
+		}
+	}
+	if container["volumeMounts"] != nil {
+		t.Errorf("the server container mounts %v with no artifactPushSecret set", container["volumeMounts"])
+	}
+	if volumes := serverPodSpec(t, docs)["volumes"]; volumes != nil {
+		t.Errorf("the server pod declares volumes with no artifactPushSecret set: %v", volumes)
+	}
+}
+
+// TestServerAndControllerMountTheCredentialAlike is the claim values.yaml makes
+// out loud: the two deployments read the same flag from the same path out of
+// the same Secret shape, so an operator who has mounted one has not learned a
+// second convention. They are two values rather than one only because the two
+// Deployments are enabled independently.
+func TestServerAndControllerMountTheCredentialAlike(t *testing.T) {
+	docs := decodeDocs(t, helmTemplate(t, append(authValues,
+		"--set", "controller.enabled=true",
+		"--set", "controller.pushSecret=ghcr-push",
+		"--set", "server.artifactPushSecret=ghcr-push",
+	)...))
+
+	var mounts, volumes []any
+	for _, doc := range docs {
+		if doc["kind"] != "Deployment" {
+			continue
+		}
+		spec, _ := doc["spec"].(map[string]any)
+		template, _ := spec["template"].(map[string]any)
+		podSpec, _ := template["spec"].(map[string]any)
+		containers := anySlice(podSpec["containers"])
+		c, _ := containers[0].(map[string]any)
+		if !contains(stringsOf(c["args"]), "--registry-config="+registryConfigPath) {
+			t.Errorf("%s does not read the credential from %s", nameOf(doc), registryConfigPath)
+		}
+		mounts = append(mounts, namedEntry(c["volumeMounts"], "registry-config"))
+		volumes = append(volumes, namedEntry(podSpec["volumes"], "registry-config"))
+	}
+	if len(mounts) != 2 {
+		t.Fatalf("expected the server's and the controller's Deployments, got %d", len(mounts))
+	}
+	if !reflect.DeepEqual(mounts[0], mounts[1]) {
+		t.Errorf("the two mounts differ:\n%s\n%s", mustYAML(t, mounts[0]), mustYAML(t, mounts[1]))
+	}
+	if !reflect.DeepEqual(volumes[0], volumes[1]) {
+		t.Errorf("the two volumes differ:\n%s\n%s", mustYAML(t, volumes[0]), mustYAML(t, volumes[1]))
+	}
+}
+
 // TestAuthGateRefusesWithoutPassword is the posture check. Serving 0.0.0.0 with
 // no authentication has to be a decision somebody made, not a default somebody
 // inherited (cmd/kelson-server's checkBind, ADR-0013 §3).
@@ -435,6 +542,19 @@ func decodeDocs(t *testing.T, out string) []map[string]any {
 
 func serverContainer(t *testing.T, docs []map[string]any) map[string]any {
 	t.Helper()
+	containers := anySlice(serverPodSpec(t, docs)["containers"])
+	if len(containers) != 1 {
+		t.Fatalf("expected one container in the Deployment, got %d", len(containers))
+	}
+	c, _ := containers[0].(map[string]any)
+	return c
+}
+
+// serverPodSpec is the pod spec of the first Deployment rendered, which is the
+// server's: the controller's is off unless a test turns it on, and the tests
+// that do name their own document.
+func serverPodSpec(t *testing.T, docs []map[string]any) map[string]any {
+	t.Helper()
 	for _, doc := range docs {
 		if doc["kind"] != "Deployment" {
 			continue
@@ -442,14 +562,22 @@ func serverContainer(t *testing.T, docs []map[string]any) map[string]any {
 		spec, _ := doc["spec"].(map[string]any)
 		template, _ := spec["template"].(map[string]any)
 		podSpec, _ := template["spec"].(map[string]any)
-		containers := anySlice(podSpec["containers"])
-		if len(containers) != 1 {
-			t.Fatalf("expected one container in the Deployment, got %d", len(containers))
-		}
-		c, _ := containers[0].(map[string]any)
-		return c
+		return podSpec
 	}
 	t.Fatal("no Deployment was rendered")
+	return nil
+}
+
+// namedEntry finds the entry of a rendered list whose `name` is the one asked
+// for — a volume, a volumeMount — so a test can assert about it by name rather
+// than by position.
+func namedEntry(list any, name string) map[string]any {
+	for _, item := range anySlice(list) {
+		entry, _ := item.(map[string]any)
+		if entry["name"] == name {
+			return entry
+		}
+	}
 	return nil
 }
 

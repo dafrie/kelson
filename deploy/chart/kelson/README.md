@@ -228,6 +228,7 @@ not delete them.
 | `server.keep` | `20` | `--keep`: deployment revisions retained per environment. |
 | `server.registry` | `""` | `--registry`: destination registry for builds. |
 | `server.pushSecret` | `""` | `--push-secret`: existing `dockerconfigjson` Secret. Not created here. |
+| `server.artifactPushSecret` | `""` | `--registry-config`, mounted from an existing `dockerconfigjson` Secret: the credential the server publishes *preview artifacts* with (ADR-0034 decision 3). A different credential from `server.pushSecret`, read by a different process — that one is a Secret name handed to a build Job, this one is a file this process reads because it pushes the artifact itself. Not created here; empty is an anonymous push. |
 | `server.buildNamespace` | `""` | `--build-namespace`: where build Jobs run. |
 | `server.insecureRegistries` | `[]` | `--insecure-registries`: registry hosts served over plain HTTP, e.g. `{localhost:5000}`. Exactly these, never a request's. |
 | `server.gitTokenSecret.name` / `.key` | `""` / `token` | Secret supplying `$KELSON_GIT_TOKEN` for Git-backed environments. |
