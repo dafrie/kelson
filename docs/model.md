@@ -38,6 +38,7 @@ milestone that will implement the field.
 | `Project.spec.components[].tools` (`kind: agent`) | M7 · Agent surface & MCP ([#75](https://github.com/dafrie/kelson/issues/75)) |
 | `Project.spec.defaults.policy.deployers`, `Environment.spec.policy.deployers` | tenancy ([#231](https://github.com/dafrie/kelson/issues/231)) |
 | `Project.spec.components[].release` | the Flux-native `dependsOn` split ([#227](https://github.com/dafrie/kelson/issues/227), [ADR-0028](adr/0028-delivery-spine.md) decision 8) |
+| `Environment.spec.autoDeploy`, `Environment.spec.components[].autoDeploy` | the trigger paths that act on a push ([ADR-0036](adr/0036-autodeploy.md) decision 3, [#248](https://github.com/dafrie/kelson/issues/248)) |
 
 The rest of `policy:` is enforced as of [ADR-0025](adr/0025-agent-policy.md) — `deployers` stays gated
 because it is about human subjects, which kelson does not model yet
@@ -406,8 +407,82 @@ what it says — nothing is bound — rather than "this project spelled its sour
 > repositories is refused with `build/several-sources` and pointed at the path that does produce
 > per-component images: `spec.build.by: ci` and `kelson ci report-build`
 > ([ADR-0034](adr/0034-forge-driven-delivery.md) §3). Per-component image production in kelson's own
-> build plane, and `autoDeploy`'s new subject — a push to repository X re-renders what is bound to sources
-> matching X — are that issue.
+> build plane is that issue; `autoDeploy`'s subject — a push to repository X re-renders what is bound to
+> sources matching X — is [below](#auto-deploy-an-environment-follows-its-sources).
+
+## Auto-deploy: an environment follows its sources
+
+**Every kelson deploy is deliberate until an environment says otherwise.** `autoDeploy` is that
+otherwise ([ADR-0036](adr/0036-autodeploy.md)): with it, a push to a repository one of the
+environment's components is bound to re-renders and republishes the environment, instead of waiting
+for a person or a pipeline verb. Absent means `false`, so an environment that says nothing about
+tracking behaves exactly as every environment does today.
+
+The flag lives at two scopes and the innermost wins — the same instinct as P1–P3:
+
+```yaml
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata: { name: staging }
+spec:
+  project: checkout
+  autoDeploy: true                 # this environment follows its components' sources
+  components:
+    - name: worker
+      autoDeploy: false            # …except this one, which stays manual
+```
+
+A component's effective setting is **its own if it set one, else the environment's, else `false`**.
+Nothing between the levels is an error and both directions are legal: `false` under a tracking
+environment keeps one risky component manual, and `true` under an environment that sets nothing is how
+single-component tracking is written. It is a workload field — `postgres`, `valkey` and `kind: helm`
+components are bound to no source, so there is no push that could move one, and `autoDeploy` on one is
+`schema/mutually-exclusive` rather than a field that resolves into nothing.
+
+### What a push moves
+
+**The binding does the routing.** On a push, the *stale set* is the components for which all of these
+hold ([ADR-0036](adr/0036-autodeploy.md) decision 2):
+
+| The component… | …because |
+|---|---|
+| is bound to the repository that moved | its `source:` says which repository it builds from ([above](#sources-declared-once-bound-per-component)); a second per-component ref field would be one more thing to disagree with it |
+| binds a source whose `ref` is the ref that moved | compared as short names — `main`, `v1.2.3` |
+| binds a source whose `ref` is not a commit | a SHA-pinned source names one revision forever, so there is nothing about it to track |
+| tracks | the effective flag above |
+| is not pinned | an `image:` on the environment override or on the component beats `--image` (rule P3), so a build cannot move it — production moves when a person moves its pin ([below](#promotion)) |
+
+An environment whose stale set is empty does nothing, silently: a push to a repository it happens to
+build from is not news.
+
+`internal/model` answers exactly that and nothing beyond it. `Resolved.AutoDeploy` carries the effective
+setting per component — so a UI shows what a component *does*, rather than making a reader merge two
+levels in their head — and `Resolved.StaleComponents(repo, ref)` is the set, both pure functions of the
+resolved spec. The ref arrives already reduced to its short name: stripping `refs/heads/` belongs to
+whichever surface read the delivery, because this package parses no payloads
+([ADR-0001](adr/0001-hybrid-state-model.md)).
+
+### How a push gets in, and what happens when it does not
+
+Two paths, one pipeline ([ADR-0036](adr/0036-autodeploy.md) decision 3): a forge **webhook** `push`, and
+**`kelson ci report-build`** with a `--ref` and no `--pr` for projects whose images are built by CI
+(`build.by: ci`). Components a report names that are *not* stale — not bound, not tracking, pinned —
+are named back in the response rather than quietly deployed, and a kelson-built project with several
+sources still refuses with `build/several-sources` ([#252](https://github.com/dafrie/kelson/issues/252))
+on the environment's conditions rather than into a webhook `202`.
+
+**There is no poller, and the docs will not imply one.** An instance that can neither receive webhooks
+nor report builds keeps manual deploys, which is exactly today's behaviour; webhook loss degrades
+tracking to manual without an error, and the delivery-state surface (last delivery, last report) is what
+makes that visible.
+
+> **Not implemented yet ([#248](https://github.com/dafrie/kelson/issues/248)).** Both fields are in the
+> model — validated, resolved, and covered by tests — and nothing acts on them, so writing either is a
+> `schema/not-implemented` refusal
+> ([the table above](#what-this-document-describes-and-what-kelson-implements-today)) and the webhook
+> and `ReportBuild` still answer that `autoDeploy` is not implemented. The two gate rows go when the
+> trigger paths land, and precedence and the stale set are already under test — the same way M9 and
+> ADR-0025 landed.
 
 ## Promotion
 
@@ -956,8 +1031,9 @@ artifact-registry credential.
 > method itself ([#248](https://github.com/dafrie/kelson/issues/248)). A report for a project whose
 > `build.by` is `kelson` (the default for a project with `source:`) is answered `accepted: false`
 > naming the field, because those images come from kelson's own build plane; a report with no
-> `--pr` is refused, because the tracking environments it would feed (`autoDeploy`, decision 4) are
-> not in the model yet.
+> `--pr` is refused, because nothing acts on the tracking environments it would feed yet — `autoDeploy`
+> is in the model as of [ADR-0036](adr/0036-autodeploy.md) and still gated
+> ([above](#auto-deploy-an-environment-follows-its-sources)).
 
 **Or CI publishes, with `kelson preview publish`, run in the application repository's CI on pull
 request events** — that is where the pull request's checkout and the image built from it already are
@@ -1307,6 +1383,7 @@ metadata:
 spec:
   project: checkout                  # required: the Project this environment deploys
   namespace: checkout-prod           # target namespace
+  autoDeploy: true                   # follow the components' sources; default false — still rejected (#248)
   routing:
     domainSuffix: acme.run
     gatewayClass: envoy              # Gateway API only (#140); a spec with `ingressClass` is rejected
@@ -1339,6 +1416,8 @@ spec:
         limits:   { memory: 1Gi }
       env:
         LOG_LEVEL: warning
+    - name: worker
+      autoDeploy: false              # …except this one; workloads only — still rejected (#248)
     - name: db                       # P5: per-environment topology override
       preset: ha-small
 ```
