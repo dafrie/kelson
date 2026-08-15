@@ -80,7 +80,27 @@ a deploy or a log tail is a link that keeps working.
 | `/projects/:project/:env/promote` | The environment in the path is the **target**: pick a source, read the plan and the diff it produces, then write the pins. It never deploys | `GetSpec`, `Promote` at `RENDER` then `NONE` |
 | `/projects/:project/:env/rollback` | Revision picker, irreversibility preview, then the apply. `?to=<revision>` preselects and previews a target, never applies it | `History`, `Rollback` at `RENDER` then `NONE` |
 | `/cluster` | Server build, the node inventory (count, readiness, CPU/memory usage where metrics.k8s.io answers), the platform-component checklist with its install flow, and the detected ClusterProfile | `/healthz`, `GetProfile`, `GetNodes`, `ListComponents`, `PlanInstall`, `Install` |
+| `/connections` | The forges this instance can pull from: provider, host, account, owner, health and the reported repository count per connection, a live probe and a delete that names the projects it breaks, plus the token-connection form | `ListConnections`, `CreateConnection`, `TestConnection`, `DeleteConnection` |
 | `/setup` | The onboarding screen: the same component checklist framed for a first run — what is present, what is missing, an install flow per missing row, and where to go next | `ListComponents`, `PlanInstall`, `Install` |
+
+The connections screen ([ADR-0033](../docs/adr/0033-git-connections.md),
+[#248](https://github.com/dafrie/kelson/issues/248)) holds the one entry point
+in this UI that is **not** an RPC. "Connect GitHub" runs GitHub's app-manifest
+flow, whose credential is minted by GitHub and handed to the *server* — which is
+why `CreateConnection` has no app variant and why the button is a plain anchor
+to `/forge/github/manifest/start` rather than a call. That endpoint is
+server-side work of a later slice, and the copy beside the button says so; note
+that the dev proxy in `vite.config.ts` forwards `/kelson.v1alpha1.`, `/auth/`
+and `/healthz` only, so a `/forge/` entry has to land with the handler for the
+flow to work under `npm run dev`.
+
+Ownership is displayed and enforced by nothing: ADR-0033 decision 6 fixes the
+semantics now and gives them a subject when tenancy does (#231), so the screen
+shows the recorded owner and states in words that every connection is visible
+to — and deletable by — everyone who can reach this server. Health is read as
+three states rather than two, because `ready` and `reachable` are both false
+before the first probe as well as after a failed one and `message` is all that
+separates them.
 
 The history screen ([#67](https://github.com/dafrie/kelson/issues/67)) is bounded
 by what `DeployService.History` actually returns, which is five strings per

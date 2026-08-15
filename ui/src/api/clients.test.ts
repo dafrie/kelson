@@ -14,6 +14,11 @@ import {
 import { LogService } from "../gen/kelson/v1alpha1/logs_pb";
 import { SecretService } from "../gen/kelson/v1alpha1/secret_pb";
 import {
+  GitAuthKind,
+  GitConnectionService,
+  GitOwnerKind,
+} from "../gen/kelson/v1alpha1/gitconnection_pb";
+import {
   EventService,
   WatchResponseSchema,
 } from "../gen/kelson/v1alpha1/events_pb";
@@ -81,6 +86,33 @@ const transport = createRouterTransport((router) => {
           ageSeconds: 3600n,
         },
       ],
+    }),
+  });
+
+  router.service(GitConnectionService, {
+    listConnections: () => ({
+      connections: [
+        {
+          name: "acme-github",
+          provider: "github",
+          host: "https://github.com",
+          owner: { kind: GitOwnerKind.INSTANCE },
+          authKind: GitAuthKind.GITHUB_APP,
+          appId: 12345n,
+          installationId: 678910n,
+          secretRef: "acme-github-app",
+          account: "acme",
+          repositories: 42,
+          ready: true,
+          reachable: true,
+        },
+      ],
+    }),
+    testConnection: () => ({
+      reachable: true,
+      account: "acme",
+      repositories: 42,
+      message: "GitHub answered",
     }),
   });
 
@@ -160,6 +192,28 @@ describe("generated clients", () => {
     // int64 arrives as a bigint, which is what the panel formats. A number here
     // would mean the generated code changed shape underneath it.
     expect(res.secrets[0]?.ageSeconds).toBe(3600n);
+  });
+
+  it("round-trips GitConnectionService.ListConnections, references only", async () => {
+    const res = await clients.gitConnection.listConnections({});
+    const connection = res.connections[0];
+
+    expect(connection?.name).toBe("acme-github");
+    expect(connection?.secretRef).toBe("acme-github-app");
+    expect(connection?.authKind).toBe(GitAuthKind.GITHUB_APP);
+    // The app identifiers are int64 and arrive as bigints; the count is int32
+    // and arrives as a number. The screen formats both, so a shape change here
+    // would reach it as a rendering bug rather than a type error.
+    expect(connection?.appId).toBe(12345n);
+    expect(connection?.repositories).toBe(42);
+  });
+
+  it("round-trips GitConnectionService.TestConnection", async () => {
+    const res = await clients.gitConnection.testConnection({
+      name: "acme-github",
+    });
+    expect(res.reachable).toBe(true);
+    expect(res.account).toBe("acme");
   });
 
   it("consumes EventService.Watch as a server stream, both oneof arms", async () => {

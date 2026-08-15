@@ -1365,3 +1365,97 @@
   padding-left: 18px;
   font-size: 0.86rem;
 }
+
+/* --- Git connections (ADR-0033) ------------------------------------------- */
+
+/* The manifest flow's explanation, directly under the button that starts it:
+   the copy and the control have to be read together, because the flow leaves
+   for GitHub and finishes somewhere this page cannot see. */
+.k-connect {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.k-connect__body {
+  margin: 0;
+  max-width: 78ch;
+  color: var(--kelson-text-2);
+}
+
+.k-connections {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 24px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.k-connection {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.k-connection__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.k-connection__name {
+  font-size: 17px;
+  font-weight: 500;
+  margin-right: auto;
+  overflow-wrap: anywhere;
+}
+
+/* The status message, verbatim. It is the field that separates "broken" from
+   "not looked at yet", so it is never truncated and never paraphrased. */
+.k-connection__health {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.k-connection__owner {
+  margin: 0;
+  color: var(--kelson-muted-deep);
+}
+
+/* One probe's answer, attached to the connection it was about. */
+.k-connection__probe {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  background: var(--kelson-panel-dim);
+  border: 1px solid var(--kelson-border);
+  border-radius: 5px;
+}
+
+.k-connection__confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  background: var(--kelson-failed-fill);
+  border: 1px solid var(--kelson-failed-border);
+  border-radius: 5px;
+  color: var(--kelson-text-2);
+}
+
+/* The projects a delete just broke. Chips because each is a name somebody has
+   to act on, not prose to skim. */
+.k-connections__affected {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.k-connections__form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
