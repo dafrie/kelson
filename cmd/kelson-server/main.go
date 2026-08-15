@@ -456,6 +456,18 @@ func connectServer(cfg config, attribution *slog.Logger) (*api.Server, *controls
 	if err != nil {
 		return nil, nil, err
 	}
+	// The forge connections (ADR-0033, issue #248). Same client and same
+	// namespace as the two stores above: a connection is a custom resource in
+	// kelson's own namespace, and the Secret it references is beside it — which
+	// is why this store, alone in the package, reads a Secret the *user* wrote
+	// rather than one kelson keeps state in.
+	connections, err := controlstore.NewGitConnectionStore(controlstore.GitConnectionStoreOptions{
+		Client:    crClient,
+		Namespace: cfg.namespace,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
 	logs, err := observation.NewLogQuery(observation.LogQueryConfig{Client: cluster.Typed})
 	if err != nil {
 		return nil, nil, err
@@ -497,6 +509,7 @@ func connectServer(cfg config, attribution *slog.Logger) (*api.Server, *controls
 		Environments: environments,
 		Agents:       agents,
 		Audit:        audit,
+		Connections:  connections,
 		Logger:       attribution,
 		Profile: api.CaptureFunc(func(context.Context) (clusterprofile.ClusterProfile, error) {
 			return detect.FromCluster(cfg.kubeconfig)
