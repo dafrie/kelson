@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// autoDeploy (ADR-0036 decision 1).
+// autoDeploy (ADR-0036 decisions 1 and 2).
 //
 // Every document here sets a field issue #141 still gates, so the cases load
 // through loadPairUnvalidated and call the unexported resolve — the same route
@@ -230,6 +230,184 @@ func TestUntrackedSpecsCarryNeitherKey(t *testing.T) {
 	for _, forbidden := range []string{"autoDeploy", "imagePins"} {
 		if strings.Contains(string(blob), forbidden) {
 			t.Errorf("a spec that tracks nothing must marshal no %q: %s", forbidden, blob)
+		}
+	}
+}
+
+// TestStaleSetFollowsTheBinding is decision 2's routing half: a push moves what
+// is bound to the repository that moved, and nothing else. There is no
+// per-component ref field that could disagree with the binding (ADR-0035).
+func TestStaleSetFollowsTheBinding(t *testing.T) {
+	p, e := loadPairUnvalidated(t, trackingProject, trackingEnv("  autoDeploy: true\n"))
+	r := resolved(t, p, e)
+
+	if got := r.StaleComponents("https://github.com/acme/checkout", "main"); !slices.Equal(got, []string{"web", "worker"}) {
+		t.Errorf("a push to the app repository = %v, want [web worker]", got)
+	}
+	if got := r.StaleComponents("https://github.com/acme/build-tools", "v2"); !slices.Equal(got, []string{"builder"}) {
+		t.Errorf("a push to the tools repository = %v, want [builder]", got)
+	}
+	if got := r.StaleComponents("https://github.com/acme/unrelated", "main"); got != nil {
+		t.Errorf("a push to a repository nothing binds to = %v, want nothing", got)
+	}
+	if got := r.StaleComponents("https://github.com/acme/checkout", "release-2"); got != nil {
+		t.Errorf("a push to a ref no source reads = %v, want nothing", got)
+	}
+}
+
+// TestStaleSetTracksOnlyWhatOptedIn: the binding says which components a push
+// *could* move; the flag says which of them it does.
+func TestStaleSetTracksOnlyWhatOptedIn(t *testing.T) {
+	p, e := loadPairUnvalidated(t, trackingProject,
+		trackingEnv("  components:\n    - {name: worker, autoDeploy: true}\n"))
+	r := resolved(t, p, e)
+
+	if got := r.StaleComponents("https://github.com/acme/checkout", "main"); !slices.Equal(got, []string{"worker"}) {
+		t.Errorf("stale set = %v, want just the component that opted in", got)
+	}
+
+	p, e = loadPairUnvalidated(t, trackingProject, trackingEnv(""))
+	if got := resolved(t, p, e).StaleComponents("https://github.com/acme/checkout", "main"); got != nil {
+		t.Errorf("an environment that tracks nothing = %v, want nothing — silently", got)
+	}
+}
+
+// TestStaleSetSkipsPinnedComponents is the P3 half of decision 2: a pinned
+// component ignores everything, which is the promotion posture ADR-0016
+// established. Both scopes that beat `--image` hold a component still, and
+// neither switches the flag off — the component tracks and cannot move.
+func TestStaleSetSkipsPinnedComponents(t *testing.T) {
+	const pinnedProject = `
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata: {name: checkout}
+spec:
+  sources:
+    - {name: app, git: https://github.com/acme/checkout, ref: main}
+  components:
+    - {name: web, port: 8080, source: app}
+    - {name: worker, source: app, image: ghcr.io/acme/worker:1.4.0}
+`
+	p, e := loadPairUnvalidated(t, pinnedProject, trackingEnv(
+		"  autoDeploy: true\n  components:\n    - {name: web, image: 'ghcr.io/acme/checkout@sha256:9f6ad2c1'}\n"))
+	r := resolved(t, p, e)
+
+	if !r.AutoDeploys("web") || !r.AutoDeploys("worker") {
+		t.Fatalf("both components track: %v", r.AutoDeploy)
+	}
+	if got := r.StaleComponents("https://github.com/acme/checkout", "main"); got != nil {
+		t.Errorf("stale set = %v, want nothing: every component is pinned", got)
+	}
+}
+
+// TestProjectImageIsNotAPin: `--image` stands in for the Project's image (rule
+// P3), so a project-wide image is the slot a build fills rather than a pin, and
+// a push moves what it names.
+func TestProjectImageIsNotAPin(t *testing.T) {
+	const projectImage = `
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata: {name: checkout}
+spec:
+  image: ghcr.io/acme/checkout:1
+  sources:
+    - {name: app, git: https://github.com/acme/checkout, ref: main}
+  components:
+    - {name: web, port: 8080, source: app}
+`
+	p, e := loadPairUnvalidated(t, projectImage, trackingEnv("  autoDeploy: true\n"))
+	r := resolved(t, p, e)
+
+	if got := r.StaleComponents("https://github.com/acme/checkout", "main"); !slices.Equal(got, []string{"web"}) {
+		t.Errorf("stale set = %v, want [web]", got)
+	}
+}
+
+// TestStaleSetSkipsCommitPinnedSources: a source at a commit names one revision
+// forever, so no push moves it — not even one whose ref is spelled as that
+// commit.
+func TestStaleSetSkipsCommitPinnedSources(t *testing.T) {
+	const sha = "9f6ad2c1b3e4f5a67890123456789abcdef01234"
+	const pinnedSource = `
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata: {name: checkout}
+spec:
+  sources:
+    - {name: app, git: https://github.com/acme/checkout, ref: ` + sha + `}
+  components:
+    - {name: web, port: 8080, source: app}
+`
+	p, e := loadPairUnvalidated(t, pinnedSource, trackingEnv("  autoDeploy: true\n"))
+	r := resolved(t, p, e)
+
+	if got := r.StaleComponents("https://github.com/acme/checkout", sha); got != nil {
+		t.Errorf("stale set = %v, want nothing: a SHA-pinned source tracks nothing", got)
+	}
+	if got := r.StaleComponents("https://github.com/acme/checkout", "main"); got != nil {
+		t.Errorf("stale set = %v, want nothing", got)
+	}
+}
+
+// TestStaleSetNeedsBothHalvesOfThePush: an empty repository or an empty ref
+// matches nothing rather than everything, because "I do not know what moved" is
+// not a licence to redeploy.
+func TestStaleSetNeedsBothHalvesOfThePush(t *testing.T) {
+	p, e := loadPairUnvalidated(t, trackingProject, trackingEnv("  autoDeploy: true\n"))
+	r := resolved(t, p, e)
+
+	for _, tc := range []struct{ repo, ref string }{
+		{"", "main"},
+		{"https://github.com/acme/checkout", ""},
+		{"", ""},
+	} {
+		if got := r.StaleComponents(tc.repo, tc.ref); got != nil {
+			t.Errorf("StaleComponents(%q, %q) = %v, want nothing", tc.repo, tc.ref, got)
+		}
+	}
+}
+
+// TestStaleSetTakesShortRefs pins the contract at the seam: the caller strips
+// the ref namespace, and this side compares short names exactly.
+func TestStaleSetTakesShortRefs(t *testing.T) {
+	p, e := loadPairUnvalidated(t, trackingProject, trackingEnv("  autoDeploy: true\n"))
+	r := resolved(t, p, e)
+
+	if got := r.StaleComponents("https://github.com/acme/checkout", "refs/heads/main"); got != nil {
+		t.Errorf("a ref the caller did not normalize = %v; the contract is the short name", got)
+	}
+	if got := r.StaleComponents("https://github.com/acme/checkout", "Main"); got != nil {
+		t.Errorf("git refs are case-sensitive, got %v", got)
+	}
+}
+
+// TestSameRepositoryAcrossSpellings: a spec and a forge write the same
+// repository differently, and neither is wrong.
+func TestSameRepositoryAcrossSpellings(t *testing.T) {
+	const spec = "https://github.com/acme/checkout"
+	for _, same := range []string{
+		"https://github.com/acme/checkout",
+		"https://github.com/acme/checkout.git",
+		"https://github.com/acme/checkout/",
+		"https://GitHub.com/Acme/Checkout",
+		"github.com/acme/checkout",
+		"git@github.com:acme/checkout.git",
+		"http://github.com/acme/checkout",
+	} {
+		if !SameRepository(spec, same) {
+			t.Errorf("SameRepository(%q, %q) = false, want true", spec, same)
+		}
+	}
+	for _, other := range []string{
+		"https://gitlab.com/acme/checkout", // same path, different forge: a real mirror collision
+		"https://github.com/acme/checkout-ui",
+		"https://github.com/other/checkout",
+		"https://github.com",
+		"",
+		"::not a url",
+	} {
+		if SameRepository(spec, other) {
+			t.Errorf("SameRepository(%q, %q) = true, want false", spec, other)
 		}
 	}
 }
