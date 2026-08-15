@@ -9,6 +9,7 @@ import { SpecService } from "../gen/kelson/v1alpha1/spec_pb";
 import type { PutSpecRequest } from "../gen/kelson/v1alpha1/spec_pb";
 import { BuildResponseSchema, BuildService } from "../gen/kelson/v1alpha1/build_pb";
 import type { BuildRequest } from "../gen/kelson/v1alpha1/build_pb";
+import { GitConnectionService } from "../gen/kelson/v1alpha1/gitconnection_pb";
 import { renderAt } from "../test/render";
 import { NewProjectPage } from "./NewProjectPage";
 
@@ -706,4 +707,286 @@ describe("NewProjectPage · from a Git repository", () => {
     expect(written).not.toContain("source:");
     expect(written).not.toContain("build:");
   });
+
+  /**
+   * The repository picker (ADR-0033 decision 3, #248).
+   *
+   * Every test above renders against a transport with no GitConnectionService
+   * at all, which is the state this screen has always been in and is asserted
+   * below to still be: the listing fails, nothing is shown about it, and the
+   * typed path is the whole form. That is what makes the picker an addition
+   * rather than a replacement.
+   */
+  describe("the repository picker", () => {
+    it("fills the source fields from a connection, a repository and a branch", async () => {
+      const requests: PutSpecRequest[] = [];
+      const branchRequests: string[] = [];
+      const transport = createRouterTransport((router) => {
+        sourceSpecService(router, requests);
+        router.service(GitConnectionService, {
+          listConnections: () => ({ connections: [ACME_GITHUB] }),
+          listConnectionRepositories: () => ({ repositories: REPOSITORIES }),
+          listConnectionBranches: (req) => {
+            branchRequests.push(req.repository);
+            return { branches: ["main", "release/1.4"] };
+          },
+        });
+      });
+      renderNew(transport);
+
+      fireEvent.click(screen.getByLabelText("From Git repository"));
+      type("Project name", "hello");
+      type("Port", "8080");
+
+      // The private badge is on the row it belongs to, and only there.
+      const row = await screen.findByRole("button", { name: /acme\/checkout/ });
+      expect(row.textContent).toContain("private");
+      expect(
+        screen.getByRole("button", { name: /acme\/site/ }).textContent,
+      ).not.toContain("private");
+
+      fireEvent.click(row);
+
+      // Picking fills the same inputs the typed path uses — that is the whole
+      // design, and it is asserted on the inputs rather than on the document
+      // so that "the picker wrote somewhere else" cannot pass.
+      await waitFor(() => {
+        expect(
+          (screen.getByLabelText("Git repository") as HTMLInputElement).value,
+        ).toBe("https://github.com/acme/checkout");
+      });
+      expect((screen.getByLabelText("Ref") as HTMLInputElement).value).toBe(
+        "main",
+      );
+      expect(branchRequests).toEqual(["acme/checkout"]);
+
+      // The branch defaults to the repository's default and can be changed to
+      // another the forge reported.
+      const branch = await screen.findByLabelText("Branch");
+      expect((branch as HTMLSelectElement).value).toBe("main");
+      fireEvent.change(branch, { target: { value: "release/1.4" } });
+      expect((screen.getByLabelText("Ref") as HTMLInputElement).value).toBe(
+        "release/1.4",
+      );
+
+      submit();
+      expect(await screen.findByText("What will be stored")).toBeTruthy();
+
+      // And the document pins the connection, so resolution is the name the
+      // user picked rather than a host match re-derived later (ADR-0033 d4).
+      const written = decoder.decode(requests[0]?.documents?.project);
+      expect(written).toContain("    git: https://github.com/acme/checkout\n");
+      expect(written).toContain("    ref: release/1.4\n");
+      expect(written).toContain("    connection: acme-github\n");
+    });
+
+    it("filters a long list client-side without asking the forge again", async () => {
+      let listings = 0;
+      const transport = createRouterTransport((router) => {
+        sourceSpecService(router, []);
+        router.service(GitConnectionService, {
+          listConnections: () => ({ connections: [ACME_GITHUB] }),
+          listConnectionRepositories: () => {
+            listings++;
+            return { repositories: manyRepositories(12) };
+          },
+          listConnectionBranches: () => ({ branches: ["main"] }),
+        });
+      });
+      renderNew(transport);
+
+      fireEvent.click(screen.getByLabelText("From Git repository"));
+      await screen.findByRole("button", { name: /acme\/repo-0/ });
+
+      fireEvent.change(screen.getByLabelText("Filter"), {
+        target: { value: "repo-11" },
+      });
+
+      await waitFor(() => {
+        expect(screen.queryByRole("button", { name: /acme\/repo-0/ })).toBeNull();
+      });
+      expect(screen.getByRole("button", { name: /acme\/repo-11/ })).toBeTruthy();
+      expect(listings).toBe(1);
+    });
+
+    /**
+     * The capability gate, from the browser's side: the refusal is shown as the
+     * server wrote it, and the typed fields are still there to be used. It must
+     * not render as a failure — nothing is broken — and it must not render as
+     * an empty repository list, which is what an installation with nothing
+     * selected looks like.
+     */
+    it("shows a capability refusal inline and leaves the typed path working", async () => {
+      const requests: PutSpecRequest[] = [];
+      const transport = createRouterTransport((router) => {
+        sourceSpecService(router, requests);
+        router.service(GitConnectionService, {
+          listConnections: () => ({ connections: [INTERNAL_GIT] }),
+          listConnectionRepositories: () => {
+            throw new ConnectError(
+              "internal-git speaks generic, and that adapter implements no repository browser",
+              Code.Unimplemented,
+              undefined,
+              [
+                {
+                  desc: ErrorSchema,
+                  value: {
+                    code: "connection/capability-unsupported",
+                    resource: "GitConnection/internal-git",
+                    message:
+                      'connection "internal-git" speaks "generic", and that adapter implements no repository browser',
+                    remediation:
+                      "paste the repository's URL instead — that path works for every connection",
+                  },
+                },
+              ],
+            );
+          },
+          listConnectionBranches: () => ({ branches: [] }),
+        });
+      });
+      renderNew(transport);
+
+      fireEvent.click(screen.getByLabelText("From Git repository"));
+
+      expect(
+        await screen.findByText(/implements no repository browser/),
+      ).toBeTruthy();
+      // The way out is on screen, in the server's own words.
+      expect(
+        screen.getByText(/paste the repository's URL instead/),
+      ).toBeTruthy();
+      // And it is not the failure panel: nothing here is broken.
+      expect(screen.queryByText(/Could not list this connection/)).toBeNull();
+
+      type("Project name", "hello");
+      type("Git repository", "https://git.acme.internal/acme/hello");
+      type("Ref", "main");
+      type("Port", "8080");
+      submit();
+
+      expect(await screen.findByText("What will be stored")).toBeTruthy();
+      const written = decoder.decode(requests[0]?.documents?.project);
+      expect(written).toContain("    git: https://git.acme.internal/acme/hello\n");
+      // Nothing was picked, so nothing is pinned: the source resolves by host
+      // match, which is ADR-0033 decision 4's default.
+      expect(written).not.toContain("connection:");
+    });
+
+    it("unpins the connection when the repository is retyped by hand", async () => {
+      const requests: PutSpecRequest[] = [];
+      const transport = createRouterTransport((router) => {
+        sourceSpecService(router, requests);
+        router.service(GitConnectionService, {
+          listConnections: () => ({ connections: [ACME_GITHUB] }),
+          listConnectionRepositories: () => ({ repositories: REPOSITORIES }),
+          listConnectionBranches: () => ({ branches: ["main"] }),
+        });
+      });
+      renderNew(transport);
+
+      fireEvent.click(screen.getByLabelText("From Git repository"));
+      type("Project name", "hello");
+      type("Port", "8080");
+      fireEvent.click(await screen.findByRole("button", { name: /acme\/checkout/ }));
+      await waitFor(() => {
+        expect(screen.getByText(/source.connection: acme-github/)).toBeTruthy();
+      });
+
+      // A pin that survived the URL being retyped would authenticate the next
+      // build with a credential chosen for a different repository.
+      type("Git repository", "https://github.com/other/thing");
+      submit();
+
+      expect(await screen.findByText("What will be stored")).toBeTruthy();
+      const written = decoder.decode(requests[0]?.documents?.project);
+      expect(written).toContain("    git: https://github.com/other/thing\n");
+      expect(written).not.toContain("connection:");
+    });
+
+    /**
+     * The state every other test in this file is in, asserted deliberately: an
+     * instance with no connections — or a server that does not answer the
+     * listing at all — is the form as it was, with nothing said about it.
+     */
+    it("is not offered when there are no connections, and says nothing about it", async () => {
+      const requests: PutSpecRequest[] = [];
+      const transport = createRouterTransport((router) => {
+        sourceSpecService(router, requests);
+        router.service(GitConnectionService, {
+          listConnections: () => ({ connections: [] }),
+        });
+      });
+      renderNew(transport);
+
+      fromGit();
+
+      expect(screen.queryByText("Pick from a connection")).toBeNull();
+      expect(screen.queryByLabelText("Connection")).toBeNull();
+      // No error either: having no connections is not a problem to report on
+      // the screen somebody came to to create a project.
+      expect(screen.queryByText(/Could not list/)).toBeNull();
+
+      submit();
+      expect(await screen.findByText("What will be stored")).toBeTruthy();
+      expect(decoder.decode(requests[0]?.documents?.project)).toBe(SOURCE_PROJECT);
+    });
+
+    it("survives a server that does not serve GitConnectionService at all", async () => {
+      const requests: PutSpecRequest[] = [];
+      const transport = createRouterTransport((router) => {
+        sourceSpecService(router, requests);
+      });
+      renderNew(transport);
+
+      fromGit();
+      submit();
+
+      expect(await screen.findByText("What will be stored")).toBeTruthy();
+      expect(screen.queryByText("Pick from a connection")).toBeNull();
+      expect(decoder.decode(requests[0]?.documents?.project)).toBe(SOURCE_PROJECT);
+    });
+  });
 });
+
+/** A connection whose provider browses, and one whose provider does not. */
+const ACME_GITHUB = {
+  name: "acme-github",
+  provider: "github",
+  host: "https://github.com",
+  ready: true,
+  reachable: true,
+};
+
+const INTERNAL_GIT = {
+  name: "internal-git",
+  provider: "generic",
+  host: "https://git.acme.internal",
+  ready: true,
+  reachable: true,
+};
+
+const REPOSITORIES = [
+  {
+    fullName: "acme/checkout",
+    htmlUrl: "https://github.com/acme/checkout",
+    defaultBranch: "main",
+    private: true,
+  },
+  {
+    fullName: "acme/site",
+    htmlUrl: "https://github.com/acme/site",
+    defaultBranch: "trunk",
+    private: false,
+  },
+];
+
+/** Enough repositories for the list to earn a filter box. */
+function manyRepositories(n: number) {
+  return Array.from({ length: n }, (_, i) => ({
+    fullName: `acme/repo-${i}`,
+    htmlUrl: `https://github.com/acme/repo-${i}`,
+    defaultBranch: "main",
+    private: false,
+  }));
+}
