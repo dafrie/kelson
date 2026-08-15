@@ -9,7 +9,8 @@
       "type": "string",
       "enum": [
         "Project",
-        "Environment"
+        "Environment",
+        "GitConnection"
       ]
     },
     "metadata": {
@@ -39,6 +40,10 @@
             "ref": {
               "type": "string",
               "default": "main"
+            },
+            "connection": {
+              "type": "string",
+              "description": "name of the GitConnection to authenticate with; resolved by host match against the instance's connections when omitted"
             }
           },
           "additionalProperties": false,
@@ -61,6 +66,15 @@
             },
             "dockerfile": {
               "type": "string"
+            },
+            "by": {
+              "type": "string",
+              "enum": [
+                "kelson",
+                "ci"
+              ],
+              "description": "who produces this project's images; kelson builds them in its own build plane and ci reports images its pipeline already built",
+              "default": "kelson"
             }
           },
           "additionalProperties": false,

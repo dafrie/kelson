@@ -7,14 +7,16 @@ import (
 )
 
 // Kind names, matching the document kinds users already write
-// (model.KindProject, model.KindEnvironment). ADR-0027 decision 1: a CRD that
-// did not mirror the authoring documents would be a third spelling of the same
-// thing.
+// (model.KindProject, model.KindEnvironment, model.KindGitConnection).
+// ADR-0027 decision 1: a CRD that did not mirror the authoring documents would
+// be a third spelling of the same thing.
 const (
-	KindProject         = "Project"
-	KindProjectList     = "ProjectList"
-	KindEnvironment     = "Environment"
-	KindEnvironmentList = "EnvironmentList"
+	KindProject           = "Project"
+	KindProjectList       = "ProjectList"
+	KindEnvironment       = "Environment"
+	KindEnvironmentList   = "EnvironmentList"
+	KindGitConnection     = "GitConnection"
+	KindGitConnectionList = "GitConnectionList"
 )
 
 // Project is the shared-configuration document as a custom resource: the
@@ -73,4 +75,38 @@ type EnvironmentList struct {
 	metav1.ListMeta `json:"metadata,omitempty"`
 
 	Items []Environment `json:"items"`
+}
+
+// GitConnection is the forge kelson can talk to and the Secret it talks with,
+// as a custom resource (ADR-0033 decision 1).
+//
+// It is the one kind here that is not an authoring document. A Project and an
+// Environment describe something to run; a connection describes something
+// kelson may *do* — clone a private repository, mint an installation token,
+// call a forge API — and the renderer never sees one. It lives in kelson's own
+// namespace beside the Secrets it names, rather than in an application's.
+//
+// The spec carries identifiers and Secret names and never a credential value,
+// which is ADR-0009 unchanged: `kubectl get gitconnection -o yaml` shows an
+// operator what this cluster can pull from and reveals nothing that could pull
+// from it.
+//
+// +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
+type GitConnection struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+
+	Spec   model.GitConnectionSpec `json:"spec,omitempty"`
+	Status GitConnectionStatus     `json:"status,omitempty"`
+}
+
+// GitConnectionList is a list of GitConnections.
+//
+// +kubebuilder:object:root=true
+type GitConnectionList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+
+	Items []GitConnection `json:"items"`
 }

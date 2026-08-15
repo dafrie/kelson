@@ -1,6 +1,7 @@
 package model
 
 import (
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -708,5 +709,256 @@ spec:
 				t.Errorf("schedule %q: want no errors, got %v", tc.schedule, errs)
 			}
 		})
+	}
+}
+
+// gitConnectionDoc wraps a spec body in the document envelope, so the cases
+// below read as the YAML an author writes rather than as a Go literal.
+func gitConnectionDoc(name, spec string) string {
+	return "apiVersion: " + APIVersion + "\nkind: " + KindGitConnection +
+		"\nmetadata: {name: " + name + "}\nspec:\n" + spec
+}
+
+// TestValidGitConnection covers the two shapes ADR-0033 decision 2 ships: the
+// per-instance GitHub App on github.com with no host written, and the token
+// fallback against a self-hosted forge.
+func TestValidGitConnection(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		spec string
+		host string
+	}{
+		{
+			name: "github app with the defaulted host",
+			spec: "  provider: github\n  auth:\n    githubApp: {appID: 12345, installationID: 678910, secretRef: acme-github-app}\n",
+			host: DefaultGitHubHost,
+		},
+		{
+			name: "github app before its installation exists",
+			spec: "  provider: github\n  auth:\n    githubApp: {appID: 12345, secretRef: acme-github-app}\n",
+			host: DefaultGitHubHost,
+		},
+		{
+			name: "token against a self-hosted forge",
+			spec: "  provider: generic\n  host: https://git.acme.internal\n  auth:\n    token: {secretRef: acme-git-token}\n  owner: {kind: instance}\n",
+			host: "https://git.acme.internal",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			docs, errs := DecodeDocuments([]byte(gitConnectionDoc("acme-github", tc.spec)))
+			if len(errs) != 0 {
+				t.Fatalf("expected a valid connection, got:\n%v", errs)
+			}
+			g, ok := docs[0].(*GitConnection)
+			if !ok {
+				t.Fatalf("expected *GitConnection, got %T", docs[0])
+			}
+			if got := g.Spec.EffectiveHost(); got != tc.host {
+				t.Errorf("EffectiveHost() = %q, want %q", got, tc.host)
+			}
+			if !g.Spec.IsInstanceOwned() {
+				t.Errorf("a connection with no owner — or owner.kind instance — is instance-owned")
+			}
+			if errs := ValidateGitConnection(g); len(errs) != 0 {
+				t.Errorf("ValidateGitConnection disagrees with the decode-time pass:\n%v", errs)
+			}
+		})
+	}
+}
+
+// TestGitConnectionValidation is the refusal half: every rule the document can
+// be held to without a cluster, each with the code the taxonomy promises and
+// the position that puts it on the author's line.
+func TestGitConnectionValidation(t *testing.T) {
+	const app = "    githubApp: {appID: 1, secretRef: s}\n"
+	for _, tc := range []struct {
+		name    string
+		docName string
+		spec    string
+		code    Code
+		field   string
+	}{
+		{
+			name:  "provider is required",
+			spec:  "  auth:\n" + app,
+			code:  ErrMissingRequired,
+			field: "$.spec.provider",
+		},
+		{
+			name:  "provider is a closed enum",
+			spec:  "  provider: gitlab\n  host: https://gitlab.com\n  auth:\n    token: {secretRef: s}\n",
+			code:  ErrInvalidEnum,
+			field: "$.spec.provider",
+		},
+		{
+			name:  "auth is required",
+			spec:  "  provider: github\n",
+			code:  ErrMissingRequired,
+			field: "$.spec.auth",
+		},
+		{
+			name:  "auth is exactly one",
+			spec:  "  provider: github\n  auth:\n" + app + "    token: {secretRef: s}\n",
+			code:  ErrMutuallyExclusive,
+			field: "$.spec.auth",
+		},
+		{
+			name:  "githubApp needs provider github",
+			spec:  "  provider: generic\n  host: https://git.acme.internal\n  auth:\n" + app,
+			code:  ErrAuthProviderMismatch,
+			field: "$.spec.auth.githubApp",
+		},
+		{
+			name:  "appID is positive",
+			spec:  "  provider: github\n  auth:\n    githubApp: {appID: 0, secretRef: s}\n",
+			code:  ErrOutOfRange,
+			field: "$.spec.auth.githubApp.appID",
+		},
+		{
+			name:  "installationID is not negative",
+			spec:  "  provider: github\n  auth:\n    githubApp: {appID: 1, installationID: -1, secretRef: s}\n",
+			code:  ErrOutOfRange,
+			field: "$.spec.auth.githubApp.installationID",
+		},
+		{
+			name:  "the app secret is named",
+			spec:  "  provider: github\n  auth:\n    githubApp: {appID: 1}\n",
+			code:  ErrMissingRequired,
+			field: "$.spec.auth.githubApp.secretRef",
+		},
+		{
+			name:  "the token secret is named",
+			spec:  "  provider: generic\n  host: https://git.acme.internal\n  auth:\n    token: {}\n",
+			code:  ErrMissingRequired,
+			field: "$.spec.auth.token.secretRef",
+		},
+		{
+			name:  "the secret name is a DNS label",
+			spec:  "  provider: github\n  auth:\n    token: {secretRef: Not_A_Name}\n",
+			code:  ErrInvalidFormat,
+			field: "$.spec.auth.token.secretRef",
+		},
+		{
+			name:  "a provider with no default host must name one",
+			spec:  "  provider: generic\n  auth:\n    token: {secretRef: s}\n",
+			code:  ErrMissingRequired,
+			field: "$.spec.host",
+		},
+		{
+			name:  "the host is an http(s) URL",
+			spec:  "  provider: generic\n  host: \"git@git.acme.internal:acme/checkout.git\"\n  auth:\n    token: {secretRef: s}\n",
+			code:  ErrInvalidFormat,
+			field: "$.spec.host",
+		},
+		{
+			name:  "the host has a host",
+			spec:  "  provider: generic\n  host: \"https:///acme\"\n  auth:\n    token: {secretRef: s}\n",
+			code:  ErrInvalidFormat,
+			field: "$.spec.host",
+		},
+		{
+			name:  "owner.kind is required when owner is set",
+			spec:  "  provider: github\n  auth:\n" + app + "  owner: {name: alice}\n",
+			code:  ErrMissingRequired,
+			field: "$.spec.owner.kind",
+		},
+		{
+			name:  "owner.kind is a closed enum",
+			spec:  "  provider: github\n  auth:\n" + app + "  owner: {kind: robot, name: alice}\n",
+			code:  ErrInvalidEnum,
+			field: "$.spec.owner.kind",
+		},
+		{
+			name:  "a user owner names its principal",
+			spec:  "  provider: github\n  auth:\n" + app + "  owner: {kind: user}\n",
+			code:  ErrMissingRequired,
+			field: "$.spec.owner.name",
+		},
+		{
+			name:  "an instance owner names none",
+			spec:  "  provider: github\n  auth:\n" + app + "  owner: {kind: instance, name: alice}\n",
+			code:  ErrMutuallyExclusive,
+			field: "$.spec.owner.name",
+		},
+		{
+			name:    "the connection name is a DNS label",
+			docName: "Acme_GitHub",
+			spec:    "  provider: github\n  auth:\n" + app,
+			code:    ErrInvalidFormat,
+			field:   "$.metadata.name",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			name := tc.docName
+			if name == "" {
+				name = "acme-github"
+			}
+			_, errs := DecodeDocuments([]byte(gitConnectionDoc(name, tc.spec)))
+			var got *Error
+			for i := range errs {
+				if errs[i].Field == tc.field && errs[i].Code == tc.code {
+					got = &errs[i]
+					break
+				}
+			}
+			if got == nil {
+				t.Fatalf("want %s on %s, got:\n%v", tc.code, tc.field, errs)
+			}
+			if got.Remediation == "" || got.DocsURL == "" || got.Resource == "" || got.Message == "" {
+				t.Errorf("error missing structure: %+v", got)
+			}
+			if got.Line == 0 {
+				t.Errorf("error must carry a source line: %+v", got)
+			}
+		})
+	}
+}
+
+// TestGitConnectionCarriesNoCredentialValue is ADR-0009's rule as a test rather
+// than as a comment: every leaf of the connection spec is an identifier or the
+// name of a Secret, and a field that looked like somewhere to paste a key would
+// be caught here before anybody pasted one.
+func TestGitConnectionCarriesNoCredentialValue(t *testing.T) {
+	forbidden := []string{"token", "password", "key", "privateKey", "secret", "webhookSecret", "credential"}
+	for _, path := range specFieldPaths(reflect.TypeOf(GitConnection{})) {
+		leaf := path[strings.LastIndex(path, ".")+1:]
+		for _, word := range forbidden {
+			if strings.EqualFold(leaf, word) {
+				t.Errorf("%s names a credential value; a connection carries references only "+
+					"(ADR-0009, ADR-0033 decision 1)", path)
+			}
+		}
+	}
+}
+
+// TestGitConnectionIsNotAnAuthoringDocument pins the other half of ADR-0033
+// decision 1: a connection is a control-plane document, so a bundle that
+// carries one beside a Project decodes and validates without the connection
+// becoming something the renderer or the resolver has to know about.
+func TestGitConnectionIsNotAnAuthoringDocument(t *testing.T) {
+	docs, errs := DecodeDocuments([]byte(`apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata: {name: checkout}
+spec:
+  image: ghcr.io/acme/web:1
+  components:
+    - {name: web, port: 8080}
+---
+apiVersion: kelson.dev/v1alpha1
+kind: GitConnection
+metadata: {name: acme-github}
+spec:
+  provider: github
+  auth:
+    githubApp: {appID: 12345, installationID: 678910, secretRef: acme-github-app}
+`))
+	if len(errs) != 0 {
+		t.Fatalf("the two documents must both validate, got:\n%v", errs)
+	}
+	if len(docs) != 2 {
+		t.Fatalf("want two documents, got %d", len(docs))
+	}
+	if _, ok := docs[1].(*GitConnection); !ok {
+		t.Fatalf("second document is %T, want *GitConnection", docs[1])
 	}
 }

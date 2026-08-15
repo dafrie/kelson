@@ -65,6 +65,19 @@ func (in *EnvironmentSpec) DeepCopy() *EnvironmentSpec {
 	return out
 }
 
+// DeepCopyInto copies the receiver into out, sharing no memory with it.
+func (in *GitConnectionSpec) DeepCopyInto(out *GitConnectionSpec) { deepCopyInto(in, out) }
+
+// DeepCopy returns a deep copy of the receiver.
+func (in *GitConnectionSpec) DeepCopy() *GitConnectionSpec {
+	if in == nil {
+		return nil
+	}
+	out := new(GitConnectionSpec)
+	in.DeepCopyInto(out)
+	return out
+}
+
 func deepCopyInto[T any](in, out *T) {
 	if in == nil || out == nil {
 		return

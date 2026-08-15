@@ -97,6 +97,27 @@ var notImplementedFields = []notImplemented{
 		TrackedBy: "milestone M11 · Teams, RBAC & multi-tenancy",
 	},
 	{
+		Kind: KindProject,
+		Path: "$.spec.source.connection",
+		What: "authenticating to the source repository through a GitConnection",
+		// ADR-0033 decision 4 is landing in slices and the document half is the
+		// first of them: the kind, its validation and its CRD exist, and nothing
+		// resolves a connection to a credential yet. A project that names one
+		// today would clone exactly as anonymously as a project that did not,
+		// which is the silence this table exists to refuse.
+		TrackedBy: "ADR-0033 · git connections, the internal/forge slice after R2 (issue #225)",
+	},
+	{
+		Kind: KindProject,
+		Path: "$.spec.build.by",
+		What: "the CI build hand-off",
+		// `by: ci` is a promise that kelson waits for a ReportBuild instead of
+		// building, and there is no ReportBuild yet — so accepting the field
+		// would tell an author their pipeline is wired up when nothing is
+		// listening for it (ADR-0034 decision 3).
+		TrackedBy: "ADR-0034 · forge-driven delivery, the BuildService.ReportBuild slice after R2 (issue #225)",
+	},
+	{
 		Kind:      KindEnvironment,
 		Path:      "$.spec.cluster",
 		What:      "multi-cluster targeting",

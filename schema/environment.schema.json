@@ -9,7 +9,8 @@
       "type": "string",
       "enum": [
         "Project",
-        "Environment"
+        "Environment",
+        "GitConnection"
       ]
     },
     "metadata": {

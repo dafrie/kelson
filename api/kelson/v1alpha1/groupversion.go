@@ -28,7 +28,7 @@ var GroupVersion = schema.GroupVersion{Group: Group, Version: Version}
 // (sigs.k8s.io/controller-runtime/pkg/scheme.Builder) on purpose: this package
 // is the contract other people's code imports, and a consumer using
 // client-go directly should not have to take a controller-runtime dependency to
-// register two kinds. The controller takes controller-runtime; the API does not.
+// register the kinds. The controller takes controller-runtime; the API does not.
 var SchemeBuilder = runtime.NewSchemeBuilder(addKnownTypes)
 
 // AddToScheme adds the kelson.dev/v1alpha1 kinds to a scheme.
@@ -38,6 +38,7 @@ func addKnownTypes(s *runtime.Scheme) error {
 	s.AddKnownTypes(GroupVersion,
 		&Project{}, &ProjectList{},
 		&Environment{}, &EnvironmentList{},
+		&GitConnection{}, &GitConnectionList{},
 	)
 	metav1.AddToGroupVersion(s, GroupVersion)
 	return nil

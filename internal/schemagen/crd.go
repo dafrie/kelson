@@ -142,6 +142,57 @@ var environmentCRD = crdDef{
 	},
 }
 
+var gitConnectionCRD = crdDef{
+	kind:        "GitConnection",
+	listKind:    "GitConnectionList",
+	plural:      "gitconnections",
+	singular:    "gitconnection",
+	shortNames:  []string{"kconn"},
+	description: "GitConnection is a forge kelson can talk to and the Secret it talks with: which provider and host, which credential kind, and who owns it. It carries identifiers and Secret names and never a credential value (ADR-0033).",
+	printerColumns: []omap{
+		printerColumn("Provider", "string", ".spec.provider", "the forge adapter this connection uses"),
+		// Printed from the spec rather than from a defaulted status field: an
+		// omitted host means https://github.com and only for provider github, and
+		// resolving that here would be a second place the default is written.
+		printerColumn("Host", "string", ".spec.host", "the forge base URL; empty means the provider's default"),
+		printerColumn("Account", "string", ".status.account", "who the credential acts as, as the provider reports it"),
+		printerColumn("Repos", "integer", ".status.repositories", "how many repositories the credential can see"),
+		printerColumn("Ready", "string", `.status.conditions[?(@.type=="Ready")].status`,
+			"whether the document validated and the credential resolved"),
+		printerColumn("Age", "date", ".metadata.creationTimestamp", ""),
+	},
+	status: gitConnectionStatusSchema(),
+	// The three rules below are the connection's structural invariants, and they
+	// are exactly the subset of validateGitConnection that needs no resolution
+	// and no cluster. The host check, the appID bound and the DNS-1123 shape of a
+	// secretRef are already carried by the reflected schema itself (format,
+	// minimum, pattern), so they are not repeated here.
+	validations: map[string][]celRule{
+		"": {{
+			rule: "!has(self.auth) || !has(self.auth.githubApp) || (has(self.provider) && self.provider == 'github')",
+			message: "auth.githubApp needs provider github: the app-manifest flow and installation " +
+				"tokens are GitHub's and no other adapter can mint one (semantic/auth-provider-mismatch)",
+		}},
+		"auth": {{
+			rule: "has(self.githubApp) != has(self.token)",
+			message: "set exactly one of auth.githubApp or auth.token: they are different credential " +
+				"kinds and not two spellings of one (schema/mutually-exclusive)",
+		}},
+		"owner": {
+			{
+				rule: "!has(self.kind) || self.kind == 'instance' || (has(self.name) && self.name != '')",
+				message: "an owner whose kind is user or team names the principal it belongs to " +
+					"(schema/missing-required)",
+			},
+			{
+				rule: "!has(self.kind) || self.kind != 'instance' || !has(self.name) || self.name == ''",
+				message: "an instance-owned connection names no principal: remove owner.name, or set " +
+					"owner.kind to user or team (schema/mutually-exclusive)",
+			},
+		},
+	},
+}
+
 func printerColumn(name, typ, path, description string) omap {
 	var m omap
 	m.set("name", name)

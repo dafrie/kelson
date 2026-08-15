@@ -10,9 +10,15 @@ import (
 	"github.com/dafrie/kelson/internal/model"
 )
 
-// documents are the two authoring documents, in the order everything downstream
+// documents are the kelson document kinds, in the order everything downstream
 // lists them. Both outputs — the JSON Schemas and the CRDs — are driven from
-// this one table, so a third document kind is one row and not two pipelines.
+// this one table, so a document kind is one row and not two pipelines.
+//
+// GitConnection (ADR-0033) is the row that proves the claim: it is not an
+// authoring document, nothing renders it, and it needed no pipeline of its own —
+// the same reflection over the same struct produces its published schema and its
+// CRD, and the only thing hand-written for it is what the Go types cannot say
+// (its names, its printer columns, its status and its CEL rules).
 var documents = []struct {
 	// schemaFile is the committed JSON Schema, under schema/.
 	schemaFile string
@@ -35,6 +41,12 @@ var documents = []struct {
 		crdFile:    "kelson.dev_environments.yaml",
 		doc:        &model.Environment{},
 		crd:        environmentCRD,
+	},
+	{
+		schemaFile: "gitconnection.schema.json",
+		crdFile:    "kelson.dev_gitconnections.yaml",
+		doc:        &model.GitConnection{},
+		crd:        gitConnectionCRD,
 	},
 }
 
