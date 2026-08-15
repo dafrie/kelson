@@ -118,6 +118,69 @@ spec:
 	}
 }
 
+// projectFromSource is one stored project that declares a source in a
+// repository, which is what makes a push to that repository the project's
+// business (ADR-0035 decision 4).
+func projectFromSource(project, repo string) controlstore.Stored {
+	doc := fmt.Sprintf(`apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: %s
+spec:
+  components:
+    - name: web
+      kind: service
+      port: 8080
+  source:
+    git: %s
+    ref: main
+`, project, repo)
+	return controlstore.Stored{
+		Project:   project,
+		Documents: controlstore.Documents{Project: []byte(doc)},
+	}
+}
+
+// fakeAutoDeploy is the trigger seam, recorded rather than performed. What it
+// stands in for is internal/api's resolve-build-write pipeline, which has its
+// own tests; what matters here is that the handler asks the right question
+// synchronously and enqueues the right work behind it.
+type fakeAutoDeploy struct {
+	mu       sync.Mutex
+	plan     PushPlan
+	planErr  error
+	plans    []Push
+	runs     []Push
+	outcome  PushOutcome
+	runError error
+}
+
+func (f *fakeAutoDeploy) PlanPush(_ context.Context, p Push) (PushPlan, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.plans = append(f.plans, p)
+	return f.plan, f.planErr
+}
+
+func (f *fakeAutoDeploy) RunPush(_ context.Context, p Push) (PushOutcome, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.runs = append(f.runs, p)
+	return f.outcome, f.runError
+}
+
+func (f *fakeAutoDeploy) planned() []Push {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]Push(nil), f.plans...)
+}
+
+func (f *fakeAutoDeploy) ran() []Push {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]Push(nil), f.runs...)
+}
+
 // fakePoker records what was stamped instead of stamping it.
 type fakePoker struct {
 	mu     sync.Mutex

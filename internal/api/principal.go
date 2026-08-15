@@ -35,6 +35,31 @@ const (
 	// route is open. It exists so an audit line for that server says
 	// "anonymous" rather than claiming a human was there.
 	PrincipalAnonymous PrincipalType = "anonymous"
+
+	// PrincipalSystem is kelson acting on something other than a request: today
+	// the `autoDeploy` trigger a verified forge delivery sets in motion
+	// (ADR-0036 decision 4). Name is the git connection whose webhook secret
+	// verified that delivery, which is the only identity in the transaction —
+	// GitHub holds no kelson credential and the person who pushed holds no
+	// session here.
+	//
+	// # It is a fourth type, and ADR-0026 decision 1 lists three
+	//
+	// That decision fixes `AuditRecord.principal.type` as "agent, human or
+	// anonymous", and this is an extension of it rather than a violation of the
+	// spirit: ADR-0036 decision 4 asks for exactly this value ("the forge
+	// connection, as a system principal, not a person — never an invented
+	// human"), and the three alternatives are each a lie. `human` would invent
+	// one, `agent` would claim a scoped identity that was never presented and
+	// never checked, and `anonymous` would say kelson does not know who caused
+	// this when it knows precisely which connection's secret signed it. The
+	// store carries the type as an opaque string and the query filters on it as
+	// one, so the trail stays queryable — `principalType: system` is the whole
+	// of "what did kelson do on its own".
+	//
+	// ADR-0026 is the document that should say so; amending it is the owner's,
+	// and this comment is the note that it is owed.
+	PrincipalSystem PrincipalType = "system"
 )
 
 // Principal is the authenticated caller of one request.

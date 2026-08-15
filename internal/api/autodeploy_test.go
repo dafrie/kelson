@@ -8,6 +8,7 @@ import (
 	"connectrpc.com/connect"
 
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
+	"github.com/dafrie/kelson/internal/build"
 	"github.com/dafrie/kelson/internal/controlstore"
 )
 
@@ -306,6 +307,189 @@ func TestTheDeployStatusDegradesSilently(t *testing.T) {
 	})
 }
 
+// --- the webhook path (ADR-0036 decision 3, second half) ----------------------
+
+// kelsonProjectDoc is a project whose images come from kelson's own build plane
+// — the `by: kelson` default for a project with a source — which is what a
+// webhook push has to build before it can deploy anything.
+const kelsonProjectDoc = `apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata: {name: checkout}
+spec:
+  components:
+    - name: web
+      kind: service
+      port: 8080
+  source:
+    git: https://github.com/acme/checkout
+    ref: main
+  build:
+    strategy: dockerfile
+`
+
+// twoSourceProjectDoc is the shape #252 refuses: two repositories, one build
+// plane, one image per build.
+const twoSourceProjectDoc = `apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata: {name: checkout}
+spec:
+  components:
+    - name: web
+      kind: service
+      port: 8080
+      source: app
+    - name: worker
+      kind: worker
+      source: tools
+  sources:
+    - name: app
+      git: https://github.com/acme/checkout
+      ref: main
+    - name: tools
+      git: https://gitlab.com/acme/build-tools
+      ref: main
+  build:
+    strategy: dockerfile
+`
+
+// trackingServer serves one stored project with the build plane wired, and
+// returns the Server itself: the webhook path is not an RPC, so it is driven
+// through the exported seam rather than through a client.
+func trackingServer(t *testing.T, project string, envs map[string][]byte, opts ...func(*Options)) (*Server, *fakeSpecStore, *fakeBuilder) {
+	t.Helper()
+	specs := newFakeSpecStore()
+	if _, err := specs.Put(t.Context(), "checkout", controlstore.Documents{
+		Project: []byte(project), Environments: envs,
+	}, controlstore.PutOptions{}); err != nil {
+		t.Fatalf("storing the project: %v", err)
+	}
+	builder := &fakeBuilder{result: build.Result{
+		Reference: webImage(),
+		Digest:    "sha256:" + strings.Repeat("a", 64),
+	}}
+	o := Options{
+		Specs: specs,
+		Build: buildPlaneFor(builder, &fakeRevisions{}, nil),
+		BuildDefaults: BuildDefaults{
+			Registry:   "ghcr.io/acme",
+			PushSecret: "ghcr-push",
+		},
+	}
+	for _, adjust := range opts {
+		adjust(&o)
+	}
+	return New(o), specs, builder
+}
+
+// pushOf is the trigger a verified delivery produces: the repository, the ref
+// as the forge spelled it, and the pushed head.
+func pushOf(ref string) PushTrigger {
+	return PushTrigger{
+		Project:    "checkout",
+		Repo:       "https://github.com/acme/checkout",
+		Ref:        ref,
+		SHA:        reportSHA,
+		Connection: "acme-github",
+	}
+}
+
+// A push to a kelson-built project runs the build plane at the pushed head and
+// then moves the environments that follow it — with the image that build
+// produced, which is the whole difference between this path and a CI report.
+func TestPushBuildsThenMoves(t *testing.T) {
+	server, specs, builder := trackingServer(t, kelsonProjectDoc,
+		map[string][]byte{"staging": trackingEnvDoc("staging", "")})
+
+	out, err := server.AutoDeployPush(t.Context(), pushOf("refs/heads/main"))
+	if err != nil {
+		t.Fatalf("AutoDeployPush: %v", err)
+	}
+	if len(out.Triggered) != 1 || out.Triggered[0] != "staging" {
+		t.Fatalf("triggered = %v (notes %v), want the tracking environment", out.Triggered, out.Notes)
+	}
+	req := builder.lastRequest(t)
+	if req.SourceRef != reportSHA || req.Revision != reportSHA {
+		t.Errorf("built %s, want the commit the push carried", req.SourceRef)
+	}
+	if req.SourceGit != "https://github.com/acme/checkout" {
+		t.Errorf("cloned %s, want the bound source", req.SourceGit)
+	}
+	if got := storedEnvironment(t, specs, "checkout", "staging"); !strings.Contains(got, webImage()) {
+		t.Errorf("the built image did not reach the environment document:\n%s", got)
+	}
+}
+
+// A push to a ref nothing follows never reaches the build plane. Building on
+// every push to every branch is the cost this ordering exists to avoid.
+func TestPushAtAnUnfollowedRefBuildsNothing(t *testing.T) {
+	server, _, builder := trackingServer(t, kelsonProjectDoc,
+		map[string][]byte{"staging": trackingEnvDoc("staging", "")})
+
+	out, err := server.AutoDeployPush(t.Context(), pushOf("refs/heads/spike"))
+	if err != nil {
+		t.Fatalf("AutoDeployPush: %v", err)
+	}
+	if len(out.Triggered) != 0 {
+		t.Errorf("triggered = %v for a ref nothing follows", out.Triggered)
+	}
+	if builder.calls() != 0 {
+		t.Errorf("the build plane ran %d times for a push nothing follows", builder.calls())
+	}
+}
+
+// The multi-source refusal (#252): named in full, before anything is built, and
+// carried out of both halves of the seam so the delivery's answer can say it.
+func TestPushRefusesAMultiSourceKelsonProject(t *testing.T) {
+	server, _, builder := trackingServer(t, twoSourceProjectDoc,
+		map[string][]byte{"staging": trackingEnvDoc("staging", "")})
+
+	plan, err := server.PlanPush(t.Context(), pushOf("refs/heads/main"))
+	if err != nil {
+		t.Fatalf("PlanPush: %v", err)
+	}
+	for _, want := range []string{"#252", "build/several-sources", "spec.build.by: ci"} {
+		if !strings.Contains(plan.Refused, want) {
+			t.Errorf("the refusal does not name %q: %s", want, plan.Refused)
+		}
+	}
+	if plan.Moves() {
+		t.Errorf("a refused project still planned %v", plan.Environments)
+	}
+
+	out, err := server.AutoDeployPush(t.Context(), pushOf("refs/heads/main"))
+	if err != nil {
+		t.Fatalf("AutoDeployPush: %v", err)
+	}
+	if out.Refused == "" || len(out.Triggered) != 0 {
+		t.Errorf("outcome = %+v, want the refusal and nothing moved", out)
+	}
+	if builder.calls() != 0 {
+		t.Error("a refused project was built anyway")
+	}
+}
+
+// PlanPush is the half a forge waits on, so it must decide and write nothing:
+// no build, no spec write.
+func TestPlanPushWritesNothing(t *testing.T) {
+	server, specs, builder := trackingServer(t, kelsonProjectDoc,
+		map[string][]byte{"staging": trackingEnvDoc("staging", "")})
+	before := storedEnvironment(t, specs, "checkout", "staging")
+
+	plan, err := server.PlanPush(t.Context(), pushOf("refs/heads/main"))
+	if err != nil {
+		t.Fatalf("PlanPush: %v", err)
+	}
+	if got := plan.Environments["staging"]; len(got) != 1 || got[0] != "web" {
+		t.Errorf("plan = %v, want the one component the push makes stale", plan.Environments)
+	}
+	if builder.calls() != 0 {
+		t.Error("planning built something")
+	}
+	if after := storedEnvironment(t, specs, "checkout", "staging"); after != before {
+		t.Error("planning wrote to the spec store")
+	}
+}
+
 // --- audit --------------------------------------------------------------------
 
 // A report is a mutation, so it leaves a record naming the principal that sent
@@ -338,5 +522,82 @@ func TestAutoDeployRecordsTheReportingAgent(t *testing.T) {
 	}
 	if rec.Change == nil || rec.Change.From != reportSHA || rec.Change.Revision != "staging" {
 		t.Errorf("change = %+v, want the environments moved and the commit they moved to", rec.Change)
+	}
+}
+
+// A webhook push is the other principal shape, and it is the one ADR-0036
+// decision 4 is careful about: the connection whose secret verified the
+// delivery, as a system principal, never an invented human.
+//
+// It also proves the record exists at all. This path reaches no ConnectRPC
+// interceptor — a delivery arrives at internal/forgehttp, outside the handlers
+// and outside the credential gate — so without an explicit write the one
+// mutation a push causes would leave no trail.
+func TestAutoDeployRecordsTheConnectionAsASystemPrincipal(t *testing.T) {
+	sink := newFakeAuditSink()
+	server, _, _ := trackingServer(t, kelsonProjectDoc,
+		map[string][]byte{"staging": trackingEnvDoc("staging", "")},
+		func(o *Options) { o.Audit = sink })
+
+	if _, err := server.AutoDeployPush(t.Context(), pushOf("refs/heads/main")); err != nil {
+		t.Fatalf("AutoDeployPush: %v", err)
+	}
+
+	rec := sink.find(t, "forge/webhook/push")
+	if rec.Principal.Type != string(PrincipalSystem) {
+		t.Errorf("principal type = %q, want %q", rec.Principal.Type, PrincipalSystem)
+	}
+	if rec.Principal.Type == string(PrincipalHuman) || rec.Principal.Type == string(PrincipalAgent) {
+		t.Error("a webhook push was recorded as somebody who was never there")
+	}
+	if rec.Principal.Name != "acme-github" {
+		t.Errorf("principal name = %q, want the connection that verified the delivery", rec.Principal.Name)
+	}
+	if rec.Operation != controlstore.OpMutate || rec.Outcome != controlstore.AuditAllowed {
+		t.Errorf("operation=%s outcome=%s, want an allowed mutation", rec.Operation, rec.Outcome)
+	}
+	if rec.Target.Project != "checkout" {
+		t.Errorf("target = %s, want the project the push moved", rec.Target.String())
+	}
+	if rec.Change == nil || rec.Change.Revision != "staging" || rec.Change.From != reportSHA {
+		t.Errorf("change = %+v, want what the push set in motion", rec.Change)
+	}
+	if rec.Scope != "" {
+		t.Errorf("scope = %q, want none — a connection has no scope to record", rec.Scope)
+	}
+}
+
+// A push that moved nothing writes no record, which is the rule every other
+// path already keeps: an allowed read changed nothing, and a webhook that
+// resolved an empty stale set is a read.
+func TestAutoDeployRecordsNothingForAPushThatMovedNothing(t *testing.T) {
+	sink := newFakeAuditSink()
+	server, _, _ := trackingServer(t, kelsonProjectDoc,
+		map[string][]byte{"staging": trackingEnvDoc("staging", "")},
+		func(o *Options) { o.Audit = sink })
+
+	if _, err := server.AutoDeployPush(t.Context(), pushOf("refs/heads/spike")); err != nil {
+		t.Fatalf("AutoDeployPush: %v", err)
+	}
+	if got := sink.all(); len(got) != 0 {
+		t.Errorf("a push that moved nothing wrote %d records", len(got))
+	}
+}
+
+// And a refused push is recorded as refused, with the code the taxonomy uses —
+// the one durable trace of a `build/several-sources` push, since the
+// environment's conditions are the controller's alone.
+func TestAutoDeployRecordsARefusedPush(t *testing.T) {
+	sink := newFakeAuditSink()
+	server, _, _ := trackingServer(t, twoSourceProjectDoc,
+		map[string][]byte{"staging": trackingEnvDoc("staging", "")},
+		func(o *Options) { o.Audit = sink })
+
+	if _, err := server.AutoDeployPush(t.Context(), pushOf("refs/heads/main")); err != nil {
+		t.Fatalf("AutoDeployPush: %v", err)
+	}
+	rec := sink.find(t, "forge/webhook/push")
+	if rec.Outcome != controlstore.AuditRefused || rec.Code != "build/several-sources" {
+		t.Errorf("outcome=%s code=%s, want the refusal recorded as one", rec.Outcome, rec.Code)
 	}
 }

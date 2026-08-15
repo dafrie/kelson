@@ -91,7 +91,10 @@ type PushTrigger struct {
 	// a change request against).
 	Repo string
 
-	// Ref is the short ref that moved.
+	// Ref is the ref that moved, in either spelling. [Server.PlanPush] and
+	// [Server.AutoDeployPush] reduce it with [ShortRef] on the way in, so a
+	// caller across a seam hands over what the delivery said and exactly one
+	// piece of code decides what `refs/heads/main` is.
 	Ref string
 
 	// SHA is the commit at the head of Ref, in full. It is the join key: a
@@ -104,6 +107,13 @@ type PushTrigger struct {
 	// itself. A stale component with no entry is named in the answer rather than
 	// deployed with whatever it was running.
 	Images map[string]string
+
+	// Connection is the git connection whose webhook secret verified the
+	// delivery that caused this, and it is the audit trail's principal for the
+	// webhook path ([PrincipalSystem], ADR-0036 decision 4). Empty on the report
+	// path, where the principal is the reporting agent and the interceptor has
+	// already recorded it.
+	Connection string
 }
 
 // PushOutcome is what one trigger did, in the vocabulary both callers report in.
@@ -151,6 +161,81 @@ func ShortRef(ref string) string {
 	return ref
 }
 
+// PushPlan is what a push *would* do, decided from the stored spec alone: no
+// build, no write, no forge call.
+//
+// It exists because the two halves of handling a delivery have opposite
+// deadlines. Deciding what a push moves is a decode and a resolve, which is
+// microseconds; doing it can be a container build, which is minutes — and a
+// forge gives a webhook ten seconds. So internal/forgehttp asks this
+// synchronously, answers the delivery with it, and enqueues
+// [Server.AutoDeployPush] behind it (ADR-0034 decision 1's "an event enqueues
+// reconciliation" read literally).
+//
+// It is also where a refusal becomes visible at all. `build/several-sources` is
+// a property of the stored Project, so it is known before anything runs, and
+// this is the only surface that can carry it back to whoever pushed: nothing in
+// this plane can write an Environment's conditions — that status subresource is
+// kelson-controller's alone (internal/controller's patchStatus, and
+// [EnvironmentStore] has Get, Watch and Annotate and no third verb).
+type PushPlan struct {
+	// Environments are the ones this push would move, in spec order, with the
+	// components it would move in each.
+	Environments map[string][]string
+
+	// Refused is the project-wide refusal, or "" for a project a push may move.
+	Refused string
+
+	// Notes are the same sentences [PushOutcome] carries, decided from the spec:
+	// an environment whose spec does not resolve, and nothing more, because a
+	// plan knows no images to say what it could not move.
+	Notes []string
+}
+
+// Moves reports whether this push has anything to do, which is what decides
+// whether the delivery is worth enqueuing behind its answer.
+func (p PushPlan) Moves() bool { return len(p.Environments) > 0 }
+
+// PlanPush answers [PushPlan] for one push. It reads the stored spec and
+// nothing else, and it writes nothing — the property internal/forgehttp depends
+// on to call it inside a delivery's own deadline.
+func (s *Server) PlanPush(ctx context.Context, t PushTrigger) (PushPlan, error) {
+	if s.specs == nil {
+		return PushPlan{}, unimplemented("the spec store")
+	}
+	t.Ref = ShortRef(t.Ref)
+	stored, err := s.specs.Get(ctx, t.Project)
+	if err != nil {
+		return PushPlan{}, err
+	}
+	spec, err := decodeSpec(stored.Documents.Project, stored.Documents.Environments)
+	if err != nil {
+		return PushPlan{}, err
+	}
+	if refusal := severalSources(spec.project); refusal != "" {
+		return PushPlan{Refused: refusal}, nil
+	}
+	globals, err := s.globalSources(ctx)
+	if err != nil {
+		return PushPlan{}, err
+	}
+
+	plan := PushPlan{Environments: map[string][]string{}}
+	repositories := t.repositories(spec.project)
+	for _, env := range spec.environments {
+		resolved, errs := model.Resolve(spec.project, env, globals...)
+		if len(errs) > 0 {
+			plan.Notes = append(plan.Notes, fmt.Sprintf("environment %s was not considered: its spec does not "+
+				"resolve (%s)", env.Metadata.Name, errs.Error()))
+			continue
+		}
+		if stale := staleFor(resolved, repositories, t.Ref); len(stale) > 0 {
+			plan.Environments[env.Metadata.Name] = stale
+		}
+	}
+	return plan, nil
+}
+
 // AutoDeployPush runs one push through the trigger pipeline: resolve every
 // environment of the project, move what the push makes stale, and store the
 // result once.
@@ -170,6 +255,7 @@ func (s *Server) AutoDeployPush(ctx context.Context, t PushTrigger) (PushOutcome
 	if s.specs == nil {
 		return PushOutcome{}, unimplemented("the spec store")
 	}
+	t.Ref = ShortRef(t.Ref)
 	stored, err := s.specs.Get(ctx, t.Project)
 	if err != nil {
 		return PushOutcome{}, err
@@ -182,8 +268,16 @@ func (s *Server) AutoDeployPush(ctx context.Context, t PushTrigger) (PushOutcome
 		// #252: one build produces one image, so a kelson-built project reading
 		// two repositories cannot be moved by a push to one of them without
 		// quietly reusing the other's stale image. The refusal is the project's
-		// and not one environment's, so nothing is resolved past it.
-		return PushOutcome{Refused: refusal}, nil
+		// and not one environment's, so nothing is resolved past it — and it is
+		// written onto the commit, which is the one surface this plane has for
+		// telling whoever pushed (see [PushPlan] for the conditions it cannot
+		// reach).
+		out := PushOutcome{Refused: refusal}
+		if note := s.reportDeployStatus(ctx, t.repositories(spec.project), t, out); note != "" {
+			out.Notes = append(out.Notes, note)
+		}
+		s.recordPush(ctx, t, out, nil)
+		return out, nil
 	}
 	if t.Images == nil {
 		built, note, err := s.buildPushedHead(ctx, spec, t)
@@ -195,7 +289,66 @@ func (s *Server) AutoDeployPush(ctx context.Context, t PushTrigger) (PushOutcome
 		}
 		t.Images = built
 	}
-	return s.applyTrigger(ctx, stored, spec, t)
+	out, err := s.applyTrigger(ctx, stored, spec, t)
+	if err != nil {
+		s.recordPush(ctx, t, PushOutcome{}, err)
+		return PushOutcome{}, err
+	}
+	if note := s.reportDeployStatus(ctx, t.repositories(spec.project), t, out); note != "" {
+		out.Notes = append(out.Notes, note)
+	}
+	s.recordPush(ctx, t, out, nil)
+	return out, nil
+}
+
+// recordPush writes the webhook trigger's own audit record (ADR-0036 decision 4,
+// ADR-0026).
+//
+// The authorization interceptor cannot do it, and that is the whole reason this
+// exists: the interceptor records one record per *RPC*, and this path is not
+// one — a verified delivery arrives at internal/forgehttp, outside the
+// ConnectRPC handlers and outside the credential gate (the HMAC over the body is
+// its gate). So the one mutation it causes would leave no trail at all, which is
+// precisely the silence ADR-0026 §3 refuses.
+//
+// The principal is the connection, as [PrincipalSystem]. There is no scope,
+// because a connection has none, and no reason, because nobody stated one.
+//
+// A push that moved nothing writes nothing, which is the rule
+// [auditEntry.recordable] already states for every other path: an allowed read
+// changed nothing, and a webhook that resolved an empty stale set is a read.
+func (s *Server) recordPush(ctx context.Context, t PushTrigger, out PushOutcome, failure error) {
+	if s.audit == nil || !s.audit.enabled() {
+		return
+	}
+	if failure == nil && !out.moved() && out.Refused == "" {
+		return
+	}
+	rec := controlstore.AuditRecord{
+		Principal: controlstore.AuditPrincipal{Type: string(PrincipalSystem), Name: t.Connection},
+		// The procedure is not an RPC path, and it is spelled so that it cannot
+		// be mistaken for one: nothing in the schema serves it, and a trail
+		// reader filtering by procedure must be able to tell a delivery from a
+		// call.
+		Procedure: "forge/webhook/push",
+		Operation: controlstore.OpMutate,
+		Target:    controlstore.AuditTarget{Project: t.Project},
+		Outcome:   controlstore.AuditAllowed,
+	}
+	switch {
+	case failure != nil:
+		rec.Outcome = controlstore.AuditFailed
+		rec.Code, rec.Message = failureCode(failure)
+	case out.Refused != "":
+		rec.Outcome = controlstore.AuditRefused
+		rec.Code, rec.Message = "build/several-sources", out.Refused
+	default:
+		rec.Change = &controlstore.AuditChange{
+			Revision: strings.Join(out.Triggered, " "),
+			From:     t.SHA,
+		}
+	}
+	s.audit.write(ctx, rec)
 }
 
 // applyTrigger is the pipeline both paths share: resolve each environment,

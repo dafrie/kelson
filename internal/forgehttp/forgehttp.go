@@ -72,6 +72,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 
 	"github.com/dafrie/kelson/internal/controlstore"
 	"github.com/dafrie/kelson/internal/forgeconn"
@@ -150,6 +151,80 @@ type PreviewPoker interface {
 	Poke(ctx context.Context, namespace, name string) error
 }
 
+// Push is one verified `push` delivery, reduced to what the trigger needs
+// (ADR-0036 decision 3).
+//
+// Ref travels in whatever spelling the forge used — `refs/heads/main` — because
+// exactly one piece of code decides what that reduces to, and it is on the other
+// side of this seam beside the model contract that consumes it
+// (internal/api's ShortRef). A second stripper here would be a second answer to
+// a question with one.
+type Push struct {
+	// Project is the stored project this trigger is about. One delivery may
+	// produce several, because two projects may build from one repository.
+	Project string
+	// Repo is the repository that moved, spelled the way a spec spells one so
+	// the resolver can compare it against a `source.git`.
+	Repo string
+	// Ref is the ref the delivery named, unreduced.
+	Ref string
+	// SHA is the commit at the head of Ref after the push — GitHub's `after`.
+	SHA string
+	// Connection is the git connection whose webhook secret verified this
+	// delivery. It is the audit trail's principal for everything the trigger
+	// does (ADR-0036 decision 4: the connection as a system principal, never an
+	// invented human), and it is the only identity in the transaction.
+	Connection string
+}
+
+// PushPlan is what a push would do, answered from the stored spec alone.
+type PushPlan struct {
+	// Environments are the ones this push would move, with the components it
+	// would move in each.
+	Environments map[string][]string
+	// Refused is a project-wide refusal — today `build/several-sources` (#252) —
+	// or "" for a project a push may move.
+	Refused string
+}
+
+// PushOutcome is what a trigger did.
+type PushOutcome struct {
+	Triggered []string
+	Notes     []string
+	Refused   string
+}
+
+// AutoDeployer is the `autoDeploy` trigger seam (ADR-0036 decision 3).
+//
+// It is two methods because the two halves have two deadlines: PlanPush is a
+// decode and a resolve, answered inside the delivery's own ten seconds and
+// written into the response, and RunPush can be a container build, which is
+// enqueued behind it ([Handler.push] says why at length).
+//
+// The types are declared here rather than imported for [Authenticator]'s
+// reason, stated in this package's doc: internal/api may hold no Kubernetes
+// client and this package holds two, so an import edge either way would hand one
+// plane the other's reach in a lint rule that only sees direct imports.
+// cmd/kelson-server is where the two meet, and the adapter there is three field
+// copies.
+//
+// A nil one is a server whose deliveries verify, resolve and then do nothing but
+// say so — which is exactly what every `push` did before this existed.
+type AutoDeployer interface {
+	// PlanPush must not build, publish or write. The handler calls it while a
+	// forge is waiting.
+	PlanPush(ctx context.Context, p Push) (PushPlan, error)
+	// RunPush does the work. It is called on a detached context with its own
+	// budget, from a goroutine nothing waits on.
+	RunPush(ctx context.Context, p Push) (PushOutcome, error)
+}
+
+// refusalSeveralSources is the code a refused push carries in the log and in the
+// delivery's answer. It is internal/build's taxonomy spelled here rather than
+// imported for the reason the seam types above are, and it is asserted against
+// the plane that produces it by this package's tests.
+const refusalSeveralSources = "build/several-sources"
+
 // Options configures a [Handler].
 type Options struct {
 	// Sources resolves connections and mints from them. Required.
@@ -174,6 +249,12 @@ type Options struct {
 	// their poll interval, which ADR-0034 decision 2 keeps as the only path on
 	// instances that cannot receive deliveries anyway.
 	Previews PreviewPoker
+
+	// AutoDeploy is what a verified `push` sets in motion (ADR-0036). Nil is a
+	// server that verifies a push, resolves it and does nothing — the behaviour
+	// every kelson had before this, and still the right one for a process with
+	// no spec store to write into.
+	AutoDeploy AutoDeployer
 
 	// ExternalURL is the base URL GitHub and the user's browser reach this
 	// server at, e.g. https://kelson.acme.com. Empty derives it per request
@@ -215,6 +296,12 @@ type Handler struct {
 	// tickets is this process's authority over the one-time tokens
 	// ManifestStartPath requires (ticket.go).
 	tickets *tickets
+
+	// inflight counts the auto-deploy triggers this handler has started and not
+	// yet finished. Nothing in production waits on it — a delivery is answered
+	// before its trigger runs, deliberately — and it exists so a test can join
+	// the goroutine it started rather than poll for its effect.
+	inflight sync.WaitGroup
 
 	// authenticate gates ManifestSessionPath. It arrives at Register rather than
 	// in Options because kelson-server cannot build it any earlier: the gate is

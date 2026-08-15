@@ -249,6 +249,22 @@ func (a *auditor) finish(ctx context.Context, e *auditEntry, err error) {
 	// The store scrubs again on the way in. That is deliberate duplication, the
 	// same kind internal/api/secret.go and internal/secret keep between them: a
 	// record must not be able to carry a value through a sink that forgot.
+	a.write(ctx, rec)
+}
+
+// write appends one finished record, scrubbed, on a detached context, and
+// reports a failure the one way ADR-0026 §3 allows: counted, logged loudly, and
+// never fatal to whatever it was recording.
+//
+// It is separate from [auditor.finish] because not every mutation is a request.
+// A verified `push` delivery causes one and reaches no interceptor at all
+// (internal/forgehttp is outside the ConnectRPC handlers), so [Server.recordPush]
+// assembles the record itself and hands it here — one Append, one failure
+// policy, one place the counter lives.
+func (a *auditor) write(ctx context.Context, rec controlstore.AuditRecord) {
+	if !a.enabled() {
+		return
+	}
 	rec.Reason = redact.Scrub(rec.Reason)
 	rec.Message = redact.Scrub(rec.Message)
 	rec.DryRunSummary = redact.Scrub(rec.DryRunSummary)

@@ -54,6 +54,27 @@ func previewing(t *testing.T, poker *fakePoker, conns *fakeConnections) *Handler
 	})
 }
 
+// tracking is one instance whose deliveries reach the autoDeploy trigger: the
+// same app connection, the stored projects the test names, and a trigger seam
+// that records instead of resolving.
+func tracking(t *testing.T, poker *fakePoker, trigger AutoDeployer, stored ...controlstore.Stored) *Handler {
+	t.Helper()
+	acme, acmeMat := appConnection("acme-github", "", appSecret)
+	opts := Options{
+		Sources:     resolverOver(storeWith(pair(acme, acmeMat))),
+		Connections: newFakeConnections(),
+		Specs:       &fakeSpecs{stored: stored},
+		Previews:    poker,
+	}
+	// A nil AutoDeployer must stay a nil *interface*, not an interface holding a
+	// nil pointer: the handler branches on the first and would call through the
+	// second.
+	if trigger != nil {
+		opts.AutoDeploy = trigger
+	}
+	return handlerWith(t, opts)
+}
+
 func decodeBody(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
 	t.Helper()
 	var body map[string]any
@@ -187,25 +208,108 @@ func TestUninstallClearsTheInstallation(t *testing.T) {
 	}
 }
 
-// A push is a deliberate no-op until autoDeploy exists (ADR-0034 decision 4),
-// and the response says so rather than pretending something happened.
-func TestPushIsANoOpAndSaysSo(t *testing.T) {
+// A push to a repository no stored project builds from does nothing, says so,
+// and never reaches the trigger. That is most pushes to most repositories, and
+// ADR-0036 decision 2 makes the silence deliberate.
+func TestPushNothingFollowsIsANoOp(t *testing.T) {
 	poker := &fakePoker{}
-	h := previewing(t, poker, newFakeConnections())
+	trigger := &fakeAutoDeploy{}
+	h := tracking(t, poker, trigger, projectWithPreviews("checkout", "staging", "https://github.com/acme/checkout"))
 
 	rec := serve(h, delivery(t, "push", appSecret, []byte(pushPayload)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	body := decodeBody(t, rec)
-	if acted, _ := body["acted"].(bool); acted {
-		t.Error("a push acted on something; autoDeploy is not implemented")
+	if acted, _ := decodeBody(t, rec)["acted"].(bool); acted {
+		t.Error("a push acted on a project that declares no source in this repository")
 	}
-	if reason, _ := body["reason"].(string); !strings.Contains(reason, "autoDeploy") {
-		t.Errorf("the response must say why nothing happened: %v", body)
+	if len(trigger.planned()) != 0 {
+		t.Errorf("the trigger was asked about %v", trigger.planned())
 	}
 	if got := poker.seen(); len(got) != 0 {
 		t.Errorf("a push poked %v", got)
+	}
+}
+
+// The live path: a push to a repository a stored project builds from is
+// resolved inside the delivery's own deadline, answered with what it enqueued,
+// and the work runs behind it.
+func TestPushEnqueuesTheTrigger(t *testing.T) {
+	trigger := &fakeAutoDeploy{plan: PushPlan{Environments: map[string][]string{"staging": {"web"}}}}
+	h := tracking(t, &fakePoker{}, trigger, projectFromSource("checkout", "https://github.com/acme/checkout"))
+
+	rec := serve(h, delivery(t, "push", appSecret, []byte(pushPayload)))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202 — the delivery is answered before the work runs", rec.Code)
+	}
+	body := decodeBody(t, rec)
+	if acted, _ := body["acted"].(bool); !acted {
+		t.Errorf("acted = false for a push that enqueued a trigger: %v", body)
+	}
+
+	h.inflight.Wait()
+	ran := trigger.ran()
+	if len(ran) != 1 {
+		t.Fatalf("ran %d triggers, want one", len(ran))
+	}
+	got := ran[0]
+	if got.Project != "checkout" || got.SHA != "9f1c0de5b2a1c3d4e5f60718293a4b5c6d7e8f90" {
+		t.Errorf("trigger = %+v, want the project and the pushed head", got)
+	}
+	// The ref travels unreduced: exactly one piece of code decides what
+	// `refs/heads/main` is, and it is on the other side of this seam beside the
+	// model contract that consumes it.
+	if got.Ref != "refs/heads/main" {
+		t.Errorf("ref = %q, want the delivery's own spelling", got.Ref)
+	}
+	// The repository is spelled the way a spec spells one, with the host from
+	// the connection rather than from the payload.
+	if got.Repo != "https://github.com/acme/checkout" {
+		t.Errorf("repo = %q, want a spec-shaped repository reference", got.Repo)
+	}
+	// And the connection is carried, because it is the audit trail's principal
+	// for everything this sets in motion (ADR-0036 decision 4).
+	if got.Connection != "acme-github" {
+		t.Errorf("connection = %q, want the one whose secret verified the delivery", got.Connection)
+	}
+}
+
+// A multi-source kelson-built project still refuses (#252). ADR-0036 decision 3
+// wants that refusal on the environment's conditions; nothing in this process
+// can write them, so it lands here — named, in full, in the delivery's own
+// answer rather than vanishing into a 202.
+func TestPushRefusalRidesTheResponse(t *testing.T) {
+	refusal := "project checkout builds from 2 repositories (a, b) and kelson's build plane produces one image " +
+		"per build. Per-component image production is issue #252"
+	trigger := &fakeAutoDeploy{plan: PushPlan{Refused: refusal}}
+	h := tracking(t, &fakePoker{}, trigger, projectFromSource("checkout", "https://github.com/acme/checkout"))
+
+	rec := serve(h, delivery(t, "push", appSecret, []byte(pushPayload)))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", rec.Code)
+	}
+	body := decodeBody(t, rec)
+	refused, _ := body["refused"].([]any)
+	if len(refused) != 1 {
+		t.Fatalf("refused = %v, want the refusal named in the answer", body)
+	}
+	if text, _ := refused[0].(string); !strings.Contains(text, "#252") || !strings.Contains(text, "checkout") {
+		t.Errorf("the refusal was summarised away: %q", text)
+	}
+	h.inflight.Wait()
+}
+
+// A server with no trigger wired verifies a push, resolves it and does nothing —
+// which is what every kelson did before ADR-0036, and is still right for a
+// process with no spec store to write into.
+func TestPushWithNoTriggerWiredIsSilent(t *testing.T) {
+	h := tracking(t, &fakePoker{}, nil, projectFromSource("checkout", "https://github.com/acme/checkout"))
+	rec := serve(h, delivery(t, "push", appSecret, []byte(pushPayload)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if acted, _ := decodeBody(t, rec)["acted"].(bool); acted {
+		t.Error("a push acted with no trigger wired")
 	}
 }
 
