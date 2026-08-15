@@ -171,6 +171,49 @@ the published artifacts, because they *are* the history (decision 4) and they ar
 an `Environment` must not make its own record unrecoverable, and re-applying the same spec afterwards
 finds every revision it ever published still in the registry.
 
+#### Amendment, 2026-08-15: an opt-out, `kelson.dev/orphan-on-delete`
+
+Recorded with [#242](https://github.com/dafrie/kelson/issues/242). The amendment above states the sharp
+edge; this is the escape hatch it argues for, and the escape hatch is the *only* thing it changes.
+
+**The decision.** `kelson.dev/orphan-on-delete` on an `Environment`, with a value that reads as true,
+makes the finalizer skip the teardown. It still runs and it still releases itself — an opt-out that
+made the custom resource undeletable would be a worse trap than the behaviour it opts out of — so the
+`Environment` goes and the pair stays: still labelled, still pinned to the last artifact kelson
+published, still reconciled and drift-corrected by Flux, with nothing left that declares it. That state
+is called *orphaned*. It is honoured on both deletion paths, the finalizer's and the
+race-losing reconcile's, because which of the two runs is a race the operator cannot see and must not
+be able to lose their application to.
+
+**Why an annotation and why opt-in.** Deleting the workloads is the behaviour that follows from
+decision 3 and it stays the default — an environment that quietly left its `Kustomization` behind on
+every delete would accumulate exactly the unowned `prune: true` objects the finalizer exists to
+prevent. But [#59](https://github.com/dafrie/kelson/issues/59)'s non-destructive `kelson uninstall`
+already promises that removing kelson does not remove your applications, and an `Environment` deletion
+that always destroys one is that guarantee failing at a smaller scale. The annotation is that promise
+scoped to a single environment. It is spelled like `kelson.dev/rollback-to` (decision 5) because kelson
+has one vocabulary for "an operator's instruction that is not part of the spec": a domain-prefixed
+annotation, read at reconcile time, with the state it produces stated somewhere a reader can find it.
+
+**Why an unreadable value orphans.** Annotations are not validated — kelson runs no admission webhook —
+so the controller is the only thing that ever reads this string, and it will be handed `ture` and `yes`
+eventually. The two ways to be wrong are not the same size: reading a typo as "no" prunes a production
+namespace *because of a misspelling in the annotation that existed to prevent that*, irreversibly,
+while reading it as "yes" leaves an application running that one `kubectl delete kustomization` removes.
+So a value Go's `strconv.ParseBool` accepts decides — `false` is the default said out loud — and
+anything else takes the reversible answer and records a `Warning` event saying it did. A validating
+webhook would let the annotation be refused at the author's terminal instead, which is the better
+answer whenever kelson grows one; it is out of scope here rather than argued against.
+
+**Where the state is visible.** Not in a condition: the object carrying it is being deleted, so a status
+written a moment before the finalizer clears is a status nobody can read. The pair keeps its
+`kelson.dev/*` provenance labels, which makes `kubectl get kustomizations -n kelson-system -l
+kelson.dev/managed-by=kelson` the inventory an orphan shows up in, and the deletion records a `Normal`
+event with reason `Orphaned` naming both ways back — re-applying an `Environment` of the same name in
+the same namespace, which adopts the pair back through the same server-side apply, or deleting the
+`Kustomization` by hand, which prunes the workloads after all. [The delivery plane](../delivery.md)
+carries the operator-facing version.
+
 ### 4. History is the registry's tag list, mirrored bounded into status
 
 The registry holds every artifact ever published for an environment, immutably, and that *is* the

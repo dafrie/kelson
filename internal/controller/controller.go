@@ -36,7 +36,9 @@
 //     tell anybody so.
 //   - **Deleting an Environment deletes its workloads.** The finalizer removes
 //     the Kustomization, which prunes what it applied. See
-//     [EnvironmentReconciler.finalize] for what is deliberately *not* removed.
+//     [EnvironmentReconciler.finalize] for what is deliberately *not* removed,
+//     and [v1alpha1.AnnotationOrphanOnDelete] for the explicit opt-out that
+//     leaves the pair — and the application — running (issue #242).
 //
 // # An invalid spec is never an error return
 //

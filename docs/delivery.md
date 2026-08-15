@@ -95,7 +95,11 @@ the `Kustomization` first — which prunes everything it applied — then the
 > It removes the `Kustomization`, the `Kustomization` prunes its inventory, and
 > the running application goes with it. That is what a `prune: true`
 > `Kustomization` *is*; it is not a new behaviour, but it is not one to derive
-> from first principles at the moment you run the command.
+> from first principles at the moment you run the command. The one way to delete
+> an `Environment` and keep its workloads is
+> [`kelson.dev/orphan-on-delete`](#the-escape-hatch-kelsondevorphan-on-delete),
+> below — set it before the delete, or on an `Environment` still sitting in
+> `Terminating`.
 
 Two things are deliberately left behind. **The workload namespace**, because
 deleting a namespace cascades to everything inside it — including resources
@@ -118,6 +122,68 @@ the reconcile that applied the pair is the only thing left that knows about it,
 and it tears the pair down itself rather than returning
 ([ADR-0028](adr/0028-delivery-spine.md), the amendment). It is the one teardown
 no later reconcile can retry.
+
+#### The escape hatch: `kelson.dev/orphan-on-delete`
+
+```sh
+kubectl annotate environment production kelson.dev/orphan-on-delete=true
+kubectl delete environment production      # the application keeps running
+```
+
+The annotation is an explicit opt-in and the teardown above stays the default
+([#242](https://github.com/dafrie/kelson/issues/242),
+[ADR-0028](adr/0028-delivery-spine.md), the 2026-08-15 amendment). With it in
+force the finalizer still runs and still releases itself — an opt-out that made
+the custom resource undeletable would be a worse trap than the behaviour it opts
+out of — and the only thing it skips is the teardown. It is read at *deletion*
+time, so it can also be added to an `Environment` that is already `Terminating`,
+which is how a stuck deletion is released; it skips whatever teardown has not
+happened yet and cannot restore what has.
+
+**What an orphaned environment is.** The `OCIRepository` and the `Kustomization`
+named `<project>-<environment>` stay in `kelson-system`, keep their
+`kelson.dev/*` provenance labels, and go on reconciling the last artifact kelson
+published — pinned to an immutable tag and digest, drift-corrected every five
+minutes, forever. The application does not notice. What is gone is the thing that
+*declared* them: no `Environment` in any namespace binds those objects any more,
+so nothing re-renders, nothing re-publishes, and no `status` describes them.
+That is what *orphaned* means here, and it is discoverable in the one place it
+has to be — the cluster:
+
+```sh
+kubectl get ocirepositories,kustomizations -n kelson-system -l kelson.dev/managed-by=kelson \
+  -L kelson.dev/project,kelson.dev/environment,kelson.dev/environment-namespace
+```
+
+Any row whose `kelson.dev/environment-namespace` / `kelson.dev/environment` pair
+names an `Environment` that no longer exists is an orphan. The deletion also
+records a `Normal` event with reason `Orphaned` on the `Environment` it deleted,
+which outlives the object: `kubectl get events -n <namespace>` is where the
+answer to "why is there a `Kustomization` here that nothing owns" still is, for
+as long as the cluster keeps events.
+
+**Two ways back.** Re-apply an `Environment` of the same name, in the same
+namespace, binding the same `Project`, and the controller **adopts the pair
+back**: the objects are named after the project and environment and are applied
+with server-side apply, so the next reconcile converges on the ones that were
+left behind rather than colliding with them (a live object labelled with a
+*different* environment namespace is still refused with `NameConflict` — that
+check is what keeps two environments of one name apart, and adoption does not
+weaken it). Or finish the job by hand:
+`kubectl delete kustomization <project>-<environment> -n kelson-system` prunes
+the workloads exactly as the teardown would have, and the `OCIRepository` can go
+after it.
+
+**A value kelson cannot read means orphan.** `true`, `True`, `1` opt in;
+`false` and `0` are the default said out loud. Anything else — `ture`, `yes`, an
+empty value — is honoured as an opt-in *and* recorded as a `Warning` event with
+reason `OrphanAnnotationMalformed`. The two mistakes are not the same size:
+reading a typo as "no" prunes a production namespace because of a
+misspelling in the annotation whose whole purpose was to prevent that, and
+nothing undoes it, while reading it as "yes" leaves an application running that
+one `kubectl delete kustomization` removes whenever somebody notices. Annotations
+are not validated by a webhook today — kelson has none — which is exactly why
+this parses defensively rather than assuming the value is well formed.
 
 ### When delivery refuses
 

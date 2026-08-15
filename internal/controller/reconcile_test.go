@@ -9,6 +9,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -1096,6 +1097,196 @@ func TestDeletionOfAnInvalidSpecStillWorks(t *testing.T) {
 	}
 	if len(spy.tornDown) != 1 {
 		t.Errorf("teardown was not attempted for an Environment with no Project: %v", spy.tornDown)
+	}
+}
+
+// --- the orphan-on-delete escape hatch (issue #242) ---------------------------
+
+// TestOrphanForReadsTheAnnotation is the whole decision table, including the
+// asymmetry: a value that does not parse is honoured as an opt-in, because the
+// other reading of a typo prunes a namespace and cannot be undone (orphan.go).
+func TestOrphanForReadsTheAnnotation(t *testing.T) {
+	cases := []struct {
+		name          string
+		annotations   map[string]string
+		want          bool
+		wantMalformed bool
+	}{
+		{name: "absent", annotations: nil},
+		{name: "absent among others",
+			annotations: map[string]string{v1alpha1.AnnotationRollbackTo: "6-9f0a1b2c"}},
+		{name: "true", annotations: orphanAnnotation("true"), want: true},
+		{name: "True", annotations: orphanAnnotation("True"), want: true},
+		{name: "1", annotations: orphanAnnotation("1"), want: true},
+		{name: "whitespace around true", annotations: orphanAnnotation(" true\n"), want: true},
+		{name: "false is the default said out loud", annotations: orphanAnnotation("false")},
+		{name: "0", annotations: orphanAnnotation("0")},
+		// The two that matter: neither is a boolean, and neither may be read as
+		// "delete the application".
+		{name: "a typo", annotations: orphanAnnotation("ture"), want: true, wantMalformed: true},
+		{name: "yes", annotations: orphanAnnotation("yes"), want: true, wantMalformed: true},
+		{name: "present and empty", annotations: orphanAnnotation(""), want: true, wantMalformed: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := orphanFor(tc.annotations)
+			if got.Requested != tc.want || got.Malformed != tc.wantMalformed {
+				t.Errorf("orphanFor(%v) = %+v, want requested=%v malformed=%v",
+					tc.annotations, got, tc.want, tc.wantMalformed)
+			}
+		})
+	}
+}
+
+func orphanAnnotation(value string) map[string]string {
+	return map[string]string{v1alpha1.AnnotationOrphanOnDelete: value}
+}
+
+// TestOrphanOnDeleteSkipsTheTeardownAndStillReleases is the escape hatch itself:
+// nothing is torn down, the workloads keep running, and the Environment still
+// goes away — an opt-out that made the custom resource undeletable would be a
+// worse trap than the behaviour it opts out of.
+func TestOrphanOnDeleteSkipsTheTeardownAndStillReleases(t *testing.T) {
+	env := deliveredEnvironment()
+	env.Annotations = orphanAnnotation("true")
+	now := metav1.Now()
+	env.DeletionTimestamp = &now
+
+	spy := &spyDeliverer{}
+	recorder := record.NewFakeRecorder(10)
+	c := newClient(t, validProject(), env)
+	r := &EnvironmentReconciler{Client: c, Profiles: StaticProfileSource{}, Delivery: spy, Recorder: recorder}
+
+	if _, err := r.Reconcile(context.Background(), request("production")); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(spy.tornDown) != 0 {
+		t.Fatalf("teardown was called with %v; the annotation exists to leave the Flux pair — and the "+
+			"application it reconciles — exactly where they are", spy.tornDown)
+	}
+	var got v1alpha1.Environment
+	err := c.Get(context.Background(), request("production").NamespacedName, &got)
+	if err == nil && len(got.Finalizers) != 0 {
+		t.Errorf("finalizers = %v; skipping the teardown must not make the object undeletable", got.Finalizers)
+	}
+
+	// The one trace left in the cluster once the Environment is gone.
+	event := nextEvent(t, recorder)
+	if !strings.Contains(event, EventReasonOrphaned) {
+		t.Errorf("event = %q, want reason %s", event, EventReasonOrphaned)
+	}
+	for _, want := range []string{v1alpha1.AnnotationOrphanOnDelete, "adopts the pair back", "kubectl delete kustomization"} {
+		if !strings.Contains(event, want) {
+			t.Errorf("the event does not say %q, so a reader has no way back from an orphaned pair: %q", want, event)
+		}
+	}
+}
+
+// TestOrphanOnDeleteFalseTearsDown: the default is the default, and spelling it
+// out loud must not change it.
+func TestOrphanOnDeleteFalseTearsDown(t *testing.T) {
+	env := deliveredEnvironment()
+	env.Annotations = orphanAnnotation("false")
+	now := metav1.Now()
+	env.DeletionTimestamp = &now
+
+	spy := &spyDeliverer{}
+	c := newClient(t, validProject(), env)
+	r := &EnvironmentReconciler{Client: c, Profiles: StaticProfileSource{}, Delivery: spy}
+
+	if _, err := r.Reconcile(context.Background(), request("production")); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(spy.tornDown) != 1 || spy.tornDown[0] != "checkout/production" {
+		t.Errorf("teardown was called with %v, want the pair torn down as usual", spy.tornDown)
+	}
+}
+
+// TestAMalformedOrphanAnnotationOrphansAndWarns: the ambiguous instruction is
+// answered the way that can be undone by hand, and the warning is what tells the
+// operator their annotation did not say what they thought it said.
+func TestAMalformedOrphanAnnotationOrphansAndWarns(t *testing.T) {
+	env := deliveredEnvironment()
+	env.Annotations = orphanAnnotation("ture")
+	now := metav1.Now()
+	env.DeletionTimestamp = &now
+
+	spy := &spyDeliverer{}
+	recorder := record.NewFakeRecorder(10)
+	c := newClient(t, validProject(), env)
+	r := &EnvironmentReconciler{Client: c, Profiles: StaticProfileSource{}, Delivery: spy, Recorder: recorder}
+
+	if _, err := r.Reconcile(context.Background(), request("production")); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(spy.tornDown) != 0 {
+		t.Fatalf("a value kelson cannot read was treated as `delete the application`: %v", spy.tornDown)
+	}
+	if got := nextEvent(t, recorder); !strings.Contains(got, EventReasonOrphaned) {
+		t.Errorf("first event = %q, want the orphan record", got)
+	}
+	warning := nextEvent(t, recorder)
+	if !strings.Contains(warning, EventReasonOrphanAnnotationMalformed) || !strings.Contains(warning, "ture") {
+		t.Errorf("warning = %q, want %s quoting the value back",
+			warning, EventReasonOrphanAnnotationMalformed)
+	}
+}
+
+// TestOrphanOnDeleteSurvivesTheFinalizerRace closes the same window
+// TestDeletionBeforeTheFinalizerStillTearsDown does, from the other side. That
+// path tears the pair down from the reconcile that applied it, because no
+// finalize will ever run — so it is also the path that would destroy an
+// application the operator explicitly asked to keep, in a race they cannot see.
+func TestOrphanOnDeleteSurvivesTheFinalizerRace(t *testing.T) {
+	env := validEnvironment()
+	env.Annotations = orphanAnnotation("true")
+
+	deleted := false
+	c := fake.NewClientBuilder().
+		WithScheme(testScheme(t)).
+		WithObjects(validProject(), env).
+		WithStatusSubresource(&v1alpha1.Project{}, &v1alpha1.Environment{}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Patch: func(ctx context.Context, cl client.WithWatch, obj client.Object,
+				patch client.Patch, opts ...client.PatchOption) error {
+				if env, ok := obj.(*v1alpha1.Environment); ok && !deleted {
+					deleted = true
+					if err := cl.Delete(ctx, env.DeepCopy()); err != nil {
+						return err
+					}
+				}
+				return cl.Patch(ctx, obj, patch, opts...)
+			},
+		}).
+		Build()
+
+	spy := &spyDeliverer{outcome: Outcome{Revision: "1-abcd1234", Phase: v1alpha1.PhaseCommitted, Published: true}}
+	r := &EnvironmentReconciler{Client: c, Profiles: StaticProfileSource{}, Delivery: spy}
+
+	if _, err := r.Reconcile(context.Background(), request("production")); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if spy.calls != 1 {
+		t.Fatalf("the pair was applied %d times, want 1 — the test does not exercise the window otherwise",
+			spy.calls)
+	}
+	if len(spy.tornDown) != 0 {
+		t.Errorf("the abandon path tore down %v despite %s: which of the two deletion paths runs is a "+
+			"race, and the answer to the annotation must not depend on it",
+			spy.tornDown, v1alpha1.AnnotationOrphanOnDelete)
+	}
+}
+
+// nextEvent reads one event off a fake recorder, or fails.
+func nextEvent(t *testing.T, recorder *record.FakeRecorder) string {
+	t.Helper()
+	select {
+	case event := <-recorder.Events:
+		return event
+	default:
+		t.Fatal("no event was recorded; an orphaned pair with nothing in the cluster explaining it is " +
+			"exactly the state this feature is supposed to make discoverable")
+		return ""
 	}
 }
 
