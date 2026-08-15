@@ -87,6 +87,19 @@ const (
 	// re-probes each time.
 	ReasonClusterProfileUnavailable = "ClusterProfileUnavailable"
 
+	// ReasonSourcesUnavailable — the controller could not list the GitSources
+	// this instance declares (ADR-0035 decision 2), so resolution cannot tell
+	// whether a component's `source:` names one.
+	//
+	// It is its own reason for the same reason ReasonClusterProfileUnavailable
+	// is: a listing that failed and an instance that declares no GitSource
+	// produce the same empty list and mean opposite things. Resolving against
+	// the empty one would refuse the component with `ref/unknown-source` — a
+	// SpecInvalid pointing at a spec that is fine — and send an author to edit
+	// a binding that was never wrong. The controller retries with backoff and
+	// lists again.
+	ReasonSourcesUnavailable = "SourcesUnavailable"
+
 	// ReasonRolledBack — the environment is serving a revision it was pinned to
 	// by AnnotationRollbackTo. Ready is True: the pinned artifact is live. What
 	// is *not* true is that the environment tracks its spec, and that is what

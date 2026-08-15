@@ -236,10 +236,35 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	// The instance's declared sources, which resolution needs before a
+	// component bound to a GitSource can deploy (ADR-0035 decisions 2 and 3).
+	gitSources, err := controlstore.NewGitSourceStore(controlstore.GitSourceStoreOptions{
+		// The *manager's* client, unlike the connection store above: a
+		// GitSource is one of kelson's own kinds, so the cache already holds
+		// every one of them — GitSourceReconciler's watch started that informer
+		// — and listing through it costs no API call per reconcile. The Secret
+		// argument for a direct client does not apply to a kind kelson already
+		// watches cluster-wide.
+		Client: mgr.GetClient(),
+		// kelson's own namespace, which this binary spells --flux-namespace:
+		// the namespace the chart installs kelson into, where the GitSources sit
+		// beside the GitConnections the previews materializer above reads out of
+		// the very same value. A second flag naming the same namespace is a
+		// second thing to get wrong, and the two must never disagree — a
+		// controller resolving `tools` from one namespace while the server
+		// resolves it from another would build and deploy different
+		// repositories. It is the same namespace kelson-server calls
+		// --namespace, which is the knob an operator sets there.
+		Namespace: cfg.fluxNamespace,
+	})
+	if err != nil {
+		return fmt.Errorf("building the git source store: %w", err)
+	}
 
 	if err := (&controller.EnvironmentReconciler{
 		Client:   mgr.GetClient(),
 		Profiles: found.source,
+		Sources:  gitSources,
 		Delivery: &controller.FluxDeliverer{
 			Client:             mgr.GetClient(),
 			Registry:           cfg.registry,

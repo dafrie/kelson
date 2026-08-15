@@ -145,6 +145,17 @@ probe that failed no longer freezes an empty profile for the life of the
 process, though the Flux *watches* still depend on the start-up answer and still
 need a restart ([#133](https://github.com/dafrie/kelson/issues/133)).
 
+Step 3 has one of the same shape. Resolution is handed the `GitSource` objects
+the instance declares, because a component's `source:` may name one
+([ADR-0035](adr/0035-sources.md) §3) and only a plane with cluster access can
+see that half of the scope; the controller lists them from its own namespace,
+the one `--flux-namespace` names. `SourcesUnavailable` means that listing
+failed. It is not `SpecInvalid`, for the reason `ClusterProfileUnavailable` is
+not `FluxNotInstalled`: resolving against the empty list would refuse the
+component with `ref/unknown-source` — "this instance offers: nothing" — and send
+an author to fix a binding that was never wrong. Nothing is rendered and the
+controller retries with backoff.
+
 Two conditions carry the answer. `Ready` is whether the environment is serving
 what it should. `Progressing` is whether kelson is still working on it — and the
 two disagree in exactly one situation, which is the reason the second condition
