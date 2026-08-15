@@ -767,7 +767,9 @@ func TestTeardownOfSomethingNeverCreated(t *testing.T) {
 // specOf is an object's spec and labels as a comparable string. The fake
 // client bumps resourceVersion on every apply, no-op or not, where a real API
 // server does not — so what an idempotent re-apply is actually asserted on is
-// the content, which is the property that matters either way.
+// the content, which is the property that matters either way. The server's own
+// half of it, that a settled pair stops being written at all, is asserted
+// against a real API server in envtest_delivery_test.go (issue #243).
 func specOf(t *testing.T, u *unstructured.Unstructured) string {
 	t.Helper()
 	return fmt.Sprintf("%v|%v", u.Object["spec"], u.GetLabels())
