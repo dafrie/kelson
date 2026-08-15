@@ -1391,8 +1391,13 @@ func validateProject(p *Project, v *validator) {
 				"set source.git to the repository URL, or remove source and use pre-built images")
 		}
 		if s.Source.Connection != "" {
+			// No gate any more: the server resolves this to a credential and
+			// projects it into the build pod's clone (ADR-0033 decisions 4 and
+			// 5, internal/forgeconn). What is still not checked here is that the
+			// connection *exists* — that is cluster state, and validation
+			// deliberately has none (ADR-0001); a name nothing matches is a
+			// resolution refusal naming this field.
 			v.name("$.spec.source.connection", s.Source.Connection, "connection")
-			v.gate("$.spec.source.connection", "$.spec.source.connection")
 		}
 	}
 	if s.Build != nil {

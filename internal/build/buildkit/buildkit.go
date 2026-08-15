@@ -121,14 +121,20 @@ type Options struct {
 	Cluster Cluster
 	// Config supplies the non-request part of the workload.
 	Config Config
+	// CloneAuth mints the credential the clone init container fetches with
+	// (ADR-0033 decision 5). Nil is an anonymous fetch, which is what every
+	// build did before connections existed and is still correct for a public
+	// repository.
+	CloneAuth build.CloneAuth
 }
 
 // Driver is the build.Builder for Dockerfile strategy (ADR-0010). It renders
 // the build Job purely, submits it through Cluster, and streams the result.
 type Driver struct {
-	name    string
-	cluster Cluster
-	cfg     Config
+	name      string
+	cluster   Cluster
+	cfg       Config
+	cloneAuth build.CloneAuth
 }
 
 var _ build.Builder = (*Driver)(nil)
@@ -138,7 +144,12 @@ func New(opts Options) (*Driver, error) {
 	if opts.Cluster == nil {
 		return nil, errors.New("buildkit: a Cluster is required")
 	}
-	return &Driver{name: StrategyName, cluster: opts.Cluster, cfg: opts.Config.withDefaults()}, nil
+	return &Driver{
+		name:      StrategyName,
+		cluster:   opts.Cluster,
+		cfg:       opts.Config.withDefaults(),
+		cloneAuth: opts.CloneAuth,
+	}, nil
 }
 
 // Name implements build.Builder: the Dockerfile strategy id (ADR-0010).
@@ -168,7 +179,11 @@ func (d *Driver) Workload(req build.Request) ([]byte, error) {
 // of them are credentials would corrupt real output while still missing the
 // credential that looks like a word (internal/redact package doc).
 func (d *Driver) Build(ctx context.Context, req build.Request, w io.Writer) (build.Result, error) {
-	manifest, err := d.cfg.Workload(req)
+	cred, err := d.mint(ctx, req)
+	if err != nil {
+		return build.Result{}, err
+	}
+	manifest, err := d.cfg.WorkloadWithCredential(req, cred)
 	if err != nil {
 		return build.Result{}, err
 	}
@@ -184,4 +199,24 @@ func (d *Driver) Build(ctx context.Context, req build.Request, w io.Writer) (bui
 		}
 	}
 	return res, werr
+}
+
+// mint asks the CloneAuth seam for this build's credential and registers it
+// with internal/redact before it can reach anything.
+//
+// Registration happens here rather than at the seam's implementation because
+// this is the boundary the guarantee has to hold at: whichever CloneAuth a
+// caller wired, the value is unprintable from the moment this driver has it,
+// and the log scrubber a few lines below is already looking for it by the time
+// the build produces a line (issue #117, ADR-0033 decision 2).
+func (d *Driver) mint(ctx context.Context, req build.Request) (build.CloneCredential, error) {
+	if d.cloneAuth == nil || req.SourceGit == "" {
+		return build.CloneCredential{}, nil
+	}
+	cred, err := d.cloneAuth.CloneCredential(ctx, req)
+	if err != nil {
+		return build.CloneCredential{}, err
+	}
+	redact.Register(cred.SecretValues()...)
+	return cred, nil
 }

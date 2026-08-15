@@ -35,6 +35,16 @@ type Request struct {
 	// built, and a moving ref makes that record a guess.
 	SourceRef string
 
+	// CloneSecret is the name of the per-run Secret holding the credential the
+	// clone fetches with (ADR-0033 decision 5). It is a *name*: the value never
+	// enters a Request, a manifest's command line or a pod spec.
+	//
+	// It is set by the driver at submit time from what [CloneAuth] minted, not
+	// by whoever assembled the Request — the API plane builds Requests and
+	// cannot mint. Empty means an anonymous fetch, which is correct for a public
+	// repository and is what every build did before connections existed.
+	CloneSecret string
+
 	// ContextDir is the build context within the checked-out tree, relative to
 	// its root. Empty means the root. This is what makes a monorepo buildable:
 	// the repository is cloned whole and only this subdirectory is built.

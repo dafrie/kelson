@@ -662,15 +662,16 @@ func buildConnector(cfg config, specs *controlstore.SpecStore, sources *forgecon
 		if err != nil {
 			return nil, err
 		}
-		driver, err := buildDriver(cfg, t, kube.NewBuildExecutor(cluster.Typed))
-		if err != nil {
-			return nil, err
-		}
 		named, err := projectConnection(ctx, specs, t.Project)
 		if err != nil {
 			return nil, err
 		}
 		credentials := gitref.Connections{Resolver: sources, Connection: named}
+		driver, err := buildDriver(cfg, t, kube.NewBuildExecutor(cluster.Typed),
+			cloneCredentials{sources: sources, connection: named})
+		if err != nil {
+			return nil, err
+		}
 		return &api.BuildPlane{
 			Builder: driver,
 			// The same credential resolution the clone init container gets, so
@@ -711,6 +712,33 @@ func projectConnection(ctx context.Context, specs *controlstore.SpecStore, proje
 	return "", nil
 }
 
+// cloneCredentials mints the credential a build pod's clone init container
+// fetches with (ADR-0033 decision 5, internal/build's CloneAuth).
+//
+// It is the same [forgeconn.Resolver] and the same `source.connection` the ref
+// resolver beside it uses, on purpose: "which commit does main name" and "fetch
+// that commit" are the same repository read, and answering them through two
+// credentials would make a build that resolves and then cannot fetch — which is
+// precisely the gap ADR-0033's Context describes.
+type cloneCredentials struct {
+	sources    *forgeconn.Resolver
+	connection string
+}
+
+// CloneCredential implements build.CloneAuth. A source no connection covers
+// mints nothing and the clone stays anonymous, which is correct for a public
+// repository and is what every build did before this existed.
+func (c cloneCredentials) CloneCredential(ctx context.Context, req build.Request) (build.CloneCredential, error) {
+	if c.sources == nil {
+		return build.CloneCredential{}, nil
+	}
+	cred, _, ok, err := c.sources.Credential(ctx, req.SourceGit, c.connection)
+	if err != nil || !ok {
+		return build.CloneCredential{}, err
+	}
+	return build.CloneCredential{Username: cred.Username, Password: cred.Password}, nil
+}
+
 // buildExecutor is what both drivers need from the cluster: submit a rendered
 // build Job and stream it to completion. kube.BuildExecutor satisfies
 // buildkit.Cluster and buildpacks.Cluster structurally, and one executor
@@ -729,11 +757,12 @@ type buildExecutor interface {
 //
 // The insecure-registry list comes from cfg rather than the target: it is what
 // the operator started this server with, and no request may extend it.
-func buildDriver(cfg config, t api.BuildTarget, cluster buildExecutor) (build.Builder, error) {
+func buildDriver(cfg config, t api.BuildTarget, cluster buildExecutor, clone build.CloneAuth) (build.Builder, error) {
 	switch t.Strategy {
 	case buildkit.StrategyName:
 		return buildkit.New(buildkit.Options{
-			Cluster: cluster,
+			Cluster:   cluster,
+			CloneAuth: clone,
 			Config: buildkit.Config{
 				Namespace:          t.Namespace,
 				PushSecret:         t.PushSecret,
@@ -745,7 +774,8 @@ func buildDriver(cfg config, t api.BuildTarget, cluster buildExecutor) (build.Bu
 		// No Rebaser: the server exposes no rebase RPC, and Driver.Rebase
 		// fails closed without one rather than pretending to patch a run image.
 		return buildpacks.New(buildpacks.Options{
-			Cluster: cluster,
+			Cluster:   cluster,
+			CloneAuth: clone,
 			Config: buildpacks.Config{
 				Namespace:          t.Namespace,
 				PushSecret:         t.PushSecret,

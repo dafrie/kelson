@@ -386,7 +386,7 @@ func TestAuthBannerSaysWhichPostureItStartedIn(t *testing.T) {
 func TestBuildDriverForStrategy(t *testing.T) {
 	cfg := config{insecureRegistries: []string{"localhost:5000"}}
 	for _, strategy := range []string{"dockerfile", "buildpacks"} {
-		driver, err := buildDriver(cfg, api.BuildTarget{Strategy: strategy, Namespace: "shop-production"}, nopExecutor{})
+		driver, err := buildDriver(cfg, api.BuildTarget{Strategy: strategy, Namespace: "shop-production"}, nopExecutor{}, nil)
 		if err != nil {
 			t.Fatalf("buildDriver(%q): %v", strategy, err)
 		}
@@ -395,7 +395,7 @@ func TestBuildDriverForStrategy(t *testing.T) {
 		}
 	}
 	for _, strategy := range []string{"", "none", "railpack"} {
-		if _, err := buildDriver(cfg, api.BuildTarget{Strategy: strategy}, nopExecutor{}); err == nil {
+		if _, err := buildDriver(cfg, api.BuildTarget{Strategy: strategy}, nopExecutor{}, nil); err == nil {
 			t.Errorf("strategy %q has no driver and must be refused", strategy)
 		}
 	}

@@ -160,16 +160,20 @@ type Options struct {
 	// Rebaser performs rebase onto a new run image. Optional: only Rebase
 	// needs it.
 	Rebaser Rebaser
+	// CloneAuth mints the credential the clone init container fetches with
+	// (ADR-0033 decision 5). Nil is an anonymous fetch.
+	CloneAuth build.CloneAuth
 }
 
 // Driver is the build.Builder for the buildpacks strategy (ADR-0010). It
 // renders the build Job purely, submits it through Cluster, and streams the
 // result; Rebase patches a run image through Rebaser.
 type Driver struct {
-	name    string
-	cluster Cluster
-	rebaser Rebaser
-	cfg     Config
+	name      string
+	cluster   Cluster
+	rebaser   Rebaser
+	cfg       Config
+	cloneAuth build.CloneAuth
 }
 
 var _ build.Builder = (*Driver)(nil)
@@ -180,10 +184,11 @@ func New(opts Options) (*Driver, error) {
 		return nil, errors.New("buildpacks: a Cluster is required")
 	}
 	return &Driver{
-		name:    StrategyName,
-		cluster: opts.Cluster,
-		rebaser: opts.Rebaser,
-		cfg:     opts.Config.withDefaults(),
+		name:      StrategyName,
+		cluster:   opts.Cluster,
+		rebaser:   opts.Rebaser,
+		cfg:       opts.Config.withDefaults(),
+		cloneAuth: opts.CloneAuth,
 	}, nil
 }
 
@@ -207,7 +212,11 @@ func (d *Driver) Workload(req build.Request) ([]byte, error) {
 // that" is not a property. Everything kelson holds only as a reference (the
 // push Secret) is not scrubbed here because it was never in this process.
 func (d *Driver) Build(ctx context.Context, req build.Request, w io.Writer) (build.Result, error) {
-	manifest, err := d.cfg.Workload(req)
+	cred, err := d.mint(ctx, req)
+	if err != nil {
+		return build.Result{}, err
+	}
+	manifest, err := d.cfg.WorkloadWithCredential(req, cred)
 	if err != nil {
 		return build.Result{}, err
 	}
@@ -223,6 +232,22 @@ func (d *Driver) Build(ctx context.Context, req build.Request, w io.Writer) (bui
 		}
 	}
 	return res, werr
+}
+
+// mint asks the CloneAuth seam for this build's credential and registers it
+// with internal/redact before it can reach anything (issue #117). It is
+// buildkit's method of the same name, for the same reason: the guarantee has to
+// hold at this boundary, whichever CloneAuth a caller wired.
+func (d *Driver) mint(ctx context.Context, req build.Request) (build.CloneCredential, error) {
+	if d.cloneAuth == nil || req.SourceGit == "" {
+		return build.CloneCredential{}, nil
+	}
+	cred, err := d.cloneAuth.CloneCredential(ctx, req)
+	if err != nil {
+		return build.CloneCredential{}, err
+	}
+	redact.Register(cred.SecretValues()...)
+	return cred, nil
 }
 
 // Rebase patches the run image of a previously built application onto

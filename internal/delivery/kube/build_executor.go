@@ -85,14 +85,37 @@ type jobMeta struct {
 	// than assumed: "buildkit" for a Dockerfile build, "buildpack" for a
 	// lifecycle build.
 	container string
+	// secrets are the per-run Secrets this build submitted beside its Job —
+	// today exactly the clone credential (ADR-0033 decision 5). They are owned
+	// by the Job so the API server's garbage collector removes them even if
+	// this process never reaches Wait, and Wait deletes them explicitly anyway
+	// so a finished build does not leave a live credential in the namespace for
+	// as long as garbage collection takes.
+	secrets []string
 }
 
-// Submit decodes the rendered Job manifest, creates the Job, and returns its
-// name. It is idempotent: because Job names are a deterministic function of
-// the Request, re-submitting an identical build finds the Job already present
-// and treats that as success rather than a conflict.
+// Submit decodes the rendered build manifest, creates what it declares, and
+// returns the Job's name. It is idempotent: because Job names are a
+// deterministic function of the Request, re-submitting an identical build finds
+// the objects already present and treats that as success rather than a
+// conflict.
+//
+// # Why the manifest may be more than a Job
+//
+// A build that clones a private repository submits the credential beside the
+// Job, in a Secret of its own (ADR-0033 decision 5, internal/build's
+// CloneSecretManifest). It is a second document rather than a field on the pod
+// spec because a credential in a pod spec is a credential in every
+// `kubectl get job -o yaml`.
+//
+// The Secrets are created *before* the Job even though the Job owns them: a
+// pod whose secret volume does not exist yet sits in ContainerCreating with a
+// FailedMount event until the kubelet retries, and that would make the private
+// path visibly slower than the public one for no reason. The ownership
+// reference is set immediately afterwards, which is what ties the two
+// lifecycles together for the case this process dies before Wait runs.
 func (e *BuildExecutor) Submit(ctx context.Context, manifest []byte) (string, error) {
-	job, meta, err := decodeBuildJob(manifest)
+	job, secrets, meta, err := decodeBuildObjects(manifest)
 	if err != nil {
 		return "", err
 	}
@@ -105,15 +128,96 @@ func (e *BuildExecutor) Submit(ctx context.Context, manifest []byte) (string, er
 		// last. Refuse before the Job runs rather than after it pushed.
 		return "", fmt.Errorf("kube: build manifest %s carries no %s annotation, so its result could not be named", job.Name, build.AnnotationImage)
 	}
-	if _, err := e.clientset.BatchV1().Jobs(meta.namespace).Create(ctx, job, metav1.CreateOptions{}); err != nil {
+
+	for _, secret := range secrets {
+		secret.Namespace = meta.namespace
+		if _, err := e.clientset.CoreV1().Secrets(meta.namespace).Create(ctx, secret, metav1.CreateOptions{}); err != nil {
+			if !apierrors.IsAlreadyExists(err) {
+				return "", fmt.Errorf("kube: writing the per-run Secret %s for build %s: %w", secret.Name, job.Name, err)
+			}
+			// A re-submitted build re-mints its credential, and the old value
+			// is the one that is about to expire. Update rather than adopt.
+			if _, err := e.clientset.CoreV1().Secrets(meta.namespace).Update(ctx, secret, metav1.UpdateOptions{}); err != nil {
+				return "", fmt.Errorf("kube: refreshing the per-run Secret %s for build %s: %w", secret.Name, job.Name, err)
+			}
+		}
+	}
+
+	created, err := e.clientset.BatchV1().Jobs(meta.namespace).Create(ctx, job, metav1.CreateOptions{})
+	if err != nil {
 		if !apierrors.IsAlreadyExists(err) {
+			// The Secrets are already written and nothing will ever own them,
+			// so they are removed here rather than left behind holding a live
+			// credential.
+			e.deleteSecrets(ctx, meta)
 			return "", fmt.Errorf("kube: submitting build Job %s: %w", job.Name, err)
 		}
 		// AlreadyExists: an identical build Job from the same Request is
 		// already scheduled; adopt it instead of failing a retry.
+		created, err = e.clientset.BatchV1().Jobs(meta.namespace).Get(ctx, job.Name, metav1.GetOptions{})
+		if err != nil {
+			return "", fmt.Errorf("kube: reading the build Job %s this submit adopted: %w", job.Name, err)
+		}
 	}
 	e.remember(job.Name, meta)
+	e.own(ctx, created, meta)
 	return job.Name, nil
+}
+
+// own makes the Job the owner of the per-run Secrets it was submitted with, so
+// deleting the Job deletes them whoever does the deleting.
+//
+// A failure here is not fatal and is deliberately silent about the Secret's
+// contents: the explicit delete in [BuildExecutor.Wait] is the primary cleanup,
+// and this is the backstop for the process that never gets there. Failing the
+// build over a missing backstop would trade a leaked object for no build at
+// all.
+func (e *BuildExecutor) own(ctx context.Context, job *batchv1.Job, meta jobMeta) {
+	if len(meta.secrets) == 0 || job == nil || job.UID == "" {
+		return
+	}
+	ref := metav1.OwnerReference{
+		APIVersion: "batch/v1",
+		Kind:       "Job",
+		Name:       job.Name,
+		UID:        job.UID,
+	}
+	for _, name := range meta.secrets {
+		secret, err := e.clientset.CoreV1().Secrets(meta.namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			continue
+		}
+		if hasOwner(secret.OwnerReferences, ref) {
+			continue
+		}
+		secret.OwnerReferences = append(secret.OwnerReferences, ref)
+		_, _ = e.clientset.CoreV1().Secrets(meta.namespace).Update(ctx, secret, metav1.UpdateOptions{})
+	}
+}
+
+func hasOwner(refs []metav1.OwnerReference, want metav1.OwnerReference) bool {
+	for _, r := range refs {
+		if r.UID == want.UID {
+			return true
+		}
+	}
+	return false
+}
+
+// deleteSecrets removes the per-run Secrets of one build. A missing one is
+// success: this runs on every terminal path, and "already gone" is the state it
+// is trying to reach.
+func (e *BuildExecutor) deleteSecrets(ctx context.Context, meta jobMeta) {
+	for _, name := range meta.secrets {
+		err := e.clientset.CoreV1().Secrets(meta.namespace).Delete(ctx, name, metav1.DeleteOptions{})
+		if err != nil && !apierrors.IsNotFound(err) {
+			// Reported nowhere on purpose: the owner reference set in Submit
+			// means the API server removes it with the Job regardless, and a
+			// build that pushed successfully must not fail because a delete
+			// that will happen anyway was slow.
+			continue
+		}
+	}
 }
 
 // Wait streams the build pod's logs to w as they are produced, then waits for
@@ -151,6 +255,10 @@ func (e *BuildExecutor) Wait(ctx context.Context, name string, w io.Writer) (bui
 	}
 
 	cleanup := func() error {
+		// The credential first, and unconditionally: it is short-lived but it
+		// is live, and it must not outlive the build on any path — including
+		// the one where deleting the Job itself fails.
+		e.deleteSecrets(ctx, meta)
 		policy := metav1.DeletePropagationBackground
 		return e.clientset.BatchV1().Jobs(meta.namespace).Delete(ctx, name, metav1.DeleteOptions{PropagationPolicy: &policy})
 	}
@@ -207,18 +315,56 @@ func (e *BuildExecutor) metaFor(name string) (jobMeta, bool) {
 
 // --- manifest decoding ------------------------------------------------------
 
-// decodeBuildJob turns the rendered manifest back into a typed Job plus the
+// decodeBuildObjects turns the rendered manifest back into the typed objects a
+// build submits — exactly one Job, and any per-run Secrets beside it — plus the
 // bits Wait needs. The manifest is YAML that is also valid JSON once
-// translated; sigs.k8s.io/yaml bridges it into a json.Unmarshal.
-func decodeBuildJob(manifest []byte) (*batchv1.Job, jobMeta, error) {
-	js, err := sigsyaml.YAMLToJSON(manifest)
-	if err != nil {
-		return nil, jobMeta{}, fmt.Errorf("kube: decoding build manifest as YAML: %w", err)
+// translated; sigs.k8s.io/yaml bridges each document into a json.Unmarshal.
+//
+// A kind other than Job or Secret is refused rather than skipped. This decoder
+// is the one thing standing between a rendered manifest and `create`, and a
+// driver that started emitting something else should meet a sentence here
+// rather than have it silently dropped.
+func decodeBuildObjects(manifest []byte) (*batchv1.Job, []*corev1.Secret, jobMeta, error) {
+	var job *batchv1.Job
+	var secrets []*corev1.Secret
+
+	for i, doc := range splitYAMLDocuments(manifest) {
+		js, err := sigsyaml.YAMLToJSON(doc)
+		if err != nil {
+			return nil, nil, jobMeta{}, fmt.Errorf("kube: decoding build manifest document %d as YAML: %w", i, err)
+		}
+		var kind struct {
+			Kind string `json:"kind"`
+		}
+		if err := json.Unmarshal(js, &kind); err != nil {
+			return nil, nil, jobMeta{}, fmt.Errorf("kube: reading the kind of build manifest document %d: %w", i, err)
+		}
+		switch kind.Kind {
+		case "Job":
+			if job != nil {
+				return nil, nil, jobMeta{}, errors.New("kube: a build manifest declares more than one Job")
+			}
+			job = &batchv1.Job{}
+			if err := json.Unmarshal(js, job); err != nil {
+				return nil, nil, jobMeta{}, fmt.Errorf("kube: decoding build manifest as a Job: %w", err)
+			}
+		case "Secret":
+			secret := &corev1.Secret{}
+			if err := json.Unmarshal(js, secret); err != nil {
+				// The error deliberately says nothing about the document: it is
+				// a Secret, and a decode failure quoting its bytes would be the
+				// leak this whole path exists to avoid.
+				return nil, nil, jobMeta{}, fmt.Errorf("kube: decoding a per-run Secret of the build manifest: %w", err)
+			}
+			secrets = append(secrets, secret)
+		default:
+			return nil, nil, jobMeta{}, fmt.Errorf("kube: a build manifest may declare a Job and its per-run Secrets, not %q", kind.Kind)
+		}
 	}
-	job := &batchv1.Job{}
-	if err := json.Unmarshal(js, job); err != nil {
-		return nil, jobMeta{}, fmt.Errorf("kube: decoding build manifest as a Job: %w", err)
+	if job == nil {
+		return nil, nil, jobMeta{}, errors.New("kube: the build manifest declares no Job")
 	}
+
 	meta := jobMeta{
 		namespace: job.Namespace,
 		image:     job.Annotations[build.AnnotationImage],
@@ -227,7 +373,29 @@ func decodeBuildJob(manifest []byte) (*batchv1.Job, jobMeta, error) {
 	if len(job.Spec.Template.Spec.Containers) > 0 {
 		meta.container = job.Spec.Template.Spec.Containers[0].Name
 	}
-	return job, meta, nil
+	for _, s := range secrets {
+		meta.secrets = append(meta.secrets, s.Name)
+	}
+	return job, secrets, meta, nil
+}
+
+// splitYAMLDocuments cuts a multi-document stream on `---` at the start of a
+// line, dropping empty documents.
+//
+// It is a split rather than a yaml.Decoder loop because the documents are
+// handed straight to sigsyaml.YAMLToJSON, which takes bytes: decoding to
+// yaml.Node and re-encoding would round-trip the very manifest whose bytes the
+// drivers render deterministically.
+func splitYAMLDocuments(manifest []byte) [][]byte {
+	var out [][]byte
+	for _, part := range bytes.Split(manifest, []byte("\n---")) {
+		trimmed := bytes.TrimSpace(bytes.TrimPrefix(bytes.TrimSpace(part), []byte("---")))
+		if len(trimmed) == 0 {
+			continue
+		}
+		out = append(out, trimmed)
+	}
+	return out
 }
 
 // --- log streaming ----------------------------------------------------------

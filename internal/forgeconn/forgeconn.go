@@ -348,14 +348,18 @@ func (r *Resolver) bootstrapResolution() (Resolution, bool, error) {
 	if !ok {
 		return Resolution{}, false, fmt.Errorf("forgeconn: no adapter for provider %q", stored.Spec.Provider)
 	}
+	// The same join a stored connection goes through, from material this
+	// process holds rather than material a Secret held. Building the Conn some
+	// other way here is how the two paths would drift.
+	material := r.Bootstrap.material()
 	return Resolution{
 		Stored:    stored,
 		Bootstrap: true,
 		Provider:  provider,
 		Conn: forge.Conn{
 			Provider: string(stored.Spec.Provider),
-			Token:    r.Bootstrap.token,
-			Username: r.Bootstrap.username,
+			Token:    material.Token,
+			Username: material.Username,
 		},
 	}, true, nil
 }

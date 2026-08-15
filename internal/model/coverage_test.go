@@ -34,10 +34,11 @@ var renderedFields = map[string]map[string]string{
 		"$.kind":          "decode: selects the document type",
 		"$.metadata.name": "renderer: project label and resource naming",
 
-		"$.spec.source.git":       "internal/build: clone URL (build.Request.SourceURL)",
-		"$.spec.source.ref":       "internal/build: checkout ref (build.Request.SourceRef)",
-		"$.spec.build.strategy":   "internal/build/detect: strategy selection",
-		"$.spec.build.dockerfile": "internal/build/detect: Dockerfile path",
+		"$.spec.source.git":        "internal/build: clone URL (build.Request.SourceURL)",
+		"$.spec.source.ref":        "internal/build: checkout ref (build.Request.SourceRef)",
+		"$.spec.source.connection": "internal/forgeconn: which GitConnection the ref resolution and the build pod's clone authenticate with (ADR-0033 decision 4)",
+		"$.spec.build.strategy":    "internal/build/detect: strategy selection",
+		"$.spec.build.dockerfile":  "internal/build/detect: Dockerfile path",
 
 		"$.spec.image":              "renderer: container image, and the P3 fallback for components",
 		"$.spec.env.*":              "renderer: container env (literal form)",
@@ -273,12 +274,6 @@ spec:
     - {name: web, port: 8080}
   defaults:
     policy: {agents: allow, deployers: [platform-team]}`,
-
-	KindProject + " $.spec.source.connection": `
-spec:
-  source: {git: "https://github.com/acme/checkout", connection: acme-github}
-  components:
-    - {name: web, port: 8080}`,
 
 	KindProject + " $.spec.build.by": `
 spec:
