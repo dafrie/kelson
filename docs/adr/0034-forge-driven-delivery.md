@@ -113,7 +113,10 @@ source ref (webhook or poll, per decision 1) and on a matching `ReportBuild`. Th
 manual: [ADR-0016](0016-delivery-flows-v0.md)'s promotion posture — production moves when its pin
 moves — is unchanged, and a pinned component ignores tracking by the existing precedence rules.
 Spelling of the field is a schema decision to finalize at implementation; the semantics — per
-environment, opt-in, off by default — are this ADR's.
+environment, opt-in, off by default — are this ADR's. If the per-environment source-ref override
+([#239](https://github.com/dafrie/kelson/issues/239)) is adopted, tracking follows the
+environment's *effective* ref — the two designs must land as one answer to "which pushes move this
+environment", not two fields that disagree.
 
 ### 5. Outcomes are written back to the forge
 
