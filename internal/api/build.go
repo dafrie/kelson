@@ -574,9 +574,18 @@ func (s *Server) reportPreviewStatus(ctx context.Context, spec decoded, sha stri
 
 	var failures []string
 	for _, repo := range previewRepositories(spec) {
+		_, fullName, ok := splitRepository(repo)
+		if !ok {
+			// Unreachable for a validated spec — `previews.repo` is a URL the
+			// model checks — and silent rather than reported if it ever is: a
+			// status is a courtesy, and nothing about what was published
+			// changes.
+			continue
+		}
 		err := s.statuses.ReportCommitStatus(ctx, CommitStatus{
-			Repo: repo,
-			SHA:  sha,
+			Repo:     repo,
+			FullName: fullName,
+			SHA:      sha,
 			// One context for every preview publish of one commit, because a
 			// forge keys statuses by it: a per-environment context would leave
 			// a check per environment on every commit, and a changing one

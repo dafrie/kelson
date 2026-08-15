@@ -85,11 +85,13 @@ import (
 	"github.com/dafrie/kelson/internal/delivery/flux"
 	"github.com/dafrie/kelson/internal/delivery/install"
 	"github.com/dafrie/kelson/internal/delivery/kube"
+	"github.com/dafrie/kelson/internal/forge"
 	"github.com/dafrie/kelson/internal/forgeconn"
 	"github.com/dafrie/kelson/internal/forgehttp"
 	"github.com/dafrie/kelson/internal/gitref"
 	"github.com/dafrie/kelson/internal/model"
 	"github.com/dafrie/kelson/internal/observation"
+	"github.com/dafrie/kelson/internal/preview"
 	"github.com/dafrie/kelson/internal/secret"
 	"github.com/dafrie/kelson/internal/version"
 	"github.com/dafrie/kelson/internal/webui"
@@ -143,6 +145,15 @@ type config struct {
 	registry       string
 	pushSecret     string
 	buildNamespace string
+
+	// registryConfig is a docker config.json holding the credential the
+	// server-side preview publish authenticates with (ADR-0034 decision 3). It
+	// is a *file* and not a Secret name, unlike --push-secret beside it,
+	// because the two pushes happen in different places: a build Job pushes
+	// from a pod and takes a Secret reference the kubelet projects, and this
+	// process pushes an artifact itself. kelson-controller reads the same
+	// mounted file for the same reason, under the same flag name.
+	registryConfig string
 	// insecureRegistries are registry hosts served over plain HTTP. It is an
 	// operator knob and never a request field: a caller that could name a
 	// registry insecure could make this server push a credential in clear to
@@ -159,6 +170,25 @@ const registryEnv = "KELSON_REGISTRY"
 // variable `kelson build` reads for the same reason: which registries have no
 // TLS is a property of the cluster this server serves.
 const insecureRegistriesEnv = "KELSON_INSECURE_REGISTRIES"
+
+// registryConfigEnv supplies --registry-config, and defaultRegistryConfig is
+// where a chart mounts it. Both are kelson-controller's, spelled identically:
+// the two processes push to the same registries with the same credential, and
+// an operator who has mounted one Secret should not discover that the other
+// half of the control plane wanted it somewhere else.
+const (
+	registryConfigEnv     = "KELSON_REGISTRY_CONFIG"
+	defaultRegistryConfig = "/etc/kelson/registry/config.json"
+)
+
+// envOr is the flag default when an environment variable may supply it and a
+// built-in default exists behind that.
+func envOr(name, fallback string) string {
+	if v := strings.TrimSpace(os.Getenv(name)); v != "" {
+		return v
+	}
+	return fallback
+}
 
 // passwordEnv supplies --password. It is the preferred way to set it: a flag
 // value is visible in `ps` and in shell history, an environment variable is at
@@ -290,6 +320,9 @@ func parseFlags(args []string, stderr io.Writer) (config, error) {
 	fs.StringVar(&cfg.registry, "registry", os.Getenv(registryEnv), "destination registry and namespace for builds, e.g. ghcr.io/acme (default: $"+registryEnv+"); a Build request may override it")
 	fs.StringVar(&cfg.pushSecret, "push-secret", "", "name of an existing kubernetes.io/dockerconfigjson Secret in the build namespace that authenticates the push")
 	fs.StringVar(&cfg.buildNamespace, "build-namespace", "", "namespace build Jobs run in (default: the environment's own namespace, as in the CLI)")
+	fs.StringVar(&cfg.registryConfig, "registry-config", envOr(registryConfigEnv, defaultRegistryConfig),
+		"path to a docker config.json holding the credential preview artifacts are published with (default: $"+registryConfigEnv+
+			", then "+defaultRegistryConfig+"); a file that is not there is an anonymous push")
 	insecure := fs.String("insecure-registries", os.Getenv(insecureRegistriesEnv),
 		"comma-separated registry hosts served over plain HTTP, e.g. localhost:5000 (default: $"+insecureRegistriesEnv+"); only the listed hosts are affected")
 	if err := fs.Parse(args); err != nil {
@@ -593,6 +626,12 @@ func connectServer(cfg config, attribution *slog.Logger) (*serverPlane, error) {
 		return nil, err
 	}
 
+	// The preview trigger's ResourceSetInputProvider poke (ADR-0034 decision
+	// 2). One value, two triggers: the webhook path below stamps the same
+	// annotation on the same object, and building two would be two answers to
+	// "how does kelson ask flux-operator to look now".
+	poker := flux.InputProviderPoker{Client: cluster.Dynamic}
+
 	server := api.New(api.Options{
 		Specs:        specs,
 		Environments: environments,
@@ -600,6 +639,18 @@ func connectServer(cfg config, attribution *slog.Logger) (*serverPlane, error) {
 		Audit:        audit,
 		Connections:  connections,
 		Logger:       attribution,
+		// The ReportBuild trigger (ADR-0034 decision 3). The publisher is
+		// internal/preview's — the same package `kelson preview publish` calls,
+		// which is what ADR-0017 decision 10 promised a server-side caller
+		// would be — and it needs no cluster connection of its own: it renders,
+		// packages and speaks the distribution API with the credential in the
+		// mounted docker config.
+		Publish: &preview.Publisher{
+			RegistryConfig:     cfg.registryConfig,
+			InsecureRegistries: cfg.insecureRegistries,
+		},
+		Poke:     poker,
+		Statuses: forgeStatuses{sources: sources, externalURL: cfg.externalURL},
 		Profile: api.CaptureFunc(func(context.Context) (clusterprofile.ClusterProfile, error) {
 			return detect.FromCluster(cfg.kubeconfig)
 		}),
@@ -646,7 +697,7 @@ func connectServer(cfg config, attribution *slog.Logger) (*serverPlane, error) {
 		Connections: connections,
 		Specs:       specs,
 		Secrets:     forgehttp.KubeSecrets{Client: cluster.Typed, Namespace: cfg.namespace},
-		Previews:    flux.InputProviderPoker{Client: cluster.Dynamic},
+		Previews:    poker,
 		ExternalURL: cfg.externalURL,
 		Logger:      attribution,
 	})
@@ -766,6 +817,74 @@ func projectConnection(ctx context.Context, specs *controlstore.SpecStore, proje
 		return p.Spec.Source.Connection, nil
 	}
 	return "", nil
+}
+
+// forgeStatuses writes a delivery outcome back onto a commit
+// ([ADR-0034](docs/adr/0034-forge-driven-delivery.md) decision 5).
+//
+// It lives here rather than in internal/api for the reason every seam
+// implementation does: joining a repository to the connection that covers it
+// and minting a token from that connection's Secret is internal/forgeconn's,
+// which reads cluster state. What the handler holds is [api.CommitStatus] and
+// an interface.
+//
+// # Everything it cannot do is silent
+//
+// No connection covers the repository, or the connection's provider has no
+// StatusReporter — a `generic` token connection has none — and nothing is
+// written and nothing fails. ADR-0034 makes that the rule rather than an
+// accident: "statuses are a courtesy of the integration, not a delivery
+// dependency", and a preview that published is a preview that published even if
+// the forge never hears about it.
+//
+// What is *not* silent is a resolution that failed rather than found nothing —
+// two connections covering one host, a Secret that cannot be read, a provider
+// no adapter speaks. Something is configured and broken there, and the report's
+// message says so.
+type forgeStatuses struct {
+	sources *forgeconn.Resolver
+	// externalURL is where this server is reachable from outside. Empty sends
+	// the status with no link rather than a guessed one: internal/forgehttp can
+	// derive an origin from a request's Host header because it *has* a request,
+	// and an RPC handler publishing an artifact has none.
+	externalURL string
+}
+
+// ReportCommitStatus implements api.CommitStatusReporter.
+func (f forgeStatuses) ReportCommitStatus(ctx context.Context, s api.CommitStatus) error {
+	if f.sources == nil {
+		return nil
+	}
+	// No `source.connection` override is consulted, and that is deliberate:
+	// the field pins which connection the project's *source* is read with, and
+	// the repository here is `previews.repo`, which ADR-0017 decision 1 keeps
+	// separate from it with no defaulting either way. Host matching is the
+	// zero-configuration path ADR-0033 decision 4 is written for.
+	res, ok, err := f.sources.Resolve(ctx, s.Repo, "")
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil
+	}
+	reporter, ok := res.Provider.(forge.StatusReporter)
+	if !ok {
+		return nil
+	}
+	return reporter.ReportStatus(ctx, res.Conn, s.FullName, s.SHA, forge.Status{
+		State:       s.State,
+		Context:     s.Context,
+		Description: s.Description,
+		TargetURL:   f.link(s.Path),
+	})
+}
+
+func (f forgeStatuses) link(path string) string {
+	base := strings.TrimRight(strings.TrimSpace(f.externalURL), "/")
+	if base == "" || path == "" {
+		return ""
+	}
+	return base + "/" + strings.TrimLeft(path, "/")
 }
 
 // cloneCredentials mints the credential a build pod's clone init container

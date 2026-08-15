@@ -272,11 +272,18 @@ type PreviewPoker interface {
 // binary's `--external-url` (cmd/kelson-server). A reporter with no external
 // URL configured sends the status without a link rather than guessing at one.
 type CommitStatus struct {
-	// Repo is the repository the commit lives in — `previews.repo`, the
-	// repository whose pull requests become previews, and not the project's
-	// source or delivery repository (ADR-0017 decision 1 keeps those distinct
-	// and defaults between them not at all).
+	// Repo is the repository the commit lives in as the spec spells it —
+	// `previews.repo`, the repository whose pull requests become previews, and
+	// not the project's source or delivery repository (ADR-0017 decision 1
+	// keeps those distinct and defaults between them not at all). It is what a
+	// connection is matched against, by host.
 	Repo string
+	// FullName is `owner/repo`, split from [Repo] by the plane that read the
+	// spec. It travels beside the URL rather than being re-derived by the
+	// reporter because a forge's status API is keyed by it and reducing a
+	// repository reference to a host and a path is already spelled twice in
+	// this repository; a third copy in the wiring would be the one that drifts.
+	FullName string
 	// SHA is the commit the status is about, in full.
 	SHA string
 	// State is the forge's vocabulary: pending, success, failure, error.
