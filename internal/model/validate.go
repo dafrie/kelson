@@ -1423,7 +1423,13 @@ func validateProject(p *Project, v *validator) {
 					"valid values: "+BuildByKelson+", "+BuildByCI+
 						" — kelson builds the image itself and ci reports one its pipeline built (ADR-0034)")
 			}
-			v.gate("$.spec.build.by", "$.spec.build.by")
+			// No gate any more: `BuildService.ReportBuild` reads this field
+			// (ADR-0034 decision 3, internal/api/build.go). `ci` is what makes
+			// the server act on a CI report and publish the change request's
+			// preview; `kelson` is what makes it decline one, and the response
+			// says which. The enum above is still all validation can judge here
+			// — whether kelson could actually build the project is a question
+			// about `source:`, and it is asked where the report is answered.
 		}
 	}
 	projectImage := s.Image

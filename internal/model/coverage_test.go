@@ -39,6 +39,7 @@ var renderedFields = map[string]map[string]string{
 		"$.spec.source.connection": "internal/forgeconn: which GitConnection the ref resolution and the build pod's clone authenticate with (ADR-0033 decision 4)",
 		"$.spec.build.strategy":    "internal/build/detect: strategy selection",
 		"$.spec.build.dockerfile":  "internal/build/detect: Dockerfile path",
+		"$.spec.build.by":          "internal/api: BuildService.ReportBuild acts on a CI report only for `ci` — it renders and publishes the change request's preview — and declines one for `kelson`, whose images come from kelson's own build plane (ADR-0034 decision 3)",
 
 		"$.spec.image":              "renderer: container image, and the P3 fallback for components",
 		"$.spec.env.*":              "renderer: container env (literal form)",
@@ -274,13 +275,6 @@ spec:
     - {name: web, port: 8080}
   defaults:
     policy: {agents: allow, deployers: [platform-team]}`,
-
-	KindProject + " $.spec.build.by": `
-spec:
-  image: i:1
-  build: {strategy: none, by: ci}
-  components:
-    - {name: web, port: 8080}`,
 
 	KindEnvironment + " $.spec.cluster": `
 spec:

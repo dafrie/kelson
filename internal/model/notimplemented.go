@@ -97,16 +97,6 @@ var notImplementedFields = []notImplemented{
 		TrackedBy: "milestone M11 · Teams, RBAC & multi-tenancy",
 	},
 	{
-		Kind: KindProject,
-		Path: "$.spec.build.by",
-		What: "the CI build hand-off",
-		// `by: ci` is a promise that kelson waits for a ReportBuild instead of
-		// building, and there is no ReportBuild yet — so accepting the field
-		// would tell an author their pipeline is wired up when nothing is
-		// listening for it (ADR-0034 decision 3).
-		TrackedBy: "ADR-0034 · forge-driven delivery, the BuildService.ReportBuild slice after R2 (issue #225)",
-	},
-	{
 		Kind:      KindEnvironment,
 		Path:      "$.spec.cluster",
 		What:      "multi-cluster targeting",

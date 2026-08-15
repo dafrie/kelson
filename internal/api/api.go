@@ -75,6 +75,7 @@ import (
 	"github.com/dafrie/kelson/internal/forge"
 	"github.com/dafrie/kelson/internal/model"
 	"github.com/dafrie/kelson/internal/observation"
+	"github.com/dafrie/kelson/internal/preview"
 	"github.com/dafrie/kelson/internal/secret"
 )
 
@@ -227,6 +228,82 @@ type PreviewEngine interface {
 // HasPolicyEngine() when attributing a rejection (issue #45).
 type PreviewConnector func(ctx context.Context, profile clusterprofile.ClusterProfile) (PreviewEngine, error)
 
+// The three seams of the ReportBuild trigger ([ADR-0034](docs/adr/0034-forge-driven-delivery.md)
+// decisions 1, 2 and 5). They are separate interfaces rather than one "trigger
+// plane" because their absences mean three different things and degrade three
+// different ways: without a publisher the report is refused, without a poker
+// the preview updates at its poll interval, and without a status reporter the
+// forge is simply never told.
+
+// PreviewPublisher renders one change request's preview and pushes it as an OCI
+// artifact — the server-side half of ADR-0017 decision 10's "shared package with
+// a thin CLI wrapper", now with a second wrapper.
+//
+// It is a seam here for the reason every cluster-facing capability is one,
+// widened by one word: a handler must be testable without a *registry*, not
+// merely without a cluster. The implementation is *preview.Publisher, which
+// needs no Kubernetes client at all — it renders (pure), packages (pure) and
+// speaks the OCI distribution API over net/http with a credential read from a
+// mounted docker config. What it does need is the network and a real registry
+// to answer, and a handler test that had to stand one up would be testing the
+// pusher rather than the trigger.
+type PreviewPublisher interface {
+	Publish(ctx context.Context, opts preview.Options) (*preview.Published, error)
+}
+
+// PreviewPoker asks flux-operator to re-poll one ResourceSetInputProvider now
+// rather than at `previews.interval` (ADR-0034 decision 2).
+// [flux.InputProviderPoker] is the implementation, and internal/forgehttp holds
+// an identically shaped seam for the webhook path — one annotation stamp, two
+// triggers that want it, spelled once in internal/delivery/flux.
+//
+// A poke is never load-bearing: losing one costs `previews.interval` of latency
+// and never correctness, which is why the handler records a failure in its
+// answer and does not fail the report over it.
+type PreviewPoker interface {
+	Poke(ctx context.Context, namespace, name string) error
+}
+
+// CommitStatus is one outcome written back onto a commit (ADR-0034 decision 5).
+//
+// It carries a *path* rather than a URL because the two halves of the link
+// belong to different planes: which page describes this outcome is the api
+// plane's to say, and where this server is reachable from outside is the
+// binary's `--external-url` (cmd/kelson-server). A reporter with no external
+// URL configured sends the status without a link rather than guessing at one.
+type CommitStatus struct {
+	// Repo is the repository the commit lives in — `previews.repo`, the
+	// repository whose pull requests become previews, and not the project's
+	// source or delivery repository (ADR-0017 decision 1 keeps those distinct
+	// and defaults between them not at all).
+	Repo string
+	// SHA is the commit the status is about, in full.
+	SHA string
+	// State is the forge's vocabulary: pending, success, failure, error.
+	State string
+	// Context is the check name. It must be stable across publishes of one
+	// commit, because a forge keys statuses by it and a changing one leaves a
+	// graveyard of stale checks instead of replacing the previous answer.
+	Context string
+	// Description is one line a human reads beside the check.
+	Description string
+	// Path is the UI path the check links to, e.g. "/projects/checkout".
+	Path string
+}
+
+// CommitStatusReporter writes a [CommitStatus] back to the forge through the
+// connection that covers the repository (ADR-0034 decision 5).
+//
+// A nil reporter, a connection that does not exist and a provider with no
+// StatusReporter capability are all the same outcome — nothing is written and
+// nothing fails — because ADR-0034 makes that degradation the rule rather than
+// an accident: "statuses are a courtesy of the integration, not a delivery
+// dependency". Only a reporter that was asked and *failed* is worth saying out
+// loud, and the handler says it in the report's message.
+type CommitStatusReporter interface {
+	ReportCommitStatus(ctx context.Context, s CommitStatus) error
+}
+
 // LogEngine is the log-query seam. The engine owns the bounding rules and this
 // package only translates the wire message onto them (issue #54).
 // [LogQueryEngine] adapts observation.LogQuery to it.
@@ -369,6 +446,16 @@ type Options struct {
 	Secrets      SecretStore
 	Agents       AgentStore
 
+	// The ReportBuild trigger (ADR-0034 decision 3). Publish is the only one
+	// whose absence refuses anything: a server with no publisher answers
+	// CodeUnimplemented to a change request's report rather than accepting it
+	// and dropping it. A nil Poke costs a preview `previews.interval` of
+	// latency and a nil Statuses costs the commit its check, both of which the
+	// ADR makes degradations rather than failures.
+	Publish  PreviewPublisher
+	Poke     PreviewPoker
+	Statuses CommitStatusReporter
+
 	// Connections is the GitConnection store behind GitConnectionService
 	// (ADR-0033). A nil one is a server that holds no forge credentials: every
 	// RPC of that service answers CodeUnimplemented, which is the pre-#248
@@ -428,6 +515,9 @@ type Server struct {
 	agents       AgentStore
 	install      InstallConnector
 	nodes        NodeReader
+	publish      PreviewPublisher
+	poke         PreviewPoker
+	statuses     CommitStatusReporter
 
 	// connections and connectionSecrets are one store seen through two
 	// interfaces. The split is load-bearing: List and Get reach for
@@ -493,6 +583,9 @@ func New(opts Options) *Server {
 		agents:        opts.Agents,
 		install:       opts.Install,
 		nodes:         opts.Nodes,
+		publish:       opts.Publish,
+		poke:          opts.Poke,
+		statuses:      opts.Statuses,
 		forges:        opts.Forges,
 		authz:         newAuthorizer(opts.Now, opts.Logger, opts.Audit),
 		buildDefaults: opts.BuildDefaults,
