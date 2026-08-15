@@ -13,9 +13,10 @@ import (
 	"connectrpc.com/connect"
 
 	"github.com/dafrie/kelson/internal/api"
-	"github.com/dafrie/kelson/internal/build"
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
 	"github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1/kelsonv1alpha1connect"
+	"github.com/dafrie/kelson/internal/build"
+	"github.com/dafrie/kelson/internal/forgeconn"
 	"github.com/dafrie/kelson/internal/version"
 	"github.com/dafrie/kelson/internal/webui"
 )
@@ -150,7 +151,7 @@ func TestPasswordComesFromTheEnvironment(t *testing.T) {
 // TestHealthzServes: liveness plus the build it is reporting for — "the server
 // is up" and "the server is the build you deployed" are asked at once.
 func TestHealthzServes(t *testing.T) {
-	srv := httptest.NewServer(newMux(api.New(api.Options{}), openAuth(t)))
+	srv := httptest.NewServer(newMux(&serverPlane{api: api.New(api.Options{}), sources: &forgeconn.Resolver{}}, openAuth(t)))
 	defer srv.Close()
 
 	res, err := srv.Client().Get(srv.URL + "/healthz")
@@ -177,7 +178,7 @@ func TestHealthzServes(t *testing.T) {
 // binary's mux answers a v1alpha1 RPC. Render needs no cluster, so it is the
 // one that proves routing, codec and schema without any wiring.
 func TestMuxServesTheSchema(t *testing.T) {
-	srv := httptest.NewServer(newMux(api.New(api.Options{}), openAuth(t)))
+	srv := httptest.NewServer(newMux(&serverPlane{api: api.New(api.Options{}), sources: &forgeconn.Resolver{}}, openAuth(t)))
 	defer srv.Close()
 
 	client := kelsonv1alpha1connect.NewRenderServiceClient(srv.Client(), srv.URL)
@@ -220,7 +221,7 @@ spec:
 // prefix that it did not register answers as a missing endpoint rather than as
 // a page (internal/webui).
 func TestMuxServesTheWebUIWithoutDisturbingTheAPI(t *testing.T) {
-	srv := httptest.NewServer(newMux(api.New(api.Options{}), openAuth(t)))
+	srv := httptest.NewServer(newMux(&serverPlane{api: api.New(api.Options{}), sources: &forgeconn.Resolver{}}, openAuth(t)))
 	defer srv.Close()
 
 	// "/" is a page — the UI, or the placeholder saying this binary has none.
@@ -306,7 +307,7 @@ func TestMuxWithAPasswordGatesTheAPIAndOnlyTheAPI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("api.NewAuth: %v", err)
 	}
-	srv := httptest.NewServer(newMux(api.New(api.Options{}), auth))
+	srv := httptest.NewServer(newMux(&serverPlane{api: api.New(api.Options{}), sources: &forgeconn.Resolver{}}, auth))
 	defer srv.Close()
 
 	// /healthz stays open: a probe holds no credential and a server that fails

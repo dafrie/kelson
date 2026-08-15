@@ -85,7 +85,9 @@ import (
 	"github.com/dafrie/kelson/internal/delivery/flux"
 	"github.com/dafrie/kelson/internal/delivery/install"
 	"github.com/dafrie/kelson/internal/delivery/kube"
+	"github.com/dafrie/kelson/internal/forgeconn"
 	"github.com/dafrie/kelson/internal/gitref"
+	"github.com/dafrie/kelson/internal/model"
 	"github.com/dafrie/kelson/internal/observation"
 	"github.com/dafrie/kelson/internal/secret"
 	"github.com/dafrie/kelson/internal/version"
@@ -185,14 +187,23 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	// record must never be silent" (ADR-0026 §3).
 	attribution := slog.New(slog.NewJSONHandler(stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
-	server, agents, err := connectServer(cfg, attribution)
+	plane, err := connectServer(cfg, attribution)
 	if err != nil {
 		return err
 	}
 
-	auth, err := api.NewAuthWith(api.AuthOptions{Password: cfg.password, Agents: agents})
+	auth, err := api.NewAuthWith(api.AuthOptions{Password: cfg.password, Agents: plane.agents})
 	if err != nil {
 		return err
+	}
+
+	// The bootstrap credential is deprecated, and a deprecation nobody is told
+	// about is a deprecation nobody acts on (ADR-0033 decision 5). It goes to
+	// stderr beside the bind warning rather than onto the banner: the banner
+	// states the posture this process is in, and this states one an operator
+	// should leave.
+	if notice := plane.sources.Bootstrap.Deprecation(); notice != "" {
+		_, _ = fmt.Fprintln(stderr, "warning:", notice)
 	}
 
 	// A plain net/http server, no h2c. The Connect protocol carries unary and
@@ -203,7 +214,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	// (ADR-0013 §4: the fence extends rather than loosens). Adding gRPC-client
 	// support later is an http2 server, not a schema change.
 	srv := &http.Server{
-		Handler: newMux(server, auth),
+		Handler: newMux(plane, auth),
 		// Only the header deadline is set. A read or write deadline would kill
 		// the server-streaming RPCs this API exists to serve — a deploy stream
 		// lives as long as the deployment does.
@@ -217,7 +228,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	// stop a server that is already listening.
 	_, _ = fmt.Fprintf(stdout, "kelson-server %s serving the kelson.v1alpha1 schema on http://%s (namespace %s, %s)\n",
 		version.String(), listener.Addr(), cfg.namespace,
-		strings.Join([]string{authBanner(auth), auditBanner(cfg), webBanner()}, ", "))
+		strings.Join([]string{authBanner(auth), auditBanner(cfg), sourceBanner(plane), webBanner()}, ", "))
 
 	errs := make(chan error, 1)
 	go func() {
@@ -351,9 +362,9 @@ func isLoopback(host string) bool {
 // gives the API precedence: Go's ServeMux matches the most specific pattern,
 // so every route above wins over "/" whatever the order here. The UI handler
 // refuses those prefixes itself as well (internal/webui).
-func newMux(server *api.Server, auth *api.Auth) http.Handler {
+func newMux(plane *serverPlane, auth *api.Auth) http.Handler {
 	mux := http.NewServeMux()
-	server.Register(mux)
+	plane.api.Register(mux)
 	auth.Register(mux)
 	mux.HandleFunc("/healthz", healthz)
 	mux.Handle("/", webui.Handler())
@@ -388,6 +399,18 @@ func auditBanner(cfg config) string {
 	return fmt.Sprintf("audit trail: %d days", cfg.auditRetention)
 }
 
+// sourceBanner says how this process authenticates to the repositories it
+// reads (ADR-0033). It is on the banner because "a private repository will not
+// clone" is the failure the whole decision exists to fix, and an operator who
+// has connected no forge and set no bootstrap variable should learn that here
+// rather than from a 404 on their first build.
+func sourceBanner(plane *serverPlane) string {
+	if plane.sources.Bootstrap != nil {
+		return "source credentials: git connections, plus the deprecated " + forgeconn.BootstrapEnv
+	}
+	return "source credentials: git connections"
+}
+
 // webBanner says whether this binary carries the web UI or the placeholder that
 // stands in for it (internal/webui). It is on the banner for the same reason
 // the other two are: a binary built without `make ui` still serves the API
@@ -416,6 +439,26 @@ func healthz(w http.ResponseWriter, _ *http.Request) {
 
 // --- production wiring ------------------------------------------------------
 
+// serverPlane is what connectServer built: the RPC server plus the pieces
+// run() and the mux need in their own right.
+//
+// It is a struct rather than a growing return list because the things beside
+// the api.Server are not incidental — the agent store is what the HTTP gate
+// resolves credentials against, and the connection resolver is what the source
+// credential, the build clone and the forge endpoints all share. One value that
+// says "this is the wiring" beats four returns nobody can name at the call
+// site.
+type serverPlane struct {
+	api    *api.Server
+	agents *controlstore.AgentStore
+
+	// sources answers "which connection covers this repository, and what does
+	// it mint" (ADR-0033 decision 4). It is never nil: with no cluster
+	// connections and no bootstrap token it resolves everything to anonymous,
+	// which is exactly what this server did before connections existed.
+	sources *forgeconn.Resolver
+}
+
 // connectServer builds the api.Server over the real cluster.
 //
 // The typed client is made once, at startup: the state stores only ever read
@@ -423,10 +466,10 @@ func healthz(w http.ResponseWriter, _ *http.Request) {
 // delivery plane is rebuilt per request instead — kube.Connect's REST mapper is
 // discovery-backed and never refreshed, so a long-running process reusing one
 // would not see a CRD registered after it started (see kube.Connect's doc).
-func connectServer(cfg config, attribution *slog.Logger) (*api.Server, *controlstore.AgentStore, error) {
+func connectServer(cfg config, attribution *slog.Logger) (*serverPlane, error) {
 	cluster, err := kube.Connect(cfg.kubeconfig)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	// The spec store speaks to custom resources, which needs a client the
 	// typed clientset above cannot give: controlstore builds it from the same
@@ -434,14 +477,14 @@ func connectServer(cfg config, attribution *slog.Logger) (*api.Server, *controls
 	// is (ADR-0027 decision 6).
 	crClient, err := controlstore.NewClient(cluster.Config)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	specs, err := controlstore.NewSpecStore(controlstore.SpecStoreOptions{
 		Client:    crClient,
 		Namespace: cfg.namespace,
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	// The delivery verbs read `Environment.status` (ADR-0027 decision 6): the
 	// phase, the revision, the history mirror and the rollback pin. It shares
@@ -454,7 +497,7 @@ func connectServer(cfg config, attribution *slog.Logger) (*api.Server, *controls
 		Namespace: cfg.namespace,
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	// The forge connections (ADR-0033, issue #248). Same client and same
 	// namespace as the two stores above: a connection is a custom resource in
@@ -466,11 +509,19 @@ func connectServer(cfg config, attribution *slog.Logger) (*api.Server, *controls
 		Namespace: cfg.namespace,
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
+	}
+	// One resolver over that store, shared by everything that needs a forge
+	// credential: the ref resolver, the build pod's clone, and the endpoints
+	// under /forge. `KELSON_GIT_TOKEN` joins it as an implicit connection rather
+	// than as a second code path beside it (ADR-0033 decision 5).
+	sources := &forgeconn.Resolver{
+		Store:     connections,
+		Bootstrap: forgeconn.NewBootstrap(os.Getenv(forgeconn.BootstrapEnv), ""),
 	}
 	logs, err := observation.NewLogQuery(observation.LogQueryConfig{Client: cluster.Typed})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	// The audit trail (issue #78, ADR-0026). It rides the startup clientset for
 	// the same reason the other state stores do: ConfigMaps in one namespace,
@@ -485,7 +536,7 @@ func connectServer(cfg config, attribution *slog.Logger) (*api.Server, *controls
 			RetainDays: cfg.auditRetention,
 		})
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		audit = store
 	}
@@ -501,10 +552,10 @@ func connectServer(cfg config, attribution *slog.Logger) (*api.Server, *controls
 		Namespace: cfg.namespace,
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	return api.New(api.Options{
+	server := api.New(api.Options{
 		Specs:        specs,
 		Environments: environments,
 		Agents:       agents,
@@ -535,7 +586,7 @@ func connectServer(cfg config, attribution *slog.Logger) (*api.Server, *controls
 		Delivery: observationConnector(cfg),
 		Preview:  previewConnector(cfg),
 		Logs:     api.LogQueryEngine{Engine: logs},
-		Build:    buildConnector(cfg),
+		Build:    buildConnector(cfg, specs, sources),
 		// The secret backend rides the startup clientset for the same reason
 		// the state stores do: it only ever gets, lists, applies and deletes
 		// Secrets, so no discovery mapper is involved and nothing about it goes
@@ -546,7 +597,8 @@ func connectServer(cfg config, attribution *slog.Logger) (*api.Server, *controls
 			PushSecret: cfg.pushSecret,
 			Namespace:  cfg.buildNamespace,
 		},
-	}), agents, nil
+	})
+	return &serverPlane{api: server, agents: agents, sources: sources}, nil
 }
 
 // observationConnector is the server's connectObservation: one cluster
@@ -586,16 +638,26 @@ func observationConnector(cfg config) api.DeliveryConnector {
 
 // buildConnector is the server's connectBuild: one cluster connection per
 // build, the driver the resolved strategy selects over the Kubernetes build
-// executor, and a remote ref resolver sharing the delivery credential. It is
-// cmd/kelson/build.go's connectBuild with the CLI's kubeconfig flag replaced
-// by the server's (issues #48, #49, #54).
+// executor, and a remote ref resolver reading through the project's connection.
+// It is cmd/kelson/build.go's connectBuild with the CLI's kubeconfig flag
+// replaced by the server's (issues #48, #49, #54).
 //
 // The Job's deadline and the RPC's budget are the same constant deliberately.
 // If the Job outlived the watch, a cancelled stream would leave a build running
 // with nothing left that could ever report its outcome; if the watch outlived
 // the Job, the server would wait past the moment the answer became impossible.
-func buildConnector(cfg config) api.BuildConnector {
-	return func(_ context.Context, t api.BuildTarget) (*api.BuildPlane, error) {
+//
+// # Why the connection is looked up here and not inside the plane
+//
+// `spec.source.connection` is the author's override and it lives on the
+// Project, but api.BuildTarget carries the project's *name* — the plane is
+// assembled from what a build target says, and a target that carried a
+// connection name would put a credential-selection decision in a request field.
+// So the name is read back out of the stored spec, here, where the store
+// already is. A project that names none resolves by host match, which is the
+// zero-configuration case ADR-0033 decision 4 is written for.
+func buildConnector(cfg config, specs *controlstore.SpecStore, sources *forgeconn.Resolver) api.BuildConnector {
+	return func(ctx context.Context, t api.BuildTarget) (*api.BuildPlane, error) {
 		cluster, err := kube.Connect(cfg.kubeconfig)
 		if err != nil {
 			return nil, err
@@ -604,15 +666,49 @@ func buildConnector(cfg config) api.BuildConnector {
 		if err != nil {
 			return nil, err
 		}
+		named, err := projectConnection(ctx, specs, t.Project)
+		if err != nil {
+			return nil, err
+		}
+		credentials := gitref.Connections{Resolver: sources, Connection: named}
 		return &api.BuildPlane{
 			Builder: driver,
-			// KELSON_GIT_TOKEN reads the *source* repository. It was named
-			// for the deployment repository the git writer pushed to, and that
-			// writer is gone (ADR-0028); reading a private source is the one
-			// job the credential still has — the CLI's choice, unchanged.
-			Revisions: gitref.RemoteResolver{Auth: sourceAuth()},
+			// The same credential resolution the clone init container gets, so
+			// "resolve the ref" and "fetch the commit" cannot disagree about
+			// which connection a build acts as (ADR-0033 decisions 4 and 5).
+			Revisions: gitref.RemoteResolver{Source: credentials},
 		}, nil
 	}
+}
+
+// projectConnection reads `spec.source.connection` off the stored Project.
+//
+// A project the store does not hold, or one whose document will not decode, is
+// not an error here: the build is about to fail on its own terms with a better
+// message than this one could give, and refusing to *assemble the plane* would
+// replace "no such project" with "could not read the connection of no such
+// project". Empty means host-match resolution, which is also what a project
+// with no source at all wants.
+func projectConnection(ctx context.Context, specs *controlstore.SpecStore, project string) (string, error) {
+	if specs == nil || project == "" {
+		return "", nil
+	}
+	stored, err := specs.Get(ctx, project)
+	if err != nil {
+		return "", nil //nolint:nilerr // see the doc comment: the build reports this better
+	}
+	docs, errs := model.DecodeDocuments(stored.Documents.Project)
+	if len(errs) > 0 {
+		return "", nil
+	}
+	for _, doc := range docs {
+		p, ok := doc.(*model.Project)
+		if !ok || p.Spec.Source == nil {
+			continue
+		}
+		return p.Spec.Source.Connection, nil
+	}
+	return "", nil
 }
 
 // buildExecutor is what both drivers need from the cluster: submit a rendered
@@ -673,12 +769,13 @@ func previewConnector(cfg config) api.PreviewConnector {
 	}
 }
 
-// sourceAuth reads the source-repository credential from the environment,
-// exactly as the CLI does. A missing token is anonymous, which is correct for
-// public remotes and fails loudly at ls-remote time for anything else.
-func sourceAuth() gitref.Auth {
-	if token := strings.TrimSpace(os.Getenv("KELSON_GIT_TOKEN")); token != "" {
-		return gitref.Token{Token: token}
-	}
-	return gitref.Anonymous{}
-}
+// There is no sourceAuth here any more.
+//
+// It read `KELSON_GIT_TOKEN` and handed the same credential to every repository
+// this process touched. ADR-0033 decision 4 replaces that with the project's
+// own connection, resolved by host or named outright, and decision 5 keeps the
+// variable alive as one implicit connection *inside* that resolution rather
+// than as a branch beside it (internal/forgeconn.Bootstrap). One credential
+// story, not two — which is what makes the deprecation notice on startup a
+// thing an operator can act on rather than a warning about a path that is
+// still special.
