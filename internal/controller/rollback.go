@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -74,40 +75,122 @@ func rollbackFor(annotations map[string]string, generation int64, status v1alpha
 	}
 }
 
-// verifyRollbackTarget checks the target against the bounded history mirror.
+// rollbackTarget is a verified target: which bytes it names, and where kelson
+// found out it exists.
+type rollbackTarget struct {
+	// Digest is the artifact digest the pair is pinned to alongside the tag.
+	// Empty is a tag-only pin: an entry recorded before digests were, or a
+	// registry that served the tag without naming one.
+	Digest string
+
+	// BeyondWindow means the bounded mirror does not hold this revision and the
+	// registry does. The rollback is exactly as exact — the tag is immutable
+	// either way — but everything the mirror would have said *about* that
+	// revision is gone, and the status has to say so rather than leave a
+	// reader to assume kelson still knows (see [rolledBackMessage]).
+	BeyondWindow bool
+}
+
+// verifyRollbackTarget checks the target against the bounded history mirror,
+// and then against the record the mirror is a mirror of.
 //
 // kelson will not point an OCIRepository at a tag it cannot confirm it
 // published. The alternative — pin it and let source-controller fail on a
-// manifest-unknown — turns a typo into a broken deployment reported in
-// somebody else's vocabulary, and a *correct* target that happens to be older
-// than the window would look identical to a typo.
+// manifest-unknown — turns a typo into a broken deployment reported in somebody
+// else's vocabulary.
 //
-// So the window is the answer, and the refusal says so: `status.history` is
-// bounded at [v1alpha1.MaxHistoryEntries], the registry holds everything ever
-// published, and a target beyond the window is a registry query rather than
-// something kelson can confirm from its own status (ADR-0028 decision 4).
-// It returns the entry's digest, which is the other reason the lookup is here:
-// the pair is pinned to the target's bytes and not only to its tag when the
-// history knows them (fluxobjects.go).
-func verifyRollbackTarget(target string, history []v1alpha1.HistoryEntry) (string, error) {
+// # Why the mirror alone was the wrong question
+//
+// `status.history` is bounded at [v1alpha1.MaxHistoryEntries] and the registry
+// holds every artifact ever published, immutably. So a *correct* target that
+// had merely aged out of the window read exactly like a typo and was refused
+// exactly like one (issue #241) — a revision that still existed, still
+// deployable, unreachable because the thing that remembers it is twenty entries
+// long. The mirror is checked first because it is free and it knows more; the
+// registry is asked when the mirror comes up empty, which is what ADR-0028
+// decision 4 means by "`kelson history` beyond the window is a registry query".
+//
+// # What each source can answer
+//
+// The mirror knows a revision's digest, its spec hash, when it was published,
+// which images it ran and how that deployment ended. The registry knows that
+// the tag exists and which bytes it names — and nothing else, because the rest
+// were observations of a cluster that no registry ever saw. That difference
+// travels back in [rollbackTarget.BeyondWindow] rather than being flattened,
+// because a status that answered "outcome: " for a revision it cannot describe
+// would be inventing a fact of the most misleading kind.
+//
+// A lister that fails is not a target that does not exist. The refusal keeps
+// the registry's own reason (unreachable, read denied) so an operator is told
+// the record could not be read, rather than told their revision is gone.
+func (r *EnvironmentReconciler) verifyRollbackTarget(ctx context.Context, project, environment, target string,
+	history []v1alpha1.HistoryEntry) (rollbackTarget, error) {
 	for _, e := range history {
 		if e.Revision == target {
-			return e.Digest, nil
+			return rollbackTarget{Digest: e.Digest}, nil
 		}
 	}
+
+	mirror := "status.history is empty: this environment has published nothing yet"
+	if known := revisionsOf(history); len(known) > 0 {
+		mirror = fmt.Sprintf("status.history holds %s", strings.Join(known, ", "))
+	}
+	if r.Revisions == nil {
+		return rollbackTarget{}, newDeliveryError(v1alpha1.ReasonRollbackTargetUnknown, fmt.Sprintf(
+			"%s names revision %q, and %s. The mirror is bounded at %d entries, and this controller has no "+
+				"registry to check the record against — the registry holds every revision ever published "+
+				"(ADR-0028 decision 4), so set --registry (or KELSON_REGISTRY) to reach past the window. "+
+				"Remove the annotation to resume tracking the spec.",
+			v1alpha1.AnnotationRollbackTo, target, mirror, v1alpha1.MaxHistoryEntries), nil)
+	}
+
+	digest, found, err := r.Revisions.Resolve(ctx, project, environment, target)
+	if err != nil {
+		return rollbackTarget{}, err
+	}
+	if found {
+		return rollbackTarget{Digest: digest, BeyondWindow: true}, nil
+	}
+
+	// Neither place has it. Listing what the registry does hold is worth one
+	// more request here: the reader has typed a revision that does not exist,
+	// and the useful part of that answer is which ones do.
+	detail := "and the registry does not hold it either"
+	if revisions, listErr := r.Revisions.Revisions(ctx, project, environment); listErr == nil {
+		detail = "and " + describeRevisions(revisions)
+	}
+	return rollbackTarget{}, newDeliveryError(v1alpha1.ReasonRollbackTargetUnknown, fmt.Sprintf(
+		"%s names revision %q, %s, %s. Both places kelson can confirm a revision from have been asked: the "+
+			"mirror bounded at %d entries, and the registry's tag list, which is the record it mirrors "+
+			"(ADR-0028 decision 4). Remove the annotation to resume tracking the spec.",
+		v1alpha1.AnnotationRollbackTo, target, mirror, detail, v1alpha1.MaxHistoryEntries), nil)
+}
+
+func revisionsOf(history []v1alpha1.HistoryEntry) []string {
 	known := make([]string, 0, len(history))
 	for _, e := range history {
 		known = append(known, e.Revision)
 	}
-	detail := "status.history is empty: this environment has published nothing yet"
-	if len(known) > 0 {
-		detail = fmt.Sprintf("status.history holds %s", strings.Join(known, ", "))
+	return known
+}
+
+// rolledBackMessage is what Ready=True says while a rollback is serving.
+//
+// A target that came from the bounded mirror is described by it: kelson knows
+// when that revision was published, what it ran and how it went. A target the
+// mirror has forgotten is described by the registry, which knows the tag exists
+// and nothing else — so the message says which of the two this is, in the same
+// place a reader is already looking. The rollback itself is no less exact
+// either way: the tag is immutable, and the pair is pinned to the same bytes.
+func rolledBackMessage(revision string, beyondWindow bool) string {
+	if !beyondWindow {
+		return fmt.Sprintf("serving revision %s, which this environment published earlier", revision)
 	}
-	return "", newDeliveryError(v1alpha1.ReasonRollbackTargetUnknown, fmt.Sprintf(
-		"%s names revision %q, and %s. The mirror is bounded at %d entries — the registry holds every "+
-			"revision ever published, so a target older than the window is a registry query "+
-			"(ADR-0028 decision 4). Remove the annotation to resume tracking the spec.",
-		v1alpha1.AnnotationRollbackTo, target, detail, v1alpha1.MaxHistoryEntries), nil)
+	return fmt.Sprintf("serving revision %s, which is older than the %d entries status.history keeps. The "+
+		"registry confirms the artifact and kelson pinned it, so the rollback is exact; what kelson cannot "+
+		"say about it is when it was published, which images it ran or how that deployment ended — the "+
+		"mirror held those and the registry never saw them (ADR-0028 decision 4).",
+		revision, v1alpha1.MaxHistoryEntries)
 }
 
 // rollbackPinnedMessage is what Progressing=False says while a rollback is in

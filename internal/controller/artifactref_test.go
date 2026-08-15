@@ -145,6 +145,7 @@ func TestDeliveryPolicyCoversEveryReason(t *testing.T) {
 		v1alpha1.ReasonFieldManagerConflict,
 		v1alpha1.ReasonNameConflict,
 		v1alpha1.ReasonRollbackTargetUnknown,
+		v1alpha1.ReasonRegistryReadDenied,
 	}
 	for _, reason := range reasons {
 		if _, ok := deliveryPolicy[reason]; !ok {
