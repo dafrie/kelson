@@ -29,13 +29,36 @@ metadata:
     {{- include "kelson.labels" . | nindent 4 }}
     app.kubernetes.io/component: controller
 rules:
-  # The specs it reconciles. Read-only: the status subresource below is the
-  # only thing the controller writes, which is exactly the separation ADR-0027
-  # decision 1 gives the status subresource credit for — a controller that
-  # cannot write a spec cannot race the user who authored it.
+  # The specs it reconciles. Read-only: the status subresource below, and the
+  # one metadata.finalizers patch after it, are the only things the controller
+  # writes — which is the separation ADR-0027 decision 1 gives the status
+  # subresource credit for, a controller that does not write a spec cannot race
+  # the user who authored it.
   - apiGroups: ["kelson.dev"]
     resources: ["projects", "environments"]
     verbs: ["get", "list", "watch"]
+
+  # The deletion blocker, on the main resource, because that is where a CRD
+  # keeps it.
+  #
+  # `environments/finalizers` below is the kubebuilder convention and some
+  # admission paths do consult it, but a CustomResourceDefinition serves no
+  # `/finalizers` endpoint, so it authorizes nothing on its own: the write
+  # EnvironmentReconciler.addFinalizer actually issues is a merge PATCH against
+  # `environments`, and RBAC checks it against *this* rule. Granting only the
+  # subresource is what the first e2e run of the delivery spine caught —
+  # `environments.kelson.dev "live" is forbidden: … cannot patch resource
+  # "environments"` on every reconcile, forever, with the artifact published
+  # and Flux healthy but `.status` never written because the reconcile
+  # returned before it got there.
+  #
+  # `patch` and not `update`: every write here is a merge patch, and a verb
+  # nothing calls is a verb that should not be granted. Projects are not listed
+  # — the Project reconciler holds no finalizer (internal/controller/project.go)
+  # and must stay unable to write a spec.
+  - apiGroups: ["kelson.dev"]
+    resources: ["environments"]
+    verbs: ["patch"]
 
   # What it observed. `update` beside `patch` because a future reconciler may
   # need to replace a status wholesale; today every write is a merge patch.
@@ -43,17 +66,30 @@ rules:
     resources: ["projects/status", "environments/status"]
     verbs: ["get", "patch", "update"]
 
-  # The deletion blocker (internal/controller/environment.go's Finalizer,
-  # `kelson.dev/environment`): added on the first successful Ensure, removed
-  # only after Teardown has deleted both Flux objects. It is a patch against
-  # metadata.finalizers on the main resource, not against a real `/finalizers`
-  # subresource a CRD serves — CRDs have no such endpoint — but naming it here
-  # is the kubebuilder/controller-runtime convention for exactly this pattern,
-  # and some admission paths do check it even where the API server's own
-  # subresource routing does not.
+  # The kubebuilder/controller-runtime spelling of the same deletion blocker
+  # (internal/controller/environment.go's Finalizer, `kelson.dev/environment`):
+  # added on the first successful Ensure, removed only after Teardown has
+  # deleted both Flux objects. Kept beside the `environments` patch above
+  # because some admission paths do check it, but it is that rule and not this
+  # one that authorizes the write — see the note there.
   - apiGroups: ["kelson.dev"]
     resources: ["environments/finalizers"]
     verbs: ["update"]
+
+  # Events. controller-runtime's manager gives leader election an event
+  # recorder whether or not a reconciler ever calls Eventf, and it emits into
+  # whichever namespace the involved object lives in — the Lease's namespace
+  # today, an Environment's namespace as soon as a reconciler records anything
+  # — which is why this is cluster-scoped rather than a Role next to the Lease.
+  #
+  # Without it the first e2e run of the delivery spine logged
+  # `events is forbidden: … cannot create resource "events" in API group ""`
+  # at start-up, and `kubectl describe environment` had nothing to show a user
+  # asking why their environment was stuck. Write-only, and no `get`/`list`:
+  # the controller records events, it never reads them back.
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
 {{- if .Values.controller.leaderElection.enabled }}
 
   # Leader election, and only when it is on. The Lease is namespaced, so this

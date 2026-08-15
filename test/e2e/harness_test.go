@@ -257,6 +257,26 @@ func (r result) combined() string {
 
 func (h *harness) run(name string, args ...string) result {
 	h.t.Helper()
+	res, elapsed := h.runQuiet(name, args...)
+	h.t.Logf("$ %s %s\n  -> exit %d in %s\n%s",
+		filepath.Base(name), strings.Join(args, " "), res.code, elapsed, res.combined())
+	return res
+}
+
+// runQuiet is run without the echo, for the one caller that runs the same
+// command a hundred times: a poll.
+//
+// A wait that re-reads `-o json` every two seconds for six minutes echoes the
+// whole object about a hundred and eighty times, which is thousands of lines of
+// duplicate YAML in a CI log — enough, in the delivery spine's first red run, to
+// push the *earlier* tests' output out of the retrievable window entirely. The
+// state a reader needs is not every observation; it is the one that changed
+// (waitFor logs those) and the whole object at the end (dumpSpine prints it).
+//
+// It returns the elapsed time as well so run can report it without timing the
+// command twice.
+func (h *harness) runQuiet(name string, args ...string) (result, time.Duration) {
+	h.t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
 	defer cancel()
 
@@ -269,6 +289,7 @@ func (h *harness) run(name string, args ...string) result {
 
 	started := time.Now()
 	err := cmd.Run()
+	elapsed := time.Since(started).Round(time.Millisecond)
 	res := result{stdout: stdout.String(), stderr: stderr.String()}
 	switch {
 	case err == nil:
@@ -280,12 +301,15 @@ func (h *harness) run(name string, args ...string) result {
 		res.stderr += "\n" + err.Error()
 	}
 
-	h.t.Logf("$ %s %s\n  -> exit %d in %s\n%s",
-		filepath.Base(name), strings.Join(args, " "), res.code, time.Since(started).Round(time.Millisecond), res.combined())
 	if ctx.Err() != nil {
+		// Echoed here rather than left to the caller: a command that ran out of
+		// time is exactly the one whose partial output is worth seeing, and the
+		// Fatalf below means the caller never gets to print it.
+		h.t.Logf("$ %s %s\n  -> timed out after %s\n%s",
+			filepath.Base(name), strings.Join(args, " "), elapsed, res.combined())
 		h.t.Fatalf("%s %s did not finish within %s", name, strings.Join(args, " "), commandTimeout)
 	}
-	return res
+	return res, elapsed
 }
 
 // kelson runs the CLI under test.

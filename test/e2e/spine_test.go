@@ -371,8 +371,15 @@ func (h *harness) requireSpinePrerequisites() {
 
 // readEnvironment returns the Environment decoded into the same types the
 // controller writes, or nil and an observation saying why not.
+//
+// Quiet, unlike every other command in this suite, because it is a poll: the
+// waits below re-read this object every [pollInterval] for up to
+// [spinePublishTimeout], and echoing the whole JSON each time is thousands of
+// duplicate lines that bury the rest of the run's log (see harness.runQuiet).
+// Nothing is lost: waitFor logs each observation that *changes*, and dumpSpine
+// prints the whole object on failure.
 func (h *harness) readEnvironment() (*v1alpha1.Environment, string) {
-	res := h.kubectl("-n", spineNamespace, "get", "environment", spineEnvName, "-o", "json")
+	res, _ := h.runQuiet("kubectl", "-n", spineNamespace, "get", "environment", spineEnvName, "-o", "json")
 	if res.code != 0 {
 		return nil, "environment not readable: " + strings.TrimSpace(res.combined())
 	}
@@ -588,9 +595,12 @@ func (h *harness) assertProvenanceLabels(kind string, obj fluxObject) {
 	}
 }
 
+// fluxObject reads one of the pair kelson writes. Quiet for the same reason
+// readEnvironment is: assertFluxPair polls it, and a Kustomization's JSON is
+// long enough that echoing every observation drowns the log.
 func (h *harness) fluxObject(kind, name string) (*fluxObject, string) {
 	h.t.Helper()
-	res := h.kubectl("-n", controller.DefaultFluxNamespace, "get", strings.ToLower(kind), name, "-o", "json")
+	res, _ := h.runQuiet("kubectl", "-n", controller.DefaultFluxNamespace, "get", strings.ToLower(kind), name, "-o", "json")
 	if res.code != 0 {
 		return nil, "not readable: " + strings.TrimSpace(res.combined())
 	}
@@ -634,7 +644,9 @@ func (h *harness) awaitWorkload(desc, image string, replicas int, timeout time.D
 	h.t.Helper()
 	h.waitFor(fmt.Sprintf("%s (%s × %d in %s)", desc, image, replicas, spineAppNS), timeout,
 		func() (bool, string) {
-			res := h.kubectl("-n", spineAppNS, "get", "deployment", spineComponent, "-o", "json")
+			// Quiet: a Deployment's JSON is eighty lines and this poll runs for
+			// minutes. See harness.runQuiet.
+			res, _ := h.runQuiet("kubectl", "-n", spineAppNS, "get", "deployment", spineComponent, "-o", "json")
 			if res.code != 0 {
 				return false, "deployment not readable: " + strings.TrimSpace(res.combined())
 			}

@@ -159,12 +159,16 @@ changed.
 > the observation plane and state, in their output, that the delivery phase is
 > not reported.
 >
-> The chart's controller RBAC is R3 ([#226](https://github.com/dafrie/kelson/issues/226)):
-> the controller now needs `create`/`patch`/`delete` on
-> `source.toolkit.fluxcd.io` `ocirepositories` and `kustomize.toolkit.fluxcd.io`
-> `kustomizations` in its own namespace, plus `update` on
-> `environments/finalizers`, and until that lands a chart install reports
-> `FluxApplyForbidden`.
+> The chart's controller RBAC has landed ([#226](https://github.com/dafrie/kelson/issues/226)):
+> `create`/`patch`/`delete` on `source.toolkit.fluxcd.io` `ocirepositories` and
+> `kustomize.toolkit.fluxcd.io` `kustomizations` in the flux namespace, and
+> `patch` on `environments` — the resource itself, because that is where a
+> CustomResourceDefinition keeps `metadata.finalizers`. `environments/finalizers`
+> is the kubebuilder spelling and the chart grants it too, but a CRD serves no
+> `/finalizers` endpoint, so granting only the subresource authorizes nothing:
+> the controller then publishes the artifact, Flux applies it, and every
+> reconcile still ends in `cannot patch resource "environments"` with `.status`
+> never written.
 
 ### Status: one state machine, three answers
 

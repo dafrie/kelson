@@ -175,6 +175,21 @@ jobs:
           # exit-gate scenario fails.
           kubectl get environments,projects -A -o yaml > /tmp/e2e-diagnostics/kelson-resources.yaml 2>&1 || true
           kubectl get ocirepositories,kustomizations -A -o yaml > /tmp/e2e-diagnostics/flux-objects.yaml 2>&1 || true
+          # What the controller is actually allowed to do. The spine's first red
+          # run was a single missing verb (`patch` on `environments`, for the
+          # finalizer) reported once per reconcile and nowhere else; this answers
+          # that question directly instead of by reading a thousand log lines.
+          {
+            kubectl auth can-i --list \
+              --as=system:serviceaccount:kelson-system:kelson-controller
+            for verb_resource in "patch environments.kelson.dev" "patch environments.kelson.dev/status" "create events"; do
+              set -- $verb_resource
+              echo "can-i $1 $2 (-n kelson-spine): $(kubectl auth can-i "$1" "$2" -n kelson-spine \
+                --as=system:serviceaccount:kelson-system:kelson-controller 2>&1)"
+            done
+            kubectl get clusterrole kelson-controller -o yaml
+            kubectl -n kelson-system get role -o yaml
+          } > /tmp/e2e-diagnostics/controller-rbac.txt 2>&1 || true
           kubectl -n kelson-system logs deploy/kelson-controller --tail=2000 \
             > /tmp/e2e-diagnostics/kelson-controller.log 2>&1 || true
           hack/bin/kind export logs /tmp/e2e-diagnostics/kind --name kelson-e2e || true
