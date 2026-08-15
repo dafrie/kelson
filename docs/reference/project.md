@@ -33,6 +33,7 @@ This reference is **generated** from the committed JSON Schema [`schema/project.
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
+| `by` | string enum `"kelson"`, `"ci"` | no | `"kelson"` | who produces this project's images; kelson builds them in its own build plane and ci reports images its pipeline already built |
 | `dockerfile` | string | no |  |  |
 | `strategy` | string enum `"auto"`, `"dockerfile"`, `"buildpacks"`, `"none"` | no | `"auto"` |  |
 
@@ -157,5 +158,6 @@ This reference is **generated** from the committed JSON Schema [`schema/project.
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
+| `connection` | string | no |  | name of the GitConnection to authenticate with; resolved by host match against the instance's connections when omitted |
 | `git` | string format uri | yes |  | git URL of the application source |
 | `ref` | string | no | `"main"` |  |

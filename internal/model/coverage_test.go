@@ -274,6 +274,19 @@ spec:
   defaults:
     policy: {agents: allow, deployers: [platform-team]}`,
 
+	KindProject + " $.spec.source.connection": `
+spec:
+  source: {git: "https://github.com/acme/checkout", connection: acme-github}
+  components:
+    - {name: web, port: 8080}`,
+
+	KindProject + " $.spec.build.by": `
+spec:
+  image: i:1
+  build: {strategy: none, by: ci}
+  components:
+    - {name: web, port: 8080}`,
+
 	KindEnvironment + " $.spec.cluster": `
 spec:
   project: p

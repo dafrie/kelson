@@ -1384,10 +1384,16 @@ func validateProject(p *Project, v *validator) {
 	// reference a data component declared further down the same list.
 	services := dataComponents(s.Components)
 
-	if s.Source != nil && s.Source.Git == "" {
-		v.err(ErrMissingRequired, "$.spec.source.git",
-			"source.git is required when source is set",
-			"set source.git to the repository URL, or remove source and use pre-built images")
+	if s.Source != nil {
+		if s.Source.Git == "" {
+			v.err(ErrMissingRequired, "$.spec.source.git",
+				"source.git is required when source is set",
+				"set source.git to the repository URL, or remove source and use pre-built images")
+		}
+		if s.Source.Connection != "" {
+			v.name("$.spec.source.connection", s.Source.Connection, "connection")
+			v.gate("$.spec.source.connection", "$.spec.source.connection")
+		}
 	}
 	if s.Build != nil {
 		switch s.Build.Strategy {
@@ -1396,6 +1402,17 @@ func validateProject(p *Project, v *validator) {
 			v.err(ErrInvalidEnum, "$.spec.build.strategy",
 				fmt.Sprintf("unknown build strategy %q", s.Build.Strategy),
 				"valid strategies: auto, dockerfile, buildpacks, none")
+		}
+		if s.Build.By != "" {
+			switch s.Build.By {
+			case BuildByKelson, BuildByCI:
+			default:
+				v.err(ErrInvalidEnum, "$.spec.build.by",
+					fmt.Sprintf("unknown build owner %q", s.Build.By),
+					"valid values: "+BuildByKelson+", "+BuildByCI+
+						" — kelson builds the image itself and ci reports one its pipeline built (ADR-0034)")
+			}
+			v.gate("$.spec.build.by", "$.spec.build.by")
 		}
 	}
 	projectImage := s.Image

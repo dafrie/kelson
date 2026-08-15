@@ -58,6 +58,12 @@ spec:
                 build:
                   type: object
                   properties:
+                    by:
+                      description: who produces this project's images; kelson builds them in its own build plane and ci reports images its pipeline already built
+                      type: string
+                      enum:
+                        - kelson
+                        - ci
                     dockerfile:
                       type: string
                     strategy:
@@ -313,6 +319,9 @@ spec:
                   required:
                     - git
                   properties:
+                    connection:
+                      description: name of the GitConnection to authenticate with; resolved by host match against the instance's connections when omitted
+                      type: string
                     git:
                       description: git URL of the application source
                       type: string
