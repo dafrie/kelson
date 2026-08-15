@@ -1,0 +1,58 @@
+# The Project and Environment the delivery spine scenario applies to the cluster
+# (TestDeliverySpine, ADR-0028's exit gate).
+#
+# It is a separate fixture from minimal.yaml, and separate in every name it
+# uses, for one reason: minimal.yaml is *rendered by the CLI* and applied with
+# kubectl, while this one is *applied as custom resources* and rendered by
+# kelson-controller. Two scenarios writing into one namespace would make a
+# failure in either one look like a failure in the other, and the objects here
+# outlive the test that made them whenever it fails (which is deliberate — the
+# suite leaves state behind so it can be inspected).
+#
+# Everything it needs exists on a stock single-node kind cluster:
+#
+#   - registry.k8s.io/pause is a few hundred kilobytes, unauthenticated, not
+#     rate-limited, and usually already in the node's image store.
+#   - No `health:` path, because pause serves no HTTP. The renderer emits probes
+#     only for a component with both `port` and `health`, so "healthy" here is a
+#     fact about the spine — the artifact, the OCIRepository, the Kustomization's
+#     `wait: true` — rather than about a probe endpoint's timing.
+#   - No `domains:`, because stock kind has no Gateway API and kelson renders
+#     Gateway API only (#140).
+#
+# The scenario mutates `spec.components[0]` on the Environment (image, then
+# replicas) to bump `.metadata.generation`, which is what the artifact tag's
+# first half is (`<generation>-<spec-hash-short>`), so nothing here should be
+# given a component override up front.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kelson-spine
+---
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: kelson-spine
+  namespace: kelson-spine
+
+spec:
+  image: registry.k8s.io/pause:3.10
+
+  components:
+    - name: web
+      port: 8080
+---
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: live
+  namespace: kelson-spine
+
+spec:
+  project: kelson-spine
+  # Explicit rather than the derived "<project>-<environment>" default, and
+  # deliberately NOT the namespace the custom resources themselves live in: the
+  # Flux pair kelson writes lands in kelson-system, the CRs live here, and the
+  # workloads land there. Three namespaces, because conflating any two of them
+  # would let a test pass for the wrong reason.
+  namespace: kelson-spine-app

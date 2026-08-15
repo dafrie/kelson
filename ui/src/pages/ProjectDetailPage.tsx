@@ -397,12 +397,14 @@ function EnvironmentPanel({
     }),
     [documents, environment],
   );
-  // Rollback is the one action with a precondition the server has already
-  // answered: a delivery plane this build was started without is Unimplemented,
-  // and there is no adapter to restore anything with. Everything else stays
-  // enabled — a deploy preview is a pure render that needs no cluster, and a
-  // failing diff or log query has its own honest error to show.
-  const rollbackBlocked = failure?.code === "unimplemented";
+  // Rollback used to share a precondition with this page's Status call: both
+  // came from the same delivery plane, so Status failing Unimplemented meant
+  // Rollback would too. The rebuilt server (ADR-0028, R2 #225) split them —
+  // Status's Unimplemented now means only that this build has no workload
+  // observation client, which says nothing about whether the Environment
+  // store Rollback needs is configured. So Rollback is no longer preemptively
+  // disabled here: like Deploy, Diff and Logs, it stays a plain link and
+  // shows its own honest error if the call itself fails.
   const base = `/projects/${encodeURIComponent(project)}/${encodeURIComponent(environment)}`;
 
   return (
@@ -454,27 +456,16 @@ function EnvironmentPanel({
             <Link className="k-button" to={`${base}/logs`}>
               Logs
             </Link>
-            {/* History is a read of the delivery mode's own record and needs no
-                cluster, so it is offered even when Status could not be read —
-                the past is exactly what a reader wants when the present is
-                unavailable. */}
+            {/* History reads the Environment's own record and needs no
+                observation client, so it is offered even when Status could
+                not be read — the past is exactly what a reader wants when the
+                present is unavailable. */}
             <Link className="k-button" to={`${base}/history`}>
               History
             </Link>
-            {rollbackBlocked ? (
-              <button
-                type="button"
-                className="k-button"
-                disabled
-                title={failure ? `${failure.code}: ${failure.message}` : ""}
-              >
-                Rollback
-              </button>
-            ) : (
-              <Link className="k-button" to={`${base}/rollback`}>
-                Rollback
-              </Link>
-            )}
+            <Link className="k-button" to={`${base}/rollback`}>
+              Rollback
+            </Link>
           </div>
         </div>
 

@@ -33,27 +33,130 @@ kelson allocates no revision numbers of its own. The tag is written once and
 never rewritten; republishing an unchanged spec produces a digest the registry
 already holds and uploads nothing. The publisher is the one PR previews already
 use ([ADR-0017](adr/0017-pr-previews.md) decision 10) — one media type, one
-determinism test, two callers.
+determinism test, two callers. The push is bounded twice: one minute per HTTP
+request and two minutes for the whole publish. A reconcile carries no deadline
+of its own and the worker pool is small, so a registry that accepts a connection
+and then answers nothing would otherwise hold one worker for as long as it liked
+— and a controller that has quietly stopped reconciling every other environment
+is a worse failure than a publish that gave up and requeued.
 
-**The two objects.** An `OCIRepository` pinned to the tag just pushed, and a
-`Kustomization` with `path: ./`, `prune: true` and `spec.decryption` when the
-environment's secret backend is `sops`. Both live in `kelson-system`, not the
-workload namespace — they are kelson's objects, and a `Kustomization` deleted by
-someone tidying an application namespace is a deployment that silently stops
-reconciling. Both are applied with server-side apply under field manager
-`kelson-controller` and carry the provenance labels, so
+**The two objects.** An `OCIRepository` pinned to the artifact just pushed — by
+`spec.ref.tag` *and* `spec.ref.digest`, whenever kelson knows the digest — and a
+`Kustomization` with `path: ./`, `prune: true`, `wait: true`,
+`targetNamespace: <the resolved namespace>` and `spec.decryption` when the
+environment's secret backend is `sops`. Both are named `<project>-<environment>`
+and both live in `kelson-system`, not the workload namespace — they are kelson's
+objects, and a `Kustomization` deleted by someone tidying an application
+namespace is a deployment that silently stops reconciling. Both are applied with
+server-side apply under field manager `kelson-controller` and carry the
+provenance labels, so
 `kubectl get kustomizations -n kelson-system -l kelson.dev/project=x` is the
 inventory.
+
+Both halves of the reference are written because they answer different
+questions. The tag is the name a human reads out of
+`kubectl get ocirepository`; the digest is the bytes. source-controller prefers
+the digest when both are set, so pinning both means what the cluster pulls
+cannot differ from what this controller pushed — a kelson tag is written once
+and never rewritten, but a registry is a shared system with mirrors, retention
+policies and operators in it, and "cannot differ" is worth more than "should not
+differ". The digest is unknown in exactly one case: a rollback to a
+`status.history` entry that carries none, which is a tag-only pin.
+
+`wait: true` is the load-bearing one. kustomize-controller assesses the health
+of everything it applied and only then reports `Ready`, so **`Ready` means
+healthy and not merely applied** — which is why the controller can report on
+workloads while holding no RBAC over them at all.
+
+Beside the standard provenance the pair carries one label of its own,
+`kelson.dev/environment-namespace`: the namespace the *custom resource* lives
+in. Two `Environment`s of the same name binding `Project`s of the same name, in
+two namespaces, resolve to one object name in one Flux namespace, and a
+server-side apply would take the object without a word. The label is what makes
+that collision detectable — a live object naming a different namespace is
+refused with `NameConflict` and nothing is written.
 
 What kelson stops owning is the interesting half: kustomize-controller does
 apply ordering, wait-for-ready, prune by inventory, drift correction and retry
 with backoff. Those are the five things the direct adapter reimplemented.
 
+### Deleting an Environment deletes its workloads
+
+`Environment` carries the finalizer `kelson.dev/environment`, added on the first
+reconcile that successfully applies the pair. On deletion the controller removes
+the `Kustomization` first — which prunes everything it applied — then the
+`OCIRepository`, and only then releases the finalizer
+([ADR-0028](adr/0028-delivery-spine.md), the 2026-08-14 amendment).
+
+> **`kubectl delete environment production` is not a bookkeeping operation.**
+> It removes the `Kustomization`, the `Kustomization` prunes its inventory, and
+> the running application goes with it. That is what a `prune: true`
+> `Kustomization` *is*; it is not a new behaviour, but it is not one to derive
+> from first principles at the moment you run the command.
+
+Two things are deliberately left behind. **The workload namespace**, because
+deleting a namespace cascades to everything inside it — including resources
+kelson never created — and the provenance labels can never prove kelson created
+the namespace rather than adopting one that already existed.
+`kelson uninstall` is the verb that reasons about namespaces. And **the
+published artifacts**, because they are the history and they are immutable:
+deleting an `Environment` must not make its own record unrecoverable, and
+re-applying the same spec finds every revision it ever published still there.
+
+The order matters for one reason: deleting the `OCIRepository` first would leave
+the `Kustomization` pointing at a source that no longer exists, so it would stop
+reconciling with an error, prune nothing, and the workloads would outlive the
+`Environment` that declared them.
+
+The finalizer is added *after* the first apply, which leaves one API round trip
+in which the pair exists and nothing protects it. A delete that lands there
+takes the custom resource immediately — there is no finalizer to block it — so
+the reconcile that applied the pair is the only thing left that knows about it,
+and it tears the pair down itself rather than returning
+([ADR-0028](adr/0028-delivery-spine.md), the amendment). It is the one teardown
+no later reconcile can retry.
+
+### When delivery refuses
+
+Steps 4 to 6 refuse with a closed set of reasons, and each one decides exactly
+one requeue behaviour — so the reason in `status.conditions` also tells a reader
+whether anything is going to happen next without them.
+
+| Reason | What happened | What the controller does next |
+|---|---|---|
+| `FluxNotInstalled` | the `ClusterProfile` reports no Flux | retries in 5m, **no error return, never a crash loop** — a cluster with no Flux is the expected state of a fresh install ([ADR-0030](adr/0030-flux-aio-install.md)), and `kelson install` is the fix |
+| `RegistryNotConfigured` | the controller was started without `--registry` | status only; nothing changes on its own |
+| `ArtifactRefInvalid` | the prefix, the names or the generation do not make a repository and a tag | status only |
+| `NameConflict` | a live object of that name belongs to a different environment namespace | status only, and **nothing is written** |
+| `RollbackTargetUnknown` | `kelson.dev/rollback-to` names a revision not in `status.history` | status only |
+| `RegistryUnreachable` | the registry never answered | error return → controller-runtime's exponential backoff |
+| `PushDenied` | the registry answered and said no | retries in 5m; a credential is an operator's to fix, and retrying into a rate limit helps nobody |
+| `FluxApplyForbidden` | the API server refused the write | retries in 5m; RBAC is an operator's to grant |
+| `FieldManagerConflict` | a server-side apply conflicted despite `ForceOwnership` | retries in 5m; something structural is contended |
+
+Step 2 has one refusal of its own, and it is deliberately not in that table.
+`ClusterProfileUnavailable` means the controller could not read what the cluster
+provides — an RBAC gap, an API server that did not answer — and it exists
+because that failure and a cluster that genuinely has no Flux produce the same
+empty `ClusterProfile` and mean opposite things. Reporting it as
+`FluxNotInstalled` would tell an operator to install what they may already have.
+The controller retries with backoff and probes again each time; the start-up
+probe that failed no longer freezes an empty profile for the life of the
+process, though the Flux *watches* still depend on the start-up answer and still
+need a restart ([#133](https://github.com/dafrie/kelson/issues/133)).
+
+Two conditions carry the answer. `Ready` is whether the environment is serving
+what it should. `Progressing` is whether kelson is still working on it — and the
+two disagree in exactly one situation, which is the reason the second condition
+exists: a rolled-back environment is `Ready=True` (the pinned revision is live)
+with `Progressing=False`, `reason: RollbackPinned` (and it is deliberately not
+tracking your spec).
+
 ### History, rollback, promotion
 
 | Verb | Mechanism |
 |---|---|
-| history | the registry's tag list. `Environment.status.history[]` mirrors the most recent 20 (revision, digest, spec hash, timestamp, resolved images, outcome) for humans and the API; the record is the registry, and a query past the window is a registry query |
+| history | the registry's tag list. `Environment.status.history[]` mirrors the most recent 20 (revision, digest, spec hash, timestamp, the image each component resolved to, outcome) for humans and the API; the record is the registry, and a query past the window is a registry query. An entry is written only on a **new** publish, deduped by revision, and the newest entry's `outcome` is refreshed while it is the current revision and frozen once a newer one takes its place — so an old entry says how that deployment *ended*, not what it looked like one second in |
 | rollback | the annotation `kelson.dev/rollback-to: <revision>` on the `Environment`. The controller repoints the `OCIRepository` at that immutable tag and **suspends re-render** — steps 3 and 4 do not run — so the current spec cannot be republished over what you just rolled back to. Two things resume tracking and only two: removing the annotation, or editing the spec. The state is visible: `Progressing=False`, `reason: RollbackPinned`, naming both ways out |
 | promotion | an authoring change, not a delivery operation: patch the target Environment's per-component image pin, stamped `kelson.dev/promoted-from: <env>@<revision>`, then reconcile normally ([the model](model.md#promotion)) |
 
@@ -70,16 +173,41 @@ changed.
 > spec and history stores. Surviving: `flux`'s status reader, reconciler,
 > dynamic client and preview reader, plus `statemachine`, `install`,
 > `uninstall`, `kube`, `dryrun` and `provenance.go`; `ManifestFiles` — the
-> artifact's layout function — moved to `internal/preview`, the publisher.
+> artifact's layout function — now lives in `internal/artifact`, the publisher
+> the preview pipeline and the spine share (ADR-0028 decision 2).
 >
-> **Nothing applies yet.** `kelson deploy`, `kelson rollback`, `kelson promote`,
-> `DeployService.{Deploy(dry_run=none),Rollback,History,Promote}` and
-> `RenderService.Diff(from_revision)` refuse with the structured
-> `delivery/not-implemented` code naming #224. `kelson render`, `kelson diff`,
-> `kelson build`, `kelson profile`, `kelson install`/`uninstall`, the cluster
-> secret backend and the MCP read and dry-run tools are unaffected.
-> `kelson status` and `kelson explain` answer from the observation plane and
-> state, in their output, that the delivery phase is not reported.
+> **The controller deploys, and the CLI verbs deploy through it.**
+> `kelson-controller` runs all six steps above: applying a `Project` and an
+> `Environment` publishes an artifact, creates the Flux pair and drives
+> `Environment.status` to `Healthy`. `DeployService.{Deploy,Status,Rollback,
+> History,Promote}` are reshaped over the CRs — SSA of the spec, an
+> `Environment.status` watch, the `kelson.dev/rollback-to` merge patch, the
+> promotion splice — and `kelson deploy`/`rollback`/`promote`/`history` are
+> ConnectRPC clients of that façade rather than refusing (#225). What has not
+> moved: `RenderService.Diff(from_revision)` still refuses with
+> `delivery/not-implemented` naming #224, because a revision diff needs the
+> rendered-history store ADR-0027 deleted and nothing has replaced it yet.
+> `kelson render`, `kelson diff`, `kelson build`, `kelson profile`,
+> `kelson install`/`uninstall`, the cluster secret backend and the MCP read and
+> dry-run tools are unaffected. `kelson status` now reads the delivery phase
+> from `DeployService.Status` too — a ConnectRPC client of the façade for that
+> half alone (`--server`/`--password`/`--token`, matching every other
+> façade-backed verb), degrading to a "not reported" line naming `--server`
+> when none answers, because the workload half still reads the cluster
+> directly and needs no server at all. `kelson explain` still answers from the
+> observation plane alone and states, in its output, that the delivery phase is
+> not reported.
+>
+> The chart's controller RBAC has landed ([#226](https://github.com/dafrie/kelson/issues/226)):
+> `create`/`patch`/`delete` on `source.toolkit.fluxcd.io` `ocirepositories` and
+> `kustomize.toolkit.fluxcd.io` `kustomizations` in the flux namespace, and
+> `patch` on `environments` — the resource itself, because that is where a
+> CustomResourceDefinition keeps `metadata.finalizers`. `environments/finalizers`
+> is the kubebuilder spelling and the chart grants it too, but a CRD serves no
+> `/finalizers` endpoint, so granting only the subresource authorizes nothing:
+> the controller then publishes the artifact, Flux applies it, and every
+> reconcile still ends in `cannot patch resource "environments"` with `.status`
+> never written.
 
 ### Status: one state machine, three answers
 

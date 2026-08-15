@@ -85,16 +85,46 @@ func setReady(conditions *[]metav1.Condition, generation int64, status metav1.Co
 	})
 }
 
+// setProgressing sets the Progressing condition, which only an Environment
+// carries: a Project has no delivery of its own and so has nothing to be
+// progressing towards.
+//
+// It is a second condition rather than another reason on Ready because the two
+// answer different questions and a rolled-back environment answers them
+// differently: Ready=True (the pinned revision is live and healthy) with
+// Progressing=False/RollbackPinned (and it is deliberately not tracking your
+// spec). Folding that into one condition would force a choice between claiming
+// an environment is broken and hiding that it has stopped deploying.
+func setProgressing(conditions *[]metav1.Condition, generation int64, status metav1.ConditionStatus, reason, message string) {
+	meta.SetStatusCondition(conditions, metav1.Condition{
+		Type:               v1alpha1.ConditionProgressing,
+		Status:             status,
+		Reason:             reason,
+		Message:            message,
+		ObservedGeneration: generation,
+	})
+}
+
 // patchStatus writes the status subresource with a merge patch against the
 // object as it was read.
 //
 // A patch and not an update: the reconciler has an object from a cache that may
 // be a few milliseconds old, and an Update would send the whole status and
 // clobber a concurrent write with a stale copy. MergeFrom sends only what this
-// reconcile changed. A conflict is returned as an error so controller-runtime
-// requeues — the one case where a retry is exactly right.
+// reconcile changed.
+//
+// The optimistic lock is what makes that true of *list* fields as well. A merge
+// patch of `status.history` replaces the whole array, so two writers that both
+// read a 3-entry history and each prepend one entry produce a 4-entry array
+// twice and the second silently discards the first one's revision — a hole in
+// the record ADR-0028 decision 4 says is the history. With the lock the patch
+// carries the resourceVersion it was computed against, the API server refuses
+// the second write with a conflict, and the conflict is returned so
+// controller-runtime requeues and the entry is folded into what is actually
+// there. A retry is exactly right here and costs one reconcile.
 func patchStatus(ctx context.Context, c client.Client, obj, base client.Object) error {
-	if err := c.Status().Patch(ctx, obj, client.MergeFrom(base)); err != nil {
+	patch := client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})
+	if err := c.Status().Patch(ctx, obj, patch); err != nil {
 		// A status write against an object that has since been deleted is not a
 		// failure of this reconcile.
 		if apierrors.IsNotFound(err) {

@@ -72,8 +72,12 @@ const transport = createRouterTransport((router) => {
       if (req.dryRun === DryRun.RENDER) return;
       yield create(RollbackResponseSchema, {
         event: {
+          // The real server always leaves as_revision empty for a rollback
+          // (ADR-0028 decision 5: it publishes nothing), so the fixture does
+          // too — an unrealistic non-empty value here would hide the blank
+          // chip this screen must never render.
           case: "committed",
-          value: { restoredRevision: req.toRevision, asRevision: "rev-10" },
+          value: { restoredRevision: req.toRevision, asRevision: "" },
         },
       });
       yield create(RollbackResponseSchema, {
@@ -147,8 +151,30 @@ describe("RollbackPage", () => {
     fireEvent.click(confirm);
 
     expect(await screen.findByText("rev-8")).toBeTruthy();
-    expect(await screen.findByText("rev-10")).toBeTruthy();
     expect(await screen.findByText("Rollback settled")).toBeTruthy();
+  });
+
+  it("never renders a blank chip for an empty as_revision", async () => {
+    renderRollback();
+
+    fireEvent.click((await screen.findAllByRole("radio"))[1] as HTMLElement);
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Restore rev-8 to checkout/production",
+      }),
+    );
+
+    // as_revision is always empty for a rollback (ADR-0028 decision 5): the
+    // screen says so in prose rather than rendering an empty copy-chip that
+    // would look like a value that got dropped.
+    expect(
+      await screen.findByText(
+        /no new revision recorded; a rollback publishes nothing/,
+      ),
+    ).toBeTruthy();
+    // Copyable's accessible name is "copy <value>"; an empty value would still
+    // mint one, "copy " — assert directly that nothing does.
+    expect(screen.queryByRole("button", { name: "copy " })).toBeNull();
   });
 
   it("preselects and previews a revision named in the URL, but never applies it (#67)", async () => {
@@ -194,5 +220,66 @@ describe("RollbackPage", () => {
     ).toBeTruthy();
     const radios = (await screen.findAllByRole("radio")) as HTMLInputElement[];
     expect(radios.some((r) => r.checked)).toBe(false);
+  });
+});
+
+/**
+ * The shape the real server sends today (internal/api's rollbackPreviewGap,
+ * ADR-0028): exactly one finding, coded `rollback/preview-unavailable`, never
+ * marked unrecoverable, and no diff — because every recorded revision is an
+ * immutable OCI artifact and the server does not fetch two of them to compare.
+ */
+const unavailableTransport = createRouterTransport((router) => {
+  router.service(DeployService, {
+    history: () => ({
+      entries: [
+        { revision: "rev-9", committedAt: "2026-08-13T09:00:00Z" },
+        { revision: "rev-8", committedAt: "2026-08-12T17:31:00Z" },
+      ],
+    }),
+    rollback: async function* (req) {
+      yield create(RollbackResponseSchema, {
+        event: {
+          case: "preview",
+          value: {
+            toRevision: req.toRevision,
+            findings: [
+              {
+                resource: "checkout/production",
+                cause: "rollback/preview-unavailable",
+                message:
+                  "kelson cannot show what changes between rev-9 and rev-8: both revisions are immutable OCI artifacts in the registry and this server does not fetch them.",
+                unrecoverable: false,
+              },
+            ],
+          },
+        },
+      });
+    },
+  });
+});
+
+describe("RollbackPage's preview-unavailable finding", () => {
+  it("reads as an informational note, not a change this rollback cannot revert", async () => {
+    renderAt(
+      unavailableTransport,
+      "/projects/checkout/production/rollback",
+      "/projects/:project/:env/rollback",
+      <RollbackPage />,
+    );
+
+    fireEvent.click((await screen.findAllByRole("radio"))[1] as HTMLElement);
+
+    // The gap finding's own message reads on screen, as a plain note.
+    expect(
+      await screen.findByText(/kelson cannot show what changes/),
+    ).toBeTruthy();
+    // It is not counted among "what this rollback cannot revert" — the header
+    // says zero of zero, because the only finding sent is not a revert risk.
+    expect(
+      screen.getByText(/What this rollback cannot revert \(0 of 0\)/),
+    ).toBeTruthy();
+    // And it never reads as something the restore will fail to undo.
+    expect(screen.queryByText("cannot revert")).toBeNull();
   });
 });

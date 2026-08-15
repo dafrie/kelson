@@ -7,24 +7,24 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 
-	"github.com/dafrie/kelson/internal/delivery"
+	"connectrpc.com/connect"
+
+	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
 	"github.com/dafrie/kelson/internal/observation"
 )
 
-// The delivery commands are assembly: they render, read the cluster and report.
-// The planes themselves are built and tested where the Kubernetes fake clients
-// live — the command plane's lint allow-list keeps those imports out of cmd —
-// so these tests drive the commands through the observationConnector seam and
-// assert the wiring.
-//
-// Most of what used to be here tested `kelson deploy` and `kelson rollback`
-// driving an adapter through the state machine, and it went with the adapters
-// (ADR-0028). What replaces it is smaller and load-bearing in a different way:
-// the deleted verbs must refuse in a shape a caller can act on, and the verbs
-// that survived must still work.
+// The delivery commands are assembly: deploy/rollback/promote/history render
+// nothing themselves and read no cluster — they are ConnectRPC clients of
+// kelson-server (R2, issue #225) — while status and explain still read the
+// cluster directly (cmd/kelson/status.go's package doc says why). So the two
+// families are tested differently: this file's fakeDeployService drives the
+// façade-backed verbs over a real HTTP server (facade_test.go), and the
+// observationConnector seam below is what status and explain are still tested
+// through.
 
 // --- fakes ------------------------------------------------------------------
 
@@ -95,15 +95,19 @@ func runDeliveryStdin(t *testing.T, connect observationConnector, stdin string, 
 	return outBuf.String(), code, msg
 }
 
-// runRoot executes an unmodified root command, for the verbs that take no seam
-// because they refuse before reaching one.
+// runRoot executes an unmodified root command with stdin closed.
 func runRoot(t *testing.T, args ...string) (stdout string, code int, msg string) {
+	t.Helper()
+	return runRootStdin(t, "", args...)
+}
+
+func runRootStdin(t *testing.T, stdin string, args ...string) (stdout string, code int, msg string) {
 	t.Helper()
 	cmd := newRootCmd()
 	var outBuf, errBuf bytes.Buffer
 	cmd.SetOut(&outBuf)
 	cmd.SetErr(&errBuf)
-	cmd.SetIn(strings.NewReader(""))
+	cmd.SetIn(strings.NewReader(stdin))
 	cmd.SetArgs(args)
 	err := cmd.Execute()
 	msg, code = resolveExit(err)
@@ -128,55 +132,121 @@ func deploySpec(t *testing.T) string {
 	return writeDeliverySpec(t, t.TempDir(), "spec.yaml")
 }
 
-// --- the gated verbs ---------------------------------------------------------
+// --- kelson deploy ------------------------------------------------------------
 
-// The three verbs ADR-0028 deleted the machinery for must refuse in the shape
-// the repo's taxonomy defines: a structured delivery.Error carrying
-// `delivery/not-implemented` and, in its remediation, the issue that tracks the
-// capability's return. A bare "not supported" would leave an agent to guess
-// whether retrying could ever help.
-func TestDeletedVerbsRefuseWithTheTrackedCode(t *testing.T) {
-	spec := deploySpec(t)
-	cases := []struct {
-		name string
-		args []string
-	}{
-		{"deploy", []string{"deploy", "-f", spec, "--env", "development"}},
-		{"rollback", []string{"rollback", "-f", spec, "--env", "development", "--yes"}},
-		// `promote` is refused for the same reason and asserted in
-		// promote_test.go, where the fixture has two environments to promote
-		// between.
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			_, code, msg := runRoot(t, tc.args...)
-			if code != exitErr {
-				t.Fatalf("exit = %d, want %d", code, exitErr)
-			}
-			if !strings.Contains(msg, string(delivery.ErrNotImplemented)) {
-				t.Errorf("the message must carry the %s code so an agent can branch on it, got: %s",
-					delivery.ErrNotImplemented, msg)
-			}
-			if !strings.Contains(msg, "#224") {
-				t.Errorf("the message must name the tracking issue, got: %s", msg)
-			}
-		})
+// deployPreviewOK is the Deploy stub every happy-path test starts from: the
+// preview call (dry_run=RENDER) reports one resource and nothing else.
+func deployPreviewOK(t *testing.T, real func(*kelsonv1alpha1.DeployRequest, *connect.ServerStream[kelsonv1alpha1.DeployResponse]) error) func(context.Context, *kelsonv1alpha1.DeployRequest, *connect.ServerStream[kelsonv1alpha1.DeployResponse]) error {
+	t.Helper()
+	return func(_ context.Context, req *kelsonv1alpha1.DeployRequest, stream *connect.ServerStream[kelsonv1alpha1.DeployResponse]) error {
+		if req.GetDryRun() == kelsonv1alpha1.DryRun_DRY_RUN_RENDER {
+			return stream.Send(&kelsonv1alpha1.DeployResponse{Event: &kelsonv1alpha1.DeployResponse_Proposed_{
+				Proposed: &kelsonv1alpha1.DeployResponse_Proposed{Project: "hello", Environment: "development", Resources: 3},
+			}})
+		}
+		return real(req, stream)
 	}
 }
 
-// The refusals are still commands, not unknown ones. `kelson deploy --help`
-// must explain what happened and what replaces it, because a reader who typed
-// a verb kelson documented deserves better than a usage error.
-func TestDeletedVerbsStayInTheCommandTree(t *testing.T) {
-	root := newRootCmd()
-	for _, name := range []string{"deploy", "rollback", "promote"} {
-		cmd, _, err := root.Find([]string{name})
-		if err != nil || cmd.Name() != name {
-			t.Fatalf("`kelson %s` is not in the command tree: %v", name, err)
+func TestDeployAppliesAndReportsSettled(t *testing.T) {
+	spec := deploySpec(t)
+	fake := &fakeDeployService{}
+	fake.deploy = deployPreviewOK(t, func(_ *kelsonv1alpha1.DeployRequest, stream *connect.ServerStream[kelsonv1alpha1.DeployResponse]) error {
+		if err := stream.Send(&kelsonv1alpha1.DeployResponse{Event: &kelsonv1alpha1.DeployResponse_Committed_{
+			Committed: &kelsonv1alpha1.DeployResponse_Committed{Revision: "1-a1b2c3d4", Adapter: "flux"},
+		}}); err != nil {
+			return err
 		}
-		if !strings.Contains(cmd.Long, "224") {
-			t.Errorf("`kelson %s --help` should name the tracking issue:\n%s", name, cmd.Long)
+		final := &kelsonv1alpha1.DeployResponse_Transition{Phase: "Healthy", Answer: "live"}
+		return stream.Send(&kelsonv1alpha1.DeployResponse{Event: &kelsonv1alpha1.DeployResponse_Settled_{
+			Settled: &kelsonv1alpha1.DeployResponse_Settled{Final: final},
+		}})
+	})
+	addr := serveFakeDeployService(t, fake)
+
+	stdout, code, msg := runRootStdin(t, "", "deploy", "-f", spec, "--env", "development", "--yes", "--server", addr)
+	if code != exitOK {
+		t.Fatalf("exit = %d (%s), want 0\n%s", code, msg, stdout)
+	}
+	for _, want := range []string{"Proposed", "3 resource", "Committed", "1-a1b2c3d4", "Settled"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout does not contain %q:\n%s", want, stdout)
 		}
+	}
+}
+
+func TestDeploySettledErrorFailsTheCommand(t *testing.T) {
+	spec := deploySpec(t)
+	fake := &fakeDeployService{}
+	fake.deploy = deployPreviewOK(t, func(_ *kelsonv1alpha1.DeployRequest, stream *connect.ServerStream[kelsonv1alpha1.DeployResponse]) error {
+		final := &kelsonv1alpha1.DeployResponse_Transition{Phase: "Rejected", Answer: "rejected"}
+		return stream.Send(&kelsonv1alpha1.DeployResponse{Event: &kelsonv1alpha1.DeployResponse_Settled_{
+			Settled: &kelsonv1alpha1.DeployResponse_Settled{
+				Final: final,
+				Error: &kelsonv1alpha1.Error{Code: "delivery/rejected", Message: "the admission webhook denied it"},
+			},
+		}})
+	})
+	addr := serveFakeDeployService(t, fake)
+
+	_, code, msg := runRootStdin(t, "", "deploy", "-f", spec, "--env", "development", "--yes", "--server", addr)
+	if code != exitErr {
+		t.Fatalf("exit = %d, want %d", code, exitErr)
+	}
+	if !strings.Contains(msg, "delivery/rejected") {
+		t.Errorf("message does not carry the settled error's code: %s", msg)
+	}
+}
+
+func TestDeployUnreachableServerNamesTheFlag(t *testing.T) {
+	spec := deploySpec(t)
+	addr := unreachableServerAddr(t)
+
+	start := time.Now()
+	_, code, msg := runRootStdin(t, "", "deploy", "-f", spec, "--env", "development", "--yes", "--server", addr)
+	elapsed := time.Since(start)
+
+	if code != exitErr {
+		t.Fatalf("exit = %d, want %d (%s)", code, exitErr, msg)
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("an unreachable --server took %s to fail; it must fail fast, not hang", elapsed)
+	}
+	for _, want := range []string{"--server", "KELSON_SERVER"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the refusal must name %q so a caller knows what to set: %s", want, msg)
+		}
+	}
+}
+
+func TestDeployRequiresFileOrProject(t *testing.T) {
+	_, code, msg := runRoot(t, "deploy", "--env", "development", "--yes")
+	if code != exitErr {
+		t.Fatalf("exit = %d, want %d", code, exitErr)
+	}
+	if !strings.Contains(msg, "-f") || !strings.Contains(msg, "--project") {
+		t.Errorf("the error should name both ways to address a spec: %s", msg)
+	}
+}
+
+func TestDeployFileAndProjectAreMutuallyExclusive(t *testing.T) {
+	spec := deploySpec(t)
+	_, code, msg := runRoot(t, "deploy", "-f", spec, "--project", "hello", "--env", "development", "--yes")
+	if code != exitErr {
+		t.Fatalf("exit = %d, want %d", code, exitErr)
+	}
+	if !strings.Contains(msg, "mutually exclusive") {
+		t.Errorf("the error should say the two flags conflict: %s", msg)
+	}
+}
+
+func TestDeployProjectRequiresEnv(t *testing.T) {
+	_, code, msg := runRoot(t, "deploy", "--project", "hello", "--yes")
+	if code != exitErr {
+		t.Fatalf("exit = %d, want %d", code, exitErr)
+	}
+	if !strings.Contains(msg, "--env") {
+		t.Errorf("the error should name --env: %s", msg)
 	}
 }
 

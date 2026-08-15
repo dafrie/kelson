@@ -154,11 +154,14 @@ replicaCount: 1
 # `kubectl apply -f deploy/crds/` alongside the upgrade.
 #
 # The Deployment is off by default and that is a statement about maturity, not
-# about the design: today the controller validates, resolves and renders, and
-# then stops — publishing the artifact and writing the Flux objects are behind
-# an interface with a no-op implementation (issue #224). Turning it on gets you
+# about the design: `kelson-controller` now runs the full ADR-0028 spine —
+# render, publish an OCI artifact, SSA-apply the OCIRepository + Kustomization
+# pair, read the result back — but a controller that can push to a registry and
+# apply Flux objects is a bigger grant than "off" defaults get to skip past
+# quietly. Turning it on with no `controller.registry` set still gets you
 # `kubectl get environments` with a Ready condition and validation errors in
-# `.status`, which is genuinely useful and is not yet a deployment.
+# `.status` — the controller reports `RegistryNotConfigured` and deploys
+# nothing rather than crash-looping (docs/delivery.md).
 controller:
   enabled: false
 
@@ -168,8 +171,8 @@ controller:
     repository: ghcr.io/dafrie/kelson-controller
     tag: ""
 
-  # -- Replica count. One is right while the controller only writes statuses;
-  # see leaderElection below before raising it.
+  # -- Replica count. One is safe unconditionally; see leaderElection below —
+  # it defaults on, which is what makes more than one replica safe too.
   replicaCount: 1
 
   # -- Port the liveness (/healthz) and readiness (/readyz) endpoints bind to.
@@ -180,13 +183,65 @@ controller:
   # for no benefit; set `:8080` and point a ServiceMonitor at it.
   metricsBindAddress: "0"
 
-  # -- Leader election. Off by default, and safe while the controller only
-  # writes statuses: two replicas would compute the same verdict from the same
-  # spec and the second write is a no-op patch. It becomes required rather than
-  # advisable once delivery is real (issue #224) — two processes pushing
-  # artifacts and applying Flux objects is a race.
+  # -- Registry artifacts are published to, e.g. ghcr.io/acme (`--registry`).
+  # Empty means the controller reports `RegistryNotConfigured` on every
+  # Environment and publishes nothing (docs/delivery.md) — a registry is a hard
+  # requirement of the delivery spine (ADR-0028, "Consequences"), not an
+  # optional knob, so leaving this empty is a deliberate "not yet" rather than
+  # a working default. Point it at the in-cluster registry
+  # (`kelson install registry`, docs/install.md) if you have none of your own:
+  #
+  #   --set controller.registry=kelson-registry.kelson-system.svc.cluster.local:5000
+  registry: ""
+
+  # -- Name of an existing `kubernetes.io/dockerconfigjson` Secret holding the
+  # push credential for `registry`. Mounted into the pod and passed as
+  # `--registry-config`; the chart does not create it, the same posture
+  # `server.pushSecret` takes — a registry credential is yours, not the
+  # installer's. Empty is an anonymous push, which is what a registry with no
+  # auth (like `kelson install registry`'s) takes.
+  pushSecret: ""
+
+  # -- dockerconfigjson Secret in `fluxNamespace` that source-controller
+  # authenticates its *pull* with (`--pull-secret`). This is a different
+  # credential from `pushSecret`, read by a different process: the controller
+  # pushes, source-controller pulls. Named on the OCIRepository it writes, not
+  # mounted into this pod — the chart does not create it either.
+  pullSecret: ""
+
+  # -- Registry hosts served over plain HTTP, as a list of `host[:port]`
+  # (`--insecure-registries`). Exactly these hosts and no others are pushed to
+  # (and marked `insecure: true` on the OCIRepository) over plain HTTP — a push
+  # that silently downgraded on a failed TLS handshake would put a credential
+  # on the wire in clear. What a local registry needs:
+  #
+  #   --set 'controller.insecureRegistries={kelson-registry.kelson-system.svc.cluster.local:5000}'
+  insecureRegistries: []
+
+  # -- Namespace kelson's `OCIRepository` and `Kustomization` pair lives in
+  # (`--flux-namespace`). Empty means the release namespace, which is also
+  # where the namespaced Role granting those two kinds is created — the flag
+  # and the Role's namespace read this one value, so they cannot drift
+  # (ADR-0028 decision 3: they are kelson's objects, not the workload's, and
+  # live beside the controller that writes them).
+  fluxNamespace: ""
+
+  # -- How often Flux re-checks the OCIRepository/Kustomization pair
+  # (`--reconcile-interval`). Empty means the binary's own default (5m). This
+  # is drift correction, not deploy latency — a new revision reaches Flux
+  # through the apply kelson-controller does, not through this poll
+  # (docs/delivery.md).
+  reconcileInterval: ""
+
+  # -- Leader election. On by default: kelson-controller pushes artifacts and
+  # applies Flux objects now (ADR-0028), and two replicas racing to do either
+  # is a real hazard rather than a harmless duplicate status write. It is safe
+  # to leave on with `replicaCount: 1` too — a single replica always wins its
+  # own Lease immediately — so this is what makes scaling to more than one
+  # replica a `helm upgrade --set controller.replicaCount=2` away rather than a
+  # two-step change.
   leaderElection:
-    enabled: false
+    enabled: true
     # Defaults to the release namespace.
     namespace: ""
 
@@ -197,15 +252,19 @@ controller:
     annotations: {}
 
   rbac:
-    # -- Create the controller's ClusterRole and binding: get/list/watch on
-    # kelson.dev Projects and Environments, and status writes on both. That is
-    # the whole grant — no workloads, no Secrets, no Flux objects — because
-    # that is the whole of what the controller does today. See
-    # templates/controller-clusterrole.yaml for the per-rule reasoning.
+    # -- Create the controller's RBAC: the cluster-scoped ClusterRole
+    # (kelson.dev Projects and Environments, their status and finalizer
+    # subresources, and — when leader election is on — Leases) plus the
+    # namespaced Role in `fluxNamespace` granting the two Flux kinds the
+    # delivery spine owns. Deliberately absent from both: any read of
+    # workloads (Pods, Deployments) — R1 delegates health to Flux's
+    # `wait: true` instead (ADR-0028, issue #240). See
+    # templates/controller-clusterrole.yaml and
+    # templates/controller-flux-role.yaml for the per-rule reasoning.
     create: true
 
   # -- Resource requests and limits. The controller's work is Kubernetes API
-  # calls and a pure render, so the shape matches the server's.
+  # calls, a pure render and a registry push, so the shape matches the server's.
   resources:
     requests:
       cpu: 50m

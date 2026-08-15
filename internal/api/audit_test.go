@@ -17,7 +17,6 @@ import (
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
 	"github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1/kelsonv1alpha1connect"
 	"github.com/dafrie/kelson/internal/controlstore"
-	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/redact"
 )
 
@@ -134,12 +133,10 @@ func (f *fakeAuditSink) find(t *testing.T, procedure string) controlstore.AuditR
 // auditedServer is the #74 gated stack plus a trail, a stored spec and an
 // observation plane, so a mutation can actually run.
 //
-// The mutation these tests drive is a Deploy, and since ADR-0028 the rung that
-// applies is gated (issue #224) while the rungs that preview still answer. That
-// turns out to exercise the trail better rather than worse: a *previewing*
-// Deploy is the allowed-mutation case with a real change record, and an
-// *applying* one is now the failed-mutation case with a real plane error, so
-// both outcomes come from the same call rather than from a scripted fake.
+// The mutation these tests drive is a Deploy: a *previewing* one is the
+// allowed-mutation case with a real change record, and an *applying* one whose
+// store refuses the write is the failed-mutation case with a real plane error.
+// Both come from the same call rather than from a scripted fake.
 type auditedServer struct {
 	*gatedServer
 	sink  *fakeAuditSink
@@ -181,6 +178,13 @@ func (h *recordingHandler) findMessage(msg string) map[string]string {
 
 func newAuditedServer(t *testing.T) *auditedServer {
 	t.Helper()
+	return newAuditedServerWith(t, nil)
+}
+
+// newAuditedServerWith is newAuditedServer with the seams adjusted, for the
+// tests that need a plane to fail rather than to work.
+func newAuditedServerWith(t *testing.T, adjust func(*Options)) *auditedServer {
+	t.Helper()
 	sink := newFakeAuditSink()
 	specs := newFakeSpecStore()
 	if _, err := specs.Put(t.Context(), "hello", controlstore.Documents{
@@ -191,12 +195,16 @@ func newAuditedServer(t *testing.T) *auditedServer {
 	}
 	connector, _ := connectorFor(nil)
 
-	g := newGatedServer(t, Options{
+	opts := Options{
 		Specs:    specs,
 		Delivery: connector,
 		Audit:    sink,
 		Secrets:  newFakeSecrets(),
-	})
+	}
+	if adjust != nil {
+		adjust(&opts)
+	}
+	g := newGatedServer(t, opts)
 	return &auditedServer{gatedServer: g, sink: sink, specs: specs}
 }
 
@@ -377,22 +385,26 @@ func TestAnAllowedReadLeavesNoRecordButARefusedOneDoes(t *testing.T) {
 // to "what did it actually do?" as often as either of the other two, so it is a
 // third outcome rather than an allowed record that quietly implies success.
 func TestAFailedMutationIsRecordedAsFailed(t *testing.T) {
-	a := newAuditedServer(t)
+	a := newAuditedServerWith(t, func(o *Options) {
+		// A deploy is a spec write (issue #225), so a store that refuses the
+		// write is a mutation that was allowed and then broke — a better test
+		// than a scripted failure, because the code in the record is the code
+		// the caller actually received.
+		o.Specs = &refusingSpecStore{SpecStore: o.Specs}
+		o.Environments = newFakeEnvironments(healthyEnvironment("hello", devEnv, "1-abcdef01"))
+	})
 	token := a.mint(t, "deploybot", controlstore.Scope{Operations: []controlstore.Operation{controlstore.OpMutate}})
 
-	// The apply rung is gated (#224), which is a plane failure like any other
-	// from the trail's point of view — and a better test than a scripted one,
-	// because the code in the record is the code the caller actually received.
 	err := applyStored(t, a.as(token), devEnv, "")
 	if err == nil {
-		t.Fatal("the gated apply rung reported success")
+		t.Fatal("a deploy whose store refused the write reported success")
 	}
 	rec := a.sink.only(t)
 	if rec.Outcome != controlstore.AuditFailed {
 		t.Fatalf("outcome = %q, want failed", rec.Outcome)
 	}
-	if rec.Code != string(delivery.ErrNotImplemented) {
-		t.Errorf("code = %q, want the refusing plane's own code %q", rec.Code, delivery.ErrNotImplemented)
+	if rec.Code != string(controlstore.ErrVersionConflict) {
+		t.Errorf("code = %q, want the refusing plane's own code %q", rec.Code, controlstore.ErrVersionConflict)
 	}
 	if !hasCode(detailCodes(err), rec.Code) {
 		t.Errorf("the record's code %q is not among the caller's %v", rec.Code, detailCodes(err))

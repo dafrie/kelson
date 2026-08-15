@@ -352,6 +352,58 @@ func TestDeployClusterRoleRendersWhenEnabled(t *testing.T) {
 	}
 }
 
+// TestControllerClusterRoleGrantsTheFinalizerPatch pins the grant whose absence
+// broke the first end-to-end run of the delivery spine.
+//
+// EnvironmentReconciler.addFinalizer issues a merge PATCH against the
+// `environments` resource itself, because that is where a CustomResourceDefinition
+// keeps metadata.finalizers — a CRD serves no `/finalizers` subresource, so
+// `environments/finalizers` authorizes nothing by itself. With only the
+// subresource granted, every reconcile failed with
+//
+//	environments.kelson.dev "live" is forbidden: User
+//	"system:serviceaccount:kelson-system:kelson-controller" cannot patch
+//	resource "environments" in API group "kelson.dev"
+//
+// and returned before it could write `.status` — an environment whose artifact
+// was published and whose Flux Kustomization was healthy, reporting nothing at
+// all. Asserting the verb here is cheap; discovering it needs a kind cluster,
+// Flux, a registry and six minutes.
+func TestControllerClusterRoleGrantsTheFinalizerPatch(t *testing.T) {
+	docs := decodeDocs(t, helmTemplate(t, append(authValues, "--set", "controller.enabled=true")...))
+
+	var rules []policyRule
+	for _, doc := range docs {
+		if doc["kind"] == "ClusterRole" && nameOf(doc) == "kelson-controller" {
+			remarshal(t, doc["rules"], &rules)
+		}
+	}
+	if rules == nil {
+		t.Fatal("controller.enabled=true rendered no kelson-controller ClusterRole")
+	}
+
+	if !granted(rules, "kelson.dev", "environments", "patch") {
+		t.Errorf("the controller ClusterRole does not grant patch on environments. That is the write "+
+			"addFinalizer makes; environments/finalizers is the kubebuilder spelling and a CRD does not "+
+			"serve it:\n%s", mustYAML(t, rules))
+	}
+	// The status write and the event the recorder emits at start-up: the other
+	// two verbs the same run found missing or would have.
+	if !granted(rules, "kelson.dev", "environments/status", "patch") {
+		t.Errorf("the controller ClusterRole does not grant patch on environments/status:\n%s", mustYAML(t, rules))
+	}
+	if !granted(rules, "", "events", "create") {
+		t.Errorf("the controller ClusterRole does not grant create on events, so leader election and "+
+			"`kubectl describe environment` both go silent:\n%s", mustYAML(t, rules))
+	}
+	// And the separation the grant is bounded by: the controller must not be
+	// able to write a Project spec, only its status.
+	if granted(rules, "kelson.dev", "projects", "patch") || granted(rules, "kelson.dev", "projects", "update") {
+		t.Errorf("the controller ClusterRole grants a write on projects. Only status is the "+
+			"controller's to write (ADR-0027 decision 1):\n%s", mustYAML(t, rules))
+	}
+}
+
 // --- helpers ----------------------------------------------------------------
 
 // nameOf reads metadata.name off a decoded document.

@@ -28,16 +28,25 @@
 // keeps `kelson status` and this API from disagreeing about what a verdict
 // means (issue #37).
 //
-// # The delivery verbs are gated, and the schema is not
+// # The delivery verbs are projections of a custom resource
 //
-// [ADR-0028](docs/adr/0028-delivery-spine.md) deleted the delivery adapters,
-// the rendered-history store and the rollback machinery. The wire schema is
-// unchanged — ADR-0027 decision 6 keeps the ConnectRPC surface exactly as
-// ADR-0013 §2 defined it — so the RPCs that needed those things still exist and
-// answer `CodeUnimplemented` with a `delivery/not-implemented` detail naming the
-// tracking issue, rather than being removed from the schema or, worse, half
-// answering. Deploy keeps both of its dry-run rungs, because rendering and
-// previewing never needed an adapter (deploy.go).
+// [ADR-0028](docs/adr/0028-delivery-spine.md) deleted the delivery adapters and
+// [ADR-0027](docs/adr/0027-crd-native-control-plane.md) put what replaced them
+// in the cluster: a spec is a `Project` and its `Environment`s, and
+// kelson-controller records what it delivered in `Environment.status`. The wire
+// schema is unchanged — ADR-0027 decision 6 keeps the ConnectRPC surface
+// exactly as ADR-0013 §2 defined it — and every delivery verb is now one
+// operation on those resources plus a projection of their status (issue #225):
+//
+//	Deploy    server-side apply of the spec, then stream status until it settles
+//	Status    read status.phase / status.revision, beside the workload verdicts
+//	Rollback  patch kelson.dev/rollback-to, then follow status
+//	History   read status.history[], the bounded mirror of the registry
+//	Promote   read the source's status, write the target's pins, stamp
+//	          kelson.dev/promoted-from
+//
+// Three wire fields have no source on this spine and are left empty rather than
+// guessed; deploy.go's handlers name each one where it would have been filled.
 //
 // # An invalid spec is an answer, not a transport failure
 //
@@ -86,6 +95,9 @@ type SpecStore interface {
 	List(ctx context.Context) ([]controlstore.Stored, error)
 	Delete(ctx context.Context, project string, opts controlstore.DeleteOptions) error
 }
+
+// The Environment-status seam is [EnvironmentStore] in environment.go, beside
+// the projection that turns a status into the wire's phases and transitions.
 
 // AgentStore is the agent-identity seam (issue #74, ADR-0024).
 // *controlstore.AgentStore implements it. A nil one is a server with no agent
@@ -296,14 +308,21 @@ type BuildDefaults struct {
 // missing, which is how a partially-wired server (a test, or a build with no
 // cluster) fails honestly instead of panicking.
 type Options struct {
-	Specs    SpecStore
-	Profile  ProfileCapture
-	Delivery DeliveryConnector
-	Preview  PreviewConnector
-	Logs     LogEngine
-	Build    BuildConnector
-	Secrets  SecretStore
-	Agents   AgentStore
+	Specs SpecStore
+	// Environments reads and watches `Environment.status`, and stamps the
+	// rollback and promotion annotations. *controlstore.EnvironmentStore
+	// implements it. A nil one is a server that can store specs and not say
+	// what became of them: Deploy, Rollback and History answer
+	// CodeUnimplemented, and Status reports the workload verdicts with the
+	// delivery half named as missing (ADR-0027 decision 6).
+	Environments EnvironmentStore
+	Profile      ProfileCapture
+	Delivery     DeliveryConnector
+	Preview      PreviewConnector
+	Logs         LogEngine
+	Build        BuildConnector
+	Secrets      SecretStore
+	Agents       AgentStore
 
 	// Install builds the platform-component installer (issue #60, ADR-0021);
 	// the seam behind InstallService. Nil answers unimplemented.
@@ -344,16 +363,17 @@ type Options struct {
 
 // Server implements all fourteen kelson.v1alpha1 services.
 type Server struct {
-	specs    SpecStore
-	profile  ProfileCapture
-	delivery DeliveryConnector
-	preview  PreviewConnector
-	logs     LogEngine
-	build    BuildConnector
-	secrets  SecretStore
-	agents   AgentStore
-	install  InstallConnector
-	nodes    NodeReader
+	specs        SpecStore
+	environments EnvironmentStore
+	profile      ProfileCapture
+	delivery     DeliveryConnector
+	preview      PreviewConnector
+	logs         LogEngine
+	build        BuildConnector
+	secrets      SecretStore
+	agents       AgentStore
+	install      InstallConnector
+	nodes        NodeReader
 
 	// authz is the scope, rate-limit and audit interceptor. It is built here
 	// and mounted by Register so no caller can serve these handlers without it
@@ -398,6 +418,7 @@ var (
 func New(opts Options) *Server {
 	s := &Server{
 		specs:         opts.Specs,
+		environments:  opts.Environments,
 		profile:       opts.Profile,
 		delivery:      opts.Delivery,
 		preview:       opts.Preview,

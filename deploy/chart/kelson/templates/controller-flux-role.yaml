@@ -1,0 +1,63 @@
+{{- include "kelson.authGate" . -}}
+{{- if and .Values.controller.enabled .Values.controller.rbac.create }}
+{{- $fluxNs := include "kelson.controller.fluxNamespace" . }}
+# The delivery spine's namespaced grant: CRUD on the two Flux kinds
+# kelson-controller owns one pair of per environment (ADR-0028 decision 3,
+# internal/controller/fluxobjects.go).
+#
+# Namespaced rather than folded into the cluster-scoped ClusterRole
+# (templates/controller-clusterrole.yaml) because the shape is namespaced:
+# kelson writes exactly one OCIRepository and one Kustomization per
+# environment, always in .Values.controller.fluxNamespace, never anywhere
+# else. A Role that names that one namespace is the grant that shape actually
+# needs, and it stays that grant even on a cluster with a thousand namespaces
+# of Projects and Environments.
+#
+# `delete` is required, not optional: EnvironmentReconciler's finalizer
+# teardown (internal/controller/environment.go, `kelson.dev/environment`)
+# deletes the Kustomization and then the OCIRepository before it releases the
+# finalizer, and a controller that could apply but not delete would leave
+# every deleted Environment's workloads running forever with no way to remove
+# them short of `kubectl delete` under a human's own credentials.
+#
+# `list`/`watch` are what the manager's own cache needs (cmd/kelson-controller
+# `cacheOptions`, and the watches EnvironmentReconciler.SetupWithManager
+# registers when Flux is detected) — an informer needs both regardless of
+# whether the reconcile loop itself ever calls List. `create`/`update` sit
+# beside the `patch` server-side apply actually authorizes against
+# (internal/controller/fluxobjects.go's apply is a PATCH under the
+# `kelson-controller` field manager) for CRUD parity and any caller that ends
+# up doing a plain create or a full replace instead.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "kelson.controller.fullname" . }}-flux
+  namespace: {{ $fluxNs }}
+  labels:
+    {{- include "kelson.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controller
+rules:
+  - apiGroups: ["source.toolkit.fluxcd.io"]
+    resources: ["ocirepositories"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["kustomize.toolkit.fluxcd.io"]
+    resources: ["kustomizations"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "kelson.controller.fullname" . }}-flux
+  namespace: {{ $fluxNs }}
+  labels:
+    {{- include "kelson.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "kelson.controller.fullname" . }}-flux
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kelson.controller.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

@@ -101,6 +101,19 @@ type PutOptions struct {
 	IdempotencyKey string
 }
 
+// There is deliberately no Image option here any more.
+//
+// There was one, for a single caller: a Deploy carrying `--image` wrote it to
+// `Project.spec.image` before the objects were built. That made a per-deploy
+// override a project-wide, every-environment fact — deploying a pull request's
+// image into development durably changed what production's next deploy would
+// resolve to — and it did it under a Put whose documents said nothing of the
+// kind, so `GetSpec` came back with a project document the author never wrote.
+// A deploy names one environment, and ADR-0016 already has the field that scopes
+// an image to one: `Environment.spec.components[].image`. internal/api splices
+// the override there (pinDeployImage) and this store writes the documents it is
+// given, unedited.
+
 // DeleteOptions carries the same controls for a delete.
 type DeleteOptions struct {
 	ExpectedVersion string
@@ -455,7 +468,6 @@ func (s *SpecStore) resources(project string, docs Documents) (resourceSet, erro
 		return resourceSet{}, fmt.Errorf("controlstore: the project document names %q and the request names %q",
 			mp.Metadata.Name, project)
 	}
-
 	out := resourceSet{
 		project:      &v1alpha1.Project{Spec: mp.Spec},
 		environments: map[string]*v1alpha1.Environment{},
@@ -629,12 +641,17 @@ func specRef(project string) string { return "spec/" + project }
 // so a handler cannot reach for a cluster call instead of going through a
 // store; building the client here keeps that fence intact while still letting
 // the server hand this package a connection.
-func NewClient(cfg *rest.Config) (client.Client, error) {
+//
+// It is a *watching* client because [EnvironmentStore] follows an
+// Environment's status while a deployment is in flight, and a client that could
+// not watch would leave the façade polling for a change the API server is able
+// to push. client.WithWatch is a client.Client, so [SpecStore] is unaffected.
+func NewClient(cfg *rest.Config) (client.WithWatch, error) {
 	s := runtime.NewScheme()
 	if err := v1alpha1.AddToScheme(s); err != nil {
 		return nil, fmt.Errorf("controlstore: registering kelson.dev/v1alpha1: %w", err)
 	}
-	c, err := client.New(cfg, client.Options{Scheme: s})
+	c, err := client.NewWithWatch(cfg, client.Options{Scheme: s})
 	if err != nil {
 		return nil, fmt.Errorf("controlstore: building the custom-resource client: %w", err)
 	}

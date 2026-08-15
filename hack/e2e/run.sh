@@ -5,12 +5,18 @@
 #
 # Every stage asserts and exits non-zero with a clear message on failure.
 #
-# The deploy and rollback stages are gone, not skipped. ADR-0028 deleted the
-# applier and the rollback and the CLI refuses both with
-# `delivery/not-implemented` naming issue #224; this script asserts that
-# refusal and applies the rendered set with kubectl instead, which is the
-# property ADR-0028 decision 10 relies on and the same set the controller will
-# publish for Flux. The deploy/rollback lifecycle comes back with #224.
+# The deploy and rollback stages are gone, not skipped. `kelson deploy` and
+# `kelson rollback` are ConnectRPC clients of kelson-server now (R2, issue
+# #225): they write a spec / a rollback annotation and follow
+# kelson-controller's status, and this harness stands up neither a
+# kelson-server nor a controller — a bare kind cluster is the whole of what
+# up.sh creates. So this script asserts the honest thing a façade-backed verb
+# does with no reachable --server (a clear, fast refusal naming the flag —
+# never a hang, never a silent no-op) and applies the rendered set with
+# kubectl instead, which is the property ADR-0028 decision 10 relies on and
+# the same set the controller will publish for Flux. The real deploy/rollback
+# round trip, against a live kelson-server and controller, is
+# hack/e2e/spine.sh.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -72,23 +78,29 @@ NAMESPACE="$(grep -m1 'namespace:' "$WORKDIR/rendered.yaml" | sed -E 's/^[[:spac
 [[ -n "$NAMESPACE" ]] || die "could not determine the target namespace from the rendered manifests"
 log "target namespace: ${NAMESPACE}"
 
-log "== stage: the deleted verbs refuse honestly (issue #224) =="
-# A gated verb is only acceptable if it refuses in a shape a caller can act on.
-# Asserting it here, against the real binary in a real cluster, is what keeps a
-# future "temporarily comment out the gate" from going unnoticed.
+log "== stage: deploy/rollback fail cleanly with no reachable kelson-server =="
+# kelson deploy and kelson rollback are ConnectRPC clients of kelson-server now
+# (R2, issue #225) and this harness runs none — up.sh stands up a bare kind
+# cluster only. So the property worth pinning here, against the real binary,
+# is that a façade-backed verb with no reachable --server fails fast and names
+# the flag: never a hang, never a silent no-op. The real deploy/rollback round
+# trip, against a live kelson-server and controller, is hack/e2e/spine.sh.
+UNREACHABLE_SERVER="http://127.0.0.1:1"
 for verb in deploy rollback; do
-	refusal=$("$KELSON" "$verb" -f "$PROJECT_FILE" -f "$ENV_FILE" --env "$ENV_NAME" \
-		--kubeconfig "$KUBECONFIG_FILE" --yes 2>&1 || true)
-	if "$KELSON" "$verb" -f "$PROJECT_FILE" -f "$ENV_FILE" --env "$ENV_NAME" \
-		--kubeconfig "$KUBECONFIG_FILE" --yes >/dev/null 2>&1; then
-		die "kelson ${verb} exited 0; the machinery behind it was deleted (ADR-0028)"
+	verb_start_ts=$(date +%s)
+	if refusal=$("$KELSON" "$verb" -f "$PROJECT_FILE" -f "$ENV_FILE" --env "$ENV_NAME" \
+		--server "$UNREACHABLE_SERVER" --yes 2>&1); then
+		die "kelson ${verb} exited 0 against an unreachable --server"
 	fi
-	grep -q "delivery/not-implemented" <<<"$refusal" ||
-		die "kelson ${verb} did not refuse with the delivery/not-implemented code: ${refusal}"
-	grep -q "#224" <<<"$refusal" ||
-		die "kelson ${verb} did not name the tracking issue: ${refusal}"
+	verb_elapsed=$(($(date +%s) - verb_start_ts))
+	[[ "$verb_elapsed" -le 15 ]] ||
+		die "kelson ${verb} took ${verb_elapsed}s to fail against an unreachable --server; it must fail fast, not hang"
+	grep -q -- "--server" <<<"$refusal" ||
+		die "kelson ${verb} did not name --server in its refusal: ${refusal}"
+	grep -q "KELSON_SERVER" <<<"$refusal" ||
+		die "kelson ${verb} did not name \$KELSON_SERVER in its refusal: ${refusal}"
 done
-log "deploy and rollback refuse with the tracked code"
+log "deploy and rollback fail cleanly, naming --server, with no reachable kelson-server"
 
 log "== stage: apply the rendered set =="
 kubectl apply -f "$WORKDIR/rendered.yaml" ||
@@ -142,10 +154,11 @@ grep -q "crash-loop-back-off" <<<"$status_out" || die "kelson status did not pri
 log "kelson status verdict confirmed"
 
 log "== stage: restore the good revision =="
-# `kelson rollback` would have done this from recorded bytes; it is gated
-# (issue #224), so the restore is a re-apply of the good render — which proves
-# the cluster recovers but NOT the property rollback exists for, that the bytes
-# replayed are the bytes that were live. That assertion returns with #224.
+# `kelson rollback` would do this against a real kelson-server and
+# controller, neither of which this harness runs, so the restore is a
+# re-apply of the good render — which proves the cluster recovers but NOT the
+# property rollback exists for, that the artifact restored is bit-identical to
+# the one that was live. That round trip is hack/e2e/spine.sh.
 kubectl apply -f "$WORKDIR/rendered.yaml" || die "kubectl could not re-apply the good revision"
 
 kubectl -n "$NAMESPACE" rollout status deployment/"$COMPONENT_NAME" --timeout=120s ||

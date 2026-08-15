@@ -115,6 +115,62 @@ Kustomization reconciles a path in the user's own repository, that was right. In
 publishes the artifact, the Kustomization that consumes it has no other plausible owner, and asking the
 operator to hand-write it would make the happy path a two-system setup.
 
+#### Amendment, 2026-08-14: an Environment finalizer, and what deleting one destroys
+
+Recorded while building the spine ([#224](https://github.com/dafrie/kelson/issues/224)). Decision 3 said
+which objects kelson owns and where they live, and said nothing about what happens when the `Environment`
+that caused them goes away. This closes that, and states the consequence in the plainest terms available,
+because it is the sharpest edge the spine adds after the registry requirement.
+
+**The decision.** `Environment` carries the finalizer `kelson.dev/environment`, added on the first
+reconcile that successfully applies the pair — not before. On deletion the controller removes the
+`Kustomization` first, then the `OCIRepository`, and only then releases the finalizer. `IsNotFound` at
+either step is success, because a teardown re-runs on every reconcile until the finalizer clears and
+"already gone" is the state it is trying to reach.
+
+**"Not before" leaves a window, and the reconcile that loses it does the teardown itself.** Adding the
+finalizer after the apply is deliberate — a deletion blocker on an object that has nothing to clean up
+means an `Environment` whose spec never validated needs its finalizer stripped by hand before
+`kubectl delete` returns — but it means there is an interval, one API round trip wide, in which the
+pair exists and nothing protects it. A `kubectl delete environment` that lands in that interval finds
+no finalizer, so the custom resource goes immediately; the finalizer patch then comes back `NotFound`,
+`finalize` never runs because there is no object left to reconcile, and a `prune: true` `Kustomization`
+and everything it applied keep running with nothing in the cluster saying whose they were. Making the
+window smaller does not close it, and adding the finalizer *before* the apply reopens the problem it
+was ordered this way to avoid. So the loser of the race cleans up: a finalizer patch that returns
+`NotFound` — or an object that comes back mid-deletion, which is how the same race arrives when the API
+server refuses a finalizer on a terminating object — runs the same teardown `finalize` would have run,
+in the same order, from the reconcile that applied the pair. It is the one teardown no later reconcile
+can retry, so a failure there is returned and logged rather than swallowed.
+
+**Why a finalizer and not an owner reference.** The two Flux objects live in `kelson-system` and the
+`Environment` lives in the application's namespace. Kubernetes garbage collection does not cross
+namespaces — a cross-namespace owner reference is not merely unsupported, it marks the dependent as an
+orphan and makes it eligible for deletion — so ownership has to be enforced by the controller that
+created both.
+
+**Why the Kustomization goes first.** Deleting it is what removes the workloads: it prunes its own
+inventory on the way out, which is the behaviour `prune: true` bought. Deleting the `OCIRepository`
+first would leave the `Kustomization` pointing at a source that no longer exists, so it would stop
+reconciling with an error, prune nothing, and the workloads would outlive the `Environment` that
+declared them with nothing left in the cluster saying whose they were.
+
+**The sharp edge, stated once and stated plainly: deleting an `Environment` deletes its workloads.**
+`kubectl delete environment production` is not a control-plane bookkeeping operation. It removes the
+`Kustomization`, the `Kustomization` prunes everything it applied, and the running application goes
+with it. That follows from decision 3 rather than being a new choice — a `Kustomization` with
+`prune: true` is what a deployment *is* here — but it is the kind of consequence a reader has to be
+told rather than left to derive, and it is repeated in [the delivery plane](../delivery.md).
+
+**Two things are deliberately not deleted.** The workload namespace, because deleting a namespace
+cascades to everything inside it including resources kelson never created, and the provenance labels
+can never prove kelson created the namespace rather than adopting one that was already there
+(`internal/delivery/provenance.go`'s ownership annotation exists for exactly this distinction).
+`kelson uninstall` is the verb that reasons about namespaces; deleting a custom resource is not. And
+the published artifacts, because they *are* the history (decision 4) and they are immutable: deleting
+an `Environment` must not make its own record unrecoverable, and re-applying the same spec afterwards
+finds every revision it ever published still in the registry.
+
 ### 4. History is the registry's tag list, mirrored bounded into status
 
 The registry holds every artifact ever published for an environment, immutably, and that *is* the

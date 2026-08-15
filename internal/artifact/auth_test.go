@@ -1,4 +1,4 @@
-package preview_test
+package artifact_test
 
 import (
 	"encoding/base64"
@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/dafrie/kelson/internal/preview"
+	"github.com/dafrie/kelson/internal/artifact"
 	"github.com/dafrie/kelson/internal/redact"
 )
 
@@ -28,7 +28,7 @@ func writeDockerConfig(t *testing.T, body string) string {
 func TestCredentialFromDockerConfig(t *testing.T) {
 	path := writeDockerConfig(t, `{"auths":{"ghcr.io":{"username":"robot","password":"s3cret-token"}}}`)
 
-	cred, err := preview.CredentialFromDockerConfig(path, "ghcr.io")
+	cred, err := artifact.CredentialFromDockerConfig(path, "ghcr.io")
 	if err != nil {
 		t.Fatalf("CredentialFromDockerConfig: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestCredentialFromDockerConfig(t *testing.T) {
 // supply a credential.
 func TestCredentialFromDockerConfigIsAnonymousWhenAbsent(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "config.json")
-	cred, err := preview.CredentialFromDockerConfig(missing, "ghcr.io")
+	cred, err := artifact.CredentialFromDockerConfig(missing, "ghcr.io")
 	if err != nil {
 		t.Fatalf("a missing docker config must not be an error: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestCredentialFromDockerConfigIsAnonymousWhenAbsent(t *testing.T) {
 	}
 
 	other := writeDockerConfig(t, `{"auths":{"docker.io":{"username":"u","password":"p"}}}`)
-	cred, err = preview.CredentialFromDockerConfig(other, "ghcr.io")
+	cred, err = artifact.CredentialFromDockerConfig(other, "ghcr.io")
 	if err != nil {
 		t.Fatalf("a login to a different registry must not be an error: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestCredentialFromDockerConfigIsAnonymousWhenAbsent(t *testing.T) {
 
 func TestCredentialFromDockerConfigRejectsABrokenLogin(t *testing.T) {
 	path := writeDockerConfig(t, "not json at all")
-	if _, err := preview.CredentialFromDockerConfig(path, "ghcr.io"); err == nil {
+	if _, err := artifact.CredentialFromDockerConfig(path, "ghcr.io"); err == nil {
 		t.Error("an unparseable docker config was treated as no login at all")
 	}
 }

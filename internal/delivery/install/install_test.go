@@ -354,6 +354,165 @@ func TestExecuteStopsComponentOnFailure(t *testing.T) {
 	}
 }
 
+// TestInstallComposesRegistryWithoutFetching: an Authored row has no manifest
+// to download, and Installer.load must never call the Fetcher for one.
+func TestInstallComposesRegistryWithoutFetching(t *testing.T) {
+	digest := digestOf([]byte("registry-image-fixture"))
+	c := authoredFixture("registry", "kelson-system", "example.invalid/registry", digest)
+	withComponents(t, c)
+	fetcher := &fakeFetcher{}
+	installer := newInstaller(t, newCluster(), fetcher)
+
+	plan, err := installer.Plan(context.Background(), Request{Components: []string{"registry"}})
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if len(fetcher.asked) != 0 {
+		t.Fatalf("fetched %v; an Authored row has no manifest to download", fetcher.asked)
+	}
+	if len(plan.Items) != 1 {
+		t.Fatalf("items = %d, want 1", len(plan.Items))
+	}
+	item := plan.Items[0]
+	if item.Digest != digest {
+		t.Fatalf("Digest = %q, want the pinned image digest %q", item.Digest, digest)
+	}
+	want := []string{
+		"Namespace/kelson-system",
+		"PersistentVolumeClaim/kelson-system/kelson-registry-data",
+		"Deployment/kelson-system/kelson-registry",
+		"Service/kelson-system/kelson-registry",
+	}
+	if len(item.Objects) != len(want) {
+		t.Fatalf("objects = %+v, want %v", item.Objects, want)
+	}
+	for idx, o := range item.Objects {
+		if o.Ref.String() != want[idx] {
+			t.Fatalf("object %d = %s, want %s", idx, o.Ref, want[idx])
+		}
+		if !o.Authored {
+			t.Fatalf("%s is not marked Authored, and the preview will not say kelson wrote it", o.Ref)
+		}
+	}
+}
+
+// TestInstallRegistryAppliesAndPinsTheImageByDigest: the deployed container
+// must reference exactly the pinned image and digest, never a mutable tag,
+// and the objects must carry the same provenance every other component's do.
+func TestInstallRegistryAppliesAndPinsTheImageByDigest(t *testing.T) {
+	digest := digestOf([]byte("registry-image-fixture"))
+	c := authoredFixture("registry", "kelson-system", "example.invalid/registry", digest)
+	withComponents(t, c)
+	cl := newCluster()
+	installer := newInstaller(t, cl, &fakeFetcher{})
+
+	plan, err := installer.Plan(context.Background(), Request{Components: []string{"registry"}})
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	report, err := installer.Execute(context.Background(), plan)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if report.Components[0].Created != 4 {
+		t.Fatalf("created = %d, want the 4 authored objects", report.Components[0].Created)
+	}
+
+	// Apply order: the namespace before anything in it, the PVC before the
+	// Deployment that claims it — the same discipline a fetched manifest's
+	// document order gives every other row.
+	want := []string{
+		"Namespace//kelson-system",
+		"PersistentVolumeClaim/kelson-system/kelson-registry-data",
+		"Deployment/kelson-system/kelson-registry",
+		"Service/kelson-system/kelson-registry",
+	}
+	if got := cl.applyLog(); len(got) != len(want) {
+		t.Fatalf("applied %v, want %v", got, want)
+	} else {
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("apply order:\n got %v\nwant %v", got, want)
+			}
+		}
+	}
+
+	dep := cl.get(t, "Deployment", "kelson-system", "kelson-registry")
+	if dep == nil {
+		t.Fatal("the Deployment was not applied")
+	}
+	containers, _, _ := unstructured.NestedSlice(dep.Object, "spec", "template", "spec", "containers")
+	if len(containers) != 1 {
+		t.Fatalf("containers = %+v, want exactly one", containers)
+	}
+	container, _ := containers[0].(map[string]any)
+	wantImage := "example.invalid/registry@sha256:" + digest
+	if got, _ := container["image"].(string); got != wantImage {
+		t.Fatalf("image = %q, want %q — a mutable tag is exactly what a pin exists to rule out", got, wantImage)
+	}
+	if got := dep.GetLabels()[LabelComponent]; got != "registry" {
+		t.Fatalf("%s = %q, want registry", LabelComponent, got)
+	}
+	if got := dep.GetAnnotations()[AnnOwnership]; got != OwnershipCreated {
+		t.Fatalf("%s = %q, want %q", AnnOwnership, got, OwnershipCreated)
+	}
+
+	svc := cl.get(t, "Service", "kelson-system", "kelson-registry")
+	if svc == nil {
+		t.Fatal("the Service was not applied")
+	}
+	svcType, _, _ := unstructured.NestedString(svc.Object, "spec", "type")
+	if svcType != "ClusterIP" {
+		t.Fatalf("Service type = %q, want ClusterIP", svcType)
+	}
+	ports, _, _ := unstructured.NestedSlice(svc.Object, "spec", "ports")
+	if len(ports) != 1 {
+		t.Fatalf("Service ports = %+v, want exactly one", ports)
+	}
+	portEntry, _ := ports[0].(map[string]any)
+	port, _ := portEntry["port"].(int64)
+	if port != RegistryPort {
+		t.Fatalf("Service port = %d, want %d", port, RegistryPort)
+	}
+
+	pvc := cl.get(t, "PersistentVolumeClaim", "kelson-system", "kelson-registry-data")
+	if pvc == nil {
+		t.Fatal("the PersistentVolumeClaim was not applied")
+	}
+	size, _, _ := unstructured.NestedString(pvc.Object, "spec", "resources", "requests", "storage")
+	if size != RegistryStorageSize {
+		t.Fatalf("PVC storage = %q, want %q", size, RegistryStorageSize)
+	}
+	if _, found, _ := unstructured.NestedString(pvc.Object, "spec", "storageClassName"); found {
+		t.Fatal("the PVC names a storageClassName; it should defer to the cluster's default")
+	}
+}
+
+// TestSweepDeclinesRegistryUnconditionally: unlike envoy-gateway, registry has
+// no detection signal that could ever turn a sweep's mind — kelson cannot see
+// a registry running outside the cluster, or one behind different
+// credentials — so --all-missing declines it every time, and only naming it
+// is the decision that it is missing.
+func TestSweepDeclinesRegistryUnconditionally(t *testing.T) {
+	reg, ok := Lookup("registry")
+	if !ok {
+		t.Fatal("the pins table has no registry row")
+	}
+	refusal, refused := refuse(reg, clusterprofile.ClusterProfile{}, true)
+	if !refused || refusal == nil {
+		t.Fatal("--all-missing installed a registry kelson has no evidence is actually missing")
+	}
+	if refusal.Outcome != clusterprofile.OutcomeNo {
+		t.Fatalf("outcome = %v, want no: registry genuinely reports absent, kelson just cannot always tell", refusal.Outcome)
+	}
+	if !strings.Contains(refusal.Remediation, "kelson install registry") {
+		t.Fatalf("remediation %q does not name the explicit command that decides", refusal.Remediation)
+	}
+	if _, refused := refuse(reg, clusterprofile.ClusterProfile{}, false); refused {
+		t.Fatal("an explicit `kelson install registry` was refused; naming it is the decision")
+	}
+}
+
 // TestInstallFluxCreatesFluxInstance: installing Flux means installing
 // flux-operator and creating one CR, with no Flux manifests vendored.
 func TestInstallFluxCreatesFluxInstance(t *testing.T) {

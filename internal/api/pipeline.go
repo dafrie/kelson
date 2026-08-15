@@ -111,9 +111,31 @@ func (s *Server) resolveSpec(ctx context.Context, ref *kelsonv1alpha1.SpecRef) (
 	}
 }
 
-// resolveProfile resolves the ClusterProfile input. Neither oneof field set is
-// the zero profile, matching the CLI's empty --profile: nothing detected, which
-// is valid and deterministic but since #140 fails a spec whose services declare
+// resolveProfile resolves the ClusterProfile input.
+//
+// # A request that names no profile gets the server's own cluster
+//
+// The renders on this server are pre-flight renders of what kelson-controller
+// is about to render, and the controller renders against the profile it
+// detected (internal/controller reads it from its Profiles source on every
+// reconcile). A server that answered the same question against the *empty*
+// profile would disagree with the controller on both halves of what a caller
+// asks it: a routed spec (`domains:`, or a `port:` under a `domainSuffix`)
+// refuses with `render/gateway-api-missing` on Deploy and Status even though
+// the cluster has Gateway API, and the resource count in `kelson deploy`'s
+// confirmation prompt is not the count the controller publishes.
+//
+// So an absent ProfileRef means "the cluster you are attached to", which is the
+// only profile this server can honestly speak for — the CLI sends no ProfileRef
+// unless `--profile` was given (cmd/kelson's inlineProfileRef), and that is the
+// ordinary case, not the exotic one. A server started without profile capture
+// (a test, a build with no cluster) still falls back to the zero profile rather
+// than refusing, because those callers had nothing better before either.
+//
+// An explicit ProfileRef is unchanged and always wins: `yaml` renders against
+// exactly those bytes, `from_cluster: true` captures, and `from_cluster: false`
+// is the one way left to ask for a render against nothing detected — valid and
+// deterministic, and since #140 a refusal for a spec whose services declare
 // domains, because there is no routing substrate to attach them to.
 func (s *Server) resolveProfile(ctx context.Context, ref *kelsonv1alpha1.ProfileRef) (clusterprofile.ClusterProfile, error) {
 	switch profile := ref.GetProfile().(type) {
@@ -124,16 +146,24 @@ func (s *Server) resolveProfile(ctx context.Context, ref *kelsonv1alpha1.Profile
 		if s.profile == nil {
 			return clusterprofile.ClusterProfile{}, unimplemented("live profile capture")
 		}
-		p, err := s.profile.Capture(ctx)
-		if err != nil {
-			return clusterprofile.ClusterProfile{}, unavailable("api: capturing the cluster profile: %w", err)
-		}
-		return p, nil
+		return s.captureProfile(ctx)
 	case *kelsonv1alpha1.ProfileRef_Yaml:
 		return clusterprofile.Unmarshal(profile.Yaml)
 	default:
-		return clusterprofile.ClusterProfile{}, nil
+		if s.profile == nil {
+			return clusterprofile.ClusterProfile{}, nil
+		}
+		return s.captureProfile(ctx)
 	}
+}
+
+// captureProfile reads the server's own cluster through the capture seam.
+func (s *Server) captureProfile(ctx context.Context) (clusterprofile.ClusterProfile, error) {
+	p, err := s.profile.Capture(ctx)
+	if err != nil {
+		return clusterprofile.ClusterProfile{}, unavailable("api: capturing the cluster profile: %w", err)
+	}
+	return p, nil
 }
 
 // selectEnvironment picks the environment to act on, matching the CLI's --env

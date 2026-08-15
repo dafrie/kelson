@@ -36,6 +36,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newExplainCmd())
 	root.AddCommand(newRollbackCmd())
 	root.AddCommand(newPromoteCmd())
+	root.AddCommand(newHistoryCmd())
 	root.AddCommand(newPreviewCmd())
 	root.AddCommand(newSecretCmd())
 	root.AddCommand(newAgentCmd())

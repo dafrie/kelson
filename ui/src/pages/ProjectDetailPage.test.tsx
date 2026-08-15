@@ -61,10 +61,12 @@ const transport = createRouterTransport((router) => {
   router.service(DeployService, {
     status: (req) => {
       if (req.environment === "staging") {
-        // A build started without a delivery plane answers Unimplemented for
-        // every environment it is asked about.
+        // A build started without a workload observation client answers
+        // Unimplemented for every environment it is asked about
+        // (internal/api's Status). It says nothing about Rollback, which
+        // reads a different seam (the Environment store).
         throw new ConnectError(
-          "the delivery plane is not available in this server: it was started without the backing seam",
+          "the observation plane is not available in this server: it was started without the backing seam",
           Code.Unimplemented,
         );
       }
@@ -173,17 +175,21 @@ describe("ProjectDetailPage", () => {
     );
   });
 
-  it("disables rollback with the server's own reason when there is no delivery plane", async () => {
+  it("keeps rollback offered when Status fails, like every other action", async () => {
+    // Status.Unimplemented now means only that this server has no workload
+    // observation client (internal/api's Status, R2 #225) — it says nothing
+    // about whether the Environment store Rollback needs is configured, so
+    // this page must not read it as "rollback cannot work". Rollback's own
+    // screen has the real precondition and its own honest error if it fails.
     renderDetail();
 
     fireEvent.click(await screen.findByRole("button", { name: "staging" }));
 
-    const rollback = await screen.findByRole("button", { name: "Rollback" });
-    expect((rollback as HTMLButtonElement).disabled).toBe(true);
-    expect(rollback.getAttribute("title")).toContain(
-      "it was started without the backing seam",
+    const rollback = await screen.findByRole("link", { name: "Rollback" });
+    expect(rollback.getAttribute("href")).toBe(
+      "/projects/checkout/staging/rollback",
     );
-    // Deploy stays available: a render dry-run needs no cluster at all.
+    // Deploy stays available too: a render dry-run needs no cluster at all.
     expect(screen.getByRole("link", { name: "Deploy" })).toBeTruthy();
   });
 });

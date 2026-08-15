@@ -33,11 +33,13 @@ const (
 	// publisher's copy of render/preview-name-too-long, refused here so a
 	// publish fails at the flag rather than at reconcile time.
 	ReasonNameTooLong = "preview/name-too-long"
-	// ReasonRepositoryInvalid: previews.artifacts.repository is not a
-	// repository reference this publisher can push to — a tag or digest on it,
-	// or a name the registry grammar rejects.
-	ReasonRepositoryInvalid = "preview/repository-invalid"
 )
+
+// There is no preview/repository-invalid any more. Parsing a push target moved
+// into internal/artifact with the publisher (ADR-0028 decision 2), and it
+// refuses with the artifact plane's own artifact/repository-invalid — a code
+// that can name `--registry` as well as `previews.artifacts.repository`,
+// because the publisher now has two callers.
 
 // Error is a publisher refusal: a named reason, what happened, and what to do.
 // The three-field shape is the house style for a plane that refuses before it

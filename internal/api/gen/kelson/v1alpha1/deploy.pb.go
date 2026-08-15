@@ -843,12 +843,30 @@ func (x *HistoryResponse) GetEntries() []*HistoryEntry {
 }
 
 type HistoryEntry struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Revision      string                 `protobuf:"bytes,1,opt,name=revision,proto3" json:"revision,omitempty"`
-	SpecHash      string                 `protobuf:"bytes,2,opt,name=spec_hash,json=specHash,proto3" json:"spec_hash,omitempty"`
-	CommittedAt   string                 `protobuf:"bytes,3,opt,name=committed_at,json=committedAt,proto3" json:"committed_at,omitempty"`
-	Message       string                 `protobuf:"bytes,4,opt,name=message,proto3" json:"message,omitempty"`
-	Author        string                 `protobuf:"bytes,5,opt,name=author,proto3" json:"author,omitempty"`
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Revision    string                 `protobuf:"bytes,1,opt,name=revision,proto3" json:"revision,omitempty"`
+	SpecHash    string                 `protobuf:"bytes,2,opt,name=spec_hash,json=specHash,proto3" json:"spec_hash,omitempty"`
+	CommittedAt string                 `protobuf:"bytes,3,opt,name=committed_at,json=committedAt,proto3" json:"committed_at,omitempty"`
+	// Message is the same facts as `digest`, `images` and `outcome` rendered as
+	// prose ("Healthy · serving · sha256:… · ghcr.io/acme/hello:1.4.2"). It was
+	// the only carrier before those fields existed, so the server keeps filling
+	// it for one release to keep clients built against the older schema working;
+	// a client reading this schema must read the fields and never parse this.
+	Message string `protobuf:"bytes,4,opt,name=message,proto3" json:"message,omitempty"`
+	Author  string `protobuf:"bytes,5,opt,name=author,proto3" json:"author,omitempty"`
+	// Digest is the artifact's OCI digest, sha256:… — what was published, as
+	// opposed to where it was published. A tag is written once and never
+	// rewritten, so the tag and the digest agree forever; the digest proves it.
+	Digest string `protobuf:"bytes,6,opt,name=digest,proto3" json:"digest,omitempty"`
+	// Images are the container images this revision resolved to, each named with
+	// the component it belongs to. The component is empty only for an entry the
+	// controller recorded before it attributed images per component.
+	Images []*ComponentImage `protobuf:"bytes,7,rep,name=images,proto3" json:"images,omitempty"`
+	// Outcome is the delivery phase this revision reached, the same
+	// delivery.Phase spelling `Transition.phase` and `StatusResponse.phase`
+	// carry. It is frozen once a newer revision takes over, so it says how that
+	// deployment ended rather than what it looked like a second in.
+	Outcome       string `protobuf:"bytes,8,opt,name=outcome,proto3" json:"outcome,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -918,6 +936,80 @@ func (x *HistoryEntry) GetAuthor() string {
 	return ""
 }
 
+func (x *HistoryEntry) GetDigest() string {
+	if x != nil {
+		return x.Digest
+	}
+	return ""
+}
+
+func (x *HistoryEntry) GetImages() []*ComponentImage {
+	if x != nil {
+		return x.Images
+	}
+	return nil
+}
+
+func (x *HistoryEntry) GetOutcome() string {
+	if x != nil {
+		return x.Outcome
+	}
+	return ""
+}
+
+// ComponentImage is one component and the image it resolved to.
+type ComponentImage struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Component     string                 `protobuf:"bytes,1,opt,name=component,proto3" json:"component,omitempty"`
+	Image         string                 `protobuf:"bytes,2,opt,name=image,proto3" json:"image,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ComponentImage) Reset() {
+	*x = ComponentImage{}
+	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ComponentImage) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ComponentImage) ProtoMessage() {}
+
+func (x *ComponentImage) ProtoReflect() protoreflect.Message {
+	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ComponentImage.ProtoReflect.Descriptor instead.
+func (*ComponentImage) Descriptor() ([]byte, []int) {
+	return file_kelson_v1alpha1_deploy_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *ComponentImage) GetComponent() string {
+	if x != nil {
+		return x.Component
+	}
+	return ""
+}
+
+func (x *ComponentImage) GetImage() string {
+	if x != nil {
+		return x.Image
+	}
+	return ""
+}
+
 // Promotion (issue #11, ADR-0016 decision 2). Promoting is reading the digest
 // the source environment deployed, writing it as the target environment's
 // image pin, and deploying through the ordinary path. This RPC is the first
@@ -953,7 +1045,7 @@ type PromoteRequest struct {
 
 func (x *PromoteRequest) Reset() {
 	*x = PromoteRequest{}
-	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[10]
+	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -965,7 +1057,7 @@ func (x *PromoteRequest) String() string {
 func (*PromoteRequest) ProtoMessage() {}
 
 func (x *PromoteRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[10]
+	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -978,7 +1070,7 @@ func (x *PromoteRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PromoteRequest.ProtoReflect.Descriptor instead.
 func (*PromoteRequest) Descriptor() ([]byte, []int) {
-	return file_kelson_v1alpha1_deploy_proto_rawDescGZIP(), []int{10}
+	return file_kelson_v1alpha1_deploy_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *PromoteRequest) GetProject() string {
@@ -1071,7 +1163,7 @@ type PromoteResponse struct {
 
 func (x *PromoteResponse) Reset() {
 	*x = PromoteResponse{}
-	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[11]
+	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1083,7 +1175,7 @@ func (x *PromoteResponse) String() string {
 func (*PromoteResponse) ProtoMessage() {}
 
 func (x *PromoteResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[11]
+	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1096,7 +1188,7 @@ func (x *PromoteResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PromoteResponse.ProtoReflect.Descriptor instead.
 func (*PromoteResponse) Descriptor() ([]byte, []int) {
-	return file_kelson_v1alpha1_deploy_proto_rawDescGZIP(), []int{11}
+	return file_kelson_v1alpha1_deploy_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *PromoteResponse) GetComponents() []*PromotedComponent {
@@ -1158,7 +1250,7 @@ type PromotedComponent struct {
 
 func (x *PromotedComponent) Reset() {
 	*x = PromotedComponent{}
-	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[12]
+	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1170,7 +1262,7 @@ func (x *PromotedComponent) String() string {
 func (*PromotedComponent) ProtoMessage() {}
 
 func (x *PromotedComponent) ProtoReflect() protoreflect.Message {
-	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[12]
+	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1183,7 +1275,7 @@ func (x *PromotedComponent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PromotedComponent.ProtoReflect.Descriptor instead.
 func (*PromotedComponent) Descriptor() ([]byte, []int) {
-	return file_kelson_v1alpha1_deploy_proto_rawDescGZIP(), []int{12}
+	return file_kelson_v1alpha1_deploy_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *PromotedComponent) GetComponent() string {
@@ -1243,7 +1335,7 @@ type DeployResponse_Proposed struct {
 
 func (x *DeployResponse_Proposed) Reset() {
 	*x = DeployResponse_Proposed{}
-	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[13]
+	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1255,7 +1347,7 @@ func (x *DeployResponse_Proposed) String() string {
 func (*DeployResponse_Proposed) ProtoMessage() {}
 
 func (x *DeployResponse_Proposed) ProtoReflect() protoreflect.Message {
-	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[13]
+	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1316,7 +1408,7 @@ type DeployResponse_Committed struct {
 
 func (x *DeployResponse_Committed) Reset() {
 	*x = DeployResponse_Committed{}
-	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[14]
+	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1328,7 +1420,7 @@ func (x *DeployResponse_Committed) String() string {
 func (*DeployResponse_Committed) ProtoMessage() {}
 
 func (x *DeployResponse_Committed) ProtoReflect() protoreflect.Message {
-	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[14]
+	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1373,7 +1465,7 @@ type DeployResponse_Transition struct {
 
 func (x *DeployResponse_Transition) Reset() {
 	*x = DeployResponse_Transition{}
-	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[15]
+	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1385,7 +1477,7 @@ func (x *DeployResponse_Transition) String() string {
 func (*DeployResponse_Transition) ProtoMessage() {}
 
 func (x *DeployResponse_Transition) ProtoReflect() protoreflect.Message {
-	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[15]
+	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1456,7 +1548,7 @@ type DeployResponse_Settled struct {
 
 func (x *DeployResponse_Settled) Reset() {
 	*x = DeployResponse_Settled{}
-	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[16]
+	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1468,7 +1560,7 @@ func (x *DeployResponse_Settled) String() string {
 func (*DeployResponse_Settled) ProtoMessage() {}
 
 func (x *DeployResponse_Settled) ProtoReflect() protoreflect.Message {
-	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[16]
+	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1509,7 +1601,7 @@ type DeployResponse_Cause struct {
 
 func (x *DeployResponse_Cause) Reset() {
 	*x = DeployResponse_Cause{}
-	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[17]
+	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1521,7 +1613,7 @@ func (x *DeployResponse_Cause) String() string {
 func (*DeployResponse_Cause) ProtoMessage() {}
 
 func (x *DeployResponse_Cause) ProtoReflect() protoreflect.Message {
-	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[17]
+	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1569,7 +1661,7 @@ type RollbackResponse_Preview struct {
 
 func (x *RollbackResponse_Preview) Reset() {
 	*x = RollbackResponse_Preview{}
-	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[19]
+	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1581,7 +1673,7 @@ func (x *RollbackResponse_Preview) String() string {
 func (*RollbackResponse_Preview) ProtoMessage() {}
 
 func (x *RollbackResponse_Preview) ProtoReflect() protoreflect.Message {
-	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[19]
+	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1631,7 +1723,7 @@ type RollbackResponse_Finding struct {
 
 func (x *RollbackResponse_Finding) Reset() {
 	*x = RollbackResponse_Finding{}
-	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[20]
+	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1643,7 +1735,7 @@ func (x *RollbackResponse_Finding) String() string {
 func (*RollbackResponse_Finding) ProtoMessage() {}
 
 func (x *RollbackResponse_Finding) ProtoReflect() protoreflect.Message {
-	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[20]
+	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1704,7 +1796,7 @@ type RollbackResponse_Committed struct {
 
 func (x *RollbackResponse_Committed) Reset() {
 	*x = RollbackResponse_Committed{}
-	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[21]
+	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1716,7 +1808,7 @@ func (x *RollbackResponse_Committed) String() string {
 func (*RollbackResponse_Committed) ProtoMessage() {}
 
 func (x *RollbackResponse_Committed) ProtoReflect() protoreflect.Message {
-	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[21]
+	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1755,7 +1847,7 @@ type RollbackResponse_Settled struct {
 
 func (x *RollbackResponse_Settled) Reset() {
 	*x = RollbackResponse_Settled{}
-	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[22]
+	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1767,7 +1859,7 @@ func (x *RollbackResponse_Settled) String() string {
 func (*RollbackResponse_Settled) ProtoMessage() {}
 
 func (x *RollbackResponse_Settled) ProtoReflect() protoreflect.Message {
-	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[22]
+	mi := &file_kelson_v1alpha1_deploy_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1895,13 +1987,19 @@ const file_kelson_v1alpha1_deploy_proto_rawDesc = "" +
 	"\venvironment\x18\x02 \x01(\tR\venvironment\x12\x12\n" +
 	"\x04mode\x18\x03 \x01(\tR\x04mode\"J\n" +
 	"\x0fHistoryResponse\x127\n" +
-	"\aentries\x18\x01 \x03(\v2\x1d.kelson.v1alpha1.HistoryEntryR\aentries\"\x9c\x01\n" +
+	"\aentries\x18\x01 \x03(\v2\x1d.kelson.v1alpha1.HistoryEntryR\aentries\"\x87\x02\n" +
 	"\fHistoryEntry\x12\x1a\n" +
 	"\brevision\x18\x01 \x01(\tR\brevision\x12\x1b\n" +
 	"\tspec_hash\x18\x02 \x01(\tR\bspecHash\x12!\n" +
 	"\fcommitted_at\x18\x03 \x01(\tR\vcommittedAt\x12\x18\n" +
 	"\amessage\x18\x04 \x01(\tR\amessage\x12\x16\n" +
-	"\x06author\x18\x05 \x01(\tR\x06author\"\xdc\x02\n" +
+	"\x06author\x18\x05 \x01(\tR\x06author\x12\x16\n" +
+	"\x06digest\x18\x06 \x01(\tR\x06digest\x127\n" +
+	"\x06images\x18\a \x03(\v2\x1f.kelson.v1alpha1.ComponentImageR\x06images\x12\x18\n" +
+	"\aoutcome\x18\b \x01(\tR\aoutcome\"D\n" +
+	"\x0eComponentImage\x12\x1c\n" +
+	"\tcomponent\x18\x01 \x01(\tR\tcomponent\x12\x14\n" +
+	"\x05image\x18\x02 \x01(\tR\x05image\"\xdc\x02\n" +
 	"\x0ePromoteRequest\x12\x18\n" +
 	"\aproject\x18\x01 \x01(\tR\aproject\x12)\n" +
 	"\x10from_environment\x18\x02 \x01(\tR\x0ffromEnvironment\x12%\n" +
@@ -1956,7 +2054,7 @@ func file_kelson_v1alpha1_deploy_proto_rawDescGZIP() []byte {
 }
 
 var file_kelson_v1alpha1_deploy_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_kelson_v1alpha1_deploy_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
+var file_kelson_v1alpha1_deploy_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
 var file_kelson_v1alpha1_deploy_proto_goTypes = []any{
 	(PromotionStatus)(0),               // 0: kelson.v1alpha1.PromotionStatus
 	(*DeployRequest)(nil),              // 1: kelson.v1alpha1.DeployRequest
@@ -1969,71 +2067,73 @@ var file_kelson_v1alpha1_deploy_proto_goTypes = []any{
 	(*HistoryRequest)(nil),             // 8: kelson.v1alpha1.HistoryRequest
 	(*HistoryResponse)(nil),            // 9: kelson.v1alpha1.HistoryResponse
 	(*HistoryEntry)(nil),               // 10: kelson.v1alpha1.HistoryEntry
-	(*PromoteRequest)(nil),             // 11: kelson.v1alpha1.PromoteRequest
-	(*PromoteResponse)(nil),            // 12: kelson.v1alpha1.PromoteResponse
-	(*PromotedComponent)(nil),          // 13: kelson.v1alpha1.PromotedComponent
-	(*DeployResponse_Proposed)(nil),    // 14: kelson.v1alpha1.DeployResponse.Proposed
-	(*DeployResponse_Committed)(nil),   // 15: kelson.v1alpha1.DeployResponse.Committed
-	(*DeployResponse_Transition)(nil),  // 16: kelson.v1alpha1.DeployResponse.Transition
-	(*DeployResponse_Settled)(nil),     // 17: kelson.v1alpha1.DeployResponse.Settled
-	(*DeployResponse_Cause)(nil),       // 18: kelson.v1alpha1.DeployResponse.Cause
-	nil,                                // 19: kelson.v1alpha1.StatusResponse.DetailEntry
-	(*RollbackResponse_Preview)(nil),   // 20: kelson.v1alpha1.RollbackResponse.Preview
-	(*RollbackResponse_Finding)(nil),   // 21: kelson.v1alpha1.RollbackResponse.Finding
-	(*RollbackResponse_Committed)(nil), // 22: kelson.v1alpha1.RollbackResponse.Committed
-	(*RollbackResponse_Settled)(nil),   // 23: kelson.v1alpha1.RollbackResponse.Settled
-	(*SpecRef)(nil),                    // 24: kelson.v1alpha1.SpecRef
-	(*ProfileRef)(nil),                 // 25: kelson.v1alpha1.ProfileRef
-	(DryRun)(0),                        // 26: kelson.v1alpha1.DryRun
-	(*Error)(nil),                      // 27: kelson.v1alpha1.Error
-	(*Manifest)(nil),                   // 28: kelson.v1alpha1.Manifest
+	(*ComponentImage)(nil),             // 11: kelson.v1alpha1.ComponentImage
+	(*PromoteRequest)(nil),             // 12: kelson.v1alpha1.PromoteRequest
+	(*PromoteResponse)(nil),            // 13: kelson.v1alpha1.PromoteResponse
+	(*PromotedComponent)(nil),          // 14: kelson.v1alpha1.PromotedComponent
+	(*DeployResponse_Proposed)(nil),    // 15: kelson.v1alpha1.DeployResponse.Proposed
+	(*DeployResponse_Committed)(nil),   // 16: kelson.v1alpha1.DeployResponse.Committed
+	(*DeployResponse_Transition)(nil),  // 17: kelson.v1alpha1.DeployResponse.Transition
+	(*DeployResponse_Settled)(nil),     // 18: kelson.v1alpha1.DeployResponse.Settled
+	(*DeployResponse_Cause)(nil),       // 19: kelson.v1alpha1.DeployResponse.Cause
+	nil,                                // 20: kelson.v1alpha1.StatusResponse.DetailEntry
+	(*RollbackResponse_Preview)(nil),   // 21: kelson.v1alpha1.RollbackResponse.Preview
+	(*RollbackResponse_Finding)(nil),   // 22: kelson.v1alpha1.RollbackResponse.Finding
+	(*RollbackResponse_Committed)(nil), // 23: kelson.v1alpha1.RollbackResponse.Committed
+	(*RollbackResponse_Settled)(nil),   // 24: kelson.v1alpha1.RollbackResponse.Settled
+	(*SpecRef)(nil),                    // 25: kelson.v1alpha1.SpecRef
+	(*ProfileRef)(nil),                 // 26: kelson.v1alpha1.ProfileRef
+	(DryRun)(0),                        // 27: kelson.v1alpha1.DryRun
+	(*Error)(nil),                      // 28: kelson.v1alpha1.Error
+	(*Manifest)(nil),                   // 29: kelson.v1alpha1.Manifest
 }
 var file_kelson_v1alpha1_deploy_proto_depIdxs = []int32{
-	24, // 0: kelson.v1alpha1.DeployRequest.spec:type_name -> kelson.v1alpha1.SpecRef
-	25, // 1: kelson.v1alpha1.DeployRequest.profile:type_name -> kelson.v1alpha1.ProfileRef
-	26, // 2: kelson.v1alpha1.DeployRequest.dry_run:type_name -> kelson.v1alpha1.DryRun
-	14, // 3: kelson.v1alpha1.DeployResponse.proposed:type_name -> kelson.v1alpha1.DeployResponse.Proposed
-	15, // 4: kelson.v1alpha1.DeployResponse.committed:type_name -> kelson.v1alpha1.DeployResponse.Committed
-	16, // 5: kelson.v1alpha1.DeployResponse.transition:type_name -> kelson.v1alpha1.DeployResponse.Transition
-	17, // 6: kelson.v1alpha1.DeployResponse.settled:type_name -> kelson.v1alpha1.DeployResponse.Settled
-	24, // 7: kelson.v1alpha1.StatusRequest.spec:type_name -> kelson.v1alpha1.SpecRef
-	25, // 8: kelson.v1alpha1.StatusRequest.profile:type_name -> kelson.v1alpha1.ProfileRef
-	19, // 9: kelson.v1alpha1.StatusResponse.detail:type_name -> kelson.v1alpha1.StatusResponse.DetailEntry
+	25, // 0: kelson.v1alpha1.DeployRequest.spec:type_name -> kelson.v1alpha1.SpecRef
+	26, // 1: kelson.v1alpha1.DeployRequest.profile:type_name -> kelson.v1alpha1.ProfileRef
+	27, // 2: kelson.v1alpha1.DeployRequest.dry_run:type_name -> kelson.v1alpha1.DryRun
+	15, // 3: kelson.v1alpha1.DeployResponse.proposed:type_name -> kelson.v1alpha1.DeployResponse.Proposed
+	16, // 4: kelson.v1alpha1.DeployResponse.committed:type_name -> kelson.v1alpha1.DeployResponse.Committed
+	17, // 5: kelson.v1alpha1.DeployResponse.transition:type_name -> kelson.v1alpha1.DeployResponse.Transition
+	18, // 6: kelson.v1alpha1.DeployResponse.settled:type_name -> kelson.v1alpha1.DeployResponse.Settled
+	25, // 7: kelson.v1alpha1.StatusRequest.spec:type_name -> kelson.v1alpha1.SpecRef
+	26, // 8: kelson.v1alpha1.StatusRequest.profile:type_name -> kelson.v1alpha1.ProfileRef
+	20, // 9: kelson.v1alpha1.StatusResponse.detail:type_name -> kelson.v1alpha1.StatusResponse.DetailEntry
 	5,  // 10: kelson.v1alpha1.StatusResponse.verdicts:type_name -> kelson.v1alpha1.WorkloadVerdict
-	24, // 11: kelson.v1alpha1.RollbackRequest.spec:type_name -> kelson.v1alpha1.SpecRef
-	25, // 12: kelson.v1alpha1.RollbackRequest.profile:type_name -> kelson.v1alpha1.ProfileRef
-	26, // 13: kelson.v1alpha1.RollbackRequest.dry_run:type_name -> kelson.v1alpha1.DryRun
-	20, // 14: kelson.v1alpha1.RollbackResponse.preview:type_name -> kelson.v1alpha1.RollbackResponse.Preview
-	22, // 15: kelson.v1alpha1.RollbackResponse.committed:type_name -> kelson.v1alpha1.RollbackResponse.Committed
-	23, // 16: kelson.v1alpha1.RollbackResponse.settled:type_name -> kelson.v1alpha1.RollbackResponse.Settled
-	24, // 17: kelson.v1alpha1.HistoryRequest.spec:type_name -> kelson.v1alpha1.SpecRef
+	25, // 11: kelson.v1alpha1.RollbackRequest.spec:type_name -> kelson.v1alpha1.SpecRef
+	26, // 12: kelson.v1alpha1.RollbackRequest.profile:type_name -> kelson.v1alpha1.ProfileRef
+	27, // 13: kelson.v1alpha1.RollbackRequest.dry_run:type_name -> kelson.v1alpha1.DryRun
+	21, // 14: kelson.v1alpha1.RollbackResponse.preview:type_name -> kelson.v1alpha1.RollbackResponse.Preview
+	23, // 15: kelson.v1alpha1.RollbackResponse.committed:type_name -> kelson.v1alpha1.RollbackResponse.Committed
+	24, // 16: kelson.v1alpha1.RollbackResponse.settled:type_name -> kelson.v1alpha1.RollbackResponse.Settled
+	25, // 17: kelson.v1alpha1.HistoryRequest.spec:type_name -> kelson.v1alpha1.SpecRef
 	10, // 18: kelson.v1alpha1.HistoryResponse.entries:type_name -> kelson.v1alpha1.HistoryEntry
-	25, // 19: kelson.v1alpha1.PromoteRequest.profile:type_name -> kelson.v1alpha1.ProfileRef
-	26, // 20: kelson.v1alpha1.PromoteRequest.dry_run:type_name -> kelson.v1alpha1.DryRun
-	13, // 21: kelson.v1alpha1.PromoteResponse.components:type_name -> kelson.v1alpha1.PromotedComponent
-	27, // 22: kelson.v1alpha1.PromoteResponse.errors:type_name -> kelson.v1alpha1.Error
-	0,  // 23: kelson.v1alpha1.PromotedComponent.status:type_name -> kelson.v1alpha1.PromotionStatus
-	28, // 24: kelson.v1alpha1.DeployResponse.Proposed.manifests:type_name -> kelson.v1alpha1.Manifest
-	18, // 25: kelson.v1alpha1.DeployResponse.Transition.cause:type_name -> kelson.v1alpha1.DeployResponse.Cause
-	16, // 26: kelson.v1alpha1.DeployResponse.Settled.final:type_name -> kelson.v1alpha1.DeployResponse.Transition
-	27, // 27: kelson.v1alpha1.DeployResponse.Settled.error:type_name -> kelson.v1alpha1.Error
-	21, // 28: kelson.v1alpha1.RollbackResponse.Preview.findings:type_name -> kelson.v1alpha1.RollbackResponse.Finding
-	27, // 29: kelson.v1alpha1.RollbackResponse.Settled.error:type_name -> kelson.v1alpha1.Error
-	1,  // 30: kelson.v1alpha1.DeployService.Deploy:input_type -> kelson.v1alpha1.DeployRequest
-	3,  // 31: kelson.v1alpha1.DeployService.Status:input_type -> kelson.v1alpha1.StatusRequest
-	6,  // 32: kelson.v1alpha1.DeployService.Rollback:input_type -> kelson.v1alpha1.RollbackRequest
-	8,  // 33: kelson.v1alpha1.DeployService.History:input_type -> kelson.v1alpha1.HistoryRequest
-	11, // 34: kelson.v1alpha1.DeployService.Promote:input_type -> kelson.v1alpha1.PromoteRequest
-	2,  // 35: kelson.v1alpha1.DeployService.Deploy:output_type -> kelson.v1alpha1.DeployResponse
-	4,  // 36: kelson.v1alpha1.DeployService.Status:output_type -> kelson.v1alpha1.StatusResponse
-	7,  // 37: kelson.v1alpha1.DeployService.Rollback:output_type -> kelson.v1alpha1.RollbackResponse
-	9,  // 38: kelson.v1alpha1.DeployService.History:output_type -> kelson.v1alpha1.HistoryResponse
-	12, // 39: kelson.v1alpha1.DeployService.Promote:output_type -> kelson.v1alpha1.PromoteResponse
-	35, // [35:40] is the sub-list for method output_type
-	30, // [30:35] is the sub-list for method input_type
-	30, // [30:30] is the sub-list for extension type_name
-	30, // [30:30] is the sub-list for extension extendee
-	0,  // [0:30] is the sub-list for field type_name
+	11, // 19: kelson.v1alpha1.HistoryEntry.images:type_name -> kelson.v1alpha1.ComponentImage
+	26, // 20: kelson.v1alpha1.PromoteRequest.profile:type_name -> kelson.v1alpha1.ProfileRef
+	27, // 21: kelson.v1alpha1.PromoteRequest.dry_run:type_name -> kelson.v1alpha1.DryRun
+	14, // 22: kelson.v1alpha1.PromoteResponse.components:type_name -> kelson.v1alpha1.PromotedComponent
+	28, // 23: kelson.v1alpha1.PromoteResponse.errors:type_name -> kelson.v1alpha1.Error
+	0,  // 24: kelson.v1alpha1.PromotedComponent.status:type_name -> kelson.v1alpha1.PromotionStatus
+	29, // 25: kelson.v1alpha1.DeployResponse.Proposed.manifests:type_name -> kelson.v1alpha1.Manifest
+	19, // 26: kelson.v1alpha1.DeployResponse.Transition.cause:type_name -> kelson.v1alpha1.DeployResponse.Cause
+	17, // 27: kelson.v1alpha1.DeployResponse.Settled.final:type_name -> kelson.v1alpha1.DeployResponse.Transition
+	28, // 28: kelson.v1alpha1.DeployResponse.Settled.error:type_name -> kelson.v1alpha1.Error
+	22, // 29: kelson.v1alpha1.RollbackResponse.Preview.findings:type_name -> kelson.v1alpha1.RollbackResponse.Finding
+	28, // 30: kelson.v1alpha1.RollbackResponse.Settled.error:type_name -> kelson.v1alpha1.Error
+	1,  // 31: kelson.v1alpha1.DeployService.Deploy:input_type -> kelson.v1alpha1.DeployRequest
+	3,  // 32: kelson.v1alpha1.DeployService.Status:input_type -> kelson.v1alpha1.StatusRequest
+	6,  // 33: kelson.v1alpha1.DeployService.Rollback:input_type -> kelson.v1alpha1.RollbackRequest
+	8,  // 34: kelson.v1alpha1.DeployService.History:input_type -> kelson.v1alpha1.HistoryRequest
+	12, // 35: kelson.v1alpha1.DeployService.Promote:input_type -> kelson.v1alpha1.PromoteRequest
+	2,  // 36: kelson.v1alpha1.DeployService.Deploy:output_type -> kelson.v1alpha1.DeployResponse
+	4,  // 37: kelson.v1alpha1.DeployService.Status:output_type -> kelson.v1alpha1.StatusResponse
+	7,  // 38: kelson.v1alpha1.DeployService.Rollback:output_type -> kelson.v1alpha1.RollbackResponse
+	9,  // 39: kelson.v1alpha1.DeployService.History:output_type -> kelson.v1alpha1.HistoryResponse
+	13, // 40: kelson.v1alpha1.DeployService.Promote:output_type -> kelson.v1alpha1.PromoteResponse
+	36, // [36:41] is the sub-list for method output_type
+	31, // [31:36] is the sub-list for method input_type
+	31, // [31:31] is the sub-list for extension type_name
+	31, // [31:31] is the sub-list for extension extendee
+	0,  // [0:31] is the sub-list for field type_name
 }
 
 func init() { file_kelson_v1alpha1_deploy_proto_init() }
@@ -2060,7 +2160,7 @@ func file_kelson_v1alpha1_deploy_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_kelson_v1alpha1_deploy_proto_rawDesc), len(file_kelson_v1alpha1_deploy_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   23,
+			NumMessages:   24,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

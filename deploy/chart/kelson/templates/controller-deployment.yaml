@@ -1,5 +1,6 @@
 {{- include "kelson.authGate" . -}}
 {{- if .Values.controller.enabled }}
+{{- $registryConfigPath := "/etc/kelson/registry/config.json" }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -9,11 +10,10 @@ metadata:
     {{- include "kelson.labels" . | nindent 4 }}
     app.kubernetes.io/component: controller
 spec:
-  # One replica, and the controller's own default matches: while it only writes
-  # statuses, two replicas would compute the same verdict and write the same
-  # patch. Turn on controller.leaderElection.enabled before scaling up — and it
-  # becomes required, not optional, once delivery is real (issue #224), because
-  # two processes pushing artifacts is a race.
+  # One replica is safe unconditionally, and more than one is safe too:
+  # controller.leaderElection.enabled defaults on (values.yaml), so a second
+  # replica contends for the Lease instead of racing the first one's publish
+  # and apply (ADR-0028).
   replicas: {{ .Values.controller.replicaCount }}
   selector:
     matchLabels:
@@ -52,6 +52,29 @@ spec:
             - --leader-elect
             - --leader-election-namespace={{ default .Release.Namespace .Values.controller.leaderElection.namespace }}
             {{- end }}
+            {{- if .Values.controller.registry }}
+            - --registry={{ .Values.controller.registry }}
+            {{- end }}
+            {{- if .Values.controller.pushSecret }}
+            # Points at the file the registry-config volume mount below
+            # projects the pushSecret's `.dockerconfigjson` key onto.
+            - --registry-config={{ $registryConfigPath }}
+            {{- end }}
+            {{- if .Values.controller.pullSecret }}
+            - --pull-secret={{ .Values.controller.pullSecret }}
+            {{- end }}
+            {{- if .Values.controller.insecureRegistries }}
+            - --insecure-registries={{ join "," .Values.controller.insecureRegistries }}
+            {{- end }}
+            # Always explicit, and not gated on controller.fluxNamespace being
+            # set: the namespaced Role granting the two Flux kinds
+            # (templates/controller-flux-role.yaml) is created in this same
+            # resolved namespace, and the two must never read different
+            # defaults.
+            - --flux-namespace={{ include "kelson.controller.fluxNamespace" . }}
+            {{- if .Values.controller.reconcileInterval }}
+            - --reconcile-interval={{ .Values.controller.reconcileInterval }}
+            {{- end }}
             {{- with .Values.controller.extraArgs }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -81,6 +104,26 @@ spec:
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          {{- if .Values.controller.pushSecret }}
+          volumeMounts:
+            - name: registry-config
+              mountPath: /etc/kelson/registry
+              readOnly: true
+          {{- end }}
+      {{- if .Values.controller.pushSecret }}
+      # The pushSecret is a kubernetes.io/dockerconfigjson Secret, whose data
+      # key is literally `.dockerconfigjson` — `items` projects it onto the
+      # plain filename $registryConfigPath's directory holds, so the mounted
+      # file is the same docker config.json shape internal/artifact's
+      # CredentialFromDockerConfig already parses for a CI login (issue #224).
+      volumes:
+        - name: registry-config
+          secret:
+            secretName: {{ .Values.controller.pushSecret }}
+            items:
+              - key: .dockerconfigjson
+                path: config.json
+      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

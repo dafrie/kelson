@@ -6,12 +6,23 @@
 #
 # It is a separate file from Dockerfile rather than a build argument because the
 # two images differ in more than a name: this one exposes the probe port instead
-# of the API port, and it has a different entrypoint. FROM scratch holds for the
-# same reason it does for the server — in-cluster credentials come from the
+# of the API port, and it has a different entrypoint.
+#
+# # Why not FROM scratch
+#
+# It used to be, on the argument that in-cluster credentials come from the
 # projected service-account token and the cluster CA the kubelet mounts, so no
-# system CA bundle is needed.
-
-FROM scratch
+# system CA bundle is needed. That was true while the controller only talked to
+# the API server. ADR-0028 makes it push an OCI artifact to a registry over
+# HTTPS on every revision, and a Go TLS client with no root store cannot verify
+# ghcr.io — the push fails with `x509: certificate signed by unknown authority`,
+# which reads like a registry problem and is not one.
+#
+# distroless/static:nonroot is the smallest image that carries ca-certificates,
+# and it also brings /etc/passwd and a non-root UID, so the container runs as
+# 65532 without the Deployment having to invent one.
+FROM gcr.io/distroless/static:nonroot
 COPY kelson-controller /kelson-controller
 EXPOSE 8081
+USER 65532:65532
 ENTRYPOINT ["/kelson-controller"]

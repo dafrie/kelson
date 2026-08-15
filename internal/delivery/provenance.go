@@ -19,6 +19,30 @@ const (
 	LabelEnvironment = "kelson.dev/environment"
 	// ManagedByKelson is the LabelManagedBy value kelson claims.
 	ManagedByKelson = "kelson"
+
+	// LabelEnvironmentNamespace records where an object's *effect* lands, as
+	// opposed to where the object itself lives.
+	//
+	// It exists because of the two objects kelson owns under
+	// [ADR-0028](docs/adr/0028-delivery-spine.md) decision 3. An `OCIRepository`
+	// and a `Kustomization` live in `kelson-system` and are named
+	// `<project>-<environment>`, while the workloads they apply land in the
+	// environment's own namespace — so the object's namespace says nothing
+	// about what it deploys, and two Environments in different namespaces can
+	// resolve to the same object name.
+	//
+	// That collision is the reason this is a label rather than a comment. A
+	// second Environment applying over the first's Kustomization would silently
+	// redirect somebody else's deployment, and server-side apply would do it
+	// without complaint. The controller reads this label off the live object
+	// first and refuses with `NameConflict` when it names a different
+	// namespace: the check is only possible because the fact is recorded.
+	//
+	// It is also the reverse index. The controller watches the Flux objects and
+	// has to map an event back to the Environment that owns it, which needs the
+	// namespace as well as the name — this label and [LabelEnvironment] are
+	// exactly that pair.
+	LabelEnvironmentNamespace = "kelson.dev/environment-namespace"
 )
 
 // AnnNamespaceOwnership records what kelson knows about a Namespace's origin.
