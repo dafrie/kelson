@@ -145,7 +145,7 @@ func TestDeliverySpine(t *testing.T) {
 	h.assertArtifactProvenance(registry, repository, rev1, gen1, env.Status.History[0])
 
 	t.Log("== the Flux pair exists, is kelson's, and consumes that artifact ==")
-	h.assertFluxPair(rev1)
+	h.assertFluxPair(rev1, h.historyDigestFor(env, rev1))
 
 	t.Log("== the workload the artifact carries is live ==")
 	h.awaitWorkload("the first revision's workload", baseImage, 1, spineSettleTimeout)
@@ -177,7 +177,7 @@ func TestDeliverySpine(t *testing.T) {
 
 	h.assertTagsInclude(registry, repository, rev1, rev2)
 	h.assertArtifactProvenance(registry, repository, rev2, gen2, env.Status.History[0])
-	h.assertFluxPair(rev2)
+	h.assertFluxPair(rev2, h.historyDigestFor(env, rev2))
 	h.awaitWorkload("the second revision's workload", nextImage, 1, spineSettleTimeout)
 
 	t.Log("== rolling back moves the pointer to bytes that already exist ==")
@@ -225,7 +225,7 @@ func TestDeliverySpine(t *testing.T) {
 	// The assertion the whole feature exists for: the pointer moved, so the
 	// cluster is running the older bytes again — while the spec on the object
 	// still says otherwise.
-	h.assertFluxPair(rev1)
+	h.assertFluxPair(rev1, h.historyDigestFor(env, rev1))
 	h.awaitWorkload("the rolled-back workload", baseImage, 1, spineSettleTimeout)
 
 	t.Log("== nothing is republished while the pin is in force ==")
@@ -287,7 +287,7 @@ func TestDeliverySpine(t *testing.T) {
 			"without it the next reconcile re-reads the annotation as a new rollback and re-pins",
 			env.Status.RollbackRevision, env.Status.RollbackGeneration, rev1, gen2)
 	}
-	h.assertFluxPair(rev3)
+	h.assertFluxPair(rev3, h.historyDigestFor(env, rev3))
 
 	t.Log("== removing the annotation resumes tracking the spec ==")
 	h.kubectlOK("-n", spineNamespace, "annotate", "environment", spineEnvName,
@@ -309,7 +309,7 @@ func TestDeliverySpine(t *testing.T) {
 	if _, ok := env.Annotations[v1alpha1.AnnotationRollbackTo]; ok {
 		t.Errorf("%s is still on the object after `kubectl annotate ...-`", v1alpha1.AnnotationRollbackTo)
 	}
-	h.assertFluxPair(rev3)
+	h.assertFluxPair(rev3, h.historyDigestFor(env, rev3))
 	h.awaitWorkload("the resumed workload", nextImage, spineResumedReplicas, spineSettleTimeout)
 	t.Logf("the spine published %s, %s and %s, rolled back to %s and resumed on %s", rev1, rev2, rev3, rev1, rev3)
 }
@@ -522,32 +522,59 @@ func (h *harness) assertHistoryEntry(entry v1alpha1.HistoryEntry, revision, imag
 	}
 }
 
+// historyDigestFor is the digest status.history recorded for revision. It is a
+// lookup by revision rather than by index — even though every call site here
+// could name one — because a lookup fails loudly if the revision it is asked
+// for is not the one the caller just confirmed is there, instead of silently
+// reading whichever entry happens to sit at that index.
+func (h *harness) historyDigestFor(e *v1alpha1.Environment, revision string) string {
+	h.t.Helper()
+	for _, entry := range e.Status.History {
+		if entry.Revision == revision {
+			return entry.Digest
+		}
+	}
+	h.t.Fatalf("status.history has no entry for %s: %s", revision, historyLine(e))
+	return ""
+}
+
 // --- the Flux pair ----------------------------------------------------------
 
 // fluxObject is as much of a Flux object as this suite reads: its identity, the
-// labels that say whose it is, and its spec as a tree.
+// labels that say whose it is, its spec as a tree, and — since F8
+// (f4e516d) started pinning spec.ref.digest — enough of its status to check
+// what Flux says it actually applied.
 type fluxObject struct {
 	Metadata struct {
 		Name      string            `json:"name"`
 		Namespace string            `json:"namespace"`
 		Labels    map[string]string `json:"labels"`
 	} `json:"metadata"`
-	Spec map[string]any `json:"spec"`
+	Spec   map[string]any `json:"spec"`
+	Status map[string]any `json:"status"`
 }
 
 // assertFluxPair checks both objects kelson owns for this environment: that
 // they exist, that they carry the provenance the controller stamps
-// (internal/delivery/provenance.go), and that they are wired to each other and
-// to the artifact this revision published.
-func (h *harness) assertFluxPair(revision string) {
+// (internal/delivery/provenance.go), that they are wired to each other and to
+// the artifact this revision published, and — when digest is known — that the
+// OCIRepository is pinned to it and the Kustomization's own status names it.
+//
+// digest is empty for a history entry that predates digest recording (there is
+// none in this suite; every revision here is fresh), in which case the pin and
+// the Kustomization's status are tag-only checks, same as before F8.
+func (h *harness) assertFluxPair(revision, digest string) {
 	h.t.Helper()
 	name := controller.ObjectName(spineProject, spineEnvName)
 	ns := controller.DefaultFluxNamespace
 
 	// The pointer moves a moment after the status does, so this is a poll and
 	// not a read: a rollback writes the OCIRepository and the status in the same
-	// reconcile, but the cache the next read is served from may be a beat behind.
-	var oci fluxObject
+	// reconcile, but the cache the next read is served from may be a beat
+	// behind — and RolledBack (environment.go's setConditions) reports Ready
+	// before Flux itself has necessarily caught up on the pinned revision, so
+	// the Kustomization's own status is polled here too rather than read once.
+	var oci, kus fluxObject
 	h.waitFor(fmt.Sprintf("%s/%s to be pinned to %s", ns, name, revision), spineSettleTimeout,
 		func() (bool, string) {
 			obj, problem := h.fluxObject(controller.KindOCIRepository, name)
@@ -555,8 +582,36 @@ func (h *harness) assertFluxPair(revision string) {
 				return false, problem
 			}
 			oci = *obj
-			got := nestedString(obj.Spec, "ref", "tag")
-			return got == revision, "spec.ref.tag is " + defaultTo(got, "(unset)")
+			if got := nestedString(obj.Spec, "ref", "tag"); got != revision {
+				return false, "spec.ref.tag is " + defaultTo(got, "(unset)")
+			}
+			if digest != "" {
+				if got := nestedString(obj.Spec, "ref", "digest"); got != digest {
+					return false, "spec.ref.digest is " + defaultTo(got, "(unset)")
+				}
+			}
+
+			kobj, kproblem := h.fluxObject(controller.KindKustomization, name)
+			if kobj == nil {
+				return false, kproblem
+			}
+			kus = *kobj
+			if digest == "" {
+				return true, "pinned"
+			}
+			// With ref.digest pinned, source-controller reports the artifact
+			// revision as bare "sha256:<digest>", not "<tag>@sha256:<digest>"
+			// — the shape CI run 64 caught kelson's own observer (PhaseFor,
+			// revisionMatches in internal/delivery/flux/status.go) failing to
+			// recognise. Checking it here against a real cluster, rather than
+			// only in the unit tests that can invent any shape they like, is
+			// the point of this assertion.
+			applied := nestedString(kobj.Status, "lastAppliedRevision")
+			if applied == "" || !strings.Contains(applied, digest) {
+				return false, "Kustomization status.lastAppliedRevision is " +
+					defaultTo(applied, "(unset)") + ", want it to name digest " + digest
+			}
+			return true, "pinned, and the Kustomization's own status names the digest"
 		})
 
 	wantURL := "oci://" + h.artifactRepository()
@@ -572,11 +627,7 @@ func (h *harness) assertFluxPair(revision string) {
 	}
 	h.assertProvenanceLabels(controller.KindOCIRepository, oci)
 
-	kus, problem := h.fluxObject(controller.KindKustomization, name)
-	if kus == nil {
-		h.t.Fatalf("no Kustomization %s/%s: %s", ns, name, problem)
-	}
-	h.assertProvenanceLabels(controller.KindKustomization, *kus)
+	h.assertProvenanceLabels(controller.KindKustomization, kus)
 	for _, want := range []struct {
 		path []string
 		want any

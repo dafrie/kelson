@@ -620,6 +620,72 @@ func TestObserveMapsTheKustomization(t *testing.T) {
 	}
 }
 
+// TestObserveMapsABareDigestKustomization is CI run 64's exact regression: F8
+// (f4e516d) started pinning spec.ref.digest on the OCIRepository, and
+// source-controller answers a digest-pinned ref with the artifact revision as
+// bare "sha256:<digest>" rather than "<tag>@sha256:<digest>". observe has to
+// carry the expected digest through to flux.PhaseFor for that shape to ever
+// read as anything but "not observed yet" — and a mismatched digest must not
+// be misread as a match either.
+func TestObserveMapsABareDigestKustomization(t *testing.T) {
+	push := &fakePusher{}
+	d := testDeliverer(t, push)
+	first, err := d.Deliver(context.Background(), testRevision(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Digest == "" {
+		t.Fatal("the fixture published nothing with a digest to assert against")
+	}
+
+	setKustomizationRevision := func(t *testing.T, revision string) {
+		t.Helper()
+		ks := liveObject(t, d.Client, kustomizationGVK, "checkout-production")
+		if err := unstructured.SetNestedMap(ks.Object, map[string]any{
+			"lastAppliedRevision":   revision,
+			"lastAttemptedRevision": revision,
+			"conditions": []any{
+				map[string]any{"type": "Ready", "status": "True", "reason": "ReconciliationSucceeded", "message": "applied"},
+			},
+		}, "status"); err != nil {
+			t.Fatal(err)
+		}
+		if err := d.Client.Update(context.Background(), ks); err != nil {
+			t.Fatalf("updating the Kustomization status: %v", err)
+		}
+	}
+
+	// Flux applies it and reports the bare-digest revision, matching what was
+	// published: the ObservedDigest a real reconcile would carry through
+	// headDigest(status.history, status.revision) (environment.go).
+	setKustomizationRevision(t, first.Digest)
+	rev := testRevision(t)
+	rev.Observed = first.Revision
+	rev.ObservedDigest = first.Digest
+	out, err := d.Deliver(context.Background(), rev)
+	if err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if out.Phase != v1alpha1.PhaseHealthy {
+		t.Fatalf("phase = %q (%s), want %q for a bare-digest revision that matches", out.Phase, out.Cause, v1alpha1.PhaseHealthy)
+	}
+
+	// A bare digest that does not match the artifact just published must not
+	// read as Healthy either — the fix is digest-aware, not digest-blind.
+	setKustomizationRevision(t, "sha256:0000000000000000000000000000000000000000000000000000000000000000")
+	rev2 := testRevision(t)
+	rev2.Observed = first.Revision
+	rev2.ObservedDigest = first.Digest
+	out2, err := d.Deliver(context.Background(), rev2)
+	if err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if out2.Phase == v1alpha1.PhaseHealthy {
+		t.Fatalf("phase = %q, want anything but %q when the bare digest does not match the artifact published",
+			out2.Phase, v1alpha1.PhaseHealthy)
+	}
+}
+
 // TestObserveReportsARejection: a change Flux processed and refused is a
 // different user action from one that is live and unhealthy, and the cause is
 // Flux's own words.

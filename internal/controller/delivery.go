@@ -203,7 +203,7 @@ func (d *FluxDeliverer) Deliver(ctx context.Context, rev Revision) (Outcome, err
 	}
 
 	// Step 6: observe. One read, no waiting — see the type doc.
-	phase, cause := d.observe(ctx, rev, out.Revision)
+	phase, cause := d.observe(ctx, rev, out.Revision, out.Digest)
 	out.Phase, out.Cause = phase, cause
 	return out, nil
 }
@@ -238,6 +238,13 @@ func (d *FluxDeliverer) settled(ctx context.Context, rev Revision, tag string) b
 
 // observe reads the Kustomization back and maps it onto a delivery phase.
 //
+// digest is the OCI digest the pair was just pinned to — out.Digest, which is
+// the freshly published artifact's, the rollback target's, or the one already
+// on record for a settled skip (see settled and Deliver). It is what lets
+// [flux.PhaseFor] recognise a bare "sha256:<digest>" Kustomization revision,
+// the shape source-controller reports once ensure pins spec.ref.digest
+// (fluxobjects.go, F8) instead of only spec.ref.tag.
+//
 // The mapping is internal/delivery/flux's, not a second one: `kelson status`
 // answers this question about any Kustomization in the cluster, and the
 // controller answering it differently about its own would be two opinions about
@@ -248,7 +255,7 @@ func (d *FluxDeliverer) settled(ctx context.Context, rev Revision, tag string) b
 // A Kustomization that is not there yet is Committed and not an error: it was
 // applied a few milliseconds ago through a cache that has not caught up, and
 // reporting a failure for that would make every first deploy look broken.
-func (d *FluxDeliverer) observe(ctx context.Context, rev Revision, revision string) (string, string) {
+func (d *FluxDeliverer) observe(ctx context.Context, rev Revision, revision, digest string) (string, string) {
 	live := &unstructured.Unstructured{}
 	live.SetGroupVersionKind(kustomizationGVK)
 	name := ObjectName(rev.Project, rev.Environment)
@@ -259,7 +266,7 @@ func (d *FluxDeliverer) observe(ctx context.Context, rev Revision, revision stri
 		}
 		return v1alpha1.PhaseCommitted, "could not read the Kustomization back: " + err.Error()
 	}
-	status := flux.PhaseFor(flux.KustomizationFrom(live.Object, name, d.namespace()), revision)
+	status := flux.PhaseFor(flux.KustomizationFrom(live.Object, name, d.namespace()), revision, digest)
 	return string(status.Phase), status.Cause
 }
 

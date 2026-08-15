@@ -15,7 +15,7 @@ const rev = "abc123def"
 
 func TestPhaseCommittedWhenNotObserved(t *testing.T) {
 	k := Kustomization{Name: "web", Namespace: "apps", Ready: ConditionUnknown}
-	st := PhaseFor(k, rev)
+	st := PhaseFor(k, rev, "")
 	if st.Phase != delivery.PhaseCommitted {
 		t.Fatalf("phase = %q, want committed", st.Phase)
 	}
@@ -30,7 +30,7 @@ func TestPhaseRejectedNamesTheCause(t *testing.T) {
 		Ready: ConditionFalse, Reason: reasonBuildFailed, Message: "image not found",
 		LastAttemptedRevision: "main@sha1:" + rev,
 	}
-	st := PhaseFor(k, rev)
+	st := PhaseFor(k, rev, "")
 	if st.Phase != delivery.PhaseRejected {
 		t.Fatalf("phase = %q, want rejected", st.Phase)
 	}
@@ -45,7 +45,7 @@ func TestPhaseDegradedSurfacesHealth(t *testing.T) {
 		Ready: ConditionFalse, Reason: reasonHealthCheckFail, Message: "ready: 0/1",
 		LastAppliedRevision: "abc123def",
 	}
-	st := PhaseFor(k, rev)
+	st := PhaseFor(k, rev, "")
 	if st.Phase != delivery.PhaseDegraded {
 		t.Fatalf("phase = %q, want degraded", st.Phase)
 	}
@@ -56,7 +56,7 @@ func TestPhaseDegradedSurfacesHealth(t *testing.T) {
 
 func TestPhaseHealthy(t *testing.T) {
 	k := Kustomization{Name: "web", Namespace: "apps", Ready: ConditionTrue, LastAppliedRevision: rev}
-	st := PhaseFor(k, rev)
+	st := PhaseFor(k, rev, "")
 	if st.Phase != delivery.PhaseHealthy {
 		t.Fatalf("phase = %q, want healthy", st.Phase)
 	}
@@ -64,7 +64,7 @@ func TestPhaseHealthy(t *testing.T) {
 
 func TestPhaseAppliedWhenAppliedNotReady(t *testing.T) {
 	k := Kustomization{Name: "web", Namespace: "apps", Ready: ConditionUnknown, LastAppliedRevision: rev}
-	st := PhaseFor(k, rev)
+	st := PhaseFor(k, rev, "")
 	if st.Phase != delivery.PhaseApplied {
 		t.Fatalf("phase = %q, want applied", st.Phase)
 	}
@@ -72,7 +72,7 @@ func TestPhaseAppliedWhenAppliedNotReady(t *testing.T) {
 
 func TestPhaseReconciling(t *testing.T) {
 	k := Kustomization{Name: "web", Namespace: "apps", Ready: ConditionUnknown, LastAttemptedRevision: rev, Reconciling: true}
-	st := PhaseFor(k, rev)
+	st := PhaseFor(k, rev, "")
 	if st.Phase != delivery.PhaseReconciling {
 		t.Fatalf("phase = %q, want reconciling", st.Phase)
 	}
@@ -80,7 +80,7 @@ func TestPhaseReconciling(t *testing.T) {
 
 func TestPhaseCommittedWhenSuspended(t *testing.T) {
 	k := Kustomization{Name: "web", Namespace: "apps", Suspended: true, Ready: ConditionFalse}
-	st := PhaseFor(k, rev)
+	st := PhaseFor(k, rev, "")
 	if st.Phase != delivery.PhaseCommitted {
 		t.Fatalf("phase = %q, want committed (suspended)", st.Phase)
 	}
@@ -111,33 +111,56 @@ func TestKustomizationCovers(t *testing.T) {
 	}
 }
 
-// TestRevisionMatches covers both source kinds. The git spellings
-// (branch@sha1:abc, branch/abc, abbreviated) are what a Kustomization kelson
-// merely observes writes; the OCI spelling (tag@sha256:digest) is what the
-// spine's own OCIRepository writes, and it is compared whole — a tag is not a
-// prefix of anything, and reading the digest as a commit is the bug that made a
-// healthy deployment report Committed forever.
+// digestA and digestB are two distinct sha256-shaped digests for the table
+// below: digestA is the one kelson expects, digestB is some other artifact's.
+const (
+	digestA = "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+	digestB = "sha256:ad87bb61a4a3ba1a1f5f5a5d2e3c4b5a697531fedcba9876543210fedcba987"
+)
+
+// TestRevisionMatches covers all three shapes a Flux revision arrives in. The
+// git spellings (branch@sha1:abc, branch/abc, abbreviated) are what a
+// Kustomization kelson merely observes writes; the OCI spellings are the
+// spine's own OCIRepository's, and CI run 64 is why there are two of them:
+// F8 (f4e516d) started pinning spec.ref.digest alongside spec.ref.tag, and
+// source-controller answers a digest-pinned ref with a bare "sha256:<digest>"
+// revision rather than "<tag>@sha256:<digest>" — a shape the comparison did
+// not know until this fix, so a deployment Flux had already applied reported
+// Committed forever.
 func TestRevisionMatches(t *testing.T) {
 	for _, tc := range []struct {
-		name      string
-		flux, sha string
-		want      bool
+		name       string
+		flux, sha  string
+		wantDigest string
+		matches    bool
 	}{
-		{"git v2", "main@sha1:abc123def", "abc123def", true},
-		{"git v2 abbreviated", "main@sha1:abc123def", "abc123", true},
-		{"git v1", "main/abc123def", "abc123def", true},
-		{"git, different commit", "main@sha1:abc123def", "def456", false},
-		{"empty revision", "", "abc", false},
+		{"git v2", "main@sha1:abc123def", "abc123def", "", true},
+		{"git v2 abbreviated", "main@sha1:abc123def", "abc123", "", true},
+		{"git v1", "main/abc123def", "abc123def", "", true},
+		{"git, different commit", "main@sha1:abc123def", "def456", "", false},
+		{"empty revision", "", "abc", "", false},
 
-		{"oci tag", "7-1a2b3c4d@sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "7-1a2b3c4d", true},
-		{"oci tag, wrong generation", "8-1a2b3c4d@sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "7-1a2b3c4d", false},
-		{"oci tag, wrong hash", "7-9999aaaa@sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "7-1a2b3c4d", false},
-		{"oci tag is not a prefix", "7-1a2b3c4de@sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "7-1a2b3c4d", false},
-		{"oci digest is not the answer", "7-1a2b3c4d@sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "9f86d081", false},
-		{"oci tag without a digest", "7-1a2b3c4d", "7-1a2b3c4d", true},
+		// tag@digest, no expected digest known (a tag-only pin, or a caller —
+		// a preview — that never learned one): fall back to the tag, whole.
+		{"oci tag", "7-1a2b3c4d@sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "7-1a2b3c4d", "", true},
+		{"oci tag, wrong generation", "8-1a2b3c4d@sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "7-1a2b3c4d", "", false},
+		{"oci tag, wrong hash", "7-9999aaaa@sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "7-1a2b3c4d", "", false},
+		{"oci tag is not a prefix", "7-1a2b3c4de@sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "7-1a2b3c4d", "", false},
+		{"oci digest is not the tag", "7-1a2b3c4d@sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "9f86d081", "", false},
+		{"oci tag without a digest in the ref", "7-1a2b3c4d", "7-1a2b3c4d", "", true},
+
+		// tag@digest, expected digest known: the digest decides, even against
+		// a tag that would otherwise have matched — it is the stronger signal.
+		{"oci tag+digest, digest matches", "7-1a2b3c4d@" + digestA, "7-1a2b3c4d", digestA, true},
+		{"oci tag+digest, digest mismatches despite the tag matching", "7-1a2b3c4d@" + digestA, "7-1a2b3c4d", digestB, false},
+
+		// bare digest — the shape f4e516d's fix introduced, and CI run 64's bug.
+		{"bare digest matches", digestA, "7-1a2b3c4d", digestA, true},
+		{"bare digest mismatches", digestA, "7-1a2b3c4d", digestB, false},
+		{"bare digest, no expected digest to confirm it against", digestA, "7-1a2b3c4d", "", false},
 	} {
-		if got := revisionMatches(tc.flux, tc.sha); got != tc.want {
-			t.Fatalf("%s: revisionMatches(%q, %q) = %v, want %v", tc.name, tc.flux, tc.sha, got, tc.want)
+		if got := revisionMatches(tc.flux, tc.sha, tc.wantDigest); got != tc.matches {
+			t.Fatalf("%s: revisionMatches(%q, %q, %q) = %v, want %v", tc.name, tc.flux, tc.sha, tc.wantDigest, got, tc.matches)
 		}
 	}
 }
@@ -154,13 +177,44 @@ func TestPhaseForOCIRevisionIsHealthy(t *testing.T) {
 		LastAppliedRevision:   rev + "@sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
 		LastAttemptedRevision: rev + "@sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
 	}
-	if st := PhaseFor(k, rev); st.Phase != delivery.PhaseHealthy {
+	if st := PhaseFor(k, rev, ""); st.Phase != delivery.PhaseHealthy {
 		t.Fatalf("phase = %s (%s), want %s", st.Phase, st.Cause, delivery.PhaseHealthy)
 	}
 	// And the previous revision is still Committed: the spine must be able to
 	// tell "Flux has not caught up" from "Flux is done".
-	if st := PhaseFor(k, "8-99887766"); st.Phase != delivery.PhaseCommitted {
+	if st := PhaseFor(k, "8-99887766", ""); st.Phase != delivery.PhaseCommitted {
 		t.Fatalf("phase for the next revision = %s, want %s", st.Phase, delivery.PhaseCommitted)
+	}
+}
+
+// TestPhaseForBareDigestRevisionIsHealthy is CI run 64's exact failure: with
+// spec.ref.digest pinned (fluxobjects.go, F8), source-controller reports the
+// artifact revision as bare "sha256:<digest>" rather than
+// "<tag>@sha256:<digest>". PhaseFor must recognise that shape when it knows
+// the expected digest, and must not confuse a mismatched digest for a match.
+func TestPhaseForBareDigestRevisionIsHealthy(t *testing.T) {
+	const rev = "7-1a2b3c4d"
+	k := Kustomization{
+		Name: "checkout-production", Namespace: "kelson-system",
+		SourceKind: "OCIRepository", SourceName: "checkout-production",
+		Ready:                 ConditionTrue,
+		LastAppliedRevision:   digestA,
+		LastAttemptedRevision: digestA,
+	}
+	if st := PhaseFor(k, rev, digestA); st.Phase != delivery.PhaseHealthy {
+		t.Fatalf("phase = %s (%s), want %s", st.Phase, st.Cause, delivery.PhaseHealthy)
+	}
+	// A different digest — the bytes changed, or Flux is still serving a
+	// stale artifact — must not read as Healthy.
+	if st := PhaseFor(k, rev, digestB); st.Phase == delivery.PhaseHealthy {
+		t.Fatalf("phase = %s, want anything but Healthy for a digest that does not match", st.Phase)
+	}
+	// And with no expected digest at all (a tag-only pin observing a
+	// Kustomization that nonetheless reports a bare digest — should not
+	// arise from kelson's own spine, but must not be misread as a match),
+	// the safe answer is "not yet observed", not Healthy.
+	if st := PhaseFor(k, rev, ""); st.Phase == delivery.PhaseHealthy {
+		t.Fatalf("phase = %s, want anything but Healthy when there is no digest to confirm the bare-digest revision against", st.Phase)
 	}
 }
 
@@ -228,7 +282,7 @@ func TestDecryptionFailureIsNamed(t *testing.T) {
 			Ready: ConditionFalse, Reason: m.reason, Message: m.message,
 			LastAttemptedRevision: "main@sha1:" + rev,
 		}
-		st := PhaseFor(k, rev)
+		st := PhaseFor(k, rev, "")
 		if st.Phase != delivery.PhaseRejected {
 			t.Fatalf("phase = %q, want rejected", st.Phase)
 		}
@@ -259,7 +313,7 @@ func TestOrdinaryBuildFailureGetsNoDecryptionCause(t *testing.T) {
 			Ready: ConditionFalse, Reason: reasonBuildFailed, Message: message,
 			LastAttemptedRevision: "main@sha1:" + rev,
 		}
-		if contains(PhaseFor(k, rev).Cause, "could not decrypt") {
+		if contains(PhaseFor(k, rev, "").Cause, "could not decrypt") {
 			t.Errorf("a non-SOPS build failure must not be explained as a decryption failure: %q", message)
 		}
 	}
