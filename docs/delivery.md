@@ -65,8 +65,9 @@ differ". The digest is unknown in exactly one case: a rollback to a
 
 `wait: true` is the load-bearing one. kustomize-controller assesses the health
 of everything it applied and only then reports `Ready`, so **`Ready` means
-healthy and not merely applied** — which is why the controller can report on
-workloads while holding no RBAC over them at all.
+healthy and not merely applied** — the phase in `Environment.status` is correct
+without the controller reading a single Pod. What it is not is *diagnosable*,
+which is what the readback below adds.
 
 Beside the standard provenance the pair carries one label of its own,
 `kelson.dev/environment-namespace`: the namespace the *custom resource* lives
@@ -244,7 +245,75 @@ Every failure transition carries a `Cause` naming the responsible component
 and the reason. The engine, the transition table, provenance correlation and
 the timeout policy are specified in [the state machine](statemachine.md)
 (`internal/delivery/statemachine`); step 6 feeds it by implementing a single
-watch-based `Source` over the Flux objects and the workloads.
+watch-based `Source` over the Flux objects and the workloads. The third answer
+is the one [the workload readback](#the-workload-readback-which-pod-which-container)
+makes specific.
+
+### The workload readback: which Pod, which container
+
+`Ready=False` on a `Kustomization` is true and not actionable. Step 6 therefore
+does a second read ([#240](https://github.com/dafrie/kelson/issues/240)): it
+lists the `Deployment`s carrying this environment's provenance labels, lists the
+Pods in each one's selector set, and runs them through the *same* classifier
+`kelson status` uses (`internal/observation`, [#53](https://github.com/dafrie/kelson/issues/53)).
+The result is `Environment.status.workloads`:
+
+```yaml
+status:
+  phase: Degraded
+  revision: 7-1a2b3c4d
+  workloads:
+    checked: 3
+    healthy: 2
+    degraded: 1
+    unhealthy:
+      - resource: Deployment/checkout-production/worker
+        code: crash-loop-back-off
+        reason: CrashLoopBackOff
+        remediation: the container keeps crashing: read its logs, fix the command or startup error, then redeploy
+        containers:
+          - pod: worker-6d4f9c-2xq7b
+            name: app
+            code: crash-loop-back-off
+            reason: CrashLoopBackOff
+```
+
+Five properties, each of which is a decision:
+
+- **The counts are complete; the list is a bounded sample.** `degraded` says how
+  many are failing, `unhealthy` holds at most 10 of them and each entry at most
+  5 containers, ordered by resource name and by pod-then-container. A status is
+  copied into every watch event every controller in the cluster receives, and a
+  bad rollout with fifty replicas would otherwise put fifty crash dumps there.
+  The order is what keeps a truncated list stable rather than churning under
+  `kubectl get -w`.
+- **The codes are the observation plane's, not a second vocabulary.**
+  `crash-loop-back-off`, `image-pull-back-off`, `failing-probe`,
+  `insufficient-resources`, `scheduling-failed`, `missing`, `secret-sync-failed`
+  — the same strings `kelson status` reports, restated as constants in
+  `api/kelson/v1alpha1` and drift-tested against `internal/observation`.
+- **No container output, ever.** The pod name, the container name and the
+  kubelet's reason identify the failure; the container's *logs* are where a
+  connection string leaks, and an `Environment`'s status is readable by anyone
+  who can read the `Environment`. `kelson logs` reads them instead, under the
+  server's own grant.
+- **"Could not check" is not "checked and fine".** A readback the API server
+  refused sets `workloads.unavailable` with the reason and leaves every count at
+  zero — the [`ClusterProfile`](detection.md)'s discipline — and never
+  fails the reconcile that already delivered the revision.
+- **It may only downgrade, and only after Flux has settled.** A definitive
+  failure turns a settled `Healthy` or `Applied` into `Degraded`, because
+  `wait: true` reports on the moment the set converged and says nothing about
+  the Pod that started crash-looping ten minutes later. It never upgrades, and
+  it never touches `Committed` or `Reconciling`: while Flux is still working the
+  Pods on the cluster are the *previous* revision's, and reporting them would
+  make every rolling update flash `Degraded`.
+
+The grant this needs is read-only `get`/`list` on `pods` and `deployments`, in
+the controller's `ClusterRole`. No `watch` (the readback lists through a direct
+client on a loop that already requeues), no `pods/log`, and no other workload
+kind: the classifier reads a `Deployment` and its Pods, so `CronJob`s, `Job`s
+and the operator-owned data services stay covered by `wait: true` alone.
 
 ### Release commands, and the barrier that is not built yet
 
