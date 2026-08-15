@@ -530,6 +530,9 @@ func capabilitiesOf(p forge.Provider) string {
 	if _, ok := p.(forge.StatusReporter); ok {
 		can = append(can, "report commit statuses and upsert one pull-request comment")
 	}
+	if _, ok := p.(forge.PRProposer); ok {
+		can = append(can, "open a pull request proposing a change")
+	}
 	return strings.Join(can, "; ")
 }
 

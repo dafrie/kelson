@@ -4,6 +4,21 @@
 // structured-error taxonomy, and versioned by the underlying store's
 // resourceVersion — optimistic concurrency is Kubernetes' own, surfaced as an
 // opaque version string (#69's "optimistic concurrency on spec version").
+//
+// # Some stored documents are not kelson's to write, and the read says so
+//
+// ADR-0027 decision 6 recommends keeping Project and Environment documents in a
+// repository and letting the user's own Flux apply them. A document that
+// arrived that way carries the Kustomization that applied it in its labels, and
+// `Spec.gitops` is that fact on the wire (#248). It is a *read* field with no
+// request counterpart: nothing a client sends can set it, because it describes
+// who else is writing rather than what anybody asked for.
+//
+// A client that ignores it is not broken — PutSpec still stores what it is
+// given. What it loses is the ability to warn, and the failure it walks into is
+// the quiet one: the write succeeds, the RPC returns, and the next Flux
+// reconcile puts the old document back. So the field is read by every surface
+// that offers an edit, and `ProposeSpec` below is the path that exists instead.
 syntax = "proto3";
 
 package kelson.v1alpha1;
@@ -11,6 +26,30 @@ package kelson.v1alpha1;
 import "kelson/v1alpha1/common.proto";
 
 option go_package = "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1;kelsonv1alpha1";
+
+// GitOpsOwnership is one stored document and the Flux Kustomization that
+// applied it.
+//
+// It is reported per document, not per project, because the two come apart in
+// practice: a Project and its production Environment checked into a repository,
+// with `development` created through kelson. One flag for the project would
+// disable a safe edit or permit an unsafe one.
+//
+// What it does *not* carry is where in the repository the document lives.
+// Identifying the Kustomization needs only a label kelson can already read;
+// resolving its source and path needs RBAC on the Flux kinds in whatever
+// namespace the user's Flux runs in, which kelson-server deliberately does not
+// hold (ADR-0013 §3). ProposeSpecRequest.files therefore carries paths the user
+// supplies rather than paths kelson derived.
+message GitOpsOwnership {
+  // The document: "project", or an environment's name.
+  string document = 1;
+  // The Flux Kustomization's name, and the namespace it lives in — what
+  // `flux get kustomization` answers to. Namespace may be empty if only the
+  // name label is present.
+  string kustomization = 2;
+  string namespace = 3;
+}
 
 message Spec {
   // Project name — the store key, from the Project document's metadata.name.
@@ -21,6 +60,10 @@ message Spec {
   string version = 3;
   // Environments declared by the documents, by name (informational).
   repeated string environments = 4;
+  // Documents somebody else's Flux is reconciling from a repository. Empty is
+  // the ordinary case: kelson's store is the only writer. Reported by every
+  // read including ListSpecs, which omits the documents themselves.
+  repeated GitOpsOwnership gitops = 5;
 }
 
 message PutSpecRequest {
@@ -64,9 +107,83 @@ message DeleteSpecRequest {
 
 message DeleteSpecResponse {}
 
+// One file a proposal writes, and where in the repository it goes.
+//
+// `content` is the file's whole new text and not a patch. kelson re-serializes
+// stored custom resources (ADR-0027 decision 6: the authored bytes do not round
+// trip), so it knows what the file should say and does not know what it
+// currently says — the pull request's own diff is where that difference becomes
+// visible, to the human who has to approve it.
+//
+// State that plainly, because it is the sharp edge of this RPC: a repository
+// file holding the document *and* something else loses the something else. A
+// client must show the content it is about to propose before it proposes it.
+message ProposedFile {
+  // Repository-relative, e.g. "clusters/prod/checkout.yaml". A path starting at
+  // the root or climbing out of the repository is refused.
+  string path = 1;
+  bytes content = 2;
+}
+
+// ProposeSpecRequest opens a pull request against the repository a project's
+// documents live in.
+//
+// Nothing it does touches kelson's store or any cluster. The whole effect is on
+// the user's repository, which is why this exists at all: for a document some
+// other Flux reconciles (`Spec.gitops`), a PutSpec would be overwritten and a
+// pull request is the only edit that survives.
+message ProposeSpecRequest {
+  // The project the documents belong to. Unlike PutSpec this is explicit, so
+  // the authorization scope of a restricted credential can be checked against
+  // it without parsing YAML (#74).
+  string project = 1;
+  // The GitConnection to open the pull request through. Required: the
+  // host-match resolution of ADR-0033 decision 4 answers "which credential
+  // clones this project's source", and the repository holding its *documents*
+  // is routinely a different one.
+  string connection = 2;
+  // The repository, as "owner/name" — what ListConnectionRepositories reports.
+  string repository = 3;
+  // The branch to propose against and cut from. Empty means the repository's
+  // default branch.
+  string base_branch = 4;
+  // The branch to create. Empty lets the server generate one; it is returned
+  // either way, because a caller that proposes twice needs to know what the
+  // first one was called.
+  string branch = 5;
+  string title = 6;
+  string body = 7;
+  repeated ProposedFile files = 8;
+  // RENDER validates the documents and resolves the connection without
+  // touching the forge — the rehearsal, for a client that wants to know the
+  // proposal is well-formed before it creates a branch in somebody's
+  // repository. There is no SERVER rung: the forge is the only thing that
+  // could answer more, and asking it is the thing being rehearsed.
+  DryRun dry_run = 9;
+  string idempotency_key = 10;
+}
+
+message ProposeSpecResponse {
+  // The pull request's page. Empty on a dry run and when errors is non-empty.
+  string url = 1;
+  // The branch the proposal was pushed to, generated or echoed.
+  string branch = 2;
+  // The base branch resolved, so a caller that named none learns which one it
+  // got.
+  string base_branch = 3;
+  bool dry_run = 4;
+  // Validation errors when the documents would not have been accepted (the RPC
+  // itself succeeds, exactly as in PutSpecResponse: a document that does not
+  // validate is an answer, not a transport failure). Nothing is proposed when
+  // this is non-empty — kelson does not open a pull request whose content it
+  // would have refused to store.
+  repeated Error errors = 5;
+}
+
 service SpecService {
   rpc PutSpec(PutSpecRequest) returns (PutSpecResponse);
   rpc GetSpec(GetSpecRequest) returns (GetSpecResponse);
   rpc ListSpecs(ListSpecsRequest) returns (ListSpecsResponse);
   rpc DeleteSpec(DeleteSpecRequest) returns (DeleteSpecResponse);
+  rpc ProposeSpec(ProposeSpecRequest) returns (ProposeSpecResponse);
 }

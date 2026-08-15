@@ -161,6 +161,27 @@ var agentOperations = map[string]model.AgentOperation{
 	kelsonv1alpha1connect.SecretServiceDeleteSecretProcedure: model.AgentOpSecretDelete,
 	kelsonv1alpha1connect.SpecServicePutSpecProcedure:        model.AgentOpSpecWrite,
 	kelsonv1alpha1connect.SpecServiceDeleteSpecProcedure:     model.AgentOpSpecDelete,
+	// ProposeSpec is the second entry mapping onto a word another RPC already
+	// owns, and the argument runs the opposite way to ReportBuild's (#248,
+	// ADR-0033 decision 3).
+	//
+	// A proposal changes no environment. It writes nothing to kelson's store,
+	// applies nothing to a cluster, and its whole effect is a branch and a pull
+	// request in the user's repository that a human must read and merge. By
+	// effect alone it is closer to `build` — an artifact somewhere else that
+	// changes nothing until somebody acts on it — than to `spec-write`.
+	//
+	// It is filed under `spec-write` anyway, and the reason is `forbid`. The
+	// subject of a proposal is the authored document: it is the same bytes
+	// PutSpec would have stored, offered by a different route. An operator who
+	// writes `forbid: [spec-write]` has said agents may not change this
+	// project's documents, and a route that let them do it by pull request
+	// instead would make that rule advisory — the exact hole this gate table
+	// exists to close, so the coarse mapping fails closed.
+	//
+	// `propose-only` is the half that must *not* refuse it, and
+	// [Server.guardProposal] is where that is spelled out.
+	kelsonv1alpha1connect.SpecServiceProposeSpecProcedure: model.AgentOpSpecWrite,
 }
 
 // proposeOnlyExempt lists the operations `agents: propose-only` does *not*
@@ -194,6 +215,10 @@ type agentGuard struct {
 	policy      model.Policy
 	project     string
 	environment string
+	// proposal marks a guard for an operation that proposes a change rather
+	// than applying one, which `propose-only` may not refuse
+	// ([Server.guardProposal]).
+	proposal bool
 }
 
 // resource is how a policy error names what it refused.
@@ -466,6 +491,39 @@ func (s *Server) storedPolicies(ctx context.Context, project string) (map[string
 // narrower would be pretending about the one operation that can rewrite the
 // policy itself.
 func (s *Server) guardStored(ctx context.Context, op model.AgentOperation, project string) error {
+	return s.guardEveryStored(ctx, op, project, false)
+}
+
+// guardProposal is [Server.guardStored] for an RPC that *proposes* a spec
+// change to the repository instead of storing one (ProposeSpec, #248).
+//
+// # `forbid` applies and `propose-only` does not, and the asymmetry is the point
+//
+// `forbid: [spec-write]` applies unchanged: the operator said agents may not
+// change this project's documents, and a pull request changes them by another
+// route (see the note beside the ProposeSpec row in [agentOperations]).
+//
+// `agents: propose-only` must not refuse it, and this is not a convenience. The
+// policy's own sentence is "no live mutation without a human", and its
+// remediation everywhere else in this file is "propose instead of applying" —
+// today that means dry_run=RENDER and a diff somebody pastes into a review by
+// hand. ADR-0033's consequences name the gap outright: "`propose-only` agents
+// can finally open the pull request they propose." Refusing this call under
+// propose-only would refuse the escalation path the same policy tells the agent
+// to take, which is the failure `proposeOnlyExempt` was invented to prevent for
+// `build` — an operation the policy has no reason to stop, blocked because it
+// shares a word with one it does.
+//
+// It is a separate entry point rather than another member of `proposeOnlyExempt`
+// because the exemption there is keyed by *operation* and this operation is
+// `spec-write`: exempting the word would exempt PutSpec, which is the one call
+// propose-only exists to stop. The distinction is which RPC is running, so the
+// handler is what states it.
+func (s *Server) guardProposal(ctx context.Context, op model.AgentOperation, project string) error {
+	return s.guardEveryStored(ctx, op, project, true)
+}
+
+func (s *Server) guardEveryStored(ctx context.Context, op model.AgentOperation, project string, proposal bool) error {
 	if !policyApplies(principalOf(ctx)) {
 		return nil
 	}
@@ -482,7 +540,7 @@ func (s *Server) guardStored(ctx context.Context, op model.AgentOperation, proje
 	// refusal an agent could not learn from.
 	slices.Sort(names)
 	for _, name := range names {
-		g := agentGuard{active: true, policy: policies[name], project: project, environment: name}
+		g := agentGuard{active: true, policy: policies[name], project: project, environment: name, proposal: proposal}
 		if err := g.refuseWrite(op); err != nil {
 			return err
 		}
@@ -491,7 +549,8 @@ func (s *Server) guardStored(ctx context.Context, op model.AgentOperation, proje
 }
 
 // refuseWrite is guard's `forbid`/`propose-only` pair for an environment whose
-// policy is already in hand.
+// policy is already in hand. A guard marked as a proposal runs the first rule
+// and skips the second — [Server.guardProposal] argues why.
 func (g agentGuard) refuseWrite(op model.AgentOperation) error {
 	if g.policy.Forbids(op) {
 		return refused(policyError{
@@ -503,7 +562,7 @@ func (g agentGuard) refuseWrite(op model.AgentOperation) error {
 			Remediation: g.escalation(string(op)),
 		})
 	}
-	if !g.policy.AllowsUnsupervised() {
+	if !g.policy.AllowsUnsupervised() && !g.proposal {
 		return refused(policyError{
 			Code:     ErrPolicyProposeOnly,
 			Resource: g.resource(),

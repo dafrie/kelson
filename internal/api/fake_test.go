@@ -95,6 +95,10 @@ type fakeSpecStore struct {
 	mu      sync.Mutex
 	entries map[string]*fakeSpecEntry
 	version int
+	// gitops is stamped onto everything this store returns, standing in for the
+	// Flux ownership labels the real store reads off the custom resources
+	// (#248). Set it before the first Put.
+	gitops []controlstore.GitOpsOwner
 }
 
 type fakeSpecEntry struct {
@@ -134,6 +138,7 @@ func (f *fakeSpecStore) Put(_ context.Context, project string, docs controlstore
 		Documents:    controlstore.Documents{Project: docs.Project, Environments: maps.Clone(docs.Environments)},
 		Version:      strconv.Itoa(f.version),
 		Environments: envs,
+		GitOps:       f.gitops,
 	}
 	f.entries[project] = &fakeSpecEntry{stored: stored, key: opts.IdempotencyKey}
 	return stored, nil
