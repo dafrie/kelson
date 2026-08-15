@@ -668,7 +668,7 @@ func connectServer(cfg config, attribution *slog.Logger) (*serverPlane, error) {
 			InsecureRegistries: cfg.insecureRegistries,
 		},
 		Poke:     poker,
-		Statuses: forgeStatuses{sources: sources, externalURL: cfg.externalURL},
+		Outcomes: forgeStatuses{sources: sources, externalURL: cfg.externalURL},
 		Profile: api.CaptureFunc(func(context.Context) (clusterprofile.ClusterProfile, error) {
 			return detect.FromCluster(cfg.kubeconfig)
 		}),
@@ -817,14 +817,22 @@ func buildConnector(cfg config, sources *forgeconn.Resolver) api.BuildConnector 
 // this connector runs. It arrives on api.BuildTarget.SourceConnection instead,
 // which also removes a second decode of a document the handler was holding.
 
-// forgeStatuses writes a delivery outcome back onto a commit
-// ([ADR-0034](docs/adr/0034-forge-driven-delivery.md) decision 5).
+// forgeStatuses writes a delivery outcome back to the forge
+// ([ADR-0034](docs/adr/0034-forge-driven-delivery.md) decision 5): the status on
+// the commit, and the one comment a preview keeps on its change request.
 //
 // It lives here rather than in internal/api for the reason every seam
 // implementation does: joining a repository to the connection that covers it
 // and minting a token from that connection's Secret is internal/forgeconn's,
-// which reads cluster state. What the handler holds is [api.CommitStatus] and
-// an interface.
+// which reads cluster state. What the handler holds is [api.CommitStatus],
+// [api.PreviewComment] and an interface.
+//
+// The comment's prose is not assembled here, and that split is the interesting
+// half. The body arrives written, because what kelson tells a pull request is
+// the same voice as what it tells the pipeline in the report's message; what
+// this type contributes to it is the *origin*, through Link, because where this
+// server is reachable from outside is the binary's `--external-url` and nothing
+// in the api plane can know it.
 //
 // # Everything it cannot do is silent
 //
@@ -848,36 +856,65 @@ type forgeStatuses struct {
 	externalURL string
 }
 
-// ReportCommitStatus implements api.CommitStatusReporter.
+var _ api.OutcomeReporter = forgeStatuses{}
+
+// ReportCommitStatus implements api.OutcomeReporter.
 func (f forgeStatuses) ReportCommitStatus(ctx context.Context, s api.CommitStatus) error {
+	reporter, conn, ok, err := f.reporterFor(ctx, s.Repo)
+	if err != nil || !ok {
+		return err
+	}
+	return reporter.ReportStatus(ctx, conn, s.FullName, s.SHA, forge.Status{
+		State:       s.State,
+		Context:     s.Context,
+		Description: s.Description,
+		TargetURL:   f.Link(s.Path),
+	})
+}
+
+// UpsertPreviewComment implements api.OutcomeReporter.
+//
+// It degrades exactly as the status does, through the same resolution and the
+// same capability check — one interface in internal/forge carries both writes,
+// because a provider that can post a status can post a comment. What differs at
+// the forge is only the permission an installation may have been granted, and
+// that difference arrives here as a failure from the API rather than as an
+// absent capability: it is named in the report's message, not swallowed.
+func (f forgeStatuses) UpsertPreviewComment(ctx context.Context, c api.PreviewComment) error {
+	reporter, conn, ok, err := f.reporterFor(ctx, c.Repo)
+	if err != nil || !ok {
+		return err
+	}
+	return reporter.UpsertPRComment(ctx, conn, c.FullName, c.PR, c.Marker, c.Body)
+}
+
+// reporterFor resolves the connection covering a repository and its write-back
+// capability. `ok` false is every silent degradation of ADR-0034 decision 5 —
+// nothing wired, no connection, no capability — and an error is a resolution
+// that failed rather than found nothing.
+func (f forgeStatuses) reporterFor(ctx context.Context, repo string) (forge.StatusReporter, forge.Conn, bool, error) {
 	if f.sources == nil {
-		return nil
+		return nil, forge.Conn{}, false, nil
 	}
 	// No `source.connection` override is consulted, and that is deliberate:
 	// the field pins which connection the project's *source* is read with, and
 	// the repository here is `previews.repo`, which ADR-0017 decision 1 keeps
 	// separate from it with no defaulting either way. Host matching is the
 	// zero-configuration path ADR-0033 decision 4 is written for.
-	res, ok, err := f.sources.Resolve(ctx, s.Repo, "")
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return nil
+	res, ok, err := f.sources.Resolve(ctx, repo, "")
+	if err != nil || !ok {
+		return nil, forge.Conn{}, false, err
 	}
 	reporter, ok := res.Provider.(forge.StatusReporter)
 	if !ok {
-		return nil
+		return nil, forge.Conn{}, false, nil
 	}
-	return reporter.ReportStatus(ctx, res.Conn, s.FullName, s.SHA, forge.Status{
-		State:       s.State,
-		Context:     s.Context,
-		Description: s.Description,
-		TargetURL:   f.link(s.Path),
-	})
+	return reporter, res.Conn, true, nil
 }
 
-func (f forgeStatuses) link(path string) string {
+// Link implements api.OutcomeReporter: the absolute URL of a UI path, or "" for
+// a server that was started without an external URL.
+func (f forgeStatuses) Link(path string) string {
 	base := strings.TrimRight(strings.TrimSpace(f.externalURL), "/")
 	if base == "" || path == "" {
 		return ""

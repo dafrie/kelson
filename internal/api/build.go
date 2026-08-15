@@ -488,6 +488,7 @@ func (s *Server) publishReportedPreviews(ctx context.Context, spec decoded, msg 
 		references []string
 		notes      []string
 		causes     []error
+		previews   []publishedPreview
 		candidates int
 	)
 	for _, env := range spec.environments {
@@ -529,6 +530,11 @@ func (s *Server) publishReportedPreviews(ctx context.Context, spec decoded, msg 
 		// thing.
 		triggered = append(triggered, published.Set.Namespace)
 		references = append(references, published.Reference)
+		previews = append(previews, publishedPreview{
+			environment: env.Metadata.Name,
+			repo:        strings.TrimSpace(env.Spec.Previews.Repo),
+			published:   published,
+		})
 		if note := s.pokeProvider(ctx, spec.project.Metadata.Name, env.Metadata.Name, published.Set.ParentNamespace); note != "" {
 			notes = append(notes, note)
 		}
@@ -550,9 +556,10 @@ func (s *Server) publishReportedPreviews(ctx context.Context, spec decoded, msg 
 			spec.project.Metadata.Name, sha, errors.Join(causes...)))
 	}
 
-	if note := s.reportPreviewStatus(ctx, spec, sha, triggered, causes); note != "" {
+	if note := s.reportPreviewStatus(ctx, spec, sha, previews, causes); note != "" {
 		notes = append(notes, note)
 	}
+	notes = append(notes, s.commentPreviews(ctx, int(msg.GetPr()), previews)...)
 	if len(references) > 0 {
 		// What this call produced, in the audit trail's own vocabulary: the
 		// artifacts, against the commit they were rendered for (#78).
@@ -657,9 +664,13 @@ func (s *Server) pokeProvider(ctx context.Context, project, environment, namespa
 // pending forever blocks merges. So the status answers the question kelson can
 // answer — did the preview publish — and what became of it afterwards is the
 // preview surface's to report.
-func (s *Server) reportPreviewStatus(ctx context.Context, spec decoded, sha string, triggered []string, causes []error) string {
-	if s.statuses == nil || len(triggered) == 0 {
+func (s *Server) reportPreviewStatus(ctx context.Context, spec decoded, sha string, published []publishedPreview, causes []error) string {
+	if s.outcomes == nil || len(published) == 0 {
 		return ""
+	}
+	triggered := make([]string, len(published))
+	for i, p := range published {
+		triggered[i] = p.published.Set.Namespace
 	}
 	state, description := "success", fmt.Sprintf("published %s", strings.Join(triggered, ", "))
 	if len(causes) > 0 {
@@ -677,7 +688,7 @@ func (s *Server) reportPreviewStatus(ctx context.Context, spec decoded, sha stri
 			// changes.
 			continue
 		}
-		err := s.statuses.ReportCommitStatus(ctx, CommitStatus{
+		err := s.outcomes.ReportCommitStatus(ctx, CommitStatus{
 			Repo:     repo,
 			FullName: fullName,
 			SHA:      sha,
@@ -688,10 +699,7 @@ func (s *Server) reportPreviewStatus(ctx context.Context, spec decoded, sha stri
 			Context:     PreviewStatusContext,
 			State:       state,
 			Description: description,
-			// There is no preview detail page yet (ADR-0017 stage 3 built the
-			// read RPC, not the route), so the link goes to the project the
-			// preview belongs to rather than to a URL that would 404.
-			Path: "/projects/" + spec.project.Metadata.Name,
+			Path:        statusPath(spec.project.Metadata.Name, published, repo),
 		})
 		if err != nil {
 			failures = append(failures, display(repo)+": "+err.Error())
@@ -709,6 +717,163 @@ func (s *Server) reportPreviewStatus(ctx context.Context, spec decoded, sha stri
 // branch protection: a required check is named by this string, and changing it
 // silently makes an existing rule match nothing.
 const PreviewStatusContext = "kelson/preview"
+
+// publishedPreview is one environment's successful publish, kept because the
+// two write-backs of ADR-0034 decision 5 speak about the preview rather than
+// about the report: the status links a preview's own page and the comment names
+// that preview's hosts, and neither is derivable from the namespace string the
+// response carries.
+type publishedPreview struct {
+	environment string
+	// repo is `previews.repo` as that environment spells it — the repository
+	// the comment is written on and the status is written to.
+	repo      string
+	published *preview.Published
+}
+
+// previewPath is the UI route one preview's detail page lives at.
+//
+// The id is the change request number as the forge numbers it, unencoded: it is
+// the same value `Preview.id` carries on the wire, and a preview's identity is
+// validated to digits (naming.ValidateID) before anything is ever published
+// under it, so there is nothing here for an escape to protect.
+func previewPath(project, environment, id string) string {
+	return "/projects/" + project + "/" + environment + "/previews/" + id
+}
+
+// statusPath is where one repository's check points: the detail page of the
+// first preview published into it.
+//
+// The fallback to the project page is not decoration. [previewRepositories]
+// lists what the *spec* previews, so a repository can appear here with nothing
+// published into it — an environment that failed while another succeeded — and
+// that repository has no preview page worth linking. Publishes are appended in
+// the environment order [decodeSpec] produced, which is sorted by name, so two
+// environments previewing one repository link the same page on every call
+// rather than whichever the map happened to yield.
+func statusPath(project string, published []publishedPreview, repo string) string {
+	for _, p := range published {
+		if sameRepository(p.repo, repo) {
+			return previewPath(project, p.environment, p.published.Set.PR)
+		}
+	}
+	return "/projects/" + project
+}
+
+// commentPreviews upserts one comment per published preview onto its change
+// request (ADR-0034 decision 5's second half), and returns the sentences to
+// report failures with.
+//
+// One comment *per environment*, keyed by [previewCommentMarker], because two
+// environments may preview one pull request: a marker naming only the project
+// would make the second publish overwrite the first's answer, and the pull
+// request would report on whichever environment published last.
+//
+// It degrades exactly as the status does — no reporter, no connection, no
+// capability, nothing written and nothing said — and names a failure for the
+// same reason: something configured is broken, and the publish stands either
+// way.
+func (s *Server) commentPreviews(ctx context.Context, pr int, published []publishedPreview) []string {
+	if s.outcomes == nil || len(published) == 0 || pr <= 0 {
+		return nil
+	}
+	var failures []string
+	for _, p := range published {
+		_, fullName, ok := splitRepository(p.repo)
+		if !ok {
+			// Unreachable for a validated spec, and silent if it ever is: see
+			// [Server.reportPreviewStatus] for why a write-back this plane
+			// cannot address is not worth a sentence.
+			continue
+		}
+		marker := previewCommentMarker(p.published.Set.Project, p.environment)
+		err := s.outcomes.UpsertPreviewComment(ctx, PreviewComment{
+			Repo:     p.repo,
+			FullName: fullName,
+			PR:       pr,
+			Marker:   marker,
+			Body: previewCommentBody(marker, p, s.outcomes.Link(
+				previewPath(p.published.Set.Project, p.environment, p.published.Set.PR))),
+		})
+		if err != nil {
+			failures = append(failures, "the preview comment for environment "+p.environment+" could not be written ("+
+				display(p.repo)+": "+err.Error()+"), which changes nothing about what was published")
+		}
+	}
+	return failures
+}
+
+// previewCommentMarker identifies the one comment an environment keeps on a
+// change request. It is an HTML comment because it must survive in the body a
+// reader sees without being part of what they read — the forge has no "my
+// comment on this pull request" lookup, so the identity lives in the text
+// (internal/forge's UpsertPRComment).
+func previewCommentMarker(project, environment string) string {
+	return "<!-- kelson:preview:" + project + "-" + environment + " -->"
+}
+
+// previewCommentBody is what the change request reads, and it is deliberately
+// short: hosts, what was published, and where the live answer is.
+//
+// Two things it does not claim. It does not report a rollout — the artifact is
+// in the registry and flux-operator applies it next, which is the same reason
+// [Server.reportPreviewStatus] writes a terminal state rather than a `pending`
+// nobody would ever resolve — and it does not pretend to be live: it is rewritten
+// by the next publish, not by the cluster, so the phase it states is the phase
+// at publish time and it says where the current one is.
+//
+// The body is scrubbed of known credentials for the reason [reportMessage] is:
+// it is free text assembled from values kelson resolved (a registry reference
+// among them), and it leaves the process rather than merely being logged.
+func previewCommentBody(marker string, p publishedPreview, link string) string {
+	set := p.published.Set
+	var b strings.Builder
+	b.WriteString(marker)
+	b.WriteString("\n### kelson preview · ")
+	b.WriteString(set.Project)
+	b.WriteString(" / ")
+	b.WriteString(p.environment)
+	b.WriteString("\n\n")
+
+	if len(set.Hosts) == 0 {
+		b.WriteString("This preview serves no hostnames: no component of this environment declares `domains`.\n\n")
+	} else {
+		for _, host := range set.Hosts {
+			b.WriteString("- [")
+			b.WriteString(host)
+			b.WriteString("](https://")
+			b.WriteString(host)
+			b.WriteString(")\n")
+		}
+		b.WriteString("\n")
+	}
+
+	b.WriteString("Published `")
+	b.WriteString(set.SHA)
+	b.WriteString("` as `")
+	b.WriteString(p.published.Reference)
+	b.WriteString("` into namespace `")
+	b.WriteString(set.Namespace)
+	b.WriteString("`.\n\nPhase at publish: **published** — the artifact exists and flux-operator applies it next. ")
+
+	if link != "" {
+		b.WriteString("The live phase, the applied revision and the logs are on the preview's page: ")
+		b.WriteString(link)
+		b.WriteString("\n")
+	} else {
+		// No external URL is configured, so there is no absolute link to give
+		// and this says where to look instead rather than guessing an origin —
+		// the same rule CommitStatus.Path keeps for the check.
+		b.WriteString("The live phase is in your kelson UI under project ")
+		b.WriteString(set.Project)
+		b.WriteString(", environment ")
+		b.WriteString(p.environment)
+		b.WriteString(", preview ")
+		b.WriteString(set.PR)
+		b.WriteString(" (this server has no external URL configured, so there is no link to give).\n")
+	}
+	return redact.Scrub(b.String())
+}
 
 // previewRepositories are the distinct repositories the report's previews live
 // in, sorted. It is normally one; it is a list because `previews.repo` is

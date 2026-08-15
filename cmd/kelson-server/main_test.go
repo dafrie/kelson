@@ -576,6 +576,63 @@ func TestForgeStatusesOmitsTheLinkWithoutAnExternalURL(t *testing.T) {
 	}
 }
 
+// The comment half of the same write-back: the connection covering the
+// repository is resolved once more, and the body this plane was handed is what
+// the forge receives — assembled sentences here would be a second voice for
+// what kelson tells a pull request.
+func TestForgeStatusesUpsertsThePreviewComment(t *testing.T) {
+	var posted, listed string
+	var body map[string]string
+	forgeAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			listed = r.URL.Path
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[]`))
+			return
+		}
+		posted = r.URL.Path
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer forgeAPI.Close()
+
+	marker := "<!-- kelson:preview:checkout-staging -->"
+	err := statusesOver(connectionTo("acme", "github", forgeAPI.URL)).UpsertPreviewComment(t.Context(), api.PreviewComment{
+		Repo:     forgeAPI.URL + "/acme/checkout",
+		FullName: "acme/checkout",
+		PR:       412,
+		Marker:   marker,
+		Body:     marker + "\nthe preview is live",
+	})
+	if err != nil {
+		t.Fatalf("UpsertPreviewComment: %v", err)
+	}
+	if want := "/api/v3/repos/acme/checkout/issues/412/comments"; posted != want {
+		t.Errorf("posted to %q, want %q", posted, want)
+	}
+	if listed == "" {
+		t.Error("the existing comments were never read, so this would append rather than upsert")
+	}
+	if body["body"] != marker+"\nthe preview is live" {
+		t.Errorf("body = %q, want the api plane's own text passed through", body["body"])
+	}
+}
+
+// The link a comment embeds and the link a check carries come from one place,
+// and a server started without --external-url has none to give: the api plane
+// asks, and writes a sentence about where to look instead.
+func TestForgeStatusesLinkNeedsAnExternalURL(t *testing.T) {
+	reporter := statusesOver()
+	if got := reporter.Link("/projects/checkout/staging/previews/412"); got != "https://kelson.acme.com/projects/checkout/staging/previews/412" {
+		t.Errorf("Link = %q, want the external URL joined to the path", got)
+	}
+	reporter.externalURL = ""
+	if got := reporter.Link("/projects/checkout/staging/previews/412"); got != "" {
+		t.Errorf("Link = %q, want nothing rather than a guessed origin", got)
+	}
+}
+
 // The two silent degradations of ADR-0034 decision 5. Neither is a failure:
 // "statuses are a courtesy of the integration, not a delivery dependency", and
 // a preview that published is a preview that published.
@@ -601,6 +658,15 @@ func TestForgeStatusesDegradesSilently(t *testing.T) {
 			})
 			if err != nil {
 				t.Errorf("ReportCommitStatus = %v, want a silent no-op", err)
+			}
+			// The comment degrades through the same three doors, which is the
+			// reason the api plane holds one seam for both and not two.
+			err = tc.reporter.UpsertPreviewComment(t.Context(), api.PreviewComment{
+				Repo: "https://git.acme.internal/acme/checkout", FullName: "acme/checkout",
+				PR: 412, Marker: "<!-- kelson:preview:checkout-staging -->", Body: "irrelevant",
+			})
+			if err != nil {
+				t.Errorf("UpsertPreviewComment = %v, want a silent no-op", err)
 			}
 		})
 	}
