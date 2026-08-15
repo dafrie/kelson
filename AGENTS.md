@@ -5,6 +5,10 @@ testing and commit conventions, and applies to you unchanged. This file covers w
 doesn't: where things live, how parallel agents share the repo, and the mistakes this project has
 actually made.
 
+If you are **coordinating** rather than implementing — driving the backlog, delegating to several
+agents at once — read [agents/architect.md](agents/architect.md) instead of picking up a task
+yourself. [agents/](agents/) also holds the role definitions and the task-brief template.
+
 ## Source of truth for project state
 
 **GitHub issues and milestones, not the prose in this repo.** README.md and CONTRIBUTING.md describe
@@ -66,7 +70,9 @@ markdown links fail the site build. See [website/README.md](website/README.md).
 
 ## Parallel agents
 
-Multiple agents often work this repo at once. The protocol:
+Multiple agents often work this repo at once. The coordinator's side of this is
+[agents/architect.md](agents/architect.md); a task brief is written from
+[agents/task-brief.md](agents/task-brief.md). The protocol:
 
 - **One worktree per agent.** `git worktree add -b ag/<slug> ../kelson-wt-<slug> main`. Never two
   agents in the same working directory.
@@ -78,10 +84,15 @@ Multiple agents often work this repo at once. The protocol:
 - **Shared types at an integration seam are agreed before work starts, not invented twice.** When two
   tasks meet at a common type, the orchestrator fixes the contract up front and both sides receive it
   byte-identical. If the contract looks wrong, stop and say so — do not change it unilaterally.
-- **Push your branch and open a PR when the work is coherent.** If the PR is low-stakes — docs,
-  tracker alignment, mechanical cleanups, changes with no behaviour impact — merge it yourself once CI
-  is green. If it changes behaviour, golden files, a public contract or an ADR-governed decision, ask
-  for review instead of merging. When in doubt, it is not low-stakes.
+- **Push your branch, open a PR when the work is coherent, and merge it once CI is green.** Merging
+  is the default, not a favour to ask for: an unmerged PR is not delivered work. Behaviour changes,
+  golden-file updates and public contracts are *disclosed* in the PR body so they stay reviewable
+  after the fact — that disclosure is not a gate. Hold back only for the rare change that is not
+  cheaply undone: one that contradicts an accepted ADR, one that is genuinely irreversible (a
+  release, a published API break, anything destructive), or a fork where two reasonable designs
+  diverge and picking wrong wastes real work. Say so explicitly when you hold back, and go work on
+  something else meanwhile. If you are a delegated agent, report the PR number and let the
+  coordinator merge — it is the only one that knows what else is in flight.
 
 ## Close the issue when the work lands
 
