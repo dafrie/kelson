@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"strings"
 
+	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
 
+	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
 	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/observation"
 )
@@ -14,43 +16,51 @@ import (
 // newStatusCmd builds `kelson status` (issue #135): the answer to "is my change
 // live, and if not, why".
 //
-// # It answers half of that today, and says which half
+// # Two planes, two paths to reach them
 //
-// Two planes used to answer it. The delivery adapter reported the state-machine
-// phase for the revision — whether the change ARRIVED — and the observation
-// plane classified the live workloads — whether it WORKS, naming the kubelet's
-// own reason (CrashLoopBackOff, ImagePullBackOff) rather than a generic
-// "deployment failed".
+// The observation half — whether the workloads WORK — reads the live cluster
+// directly through internal/observation and classifies the workloads the
+// current render declares. It needs no adapter, no history and no server, and
+// it has answered this unchanged since before ADR-0028 deleted the old
+// delivery adapters.
 //
-// [ADR-0028](docs/adr/0028-delivery-spine.md) deleted both adapters, and with
-// them the phase. The observation half needs no adapter, no history and no
-// delivery mode — it reads the live cluster through internal/observation and
-// classifies the workloads the current render declares — so it keeps working
-// unchanged, and this command keeps working with it. What it does NOT do is
-// invent a phase: a "Healthy" or "Unknown" with nothing behind it would be the
-// conflation issue #53 exists to prevent, so the missing half is printed as
-// missing, once, naming the issue that restores it (#224, then
-// `Environment.status` per ADR-0027 decision 6).
+// The delivery half — whether the change ARRIVED — used to come from one of
+// those adapters. ADR-0028 deleted them, and until R2 (#225) landed this
+// command printed the gap rather than a guess: a "Healthy" or "Unknown" with
+// nothing behind it would be the conflation issue #53 exists to prevent.
+// `DeployService.Status` now answers it from `Environment.status`
+// (internal/api/deploy.go), so this command is a ConnectRPC client of it for
+// that half alone — the same --server/--password/--token conventions every
+// other façade-backed verb uses (serverclient.go) — while the workload half
+// keeps reading the cluster directly, unchanged.
 //
-// The gap is worth carrying rather than gating the command, because the two
-// questions fail independently and the surviving one is the one people run this
-// command in an incident to ask.
+// # The delivery half degrades, it never gates
+//
+// A server that does not answer must not turn a working command into a
+// failing one: plenty of `kelson status` runs have no kelson-server up at
+// all, and the workload half is the one people run this command in an
+// incident to ask — the two questions fail independently, and the surviving
+// one matters more. So an unreachable --server, a rejected credential, or any
+// other RPC failure is folded into the same "delivery phase" line the missing
+// phase used to occupy, naming --server, rather than failing the command.
 func newStatusCmd() *cobra.Command { return newStatusCmdFactory(connectObservation) }
 
 func newStatusCmdFactory(connect observationConnector) *cobra.Command {
 	opts := &statusOptions{connect: connect}
 	cmd := &cobra.Command{
 		Use:   "status -f spec.yaml --env <name>",
-		Short: "Report the health verdict of the workloads the rendered spec declares",
-		Long: "Status reports the observation plane's health verdict for each workload the rendered spec\n" +
-			"declares: whether it works, naming the specific reason (CrashLoopBackOff, ImagePullBackOff,\n" +
-			"a failing probe) with the container logs behind it where they are readable.\n\n" +
-			"It does NOT report the delivery phase — whether this revision arrived — because the adapters\n" +
-			"that answered that were deleted with the old delivery machinery (ADR-0028). That half returns\n" +
-			"with issue #224, read from Environment.status. Until then it is reported as missing rather\n" +
-			"than guessed at.",
+		Short: "Report the delivery phase and the health verdict of the rendered spec",
+		Long: "Status reports two things: whether the change arrived — the delivery phase, read from\n" +
+			"DeployService.Status/Environment.status — and whether the workloads it declares work: the\n" +
+			"observation plane's verdict for each, naming the specific reason (CrashLoopBackOff,\n" +
+			"ImagePullBackOff, a failing probe) with the container logs behind it where they are\n" +
+			"readable.\n\n" +
+			"The delivery half needs kelson-server (--server/--password/--token, matching every other\n" +
+			"façade-backed verb); the workload half reads the cluster directly and keeps working with no\n" +
+			"server reachable, reporting that plainly rather than gating the whole command on it.",
 		Example: "  kelson status -f project.yaml -f production.yaml --env production\n" +
-			"  kelson status -f spec.yaml --env development --kubeconfig ./kubeconfig",
+			"  kelson status -f spec.yaml --env development --kubeconfig ./kubeconfig\n" +
+			"  kelson status -f spec.yaml --env production --server http://127.0.0.1:8420",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runStatus(cmd, opts)
@@ -63,12 +73,14 @@ func newStatusCmdFactory(connect observationConnector) *cobra.Command {
 	f.StringVar(&opts.kubeconfig, "kubeconfig", "", "path to a kubeconfig (default: $KUBECONFIG, in-cluster credentials, then ~/.kube/config)")
 	f.StringVar(&opts.image, "image", "", imageFlagUsage)
 	cobra.CheckErr(cmd.MarkFlagRequired("file"))
+	addServerFlags(cmd, &opts.server)
 	return cmd
 }
 
 type statusOptions struct {
 	specInput
 	connect observationConnector
+	server  serverOptions
 }
 
 // runStatus reports and exits 0. A degraded workload is a successful report of
@@ -93,25 +105,103 @@ func runStatus(cmd *cobra.Command, opts *statusOptions) error {
 		return err
 	}
 
+	phase := resolveDeliveryPhase(cmd.Context(), opts)
+
 	out := &printer{w: cmd.OutOrStdout()}
 	out.printf("%s/%s in namespace %s\n", set.Project, set.Environment, target.namespace)
-	printPhaseGap(out)
+	printPhase(out, phase)
 	printSummary(out, set, verdicts)
 	printVerdicts(out, plane, verdicts)
 	return out.err
 }
 
-// printPhaseGap states the half of this command that is missing, in the place
-// the phase line used to be.
+// resolveDeliveryPhase asks kelson-server's DeployService.Status for the
+// delivery half this command otherwise cannot answer: whether this revision
+// arrived, its phase and cause, read straight from Environment.status
+// (internal/api/deploy.go's reportDelivery).
 //
-// It is printed unconditionally, including when everything is healthy. A gap
-// that only announces itself on failure is a gap a reader learns about at the
-// worst possible moment, and "kelson did not tell me it wasn't checking" is the
-// complaint this line exists to make impossible.
-func printPhaseGap(out *printer) {
-	out.printf("  delivery phase: not reported — the adapters that answered \"did this revision arrive?\"\n")
-	out.printf("                  were deleted with the old delivery machinery (ADR-0028); it returns with\n")
-	out.printf("                  issue #224. What follows is workload health only.\n")
+// It never returns an error: a server that does not answer, or refuses this
+// process's credential, is reported through the response's Cause field with
+// Phase left empty — the same "phase empty means not reported" contract the
+// server itself uses — via serverError, which is what names --server (or
+// --password/--token) in the one line this prints. This command's workload
+// half needs no server at all, and making the whole command depend on one
+// would regress the one question status could always answer.
+//
+// Only Phase/Revision/Cause are read from the response; the server's own
+// Verdicts and Namespace are not — the workload half above already computed
+// those by reading the cluster directly, and reconciling two independently
+// computed answers is exactly the disagreement issue #151 exists to avoid.
+func resolveDeliveryPhase(ctx context.Context, opts *statusOptions) *kelsonv1alpha1.StatusResponse {
+	// status has no --project flag (its input is always -f), so project is
+	// always empty here; resolveSpecRef is still the one place that builds a
+	// SpecRef from -f files, the same as every façade-backed verb uses.
+	ref, env, err := resolveSpecRef(opts.files, "", opts.env)
+	if err != nil {
+		return &kelsonv1alpha1.StatusResponse{Cause: err.Error()}
+	}
+	// --profile/--image are passed through unchanged: the server renders this
+	// RPC itself (inlineProfileRef's doc comment), the same as deploy/rollback,
+	// so "from-cluster" here captures kelson-server's own cluster connection,
+	// not this process's --kubeconfig — which is what the workload half above
+	// already used for its own, separately-resolved render.
+	profile, err := inlineProfileRef(opts.profile)
+	if err != nil {
+		return &kelsonv1alpha1.StatusResponse{Cause: err.Error()}
+	}
+	client, addr := opts.server.deployClient()
+
+	reqCtx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+	res, err := client.Status(reqCtx, connect.NewRequest(&kelsonv1alpha1.StatusRequest{
+		Spec:        ref,
+		Environment: env,
+		Profile:     profile,
+		Image:       opts.image,
+	}))
+	if err != nil {
+		return &kelsonv1alpha1.StatusResponse{Cause: serverError("status", addr, err).Error()}
+	}
+	return res.Msg
+}
+
+// printPhase prints the delivery-phase line in the place the "not reported"
+// gap used to occupy — unconditionally, including when everything is
+// healthy, so a reader never learns "kelson did not tell me it wasn't
+// checking" at the worst possible moment.
+func printPhase(out *printer, res *kelsonv1alpha1.StatusResponse) {
+	out.printf("  delivery phase: %s\n", phaseLine(res))
+}
+
+// phaseLine renders one delivery phase the way `kelson deploy`'s transition
+// log does (deploy.go's transitionDetail): the revision and the cause folded
+// in wherever the server reported one, so a stale status (internal/api's
+// "status is at generation N, spec is at M") reads inline rather than as a
+// separate line to reconcile.
+//
+// An empty phase is the server's "not reported" contract (StatusResponse.Phase
+// is empty exactly when the delivery half could not be answered), and Cause
+// carries why — the RPC failure serverError already worded, or the server's
+// own reportDelivery cause.
+func phaseLine(res *kelsonv1alpha1.StatusResponse) string {
+	phase := res.GetPhase()
+	if phase == "" {
+		cause := res.GetCause()
+		if cause == "" {
+			cause = "no cause reported"
+		}
+		return "not reported — " + cause
+	}
+	switch {
+	case res.GetCause() != "" && res.GetRevision() != "":
+		return fmt.Sprintf("%s (revision %s): %s", phase, res.GetRevision(), res.GetCause())
+	case res.GetCause() != "":
+		return fmt.Sprintf("%s: %s", phase, res.GetCause())
+	case res.GetRevision() != "":
+		return fmt.Sprintf("%s (revision %s)", phase, res.GetRevision())
+	default:
+		return phase
+	}
 }
 
 // printSummary prints the per-resource counters.
@@ -125,8 +215,8 @@ func printPhaseGap(out *printer) {
 //
 // There is no second source now, so the verdicts are the count. That is a lower
 // bound on what is wrong — the probe classifies Deployments and the adapter also
-// judged CronJobs — and printPhaseGap is what keeps the bound from reading as a
-// complete answer.
+// judged CronJobs — and this counter answers the workload half only; printPhase
+// is what carries whether the revision itself arrived.
 func printSummary(out *printer, set delivery.ManifestSet, verdicts []observation.Verdict) {
 	out.printf("  %-10s %d\n", "resources:", len(set.Manifests))
 	n := 0

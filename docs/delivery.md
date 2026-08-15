@@ -154,10 +154,14 @@ changed.
 > rendered-history store ADR-0027 deleted and nothing has replaced it yet.
 > `kelson render`, `kelson diff`, `kelson build`, `kelson profile`,
 > `kelson install`/`uninstall`, the cluster secret backend and the MCP read and
-> dry-run tools are unaffected. `kelson status` and `kelson explain` still
-> answer from the observation plane alone and state, in their output, that the
-> delivery phase is not reported — `DeployService.Status` reads it from
-> `Environment.status` now, but neither CLI command calls that RPC yet.
+> dry-run tools are unaffected. `kelson status` now reads the delivery phase
+> from `DeployService.Status` too — a ConnectRPC client of the façade for that
+> half alone (`--server`/`--password`/`--token`, matching every other
+> façade-backed verb), degrading to a "not reported" line naming `--server`
+> when none answers, because the workload half still reads the cluster
+> directly and needs no server at all. `kelson explain` still answers from the
+> observation plane alone and states, in its output, that the delivery phase is
+> not reported.
 >
 > The chart's controller RBAC has landed ([#226](https://github.com/dafrie/kelson/issues/226)):
 > `create`/`patch`/`delete` on `source.toolkit.fluxcd.io` `ocirepositories` and

@@ -6,17 +6,23 @@ import (
 	"strings"
 	"testing"
 
+	"connectrpc.com/connect"
+
+	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
 	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/observation"
 )
 
-// `kelson status` answers half of "is my change live, and if not, why".
+// `kelson status` answers "is my change live, and if not, why" in two halves.
 //
-// The delivery phase — whether the change ARRIVED — came from an adapter, and
-// ADR-0028 deleted the adapters. The observation half — whether it WORKS — needs
-// no adapter and is what these tests cover, plus the one property the missing
-// half adds: the gap is stated in the output, always, so it can never be
-// mistaken for a clean bill of health.
+// The observation half — whether it WORKS — needs no adapter and no server; it
+// reads the cluster directly and is what most of these tests cover. The
+// delivery half — whether the change ARRIVED — is a ConnectRPC client of
+// DeployService.Status (R2, #225), tested the same way deploy/rollback/
+// promote/history are (facade_test.go's fakeDeployService), plus the one
+// property a missing server adds: an unreachable --server degrades that half
+// to a "not reported" line naming the flag, rather than failing the command —
+// the workload half is the one people run this command in an incident to ask.
 
 // crashLoopVerdict is the shape observation.Probe produces for a container the
 // kubelet named CrashLoopBackOff: the code is the typed value a machine reads,
@@ -62,10 +68,12 @@ func TestStatusPrintsTheVerdict(t *testing.T) {
 	}
 }
 
-// The missing half is printed whether or not anything is wrong. A gap that only
-// announces itself on failure is a gap the reader meets at the worst possible
-// moment.
-func TestStatusAlwaysStatesTheMissingPhase(t *testing.T) {
+// The delivery-phase line is printed whether or not the workload half is
+// wrong, and — with no reachable server, the default in these tests — it
+// degrades to "not reported" naming --server rather than failing the command.
+// A gap that only announces itself on failure is a gap the reader meets at
+// the worst possible moment.
+func TestStatusDeliveryPhaseDegradesWithoutServer(t *testing.T) {
 	spec := deploySpec(t)
 	for _, tc := range []struct {
 		name  string
@@ -75,16 +83,96 @@ func TestStatusAlwaysStatesTheMissingPhase(t *testing.T) {
 		{"degraded", fakeProbe{verdicts: map[string]observation.Verdict{"web": crashLoopVerdict()}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			stdout, code, msg := runDelivery(t, planeOf(tc.probe), "status", "-f", spec, "--env", "development")
+			stdout, code, msg := runDelivery(t, planeOf(tc.probe), "status", "-f", spec, "--env", "development",
+				"--server", unreachableServerAddr(t))
 			if code != exitOK {
 				t.Fatalf("exit = %d (%s)", code, msg)
 			}
-			for _, want := range []string{"delivery phase: not reported", "#224", "workload health only"} {
+			for _, want := range []string{"delivery phase: not reported", "--server", "KELSON_SERVER"} {
 				if !strings.Contains(stdout, want) {
 					t.Fatalf("stdout missing %q:\n%s", want, stdout)
 				}
 			}
 		})
+	}
+}
+
+// TestStatusReportsTheDeliveryPhase: a reachable server's phase, revision and
+// cause appear in the same line, even when the workload half is unrelated.
+func TestStatusReportsTheDeliveryPhase(t *testing.T) {
+	spec := deploySpec(t)
+	fake := &fakeDeployService{
+		status: func(_ context.Context, req *kelsonv1alpha1.StatusRequest) (*kelsonv1alpha1.StatusResponse, error) {
+			if req.GetEnvironment() != "development" {
+				t.Fatalf("unexpected environment %q", req.GetEnvironment())
+			}
+			return &kelsonv1alpha1.StatusResponse{
+				Phase:    "Healthy",
+				Revision: "3-cccc0000",
+				Cause:    "Ready",
+			}, nil
+		},
+	}
+	addr := serveFakeDeployService(t, fake)
+
+	stdout, code, msg := runDelivery(t, planeOf(fakeProbe{}), "status", "-f", spec, "--env", "development", "--server", addr)
+	if code != exitOK {
+		t.Fatalf("exit = %d (%s)", code, msg)
+	}
+	for _, want := range []string{"delivery phase:", "Healthy", "3-cccc0000", "Ready"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, stdout)
+		}
+	}
+}
+
+// TestStatusDeliveryPhaseStaleReportsBothGenerations pins the server's own
+// staleness wording (internal/api/deploy.go's reportDelivery, 43ccaf4)
+// through unchanged: a status still describing an older generation than the
+// spec says so, inline with the cause.
+func TestStatusDeliveryPhaseStaleReportsBothGenerations(t *testing.T) {
+	spec := deploySpec(t)
+	fake := &fakeDeployService{
+		status: func(context.Context, *kelsonv1alpha1.StatusRequest) (*kelsonv1alpha1.StatusResponse, error) {
+			return &kelsonv1alpha1.StatusResponse{
+				Phase:    "Progressing",
+				Revision: "2-bbbb0000",
+				Cause:    "Progressing (status is at generation 2, the spec is at 3)",
+			}, nil
+		},
+	}
+	addr := serveFakeDeployService(t, fake)
+
+	stdout, code, msg := runDelivery(t, planeOf(fakeProbe{}), "status", "-f", spec, "--env", "development", "--server", addr)
+	if code != exitOK {
+		t.Fatalf("exit = %d (%s)", code, msg)
+	}
+	if !strings.Contains(stdout, "status is at generation 2, the spec is at 3") {
+		t.Fatalf("stdout does not carry the server's staleness wording:\n%s", stdout)
+	}
+}
+
+// TestStatusDeliveryPhaseServerErrorStillReportsWorkloads: a server that
+// rejects the credential must not take the workload half down with it — the
+// two questions fail independently (issue #53), and status still exits 0.
+func TestStatusDeliveryPhaseServerErrorStillReportsWorkloads(t *testing.T) {
+	spec := deploySpec(t)
+	fake := &fakeDeployService{
+		status: func(context.Context, *kelsonv1alpha1.StatusRequest) (*kelsonv1alpha1.StatusResponse, error) {
+			return nil, connect.NewError(connect.CodeUnauthenticated, errors.New("bad credential"))
+		},
+	}
+	addr := serveFakeDeployService(t, fake)
+
+	stdout, code, msg := runDelivery(t, planeOf(fakeProbe{verdicts: map[string]observation.Verdict{"web": crashLoopVerdict()}}),
+		"status", "-f", spec, "--env", "development", "--server", addr)
+	if code != exitOK {
+		t.Fatalf("exit = %d (%s)", code, msg)
+	}
+	for _, want := range []string{"delivery phase: not reported", "--password", "CrashLoopBackOff"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, stdout)
+		}
 	}
 }
 

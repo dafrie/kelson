@@ -22,6 +22,7 @@ import (
 type fakeDeployService struct {
 	kelsonv1alpha1connect.UnimplementedDeployServiceHandler
 	deploy   func(context.Context, *kelsonv1alpha1.DeployRequest, *connect.ServerStream[kelsonv1alpha1.DeployResponse]) error
+	status   func(context.Context, *kelsonv1alpha1.StatusRequest) (*kelsonv1alpha1.StatusResponse, error)
 	rollback func(context.Context, *kelsonv1alpha1.RollbackRequest, *connect.ServerStream[kelsonv1alpha1.RollbackResponse]) error
 	promote  func(context.Context, *kelsonv1alpha1.PromoteRequest) (*kelsonv1alpha1.PromoteResponse, error)
 	history  func(context.Context, *kelsonv1alpha1.HistoryRequest) (*kelsonv1alpha1.HistoryResponse, error)
@@ -32,6 +33,17 @@ func (f *fakeDeployService) Deploy(ctx context.Context, req *connect.Request[kel
 		return f.UnimplementedDeployServiceHandler.Deploy(ctx, req, stream)
 	}
 	return f.deploy(ctx, req.Msg, stream)
+}
+
+func (f *fakeDeployService) Status(ctx context.Context, req *connect.Request[kelsonv1alpha1.StatusRequest]) (*connect.Response[kelsonv1alpha1.StatusResponse], error) {
+	if f.status == nil {
+		return f.UnimplementedDeployServiceHandler.Status(ctx, req)
+	}
+	res, err := f.status(ctx, req.Msg)
+	if err != nil {
+		return nil, err
+	}
+	return connect.NewResponse(res), nil
 }
 
 func (f *fakeDeployService) Rollback(ctx context.Context, req *connect.Request[kelsonv1alpha1.RollbackRequest], stream *connect.ServerStream[kelsonv1alpha1.RollbackResponse]) error {
