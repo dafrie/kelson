@@ -42,6 +42,31 @@ type RevisionLister interface {
 	Resolve(ctx context.Context, project, environment, revision string) (digest string, found bool, err error)
 }
 
+// RevisionFetcher is the third question, and the only one whose answer is
+// bytes: what did revision N actually render (issue #247)?
+//
+// It is a second interface rather than a third method on [RevisionLister]
+// because the two are wired for different reasons and a caller may hold only
+// the first. Listing and resolving are a rollback's pre-flight — one HEAD, one
+// tag list — where fetching downloads and unpacks an artifact, which only the
+// two verbs that compare rendered bytes need (`Diff(from_revision)` and the
+// rollback preview). A process wired with a lister that cannot fetch says so
+// and refuses those two; it does not lose History or Rollback with them.
+//
+// [RegistryRevisions] implements both, so every real deployment has both.
+type RevisionFetcher interface {
+	// Fetch reads back the manifests one revision published. found=false with a
+	// nil error is "the registry holds no such revision", the same answer
+	// [RevisionLister.Resolve] gives and distinguishable from "kelson could not
+	// look" for the same reason.
+	//
+	// digest is what the caller already recorded for this revision
+	// (`status.history[].digest`), or empty when it has none: a mismatch
+	// between it and the bytes the registry serves is an integrity failure and
+	// never a silent fallback (artifact.IntegrityError).
+	Fetch(ctx context.Context, project, environment, revision, digest string) (artifact.Pulled, bool, error)
+}
+
 // RegistryReader is the registry client [RegistryRevisions] reads through.
 // *artifact.Pusher implements it; the seam exists so the reconciler's tests and
 // the server's need no registry, the same argument [ArtifactPusher] makes for
@@ -49,6 +74,7 @@ type RevisionLister interface {
 type RegistryReader interface {
 	Tags(ctx context.Context, repository string) ([]string, error)
 	Resolve(ctx context.Context, repository, tag string) (digest string, found bool, err error)
+	Pull(ctx context.Context, req artifact.PullRequest) (artifact.Pulled, error)
 }
 
 // ReaderFor builds the reader for one query, given the credential and whether
@@ -93,7 +119,10 @@ type RegistryRevisions struct {
 	Reader ReaderFor
 }
 
-var _ RevisionLister = RegistryRevisions{}
+var (
+	_ RevisionLister  = RegistryRevisions{}
+	_ RevisionFetcher = RegistryRevisions{}
+)
 
 // Revisions implements [RevisionLister].
 func (r RegistryRevisions) Revisions(ctx context.Context, project, environment string) ([]string, error) {
@@ -121,6 +150,54 @@ func (r RegistryRevisions) Resolve(ctx context.Context, project, environment, re
 		return "", false, classifyRead(err, repository)
 	}
 	return digest, found, nil
+}
+
+// Fetch implements [RevisionFetcher].
+//
+// The revision is the tag, so this needs no lookup to find the bytes — but it
+// passes the caller's recorded digest through, because a tag is a pointer and a
+// digest is the content. ADR-0028 decision 2 writes a tag once and never
+// rewrites it, so the two agree forever; checking anyway is what turns that
+// promise into something the code verifies rather than assumes, and it is the
+// argument the ADR makes for rollback applied to the diff that precedes one.
+func (r RegistryRevisions) Fetch(ctx context.Context, project, environment, revision, digest string) (artifact.Pulled, bool, error) {
+	repository, reader, err := r.connect(project, environment)
+	if err != nil {
+		return artifact.Pulled{}, false, err
+	}
+	pulled, err := reader.Pull(ctx, artifact.PullRequest{
+		Repository: repository,
+		Reference:  revision,
+		Digest:     digest,
+	})
+	if err != nil {
+		// A revision the registry does not hold is an answer. Everything else
+		// is classified, and an integrity failure keeps its own type all the way
+		// to the caller (see [classifyFetch]).
+		if artifact.NotFound(err) {
+			return artifact.Pulled{}, false, nil
+		}
+		return artifact.Pulled{}, false, classifyFetch(err, repository)
+	}
+	return pulled, true, nil
+}
+
+// classifyFetch is [classifyRead] with one exception, and the exception is the
+// point: an [artifact.IntegrityError] is returned unwrapped, in its own type.
+//
+// The delivery reasons exist to decide a reconciler's requeue, and this failure
+// belongs to none of them. It is not transient — retrying a registry that
+// served bytes contradicting their own digest gets the same bytes — and it is
+// not a credential. Wrapping it as either would tell the caller to wait for
+// something that will not change, where the honest answer is that these bytes
+// are not the ones that revision was published as and nothing may be computed
+// from them.
+func classifyFetch(err error, repository string) error {
+	var integrity *artifact.IntegrityError
+	if errors.As(err, &integrity) {
+		return err
+	}
+	return classifyRead(err, repository)
 }
 
 // connect derives the repository and resolves the credential. Both are done per
