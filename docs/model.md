@@ -396,12 +396,18 @@ enter that component's `kelson.dev/spec-hash` and churn every workload in every 
 renderer never reads. It does change the *revision* — where kelson reads the code from is part of what a
 revision is — so a project with a source republishes once, under a new artifact tag, and then stays put.
 
-> **Transition ([#239](https://github.com/dafrie/kelson/issues/239)).** The model declares, validates and
-> binds; the build plane still clones once per project rather than once per binding. Until it does, a
-> Project using the plural spelling has no `spec.source` for the build plane to fall back on, so
-> `kelson build` refuses it (`build/no-source`) rather than building the wrong repository, and a name
-> that resolves nowhere never reaches a build at all. Per-component clones, and `autoDeploy`'s new
-> subject — a push to repository X re-renders what is bound to sources matching X — are that issue.
+The build plane consumes those bindings: it clones the source the components are bound to, at that
+source's ref, with the credential that source resolves to, whichever spelling declared it
+([docs/build.md](build.md)). Two components on one source share one build; `build/no-source` now means
+what it says — nothing is bound — rather than "this project spelled its sources in the plural".
+
+> **Transition ([#239](https://github.com/dafrie/kelson/issues/239)).** One build still produces one
+> image, because rule P3 pins one image per project, so a project whose components build from *different*
+> repositories is refused with `build/several-sources` and pointed at the path that does produce
+> per-component images: `spec.build.by: ci` and `kelson ci report-build`
+> ([ADR-0034](adr/0034-forge-driven-delivery.md) §3). Per-component image production in kelson's own
+> build plane, and `autoDeploy`'s new subject — a push to repository X re-renders what is bound to sources
+> matching X — are that issue.
 
 ## Promotion
 
