@@ -87,11 +87,11 @@ the controller re-render: the digests are spliced into `Environment.spec.compone
 document is stored, which bumps `.metadata.generation`. This is the mechanism `kelson deploy --image` and
 `kelson promote` already use, through the same splice.
 
-**That collides with decision 2, and the collision is not resolved here.** The field written is a pin,
-and decision 2 excludes a pinned component from the stale set — so auto-deploy moves each component once
-and then reports it as pinned. Closing it needs the model to tell an author's pin from a trigger's (a
-provenance marker on the pin, or a component-keyed image input that is not a pin), which is a decision
-this ADR should make rather than one a trigger path takes by ignoring pins it believes it wrote.
+**That collides with decision 2, and decision 5 below resolves it.** The field written is a pin,
+and decision 2 excludes a pinned component from the stale set — so without more, auto-deploy would move
+each component once and then report it as pinned. Closing it needs the model to tell an author's pin
+from a trigger's, which is this ADR's decision to make, not one a trigger path takes by ignoring pins
+it believes it wrote.
 
 **The multi-source refusal does not reach the environment's conditions.** Decision 3 asks for it there;
 `Environment.status.conditions` is a status subresource kelson-controller owns, and no seam in
@@ -101,7 +101,29 @@ answer, in the log, on a `kelson/deploy` commit status and in the audit trail in
 
 **Decision 4's system principal is a fourth value.** [ADR-0026](0026-agent-audit-trail.md) decision 1
 lists `agent`, `human` and `anonymous`; a webhook trigger records `system` with the connection's name,
-because each of the three would be false. ADR-0026 is owed that amendment.
+because each of the three would be false. This paragraph is that amendment: ADR-0026's principal
+vocabulary gains `system` — a trigger kelson itself fires on a verified external event, named by the
+connection that verified it, never standing in for a person or a presented credential.
+
+### 5. The trigger's pin carries its provenance, and a marked pin does not freeze tracking
+
+The image the trigger splices into `Environment.spec.components[].image` is written **with a marker**
+(field spelling follows the model's idiom; the semantics are this ADR's):
+
+- A **marked** pin renders exactly like any pin — rule P3 is untouched at render time; the revision it
+  names is what runs. But the model excludes it from `ImagePins`, and the stale set may move it: it
+  holds the component *at* a revision without holding it *still*. The trigger overwrites its own marked
+  pins on the next push.
+- An **unmarked** pin — an author's `image:`, `kelson promote`, `kelson deploy --image` — keeps
+  decision 2's meaning in full: a person is holding this still, and no trigger ever overwrites it.
+  Tracking resumes when the author removes it.
+- An author *may* write the marker deliberately: image-plus-marker means "start here, and let tracking
+  advance it" — coherent, permitted, documented.
+
+One consequence stated plainly: in a GitOps-managed install (CRs reconciled from a repository), the
+trigger's spec-writes fight the git reconciler — `autoDeploy` and externally-reconciled Environment
+documents do not compose, and the ownership-detection UX planned on #248 should say so rather than let
+the two silently overwrite each other.
 
 ## Rationale
 
