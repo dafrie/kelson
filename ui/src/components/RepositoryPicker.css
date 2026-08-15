@@ -1,0 +1,91 @@
+/* The repository picker on the New Project screen (ADR-0033 decision 3).
+   It shares the page's panel and field chrome — it is one more block of the
+   same form — and owns only what is specific to a list of repositories. */
+
+.k-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.k-picker__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.k-picker__note {
+  margin: 0;
+  max-width: 78ch;
+  color: var(--kelson-muted-2);
+}
+
+/* The capability refusal. Muted and not the failure colour on purpose: the
+   connection works, it simply cannot be browsed, and painting it red would
+   teach the reader to distrust the colour when something really is broken. */
+.k-picker__refusal {
+  margin: 0;
+  max-width: 78ch;
+  padding: 12px 14px;
+  border: 1px solid var(--kelson-border);
+  border-radius: 6px;
+  background: var(--kelson-panel-dim);
+  color: var(--kelson-muted-2);
+}
+
+.k-picker__pinned {
+  margin: 0;
+  max-width: 78ch;
+  color: var(--kelson-muted-deep);
+}
+
+.k-picker__list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  /* Bounded rather than unbounded: an installation runs to hundreds, and a
+     list that pushes the rest of the form off the screen is a picker that has
+     made the manual path unreachable. */
+  max-height: 320px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.k-picker__repo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.k-picker__repo:hover {
+  background: var(--kelson-panel-dim);
+}
+
+.k-picker__repo--picked {
+  border-color: var(--kelson-border);
+  background: var(--kelson-panel-dim);
+}
+
+.k-picker__repo-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.k-picker__repo-branch {
+  color: var(--kelson-muted-2);
+}

@@ -47,6 +47,32 @@
 // service reports and never a value it accepts, and the HTTP callback pair is
 // the only way an app connection comes into being.
 //
+// # Repository listing is on the wire, and it refuses rather than lies
+//
+// Browsing repositories is `RepoBrowser`, an *optional* capability in ADR-0033
+// decision 3: the GitHub adapter has it and a `generic` token connection does
+// not. An earlier cut of this file left the listing off the wire entirely,
+// because "an RPC every connection answered would have to lie for the ones that
+// cannot — an empty list is indistinguishable from 'this forge has no
+// browser'". That objection is about the *answer*, not about the RPC, and the
+// two calls below settle it by making the capability part of the vocabulary:
+// ListConnectionRepositories and ListConnectionBranches are served by a
+// connection whose provider implements the browser, and refused by one whose
+// provider does not — with the structured code `connection/capability-unsupported`
+// rather than with an empty list. A client can therefore tell "nothing here"
+// from "this forge cannot be asked", which is the whole of what was missing.
+//
+// The refusal is not an error state of the connection. A `generic` token
+// connection that cannot list repositories still mints credentials and clones
+// private ones, which is the only capability a deploy needs (ADR-0033
+// decision 3: "absence degrades the UI, never the deploy"), so the refusal says
+// what the connection *can* do and points at the pasted-URL path, which works
+// for every forge and every auth kind. A client that meets it falls back to
+// that field rather than treating the connection as broken.
+//
+// `repositories` on GitConnection stays what it was: a count the provider
+// reported at the last probe, not a page of this listing.
+//
 // # Deliberately omitted, and why
 //
 // **No UpdateConnection.** Rotating a credential is writing the Secret the
@@ -57,14 +83,6 @@
 // and create says so, where a field-level edit would let a connection quietly
 // become a different one under projects already resolving through it
 // (ADR-0033 decision 4).
-//
-// **No repository listing.** Browsing repositories is `RepoBrowser`, an
-// *optional* capability in ADR-0033 decision 3: the GitHub adapter has it and a
-// `generic` token connection does not. An RPC every connection answered would
-// have to lie for the ones that cannot — an empty list is indistinguishable
-// from "this forge has no browser" — so the repo picker is its own decision,
-// with the capability discovery it needs. `repositories` below is a count the
-// provider reported about an installation, not a list this service can page.
 //
 // **No credential read-back, and no GetConnectionSecret.** ADR-0009's masked
 // read-back applies to forge credentials unchanged; ADR-0033 amends what kelson
@@ -122,6 +140,12 @@ const (
 	// GitConnectionServiceTestConnectionProcedure is the fully-qualified name of the
 	// GitConnectionService's TestConnection RPC.
 	GitConnectionServiceTestConnectionProcedure = "/kelson.v1alpha1.GitConnectionService/TestConnection"
+	// GitConnectionServiceListConnectionRepositoriesProcedure is the fully-qualified name of the
+	// GitConnectionService's ListConnectionRepositories RPC.
+	GitConnectionServiceListConnectionRepositoriesProcedure = "/kelson.v1alpha1.GitConnectionService/ListConnectionRepositories"
+	// GitConnectionServiceListConnectionBranchesProcedure is the fully-qualified name of the
+	// GitConnectionService's ListConnectionBranches RPC.
+	GitConnectionServiceListConnectionBranchesProcedure = "/kelson.v1alpha1.GitConnectionService/ListConnectionBranches"
 )
 
 // GitConnectionServiceClient is a client for the kelson.v1alpha1.GitConnectionService service.
@@ -150,6 +174,37 @@ type GitConnectionServiceClient interface {
 	// never returned, and any token minted to make the call is registered with
 	// internal/redact before it is used.
 	TestConnection(context.Context, *connect.Request[v1alpha1.TestConnectionRequest]) (*connect.Response[v1alpha1.TestConnectionResponse], error)
+	// ListConnectionRepositories reports the repositories this connection's
+	// credential can see — the New Project repository picker's read, made
+	// server-side with the Secret the connection references.
+	//
+	// # It is capability-gated, and the gate is part of the answer
+	//
+	// Repository browsing is `RepoBrowser`, optional in ADR-0033 decision 3. A
+	// connection whose provider implements it is served; one whose provider does
+	// not is refused with `connection/capability-unsupported`, naming what the
+	// connection *can* do and saying that pasting the repository URL works for
+	// every connection there is. It is not an empty list, because an empty list
+	// is what a real installation with nothing selected looks like, and it is not
+	// a fault of the connection: a `generic` token connection that cannot be
+	// browsed still clones private repositories, which is the capability a deploy
+	// needs.
+	//
+	// Read-only, and it changes nothing: no status is written, and no credential
+	// reaches the response — GitRepository has no field one would fit in. Any
+	// token minted to make the call is registered with internal/redact before it
+	// is used, exactly as TestConnection's is.
+	ListConnectionRepositories(context.Context, *connect.Request[v1alpha1.ListConnectionRepositoriesRequest]) (*connect.Response[v1alpha1.ListConnectionRepositoriesResponse], error)
+	// ListConnectionBranches reports one repository's branches, for the picker's
+	// second step. Same capability gate and same refusal as
+	// ListConnectionRepositories — they are the two halves of one `RepoBrowser`,
+	// and a connection that answered the first will answer this one — and the
+	// same read-only posture.
+	//
+	// The repository is named as "owner/name" rather than as a URL: it is the key
+	// the listing above already reported, and re-deriving it from a URL here
+	// would be a second parser disagreeing with the first.
+	ListConnectionBranches(context.Context, *connect.Request[v1alpha1.ListConnectionBranchesRequest]) (*connect.Response[v1alpha1.ListConnectionBranchesResponse], error)
 }
 
 // NewGitConnectionServiceClient constructs a client for the kelson.v1alpha1.GitConnectionService
@@ -193,16 +248,30 @@ func NewGitConnectionServiceClient(httpClient connect.HTTPClient, baseURL string
 			connect.WithSchema(gitConnectionServiceMethods.ByName("TestConnection")),
 			connect.WithClientOptions(opts...),
 		),
+		listConnectionRepositories: connect.NewClient[v1alpha1.ListConnectionRepositoriesRequest, v1alpha1.ListConnectionRepositoriesResponse](
+			httpClient,
+			baseURL+GitConnectionServiceListConnectionRepositoriesProcedure,
+			connect.WithSchema(gitConnectionServiceMethods.ByName("ListConnectionRepositories")),
+			connect.WithClientOptions(opts...),
+		),
+		listConnectionBranches: connect.NewClient[v1alpha1.ListConnectionBranchesRequest, v1alpha1.ListConnectionBranchesResponse](
+			httpClient,
+			baseURL+GitConnectionServiceListConnectionBranchesProcedure,
+			connect.WithSchema(gitConnectionServiceMethods.ByName("ListConnectionBranches")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // gitConnectionServiceClient implements GitConnectionServiceClient.
 type gitConnectionServiceClient struct {
-	listConnections  *connect.Client[v1alpha1.ListConnectionsRequest, v1alpha1.ListConnectionsResponse]
-	getConnection    *connect.Client[v1alpha1.GetConnectionRequest, v1alpha1.GetConnectionResponse]
-	createConnection *connect.Client[v1alpha1.CreateConnectionRequest, v1alpha1.CreateConnectionResponse]
-	deleteConnection *connect.Client[v1alpha1.DeleteConnectionRequest, v1alpha1.DeleteConnectionResponse]
-	testConnection   *connect.Client[v1alpha1.TestConnectionRequest, v1alpha1.TestConnectionResponse]
+	listConnections            *connect.Client[v1alpha1.ListConnectionsRequest, v1alpha1.ListConnectionsResponse]
+	getConnection              *connect.Client[v1alpha1.GetConnectionRequest, v1alpha1.GetConnectionResponse]
+	createConnection           *connect.Client[v1alpha1.CreateConnectionRequest, v1alpha1.CreateConnectionResponse]
+	deleteConnection           *connect.Client[v1alpha1.DeleteConnectionRequest, v1alpha1.DeleteConnectionResponse]
+	testConnection             *connect.Client[v1alpha1.TestConnectionRequest, v1alpha1.TestConnectionResponse]
+	listConnectionRepositories *connect.Client[v1alpha1.ListConnectionRepositoriesRequest, v1alpha1.ListConnectionRepositoriesResponse]
+	listConnectionBranches     *connect.Client[v1alpha1.ListConnectionBranchesRequest, v1alpha1.ListConnectionBranchesResponse]
 }
 
 // ListConnections calls kelson.v1alpha1.GitConnectionService.ListConnections.
@@ -228,6 +297,16 @@ func (c *gitConnectionServiceClient) DeleteConnection(ctx context.Context, req *
 // TestConnection calls kelson.v1alpha1.GitConnectionService.TestConnection.
 func (c *gitConnectionServiceClient) TestConnection(ctx context.Context, req *connect.Request[v1alpha1.TestConnectionRequest]) (*connect.Response[v1alpha1.TestConnectionResponse], error) {
 	return c.testConnection.CallUnary(ctx, req)
+}
+
+// ListConnectionRepositories calls kelson.v1alpha1.GitConnectionService.ListConnectionRepositories.
+func (c *gitConnectionServiceClient) ListConnectionRepositories(ctx context.Context, req *connect.Request[v1alpha1.ListConnectionRepositoriesRequest]) (*connect.Response[v1alpha1.ListConnectionRepositoriesResponse], error) {
+	return c.listConnectionRepositories.CallUnary(ctx, req)
+}
+
+// ListConnectionBranches calls kelson.v1alpha1.GitConnectionService.ListConnectionBranches.
+func (c *gitConnectionServiceClient) ListConnectionBranches(ctx context.Context, req *connect.Request[v1alpha1.ListConnectionBranchesRequest]) (*connect.Response[v1alpha1.ListConnectionBranchesResponse], error) {
+	return c.listConnectionBranches.CallUnary(ctx, req)
 }
 
 // GitConnectionServiceHandler is an implementation of the kelson.v1alpha1.GitConnectionService
@@ -257,6 +336,37 @@ type GitConnectionServiceHandler interface {
 	// never returned, and any token minted to make the call is registered with
 	// internal/redact before it is used.
 	TestConnection(context.Context, *connect.Request[v1alpha1.TestConnectionRequest]) (*connect.Response[v1alpha1.TestConnectionResponse], error)
+	// ListConnectionRepositories reports the repositories this connection's
+	// credential can see — the New Project repository picker's read, made
+	// server-side with the Secret the connection references.
+	//
+	// # It is capability-gated, and the gate is part of the answer
+	//
+	// Repository browsing is `RepoBrowser`, optional in ADR-0033 decision 3. A
+	// connection whose provider implements it is served; one whose provider does
+	// not is refused with `connection/capability-unsupported`, naming what the
+	// connection *can* do and saying that pasting the repository URL works for
+	// every connection there is. It is not an empty list, because an empty list
+	// is what a real installation with nothing selected looks like, and it is not
+	// a fault of the connection: a `generic` token connection that cannot be
+	// browsed still clones private repositories, which is the capability a deploy
+	// needs.
+	//
+	// Read-only, and it changes nothing: no status is written, and no credential
+	// reaches the response — GitRepository has no field one would fit in. Any
+	// token minted to make the call is registered with internal/redact before it
+	// is used, exactly as TestConnection's is.
+	ListConnectionRepositories(context.Context, *connect.Request[v1alpha1.ListConnectionRepositoriesRequest]) (*connect.Response[v1alpha1.ListConnectionRepositoriesResponse], error)
+	// ListConnectionBranches reports one repository's branches, for the picker's
+	// second step. Same capability gate and same refusal as
+	// ListConnectionRepositories — they are the two halves of one `RepoBrowser`,
+	// and a connection that answered the first will answer this one — and the
+	// same read-only posture.
+	//
+	// The repository is named as "owner/name" rather than as a URL: it is the key
+	// the listing above already reported, and re-deriving it from a URL here
+	// would be a second parser disagreeing with the first.
+	ListConnectionBranches(context.Context, *connect.Request[v1alpha1.ListConnectionBranchesRequest]) (*connect.Response[v1alpha1.ListConnectionBranchesResponse], error)
 }
 
 // NewGitConnectionServiceHandler builds an HTTP handler from the service implementation. It returns
@@ -296,6 +406,18 @@ func NewGitConnectionServiceHandler(svc GitConnectionServiceHandler, opts ...con
 		connect.WithSchema(gitConnectionServiceMethods.ByName("TestConnection")),
 		connect.WithHandlerOptions(opts...),
 	)
+	gitConnectionServiceListConnectionRepositoriesHandler := connect.NewUnaryHandler(
+		GitConnectionServiceListConnectionRepositoriesProcedure,
+		svc.ListConnectionRepositories,
+		connect.WithSchema(gitConnectionServiceMethods.ByName("ListConnectionRepositories")),
+		connect.WithHandlerOptions(opts...),
+	)
+	gitConnectionServiceListConnectionBranchesHandler := connect.NewUnaryHandler(
+		GitConnectionServiceListConnectionBranchesProcedure,
+		svc.ListConnectionBranches,
+		connect.WithSchema(gitConnectionServiceMethods.ByName("ListConnectionBranches")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/kelson.v1alpha1.GitConnectionService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case GitConnectionServiceListConnectionsProcedure:
@@ -308,6 +430,10 @@ func NewGitConnectionServiceHandler(svc GitConnectionServiceHandler, opts ...con
 			gitConnectionServiceDeleteConnectionHandler.ServeHTTP(w, r)
 		case GitConnectionServiceTestConnectionProcedure:
 			gitConnectionServiceTestConnectionHandler.ServeHTTP(w, r)
+		case GitConnectionServiceListConnectionRepositoriesProcedure:
+			gitConnectionServiceListConnectionRepositoriesHandler.ServeHTTP(w, r)
+		case GitConnectionServiceListConnectionBranchesProcedure:
+			gitConnectionServiceListConnectionBranchesHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -335,4 +461,12 @@ func (UnimplementedGitConnectionServiceHandler) DeleteConnection(context.Context
 
 func (UnimplementedGitConnectionServiceHandler) TestConnection(context.Context, *connect.Request[v1alpha1.TestConnectionRequest]) (*connect.Response[v1alpha1.TestConnectionResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("kelson.v1alpha1.GitConnectionService.TestConnection is not implemented"))
+}
+
+func (UnimplementedGitConnectionServiceHandler) ListConnectionRepositories(context.Context, *connect.Request[v1alpha1.ListConnectionRepositoriesRequest]) (*connect.Response[v1alpha1.ListConnectionRepositoriesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("kelson.v1alpha1.GitConnectionService.ListConnectionRepositories is not implemented"))
+}
+
+func (UnimplementedGitConnectionServiceHandler) ListConnectionBranches(context.Context, *connect.Request[v1alpha1.ListConnectionBranchesRequest]) (*connect.Response[v1alpha1.ListConnectionBranchesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("kelson.v1alpha1.GitConnectionService.ListConnectionBranches is not implemented"))
 }

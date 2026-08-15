@@ -47,6 +47,32 @@
 // service reports and never a value it accepts, and the HTTP callback pair is
 // the only way an app connection comes into being.
 //
+// # Repository listing is on the wire, and it refuses rather than lies
+//
+// Browsing repositories is `RepoBrowser`, an *optional* capability in ADR-0033
+// decision 3: the GitHub adapter has it and a `generic` token connection does
+// not. An earlier cut of this file left the listing off the wire entirely,
+// because "an RPC every connection answered would have to lie for the ones that
+// cannot — an empty list is indistinguishable from 'this forge has no
+// browser'". That objection is about the *answer*, not about the RPC, and the
+// two calls below settle it by making the capability part of the vocabulary:
+// ListConnectionRepositories and ListConnectionBranches are served by a
+// connection whose provider implements the browser, and refused by one whose
+// provider does not — with the structured code `connection/capability-unsupported`
+// rather than with an empty list. A client can therefore tell "nothing here"
+// from "this forge cannot be asked", which is the whole of what was missing.
+//
+// The refusal is not an error state of the connection. A `generic` token
+// connection that cannot list repositories still mints credentials and clones
+// private ones, which is the only capability a deploy needs (ADR-0033
+// decision 3: "absence degrades the UI, never the deploy"), so the refusal says
+// what the connection *can* do and points at the pasted-URL path, which works
+// for every forge and every auth kind. A client that meets it falls back to
+// that field rather than treating the connection as broken.
+//
+// `repositories` on GitConnection stays what it was: a count the provider
+// reported at the last probe, not a page of this listing.
+//
 // # Deliberately omitted, and why
 //
 // **No UpdateConnection.** Rotating a credential is writing the Secret the
@@ -57,14 +83,6 @@
 // and create says so, where a field-level edit would let a connection quietly
 // become a different one under projects already resolving through it
 // (ADR-0033 decision 4).
-//
-// **No repository listing.** Browsing repositories is `RepoBrowser`, an
-// *optional* capability in ADR-0033 decision 3: the GitHub adapter has it and a
-// `generic` token connection does not. An RPC every connection answered would
-// have to lie for the ones that cannot — an empty list is indistinguishable
-// from "this forge has no browser" — so the repo picker is its own decision,
-// with the capability discovery it needs. `repositories` below is a count the
-// provider reported about an installation, not a list this service can page.
 //
 // **No credential read-back, and no GetConnectionSecret.** ADR-0009's masked
 // read-back applies to forge credentials unchanged; ADR-0033 amends what kelson
@@ -86,7 +104,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file kelson/v1alpha1/gitconnection.proto.
  */
 export const file_kelson_v1alpha1_gitconnection: GenFile = /*@__PURE__*/
-  fileDesc("CiNrZWxzb24vdjFhbHBoYTEvZ2l0Y29ubmVjdGlvbi5wcm90bxIPa2Vsc29uLnYxYWxwaGExIkUKCEdpdE93bmVyEisKBGtpbmQYASABKA4yHS5rZWxzb24udjFhbHBoYTEuR2l0T3duZXJLaW5kEgwKBG5hbWUYAiABKAkirwIKDUdpdENvbm5lY3Rpb24SDAoEbmFtZRgBIAEoCRIQCghwcm92aWRlchgCIAEoCRIMCgRob3N0GAMgASgJEigKBW93bmVyGAQgASgLMhkua2Vsc29uLnYxYWxwaGExLkdpdE93bmVyEi8KCWF1dGhfa2luZBgFIAEoDjIcLmtlbHNvbi52MWFscGhhMS5HaXRBdXRoS2luZBIOCgZhcHBfaWQYBiABKAMSFwoPaW5zdGFsbGF0aW9uX2lkGAcgASgDEhIKCnNlY3JldF9yZWYYCCABKAkSDwoHYWNjb3VudBgJIAEoCRIUCgxyZXBvc2l0b3JpZXMYCiABKAUSDQoFcmVhZHkYCyABKAgSEQoJcmVhY2hhYmxlGAwgASgIEg8KB21lc3NhZ2UYDSABKAkiGAoWTGlzdENvbm5lY3Rpb25zUmVxdWVzdCJOChdMaXN0Q29ubmVjdGlvbnNSZXNwb25zZRIzCgtjb25uZWN0aW9ucxgBIAMoCzIeLmtlbHNvbi52MWFscGhhMS5HaXRDb25uZWN0aW9uIiQKFEdldENvbm5lY3Rpb25SZXF1ZXN0EgwKBG5hbWUYASABKAkiSwoVR2V0Q29ubmVjdGlvblJlc3BvbnNlEjIKCmNvbm5lY3Rpb24YASABKAsyHi5rZWxzb24udjFhbHBoYTEuR2l0Q29ubmVjdGlvbiLIAQoXQ3JlYXRlQ29ubmVjdGlvblJlcXVlc3QSDAoEbmFtZRgBIAEoCRIQCghwcm92aWRlchgCIAEoCRIMCgRob3N0GAMgASgJEhIKCnNlY3JldF9yZWYYBCABKAkSKAoFb3duZXIYBSABKAsyGS5rZWxzb24udjFhbHBoYTEuR2l0T3duZXISKAoHZHJ5X3J1bhgGIAEoDjIXLmtlbHNvbi52MWFscGhhMS5EcnlSdW4SFwoPaWRlbXBvdGVuY3lfa2V5GAcgASgJIl8KGENyZWF0ZUNvbm5lY3Rpb25SZXNwb25zZRIyCgpjb25uZWN0aW9uGAEgASgLMh4ua2Vsc29uLnYxYWxwaGExLkdpdENvbm5lY3Rpb24SDwoHZHJ5X3J1bhgCIAEoCCJqChdEZWxldGVDb25uZWN0aW9uUmVxdWVzdBIMCgRuYW1lGAEgASgJEigKB2RyeV9ydW4YAiABKA4yFy5rZWxzb24udjFhbHBoYTEuRHJ5UnVuEhcKD2lkZW1wb3RlbmN5X2tleRgDIAEoCSJGChhEZWxldGVDb25uZWN0aW9uUmVzcG9uc2USDwoHZGVsZXRlZBgBIAEoCBIZChFhZmZlY3RlZF9wcm9qZWN0cxgCIAMoCSIlChVUZXN0Q29ubmVjdGlvblJlcXVlc3QSDAoEbmFtZRgBIAEoCSJjChZUZXN0Q29ubmVjdGlvblJlc3BvbnNlEhEKCXJlYWNoYWJsZRgBIAEoCBIPCgdhY2NvdW50GAIgASgJEhQKDHJlcG9zaXRvcmllcxgDIAEoBRIPCgdtZXNzYWdlGAQgASgJKmMKC0dpdEF1dGhLaW5kEh0KGUdJVF9BVVRIX0tJTkRfVU5TUEVDSUZJRUQQABIcChhHSVRfQVVUSF9LSU5EX0dJVEhVQl9BUFAQARIXChNHSVRfQVVUSF9LSU5EX1RPS0VOEAIqfQoMR2l0T3duZXJLaW5kEh4KGkdJVF9PV05FUl9LSU5EX1VOU1BFQ0lGSUVEEAASGwoXR0lUX09XTkVSX0tJTkRfSU5TVEFOQ0UQARIXChNHSVRfT1dORVJfS0lORF9VU0VSEAISFwoTR0lUX09XTkVSX0tJTkRfVEVBTRADMpEEChRHaXRDb25uZWN0aW9uU2VydmljZRJkCg9MaXN0Q29ubmVjdGlvbnMSJy5rZWxzb24udjFhbHBoYTEuTGlzdENvbm5lY3Rpb25zUmVxdWVzdBooLmtlbHNvbi52MWFscGhhMS5MaXN0Q29ubmVjdGlvbnNSZXNwb25zZRJeCg1HZXRDb25uZWN0aW9uEiUua2Vsc29uLnYxYWxwaGExLkdldENvbm5lY3Rpb25SZXF1ZXN0GiYua2Vsc29uLnYxYWxwaGExLkdldENvbm5lY3Rpb25SZXNwb25zZRJnChBDcmVhdGVDb25uZWN0aW9uEigua2Vsc29uLnYxYWxwaGExLkNyZWF0ZUNvbm5lY3Rpb25SZXF1ZXN0Gikua2Vsc29uLnYxYWxwaGExLkNyZWF0ZUNvbm5lY3Rpb25SZXNwb25zZRJnChBEZWxldGVDb25uZWN0aW9uEigua2Vsc29uLnYxYWxwaGExLkRlbGV0ZUNvbm5lY3Rpb25SZXF1ZXN0Gikua2Vsc29uLnYxYWxwaGExLkRlbGV0ZUNvbm5lY3Rpb25SZXNwb25zZRJhCg5UZXN0Q29ubmVjdGlvbhImLmtlbHNvbi52MWFscGhhMS5UZXN0Q29ubmVjdGlvblJlcXVlc3QaJy5rZWxzb24udjFhbHBoYTEuVGVzdENvbm5lY3Rpb25SZXNwb25zZUJKWkhnaXRodWIuY29tL2RhZnJpZS9rZWxzb24vaW50ZXJuYWwvYXBpL2dlbi9rZWxzb24vdjFhbHBoYTE7a2Vsc29udjFhbHBoYTFiBnByb3RvMw", [file_kelson_v1alpha1_common]);
+  fileDesc("CiNrZWxzb24vdjFhbHBoYTEvZ2l0Y29ubmVjdGlvbi5wcm90bxIPa2Vsc29uLnYxYWxwaGExIkUKCEdpdE93bmVyEisKBGtpbmQYASABKA4yHS5rZWxzb24udjFhbHBoYTEuR2l0T3duZXJLaW5kEgwKBG5hbWUYAiABKAkirwIKDUdpdENvbm5lY3Rpb24SDAoEbmFtZRgBIAEoCRIQCghwcm92aWRlchgCIAEoCRIMCgRob3N0GAMgASgJEigKBW93bmVyGAQgASgLMhkua2Vsc29uLnYxYWxwaGExLkdpdE93bmVyEi8KCWF1dGhfa2luZBgFIAEoDjIcLmtlbHNvbi52MWFscGhhMS5HaXRBdXRoS2luZBIOCgZhcHBfaWQYBiABKAMSFwoPaW5zdGFsbGF0aW9uX2lkGAcgASgDEhIKCnNlY3JldF9yZWYYCCABKAkSDwoHYWNjb3VudBgJIAEoCRIUCgxyZXBvc2l0b3JpZXMYCiABKAUSDQoFcmVhZHkYCyABKAgSEQoJcmVhY2hhYmxlGAwgASgIEg8KB21lc3NhZ2UYDSABKAkiGAoWTGlzdENvbm5lY3Rpb25zUmVxdWVzdCJOChdMaXN0Q29ubmVjdGlvbnNSZXNwb25zZRIzCgtjb25uZWN0aW9ucxgBIAMoCzIeLmtlbHNvbi52MWFscGhhMS5HaXRDb25uZWN0aW9uIiQKFEdldENvbm5lY3Rpb25SZXF1ZXN0EgwKBG5hbWUYASABKAkiSwoVR2V0Q29ubmVjdGlvblJlc3BvbnNlEjIKCmNvbm5lY3Rpb24YASABKAsyHi5rZWxzb24udjFhbHBoYTEuR2l0Q29ubmVjdGlvbiLIAQoXQ3JlYXRlQ29ubmVjdGlvblJlcXVlc3QSDAoEbmFtZRgBIAEoCRIQCghwcm92aWRlchgCIAEoCRIMCgRob3N0GAMgASgJEhIKCnNlY3JldF9yZWYYBCABKAkSKAoFb3duZXIYBSABKAsyGS5rZWxzb24udjFhbHBoYTEuR2l0T3duZXISKAoHZHJ5X3J1bhgGIAEoDjIXLmtlbHNvbi52MWFscGhhMS5EcnlSdW4SFwoPaWRlbXBvdGVuY3lfa2V5GAcgASgJIl8KGENyZWF0ZUNvbm5lY3Rpb25SZXNwb25zZRIyCgpjb25uZWN0aW9uGAEgASgLMh4ua2Vsc29uLnYxYWxwaGExLkdpdENvbm5lY3Rpb24SDwoHZHJ5X3J1bhgCIAEoCCJqChdEZWxldGVDb25uZWN0aW9uUmVxdWVzdBIMCgRuYW1lGAEgASgJEigKB2RyeV9ydW4YAiABKA4yFy5rZWxzb24udjFhbHBoYTEuRHJ5UnVuEhcKD2lkZW1wb3RlbmN5X2tleRgDIAEoCSJGChhEZWxldGVDb25uZWN0aW9uUmVzcG9uc2USDwoHZGVsZXRlZBgBIAEoCBIZChFhZmZlY3RlZF9wcm9qZWN0cxgCIAMoCSIlChVUZXN0Q29ubmVjdGlvblJlcXVlc3QSDAoEbmFtZRgBIAEoCSJjChZUZXN0Q29ubmVjdGlvblJlc3BvbnNlEhEKCXJlYWNoYWJsZRgBIAEoCBIPCgdhY2NvdW50GAIgASgJEhQKDHJlcG9zaXRvcmllcxgDIAEoBRIPCgdtZXNzYWdlGAQgASgJIl0KDUdpdFJlcG9zaXRvcnkSEQoJZnVsbF9uYW1lGAEgASgJEhAKCGh0bWxfdXJsGAIgASgJEhYKDmRlZmF1bHRfYnJhbmNoGAMgASgJEg8KB3ByaXZhdGUYBCABKAgiNwohTGlzdENvbm5lY3Rpb25SZXBvc2l0b3JpZXNSZXF1ZXN0EhIKCmNvbm5lY3Rpb24YASABKAkiWgoiTGlzdENvbm5lY3Rpb25SZXBvc2l0b3JpZXNSZXNwb25zZRI0CgxyZXBvc2l0b3JpZXMYASADKAsyHi5rZWxzb24udjFhbHBoYTEuR2l0UmVwb3NpdG9yeSJHCh1MaXN0Q29ubmVjdGlvbkJyYW5jaGVzUmVxdWVzdBISCgpjb25uZWN0aW9uGAEgASgJEhIKCnJlcG9zaXRvcnkYAiABKAkiMgoeTGlzdENvbm5lY3Rpb25CcmFuY2hlc1Jlc3BvbnNlEhAKCGJyYW5jaGVzGAEgAygJKmMKC0dpdEF1dGhLaW5kEh0KGUdJVF9BVVRIX0tJTkRfVU5TUEVDSUZJRUQQABIcChhHSVRfQVVUSF9LSU5EX0dJVEhVQl9BUFAQARIXChNHSVRfQVVUSF9LSU5EX1RPS0VOEAIqfQoMR2l0T3duZXJLaW5kEh4KGkdJVF9PV05FUl9LSU5EX1VOU1BFQ0lGSUVEEAASGwoXR0lUX09XTkVSX0tJTkRfSU5TVEFOQ0UQARIXChNHSVRfT1dORVJfS0lORF9VU0VSEAISFwoTR0lUX09XTkVSX0tJTkRfVEVBTRADMpQGChRHaXRDb25uZWN0aW9uU2VydmljZRJkCg9MaXN0Q29ubmVjdGlvbnMSJy5rZWxzb24udjFhbHBoYTEuTGlzdENvbm5lY3Rpb25zUmVxdWVzdBooLmtlbHNvbi52MWFscGhhMS5MaXN0Q29ubmVjdGlvbnNSZXNwb25zZRJeCg1HZXRDb25uZWN0aW9uEiUua2Vsc29uLnYxYWxwaGExLkdldENvbm5lY3Rpb25SZXF1ZXN0GiYua2Vsc29uLnYxYWxwaGExLkdldENvbm5lY3Rpb25SZXNwb25zZRJnChBDcmVhdGVDb25uZWN0aW9uEigua2Vsc29uLnYxYWxwaGExLkNyZWF0ZUNvbm5lY3Rpb25SZXF1ZXN0Gikua2Vsc29uLnYxYWxwaGExLkNyZWF0ZUNvbm5lY3Rpb25SZXNwb25zZRJnChBEZWxldGVDb25uZWN0aW9uEigua2Vsc29uLnYxYWxwaGExLkRlbGV0ZUNvbm5lY3Rpb25SZXF1ZXN0Gikua2Vsc29uLnYxYWxwaGExLkRlbGV0ZUNvbm5lY3Rpb25SZXNwb25zZRJhCg5UZXN0Q29ubmVjdGlvbhImLmtlbHNvbi52MWFscGhhMS5UZXN0Q29ubmVjdGlvblJlcXVlc3QaJy5rZWxzb24udjFhbHBoYTEuVGVzdENvbm5lY3Rpb25SZXNwb25zZRKFAQoaTGlzdENvbm5lY3Rpb25SZXBvc2l0b3JpZXMSMi5rZWxzb24udjFhbHBoYTEuTGlzdENvbm5lY3Rpb25SZXBvc2l0b3JpZXNSZXF1ZXN0GjMua2Vsc29uLnYxYWxwaGExLkxpc3RDb25uZWN0aW9uUmVwb3NpdG9yaWVzUmVzcG9uc2USeQoWTGlzdENvbm5lY3Rpb25CcmFuY2hlcxIuLmtlbHNvbi52MWFscGhhMS5MaXN0Q29ubmVjdGlvbkJyYW5jaGVzUmVxdWVzdBovLmtlbHNvbi52MWFscGhhMS5MaXN0Q29ubmVjdGlvbkJyYW5jaGVzUmVzcG9uc2VCSlpIZ2l0aHViLmNvbS9kYWZyaWUva2Vsc29uL2ludGVybmFsL2FwaS9nZW4va2Vsc29uL3YxYWxwaGExO2tlbHNvbnYxYWxwaGExYgZwcm90bzM", [file_kelson_v1alpha1_common]);
 
 /**
  * GitOwner is who may edit, rotate and delete a connection — ADR-0033
@@ -561,6 +579,150 @@ export const TestConnectionResponseSchema: GenMessage<TestConnectionResponse> = 
   messageDesc(file_kelson_v1alpha1_gitconnection, 11);
 
 /**
+ * GitRepository is one repository a connection can see, reduced to what a
+ * picker needs: a row to show, and the fields that fill in a Project's
+ * `spec.source`. It mirrors internal/forge's own Repo, which is deliberately
+ * this small — whatever else a forge reports about a repository is that forge's
+ * business and stops at the adapter.
+ *
+ * @generated from message kelson.v1alpha1.GitRepository
+ */
+export type GitRepository = Message<"kelson.v1alpha1.GitRepository"> & {
+  /**
+   * "owner/name" as the forge spells it, which is the key ListConnectionBranches
+   * takes back.
+   *
+   * @generated from field: string full_name = 1;
+   */
+  fullName: string;
+
+  /**
+   * The browser URL, and the value that goes into `Project.spec.source.git`.
+   * It is the forge's own, not one assembled from host and full_name: a
+   * self-hosted instance serving repositories under a path prefix would have
+   * the assembled one point at nothing.
+   *
+   * @generated from field: string html_url = 2;
+   */
+  htmlUrl: string;
+
+  /**
+   * The branch a clone lands on when nothing asks for another — what a picker
+   * preselects, and what leaving `spec.source.ref` empty resolves to.
+   *
+   * @generated from field: string default_branch = 3;
+   */
+  defaultBranch: string;
+
+  /**
+   * Whether reading it needs the credential at all. A picker shows it as a
+   * badge; nothing else in kelson branches on it, because a connection that
+   * can see a repository can clone it whichever this says.
+   *
+   * @generated from field: bool private = 4;
+   */
+  private: boolean;
+};
+
+/**
+ * Describes the message kelson.v1alpha1.GitRepository.
+ * Use `create(GitRepositorySchema)` to create a new message.
+ */
+export const GitRepositorySchema: GenMessage<GitRepository> = /*@__PURE__*/
+  messageDesc(file_kelson_v1alpha1_gitconnection, 12);
+
+/**
+ * ListConnectionRepositoriesRequest names the connection to browse. It is
+ * `connection` and not `name` because the answer is about repositories rather
+ * than about the connection — the same word Project.spec.source.connection uses
+ * for the same reference.
+ *
+ * @generated from message kelson.v1alpha1.ListConnectionRepositoriesRequest
+ */
+export type ListConnectionRepositoriesRequest = Message<"kelson.v1alpha1.ListConnectionRepositoriesRequest"> & {
+  /**
+   * @generated from field: string connection = 1;
+   */
+  connection: string;
+};
+
+/**
+ * Describes the message kelson.v1alpha1.ListConnectionRepositoriesRequest.
+ * Use `create(ListConnectionRepositoriesRequestSchema)` to create a new message.
+ */
+export const ListConnectionRepositoriesRequestSchema: GenMessage<ListConnectionRepositoriesRequest> = /*@__PURE__*/
+  messageDesc(file_kelson_v1alpha1_gitconnection, 13);
+
+/**
+ * @generated from message kelson.v1alpha1.ListConnectionRepositoriesResponse
+ */
+export type ListConnectionRepositoriesResponse = Message<"kelson.v1alpha1.ListConnectionRepositoriesResponse"> & {
+  /**
+   * Every repository the credential can see, in the order the provider
+   * reported them. An installation lists exactly the repositories it was
+   * granted; a token lists everything its owner can reach, which is a wider and
+   * less deliberate set — ADR-0033 decision 2's argument for the app, visible
+   * here as the difference between a short list and a long one.
+   *
+   * @generated from field: repeated kelson.v1alpha1.GitRepository repositories = 1;
+   */
+  repositories: GitRepository[];
+};
+
+/**
+ * Describes the message kelson.v1alpha1.ListConnectionRepositoriesResponse.
+ * Use `create(ListConnectionRepositoriesResponseSchema)` to create a new message.
+ */
+export const ListConnectionRepositoriesResponseSchema: GenMessage<ListConnectionRepositoriesResponse> = /*@__PURE__*/
+  messageDesc(file_kelson_v1alpha1_gitconnection, 14);
+
+/**
+ * @generated from message kelson.v1alpha1.ListConnectionBranchesRequest
+ */
+export type ListConnectionBranchesRequest = Message<"kelson.v1alpha1.ListConnectionBranchesRequest"> & {
+  /**
+   * @generated from field: string connection = 1;
+   */
+  connection: string;
+
+  /**
+   * "owner/name", as GitRepository.full_name reported it.
+   *
+   * @generated from field: string repository = 2;
+   */
+  repository: string;
+};
+
+/**
+ * Describes the message kelson.v1alpha1.ListConnectionBranchesRequest.
+ * Use `create(ListConnectionBranchesRequestSchema)` to create a new message.
+ */
+export const ListConnectionBranchesRequestSchema: GenMessage<ListConnectionBranchesRequest> = /*@__PURE__*/
+  messageDesc(file_kelson_v1alpha1_gitconnection, 15);
+
+/**
+ * @generated from message kelson.v1alpha1.ListConnectionBranchesResponse
+ */
+export type ListConnectionBranchesResponse = Message<"kelson.v1alpha1.ListConnectionBranchesResponse"> & {
+  /**
+   * Branch names only. A picker needs a name to write into `spec.source.ref`
+   * and the ref resolver needs nothing from here at all, so the commit each
+   * branch points at is deliberately absent: it would be stale by the time it
+   * was read, and reading it is what BuildService does at build time.
+   *
+   * @generated from field: repeated string branches = 1;
+   */
+  branches: string[];
+};
+
+/**
+ * Describes the message kelson.v1alpha1.ListConnectionBranchesResponse.
+ * Use `create(ListConnectionBranchesResponseSchema)` to create a new message.
+ */
+export const ListConnectionBranchesResponseSchema: GenMessage<ListConnectionBranchesResponse> = /*@__PURE__*/
+  messageDesc(file_kelson_v1alpha1_gitconnection, 16);
+
+/**
  * GitAuthKind is which of ADR-0033 decision 2's two auth shapes a connection
  * carries. The CR spells it as exactly-one-of `auth.githubApp` / `auth.token`;
  * on the wire it is a discriminator plus the fields each shape populates,
@@ -709,6 +871,53 @@ export const GitConnectionService: GenService<{
     methodKind: "unary";
     input: typeof TestConnectionRequestSchema;
     output: typeof TestConnectionResponseSchema;
+  },
+  /**
+   * ListConnectionRepositories reports the repositories this connection's
+   * credential can see — the New Project repository picker's read, made
+   * server-side with the Secret the connection references.
+   *
+   * # It is capability-gated, and the gate is part of the answer
+   *
+   * Repository browsing is `RepoBrowser`, optional in ADR-0033 decision 3. A
+   * connection whose provider implements it is served; one whose provider does
+   * not is refused with `connection/capability-unsupported`, naming what the
+   * connection *can* do and saying that pasting the repository URL works for
+   * every connection there is. It is not an empty list, because an empty list
+   * is what a real installation with nothing selected looks like, and it is not
+   * a fault of the connection: a `generic` token connection that cannot be
+   * browsed still clones private repositories, which is the capability a deploy
+   * needs.
+   *
+   * Read-only, and it changes nothing: no status is written, and no credential
+   * reaches the response — GitRepository has no field one would fit in. Any
+   * token minted to make the call is registered with internal/redact before it
+   * is used, exactly as TestConnection's is.
+   *
+   * @generated from rpc kelson.v1alpha1.GitConnectionService.ListConnectionRepositories
+   */
+  listConnectionRepositories: {
+    methodKind: "unary";
+    input: typeof ListConnectionRepositoriesRequestSchema;
+    output: typeof ListConnectionRepositoriesResponseSchema;
+  },
+  /**
+   * ListConnectionBranches reports one repository's branches, for the picker's
+   * second step. Same capability gate and same refusal as
+   * ListConnectionRepositories — they are the two halves of one `RepoBrowser`,
+   * and a connection that answered the first will answer this one — and the
+   * same read-only posture.
+   *
+   * The repository is named as "owner/name" rather than as a URL: it is the key
+   * the listing above already reported, and re-deriving it from a URL here
+   * would be a second parser disagreeing with the first.
+   *
+   * @generated from rpc kelson.v1alpha1.GitConnectionService.ListConnectionBranches
+   */
+  listConnectionBranches: {
+    methodKind: "unary";
+    input: typeof ListConnectionBranchesRequestSchema;
+    output: typeof ListConnectionBranchesResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_kelson_v1alpha1_gitconnection, 0);

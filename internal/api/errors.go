@@ -140,6 +140,17 @@ func planeErrors(err error) []*kelsonv1alpha1.Error {
 	if errors.As(err, &reportErr) {
 		return []*kelsonv1alpha1.Error{reportErr.wire()}
 	}
+
+	// The forge-connection plane (ADR-0033, issue #248). The api plane's
+	// vocabulary again, and its prefix answers a question the others cannot:
+	// `connection/capability-unsupported` says this *forge* has no repository
+	// browser, where `store/not-found` would say the connection is missing and
+	// `auth/out-of-scope` would say the caller may not ask. A client that
+	// conflated them would tell somebody to fix a connection that is working.
+	var connErr connectionError
+	if errors.As(err, &connErr) {
+		return []*kelsonv1alpha1.Error{connErr.wire()}
+	}
 	return nil
 }
 

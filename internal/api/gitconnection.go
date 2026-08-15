@@ -257,17 +257,7 @@ func (s *Server) probe(ctx context.Context, conn controlstore.StoredConnection) 
 	// Ready is settled from here on: the document validated to be stored and
 	// the Secret holds the key this auth kind reads. Whatever the forge says
 	// next is Reachable's business.
-	c := forge.Conn{
-		Provider:      string(conn.Spec.Provider),
-		Host:          conn.Spec.EffectiveHost(),
-		Token:         material.Token,
-		Username:      material.Username,
-		PrivateKeyPEM: material.PrivateKeyPEM,
-		WebhookSecret: material.WebhookSecret,
-	}
-	if app := conn.Spec.Auth.GitHubApp; app != nil {
-		c.AppID, c.InstallationID = app.AppID, app.InstallationID
-	}
+	c := forgeConn(conn, material)
 
 	// The connection's own host stands in for a repository URL. Nothing in the
 	// seam scopes a credential to one — an installation token already carries
@@ -317,6 +307,271 @@ func (s *Server) probe(ctx context.Context, conn controlstore.StoredConnection) 
 		Message:         probeSummary(conn, account, spread, len(repos)),
 		ReachableReason: controlstore.ReasonReachable,
 	}
+}
+
+// Repository browsing, capability-gated (ADR-0033 decision 3, issue #248).
+//
+// # Why these two RPCs can exist now and could not before
+//
+// gitconnection.proto's first cut left repository listing off the wire on the
+// grounds that "an RPC every connection answered would have to lie for the ones
+// that cannot". The objection was about the answer: an empty list is what a
+// GitHub App installation with nothing selected looks like *and* what a
+// `generic` token connection with no browser at all would have to look like,
+// and no client can tell those apart. These two calls do not answer that way.
+// A connection whose provider implements [forge.RepoBrowser] is served, and one
+// whose provider does not is *refused*, with a code in the api plane's own
+// vocabulary — so "nothing here" and "this forge cannot be asked" are different
+// answers rather than the same empty slice.
+//
+// # The refusal comes before the Secret is opened
+//
+// [Server.browse] resolves the connection, resolves the adapter and checks the
+// capability, and only then reaches for [ConnectionSecretReader]. A connection
+// that cannot be browsed therefore never has its Secret read to find that out,
+// which keeps this file's structural rule intact for the path that most looks
+// like it needs bending: the one place a credential would be read for a request
+// that was always going to be refused.
+
+// Connection error codes. They are the api plane's own vocabulary, like
+// `auth/…` and `report/…`, and they ride the wire shape every other plane's
+// errors do (errors.go) — so an agent branches on
+// `connection/capability-unsupported` exactly where it branches on
+// `store/not-found`.
+const (
+	// ErrConnectionCapabilityUnsupported is a connection whose provider does
+	// not implement the optional capability the RPC needs. It is a statement
+	// about the *forge*, never about the connection's health: the connection
+	// works, and what it works for is in the message.
+	ErrConnectionCapabilityUnsupported = "connection/capability-unsupported"
+	// ErrConnectionProviderUnknown is a connection declaring a forge no adapter
+	// in this build speaks. Distinct from the one above because the remedies
+	// have nothing in common: a missing capability is permanent for that forge
+	// until somebody writes it, and an unknown provider is a value that should
+	// not have been stored (or a build older than the connection).
+	ErrConnectionProviderUnknown = "connection/provider-unknown"
+)
+
+const connectionDocsBase = "https://kelson.dev/server/errors"
+
+// connectionError is one refusal about a connection, in the shape errors.go
+// projects onto the wire without a second taxonomy.
+type connectionError struct {
+	Code        string
+	Resource    string
+	Message     string
+	Remediation string
+}
+
+func (e connectionError) Error() string {
+	return fmt.Sprintf("%s [%s] %s: %s", e.Resource, e.Code, e.Message, e.Remediation)
+}
+
+func (e connectionError) wire() *kelsonv1alpha1.Error {
+	return &kelsonv1alpha1.Error{
+		Code:        e.Code,
+		Resource:    e.Resource,
+		Message:     e.Message,
+		Remediation: e.Remediation,
+		DocsUrl:     connectionDocsBase + "/" + e.Code,
+	}
+}
+
+// unbrowsable is what both refusals become: Unimplemented, and never
+// InvalidArgument.
+//
+// It is the distinction failRequest already draws for a gated delivery
+// capability, for the same reason (ADR-0028, issue #224). An agent that reads
+// InvalidArgument rewrites its request and tries again forever; there is no
+// request that makes a `generic` connection grow a repository browser, and
+// Unimplemented is the code that says so. A browser client reads it the same
+// way: fall back to the field that always works.
+func unbrowsable(e connectionError) error { return fail(connect.CodeUnimplemented, e) }
+
+// connectionBrowseTimeout bounds one repository or branch listing.
+//
+// It is the probe's budget for the probe's reason: both listings paginate, an
+// installation on a large organisation is several pages, and a picker waiting
+// on a forge that accepted the connection and stopped talking wants a refusal
+// in bounded time rather than a spinner. The listing is the more forgivable of
+// the two to lose — a user who cannot browse can still paste a URL — so it does
+// not get a longer one.
+const connectionBrowseTimeout = connectionProbeTimeout
+
+// ListConnectionRepositories reports what one connection's credential can see.
+func (s *Server) ListConnectionRepositories(ctx context.Context, req *connect.Request[kelsonv1alpha1.ListConnectionRepositoriesRequest]) (*connect.Response[kelsonv1alpha1.ListConnectionRepositoriesResponse], error) {
+	browse, err := s.browse(ctx, req.Msg.GetConnection())
+	if err != nil {
+		return nil, err
+	}
+
+	listCtx, cancel := context.WithTimeout(ctx, connectionBrowseTimeout)
+	defer cancel()
+	repos, err := browse.browser.ListRepositories(listCtx, browse.conn)
+	if err != nil {
+		return nil, failRequest(browseFailed(browse.stored, "list its repositories", err))
+	}
+
+	out := make([]*kelsonv1alpha1.GitRepository, 0, len(repos))
+	for _, r := range repos {
+		out = append(out, &kelsonv1alpha1.GitRepository{
+			FullName:      r.FullName,
+			HtmlUrl:       r.HTMLURL,
+			DefaultBranch: r.DefaultBranch,
+			Private:       r.Private,
+		})
+	}
+	return connect.NewResponse(&kelsonv1alpha1.ListConnectionRepositoriesResponse{Repositories: out}), nil
+}
+
+// ListConnectionBranches reports one repository's branches, for the picker's
+// second step.
+func (s *Server) ListConnectionBranches(ctx context.Context, req *connect.Request[kelsonv1alpha1.ListConnectionBranchesRequest]) (*connect.Response[kelsonv1alpha1.ListConnectionBranchesResponse], error) {
+	repository := strings.TrimSpace(req.Msg.GetRepository())
+	if repository == "" {
+		return nil, failRequest(fmt.Errorf("api: ListConnectionBranches needs a repository: the \"owner/name\" " +
+			"ListConnectionRepositories reported. Branches are a property of one repository, and a connection " +
+			"routinely sees many"))
+	}
+	browse, err := s.browse(ctx, req.Msg.GetConnection())
+	if err != nil {
+		return nil, err
+	}
+
+	listCtx, cancel := context.WithTimeout(ctx, connectionBrowseTimeout)
+	defer cancel()
+	branches, err := browse.browser.ListBranches(listCtx, browse.conn, repository)
+	if err != nil {
+		return nil, failRequest(browseFailed(browse.stored, "list the branches of "+repository, err))
+	}
+	return connect.NewResponse(&kelsonv1alpha1.ListConnectionBranchesResponse{Branches: branches}), nil
+}
+
+// connectionBrowse is a connection resolved far enough to browse it: the stored
+// object for diagnostics, the adapter's browsing half, and the material joined
+// onto it.
+type connectionBrowse struct {
+	stored  controlstore.StoredConnection
+	browser forge.RepoBrowser
+	conn    forge.Conn
+}
+
+// browse is the join both listings need, and the gate both are subject to.
+//
+// The order of its steps is the interesting part and is not an accident. The
+// capability is checked *before* the Secret is read, so a refusal costs no
+// credential read at all — see this section's header. Everything it returns is
+// already a ConnectRPC error, because each step fails in its own vocabulary
+// (the store's not-found, the connection family's two codes, an unwired seam)
+// and flattening them into one would lose the code an agent branches on.
+func (s *Server) browse(ctx context.Context, name string) (connectionBrowse, error) {
+	if s.connections == nil {
+		return connectionBrowse{}, unimplemented("the git connection store")
+	}
+	conn, err := s.connections.Get(ctx, name)
+	if err != nil {
+		return connectionBrowse{}, failRequest(err)
+	}
+
+	provider, ok := s.forge(string(conn.Spec.Provider))
+	if !ok {
+		return connectionBrowse{}, unbrowsable(connectionError{
+			Code:     ErrConnectionProviderUnknown,
+			Resource: connectionResource(conn.Name),
+			Message: fmt.Sprintf("connection %q declares provider %q, which no adapter in this build of kelson "+
+				"speaks, so nothing here can browse it", conn.Name, conn.Spec.Provider),
+			Remediation: fmt.Sprintf("kelson speaks %s; every other forge connects as `generic` with a token. "+
+				"Recreate the connection with one of them, or paste the repository's URL — that path needs no "+
+				"adapter at all", providerNames()),
+		})
+	}
+	browser, ok := provider.(forge.RepoBrowser)
+	if !ok {
+		return connectionBrowse{}, unbrowsable(connectionError{
+			Code:     ErrConnectionCapabilityUnsupported,
+			Resource: connectionResource(conn.Name),
+			Message: fmt.Sprintf("connection %q speaks %q, and that adapter implements no repository browser: "+
+				"there is no list of repositories or branches for it to return. What it can do is %s",
+				conn.Name, conn.Spec.Provider, capabilitiesOf(provider)),
+			Remediation: fmt.Sprintf("paste the repository's URL instead — that path works for every connection, "+
+				"every forge and every auth kind, and %q still authenticates the clone that follows. Browsing is "+
+				"an optional capability (ADR-0033 decision 3: absence degrades the UI, never the deploy), so this "+
+				"connection is not broken and there is nothing on it to fix; a forge gains a picker when somebody "+
+				"writes that half of its adapter", conn.Name),
+		})
+	}
+
+	if s.connectionSecrets == nil {
+		return connectionBrowse{}, unimplemented("reading the Secret a connection references")
+	}
+	material, err := s.connectionSecrets.ReadAuthSecret(ctx, conn)
+	if err != nil {
+		return connectionBrowse{}, failRequest(err)
+	}
+	return connectionBrowse{stored: conn, browser: browser, conn: forgeConn(conn, material)}, nil
+}
+
+// capabilitiesOf names what an adapter actually implements, so a refusal can
+// say what the connection is good for rather than only what it is not.
+//
+// It asks the adapter rather than consulting a table of providers, because a
+// table here would be a second answer to a question internal/forge already
+// answers by declaration — and it would be wrong the day an adapter grows a
+// capability, in the one message a user reads when something is already not
+// working.
+func capabilitiesOf(p forge.Provider) string {
+	can := []string{"mint short-lived credentials and clone private repositories, which is what a deploy needs"}
+	if _, ok := p.(forge.RepoBrowser); ok {
+		can = append(can, "browse repositories and branches")
+	}
+	if _, ok := p.(forge.WebhookSource); ok {
+		can = append(can, "verify webhook deliveries")
+	}
+	if _, ok := p.(forge.StatusReporter); ok {
+		can = append(can, "report commit statuses and upsert one pull-request comment")
+	}
+	return strings.Join(can, "; ")
+}
+
+// browseFailed wraps a listing the forge would not complete.
+//
+// It is [unavailable] and not an invalid argument: the request was well-formed
+// and the credential was accepted far enough to be spent, so what failed is a
+// dependency of this server rather than anything the caller could rewrite. The
+// remediation points at TestConnection because that is the call that says which
+// half is wrong — and at the URL field, because a picker that cannot list is a
+// picker the user can step around.
+func browseFailed(conn controlstore.StoredConnection, what string, err error) error {
+	return unavailable("connection %q could not %s: %w. Test the connection to see whether the credential is "+
+		"still accepted at %s, or paste the repository's URL — the pasted path needs no listing",
+		conn.Name, what, err, conn.Spec.EffectiveHost())
+}
+
+func connectionResource(name string) string { return model.KindGitConnection + "/" + name }
+
+// forgeConn joins a stored connection with the material its Secret held, which
+// is the value every call into internal/forge takes.
+//
+// It is one function because three handlers need the same join and a second
+// spelling of it is how a credential ends up in the wrong field: the app
+// identifiers come from the spec and the key material from the Secret, and only
+// the pair is a usable connection. [forgeconn.Resolver.join] does the same join
+// for the planes below the API, against the same two halves — this is the
+// api-plane copy for the one seam that reads its store directly rather than
+// through the resolver.
+func forgeConn(conn controlstore.StoredConnection, material controlstore.AuthMaterial) forge.Conn {
+	c := forge.Conn{
+		Provider:      string(conn.Spec.Provider),
+		Host:          conn.Spec.EffectiveHost(),
+		Token:         material.Token,
+		Username:      material.Username,
+		PrivateKeyPEM: material.PrivateKeyPEM,
+		WebhookSecret: material.WebhookSecret,
+	}
+	if app := conn.Spec.Auth.GitHubApp; app != nil {
+		c.AppID, c.InstallationID = app.AppID, app.InstallationID
+	}
+	return c
 }
 
 // forge resolves the adapter for a provider, through the injected lookup when

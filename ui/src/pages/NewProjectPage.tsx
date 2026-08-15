@@ -9,7 +9,7 @@ import {
 } from "react";
 import { Link } from "react-router-dom";
 
-import { useClients } from "../api/data";
+import { useAsync, useClients } from "../api/data";
 import { isVersionConflict } from "../api/errors";
 import { useRun } from "../api/stream";
 import { DryRun } from "../gen/kelson/v1alpha1/common_pb";
@@ -22,6 +22,7 @@ import { Copyable } from "../components/Copyable";
 import { Disclosure, YamlBlock } from "../components/Disclosure";
 import { EnvValueFields, envValueNote } from "../components/EnvValueFields";
 import { ErrorPanel } from "../components/ErrorPanel";
+import { RepositoryPicker, type RepositoryPick } from "../components/RepositoryPicker";
 import { StatusPill } from "../components/StatusPill";
 import {
   buildDocuments,
@@ -63,6 +64,22 @@ import {
  * tree only exists inside the build pod, after the clone (#50). So the git path
  * asks the one question detection would have answered — is there a Dockerfile?
  * — and writes the answer, rather than storing a spec whose build refuses.
+ *
+ * # Two ways to name a repository, and the typed one is not the lesser
+ *
+ * When this instance holds at least one git connection, the git path offers a
+ * picker: a connection, then one of its repositories, then a branch
+ * (ADR-0033 decision 3, #248). What it does is *fill in the fields below* — the
+ * repository URL, the ref, and `spec.source.connection` — so there is exactly
+ * one path from here to a document, and the picker is a shortcut along it
+ * rather than a fork in it.
+ *
+ * The typed path therefore stays first-class, and it is what remains when the
+ * picker cannot help: no connections, a connection whose forge has no
+ * repository browser (which refuses with `connection/capability-unsupported`
+ * and says so in the picker, beside inputs that still work), or a forge that
+ * will not answer. None of those is a dead end, because none of them was ever
+ * the only way in.
  *
  * The bar this screen is held to (#63) is that a developer who has never seen
  * kelson deploys something without reading anything. So what is *present* is a
@@ -135,15 +152,61 @@ export function NewProjectPage() {
    * would let someone press Create on bytes they have since edited, or read an
    * error against a line they have already fixed.
    */
-  const update = useCallback(
-    <K extends keyof NewProjectForm>(key: K, value: NewProjectForm[K], field?: FieldKey) => {
-      setForm((prev) => ({ ...prev, [key]: value }));
-      if (field !== undefined) setTouched((prev) => ({ ...prev, [field]: true }));
+  const updateMany = useCallback(
+    (patch: Partial<NewProjectForm>, fields: FieldKey[] = []) => {
+      setForm((prev) => ({ ...prev, ...patch }));
+      if (fields.length > 0) {
+        setTouched((prev) => {
+          const next = { ...prev };
+          for (const field of fields) next[field] = true;
+          return next;
+        });
+      }
       setWire([]);
       setChecked(undefined);
     },
     [],
   );
+
+  const update = useCallback(
+    <K extends keyof NewProjectForm>(key: K, value: NewProjectForm[K], field?: FieldKey) => {
+      updateMany({ [key]: value } as Partial<NewProjectForm>, field === undefined ? [] : [field]);
+    },
+    [updateMany],
+  );
+
+  /**
+   * A pick writes the three source fields at once, because they are one
+   * statement: this repository, on this branch, through this connection.
+   * Writing them one at a time would leave the form momentarily describing a
+   * repository with the previous one's branch.
+   */
+  const pick = useCallback(
+    (picked: RepositoryPick) => {
+      updateMany(
+        { git: picked.git, ref: picked.ref, connection: picked.connection },
+        ["git", "ref"],
+      );
+    },
+    [updateMany],
+  );
+
+  /**
+   * The connections this instance holds, or none.
+   *
+   * A failure here is deliberately not shown and deliberately not fatal. A
+   * server with no connection store answers Unimplemented, an older one does
+   * not know the RPC, and neither is a reason to put an error on the screen
+   * somebody came to to create a project: what it means is that there is
+   * nothing to pick from, which is the state this form has always been in. The
+   * read is skipped entirely outside the git path, where a repository picker
+   * would have nothing to fill in.
+   */
+  const connections = useAsync(async (signal) => {
+    if (form.sourceMode !== "git") return [];
+    const res = await clients.gitConnection.listConnections({}, { signal });
+    return res.connections;
+  }, [clients, form.sourceMode]);
 
   const problems = useMemo(() => formProblems(form), [form]);
   const mapped = useMemo(() => mapErrors(wire), [wire]);
@@ -249,6 +312,25 @@ export function NewProjectPage() {
           />
         ) : null}
 
+        {/* Offered only when there is something to pick from. With no
+            connections this is the form it has always been, which is the
+            property that keeps the typed path first-class rather than a
+            fallback nobody maintains. */}
+        {form.sourceMode === "git" && (connections.data ?? []).length > 0 ? (
+          <>
+            <RepositoryPicker
+              connections={connections.data ?? []}
+              picked={{
+                connection: form.connection,
+                git: form.git,
+                ref: form.ref,
+              }}
+              onPick={pick}
+            />
+            <FieldErrors errors={errorsFor("connection")} />
+          </>
+        ) : null}
+
         <div className="k-panel k-new__row">
           <Field
             label="Project name"
@@ -285,11 +367,20 @@ export function NewProjectPage() {
               <Field
                 label="Git repository"
                 value={form.git}
-                onChange={(v) => update("git", v, "git")}
+                // Typing over the URL unpins the connection a pick wrote. The
+                // two are one statement about where the source comes from, and
+                // a name left pinned to a repository somebody has since
+                // retyped would authenticate the next build with a credential
+                // chosen for a different forge.
+                onChange={(v) => updateMany({ git: v, connection: "" }, ["git"])}
                 placeholder="https://github.com/acme/hello"
                 problem={problemFor("git")}
                 errors={errorsFor("git")}
-                note="cloned inside the cluster at build time; a private repository needs the server's git credential"
+                note={
+                  form.connection === ""
+                    ? "cloned inside the cluster at build time; a private repository resolves its credential by matching this host against the instance's git connections"
+                    : `cloned inside the cluster at build time, through connection ${form.connection}`
+                }
               />
               <Field
                 label="Ref"

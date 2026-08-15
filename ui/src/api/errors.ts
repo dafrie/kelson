@@ -80,6 +80,43 @@ export function isVersionConflict(err: unknown): boolean {
   );
 }
 
+/**
+ * The codes a connection uses to say it cannot be browsed (internal/api's
+ * `connection/…` family, ADR-0033 decision 3).
+ *
+ * Both mean the same thing to a picker and neither means the connection is
+ * broken: `capability-unsupported` is a forge whose adapter implements no
+ * repository browser, and `provider-unknown` is one this build has no adapter
+ * for at all. A connection in either state still mints credentials and clones,
+ * which is the capability a deploy needs — so the answer to both is the pasted
+ * URL, not a repair.
+ */
+const BROWSE_REFUSALS = [
+  "connection/capability-unsupported",
+  "connection/provider-unknown",
+];
+
+/**
+ * The server's own words for why a connection cannot be browsed, or undefined
+ * when the failure was something else.
+ *
+ * The message and the remediation are returned rather than a boolean, because
+ * the refusal is written to be *read*: it names what the connection can do and
+ * says that pasting a URL works, which is the entire next step for whoever hit
+ * it. A picker that reduced it to "not supported" would throw away the half
+ * that tells them they are not stuck.
+ */
+export function browseRefusal(err: unknown): string | undefined {
+  const wire = toFailure(err).wire.find((e) =>
+    BROWSE_REFUSALS.includes(e.code),
+  );
+  if (wire === undefined) return undefined;
+  return [wire.message, wire.remediation]
+    .map((part) => part.trim())
+    .filter((part) => part !== "")
+    .join(" — ");
+}
+
 /** True when we aborted the request ourselves, which is not a failure. */
 export function isAbort(err: unknown): boolean {
   if (err instanceof ConnectError) return err.code === Code.Canceled;
