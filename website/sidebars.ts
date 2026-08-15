@@ -25,6 +25,7 @@ const sidebars: SidebarsConfig = {
         {type: 'doc', id: 'reference/project', label: 'Project spec'},
         {type: 'doc', id: 'reference/environment', label: 'Environment spec'},
         {type: 'doc', id: 'reference/gitconnection', label: 'GitConnection spec'},
+        {type: 'doc', id: 'reference/gitsource', label: 'GitSource spec'},
         {type: 'doc', id: 'detection', label: 'Cluster detection'},
         {type: 'doc', id: 'server', label: 'Server'},
         {type: 'doc', id: 'mcp', label: 'MCP server'},

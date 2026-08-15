@@ -10,7 +10,8 @@
       "enum": [
         "Project",
         "Environment",
-        "GitConnection"
+        "GitConnection",
+        "GitSource"
       ]
     },
     "metadata": {
@@ -32,6 +33,12 @@
       "properties": {
         "source": {
           "properties": {
+            "name": {
+              "type": "string",
+              "maxLength": 63,
+              "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+              "description": "DNS-1123 label a component binds to; required in spec.sources and refused on the singular spec.source"
+            },
             "git": {
               "type": "string",
               "format": "uri",
@@ -51,6 +58,38 @@
           "required": [
             "git"
           ]
+        },
+        "sources": {
+          "items": {
+            "properties": {
+              "name": {
+                "type": "string",
+                "maxLength": 63,
+                "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+                "description": "DNS-1123 label a component binds to; required in spec.sources and refused on the singular spec.source"
+              },
+              "git": {
+                "type": "string",
+                "format": "uri",
+                "description": "git URL of the application source"
+              },
+              "ref": {
+                "type": "string",
+                "default": "main"
+              },
+              "connection": {
+                "type": "string",
+                "description": "name of the GitConnection to authenticate with; resolved by host match against the instance's connections when omitted"
+              }
+            },
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "git"
+            ]
+          },
+          "type": "array",
+          "description": "repositories this Project declares for its components to build from; the singular source: is shorthand for one entry named default"
         },
         "build": {
           "properties": {
@@ -335,20 +374,30 @@
                 "description": "helm components only; the exact chart version — required because an unpinned chart is not reproducible"
               },
               "source": {
-                "properties": {
-                  "repository": {
+                "oneOf": [
+                  {
                     "type": "string",
-                    "format": "uri",
-                    "description": "classic Helm repository URL — the one serving index.yaml"
+                    "maxLength": 63,
+                    "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+                    "description": "the name of a source this component builds from, declared in spec.sources or by a GitSource"
                   },
-                  "oci": {
-                    "type": "string",
-                    "description": "OCI registry URL holding the chart — the registry path without the chart name (oci://ghcr.io/acme/charts)"
+                  {
+                    "properties": {
+                      "repository": {
+                        "type": "string",
+                        "format": "uri",
+                        "description": "classic Helm repository URL — the one serving index.yaml"
+                      },
+                      "oci": {
+                        "type": "string",
+                        "description": "OCI registry URL holding the chart — the registry path without the chart name (oci://ghcr.io/acme/charts)"
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object"
                   }
-                },
-                "additionalProperties": false,
-                "type": "object",
-                "description": "helm components only; exactly one of repository or oci"
+                ],
+                "description": "a source name for a buildable component (ADR-0035) or the chart source of a helm component — exactly one of repository or oci (ADR-0016)"
               },
               "values": {
                 "type": "object",

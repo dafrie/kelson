@@ -327,6 +327,28 @@ type ProjectStatus struct {
 	ValidationErrors []ValidationError `json:"validationErrors,omitempty"`
 }
 
+// GitSourceStatus is what the control plane observed about a GitSource: whether
+// the document is usable, as of which generation, and nothing else (ADR-0035
+// decision 2).
+//
+// The absence of a Reachable condition is the decision, not a gap. A source is
+// data — a repository URL, a ref, a connection name — and the question of
+// whether that repository answers is a question about the *credential*, which
+// lives on the GitConnection and already has a condition there. Asking it twice
+// would give an operator two places to look and two answers that can disagree.
+type GitSourceStatus struct {
+	// ObservedGeneration is the .metadata.generation this status describes.
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	// Conditions carries Ready as its summary.
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// ValidationErrors is what validate.go said about this source, with the
+	// slash codes intact. An invalid spec is a status and not a rejection here
+	// for the same reason it is on every other kind (ADR-0027 decision 5).
+	ValidationErrors []ValidationError `json:"validationErrors,omitempty"`
+}
+
 // EnvironmentStatus is what the controller observed about an Environment: the
 // validation record a Project also has, plus the delivery record.
 type EnvironmentStatus struct {

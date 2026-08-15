@@ -174,6 +174,24 @@ func gitConnectionStatusSchema() omap {
 	return m
 }
 
+// gitSourceStatusSchema mirrors api/kelson/v1alpha1.GitSourceStatus. It is the
+// shortest status in the model and deliberately: a source is data, and whether
+// the repository it names can be reached is the serving connection's answer, not
+// a second one here (ADR-0035 decision 2).
+func gitSourceStatusSchema() omap {
+	var m omap
+	m.set("description", "GitSourceStatus is what the control plane observed about this GitSource: "+
+		"whether the document is usable, as of which generation. Reachability belongs to the "+
+		"GitConnection that serves it.")
+	m.set("type", "object")
+	m.set("properties", omap{
+		{"conditions", conditionsSchema("the observed conditions, with Ready as the summary")},
+		{"observedGeneration", observedGenerationSchema()},
+		{"validationErrors", validationErrorsSchema()},
+	})
+	return m
+}
+
 func environmentStatusSchema() omap {
 	var historyItem omap
 	historyItem.set("type", "object")

@@ -193,6 +193,44 @@ var gitConnectionCRD = crdDef{
 	},
 }
 
+var gitSourceCRD = crdDef{
+	kind:        "GitSource",
+	listKind:    "GitSourceList",
+	plural:      "gitsources",
+	singular:    "gitsource",
+	shortNames:  []string{"ksrc"},
+	description: "GitSource is a repository the instance offers to every project: where the code is, at which ref, through which connection, and who owns it. Its name is what a component binds to with `source: <name>`, and a project declaring a source of that name shadows it (ADR-0035).",
+	printerColumns: []omap{
+		printerColumn("Repository", "string", ".spec.git", "the repository this source offers"),
+		printerColumn("Ref", "string", ".spec.ref", "the branch, tag or commit it is read at"),
+		printerColumn("Connection", "string", ".spec.connection",
+			"the GitConnection it is read with; empty means the host match"),
+		printerColumn("Ready", "string", `.status.conditions[?(@.type=="Ready")].status`,
+			"whether the document validated"),
+		printerColumn("Age", "date", ".metadata.creationTimestamp", ""),
+	},
+	status: gitSourceStatusSchema(),
+	// The owner rules, and only those: they are the same two a GitConnection
+	// carries, because it is the same block (ADR-0033 decision 6). Everything
+	// else a source declares is a string the reflected schema already describes,
+	// and whether the repository answers is not expressible in CEL — it is not
+	// expressible without a network.
+	validations: map[string][]celRule{
+		"owner": {
+			{
+				rule: "!has(self.kind) || self.kind == 'instance' || (has(self.name) && self.name != '')",
+				message: "an owner whose kind is user or team names the principal it belongs to " +
+					"(schema/missing-required)",
+			},
+			{
+				rule: "!has(self.kind) || self.kind != 'instance' || !has(self.name) || self.name == ''",
+				message: "an instance-owned source names no principal: remove owner.name, or set " +
+					"owner.kind to user or team (schema/mutually-exclusive)",
+			},
+		},
+	},
+}
+
 func printerColumn(name, typ, path, description string) omap {
 	var m omap
 	m.set("name", name)

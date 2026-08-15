@@ -5,20 +5,21 @@
 //
 // # Documents
 //
-// Three document kinds exist — Project, Environment and GitConnection — all
-// carrying apiVersion kelson.dev/v1alpha1. A Project names its Components
-// inline (spec.components); an Environment binds to a Project by name
+// Four document kinds exist — Project, Environment, GitConnection and
+// GitSource — all carrying apiVersion kelson.dev/v1alpha1. A Project names its
+// Components inline (spec.components); an Environment binds to a Project by name
 // (spec.project) and carries everything that differs per deployment target:
 // cluster, namespace, routing, delivery mode, policy, secret backend and
 // per-Component overrides.
 //
-// GitConnection is the odd one out and deliberately so (ADR-0033): it is a
-// control-plane document rather than an authoring one. Nothing about it is
-// rendered and the renderer never sees one — it says which forge kelson can
-// talk to and which Secret it talks with, and it is read by the planes that
-// have cluster access. It lives here because what a kelson document *is* has
-// exactly one home, and because validate.go is the one taxonomy every surface
-// reports (ADR-0027 decisions 3 and 5).
+// GitConnection (ADR-0033) and GitSource (ADR-0035) are the odd ones out and
+// deliberately so: they are control-plane documents rather than authoring ones.
+// Nothing about them is rendered and the renderer never sees one — a connection
+// says which forge kelson can talk to and which Secret it talks with, a source
+// says which repository the instance offers to every project — and both are read
+// by the planes that have cluster access. They live here because what a kelson
+// document *is* has exactly one home, and because validate.go is the one
+// taxonomy every surface reports (ADR-0027 decisions 3 and 5).
 //
 // # Design rules
 //
@@ -72,15 +73,16 @@ const (
 	KindProject       = "Project"
 	KindEnvironment   = "Environment"
 	KindGitConnection = "GitConnection"
+	KindGitSource     = "GitSource"
 )
 
 // Kinds is every document kind, in the order error remediations list them.
-var Kinds = []string{KindProject, KindEnvironment, KindGitConnection}
+var Kinds = []string{KindProject, KindEnvironment, KindGitConnection, KindGitSource}
 
 // TypeMeta carries apiVersion and kind for every document kind.
 type TypeMeta struct {
 	APIVersion string `yaml:"apiVersion" json:"apiVersion" jsonschema:"required"`
-	Kind       string `yaml:"kind" json:"kind" jsonschema:"required,enum=Project,enum=Environment,enum=GitConnection"`
+	Kind       string `yaml:"kind" json:"kind" jsonschema:"required,enum=Project,enum=Environment,enum=GitConnection,enum=GitSource"`
 }
 
 // ObjectMeta is the (deliberately minimal) shared metadata.

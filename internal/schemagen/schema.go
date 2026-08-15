@@ -48,6 +48,12 @@ var documents = []struct {
 		doc:        &model.GitConnection{},
 		crd:        gitConnectionCRD,
 	},
+	{
+		schemaFile: "gitsource.schema.json",
+		crdFile:    "kelson.dev_gitsources.yaml",
+		doc:        &model.GitSource{},
+		crd:        gitSourceCRD,
+	},
 }
 
 // reflector is the one reflector both outputs use.

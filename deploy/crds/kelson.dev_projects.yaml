@@ -200,16 +200,8 @@ spec:
                         description: five-field cron expression
                         type: string
                       source:
-                        description: helm components only; exactly one of repository or oci
-                        type: object
-                        properties:
-                          oci:
-                            description: OCI registry URL holding the chart — the registry path without the chart name (oci://ghcr.io/acme/charts)
-                            type: string
-                          repository:
-                            description: classic Helm repository URL — the one serving index.yaml
-                            type: string
-                            format: uri
+                        description: a source name for a buildable component (ADR-0035) or the chart source of a helm component — exactly one of repository or oci (ADR-0016)
+                        x-kubernetes-preserve-unknown-fields: true
                       tools:
                         description: 'agent components only; refused until issue #75'
                         type: array
@@ -326,8 +318,35 @@ spec:
                       description: git URL of the application source
                       type: string
                       format: uri
+                    name:
+                      description: DNS-1123 label a component binds to; required in spec.sources and refused on the singular spec.source
+                      type: string
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      maxLength: 63
                     ref:
                       type: string
+                sources:
+                  description: 'repositories this Project declares for its components to build from; the singular source: is shorthand for one entry named default'
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - git
+                    properties:
+                      connection:
+                        description: name of the GitConnection to authenticate with; resolved by host match against the instance's connections when omitted
+                        type: string
+                      git:
+                        description: git URL of the application source
+                        type: string
+                        format: uri
+                      name:
+                        description: DNS-1123 label a component binds to; required in spec.sources and refused on the singular spec.source
+                        type: string
+                        pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                        maxLength: 63
+                      ref:
+                        type: string
             status:
               description: ProjectStatus is what the controller observed about this Project. A Project has no delivery of its own, so its status is validation and nothing else.
               type: object

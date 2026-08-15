@@ -78,6 +78,20 @@ func loadPairUnvalidated(t *testing.T, projSrc, envSrc string) (*Project, *Envir
 	return p, e
 }
 
+// resolved runs the resolver with an empty global source tier, which is what a
+// precedence test means: the bindings under test are the Project's own, and the
+// GitSources an instance offers (ADR-0035 decision 2) are somebody else's
+// input. A binding refusal fails the test rather than being asserted away —
+// these documents are supposed to resolve.
+func resolved(t *testing.T, p *Project, e *Environment) *Resolved {
+	t.Helper()
+	r, errs := resolve(p, e, nil)
+	if len(errs) > 0 {
+		t.Fatalf("resolve: %v", errs)
+	}
+	return r
+}
+
 func TestResolveMergesEnvironmentVariablesP1(t *testing.T) {
 	p, e := loadPairUnvalidated(t, precedenceProject, `
 apiVersion: kelson.dev/v1alpha1
@@ -94,7 +108,7 @@ spec:
       env:
         LOG_LEVEL: trace          # environment override beats component (P1)
 `)
-	r := resolve(p, e)
+	r := resolved(t, p, e)
 	web := r.Components[0]
 	if web.Env["LOG_LEVEL"].Literal != "trace" {
 		t.Errorf("LOG_LEVEL = %q, want trace (environment override wins)", web.Env["LOG_LEVEL"].Literal)
@@ -122,7 +136,7 @@ spec:
     - name: web
       replicas: {min: 5}          # replaces the component's {2,4} whole (P2)
 `)
-	r := resolve(p, e)
+	r := resolved(t, p, e)
 	web := r.Components[0]
 	if web.Replicas != (Replicas{Min: 5}) {
 		t.Errorf("replicas = %+v, want {Min:5} — environment replaces whole, no deep merge", web.Replicas)
@@ -177,7 +191,7 @@ spec:
   delivery:
     git: {repo: git@github.com:acme/deploy.git, path: shop/staging}
 `)
-	r := resolve(p, staging)
+	r := resolved(t, p, staging)
 	if r.Environment.Mode != DeliveryFlux {
 		t.Errorf("mode = %q, want flux from project default", r.Environment.Mode)
 	}
@@ -234,7 +248,7 @@ spec:
   secrets:
     backend: sops
 `)
-	r := resolve(p, prod)
+	r := resolved(t, p, prod)
 	if r.Environment.Mode != DeliveryDirect {
 		t.Errorf("mode = %q, want direct (environment beats project default)", r.Environment.Mode)
 	}
@@ -264,7 +278,7 @@ spec:
   components:
     - {name: db, preset: ha-small}
 `)
-	r := resolve(p, e)
+	r := resolved(t, p, e)
 	if r.DataServices[0].Preset != PresetHASmall {
 		t.Errorf("db preset = %q, want ha-small (P5)", r.DataServices[0].Preset)
 	}
@@ -285,7 +299,7 @@ spec:
   overlays:
     - patch: ./k8s/staging.yaml
 `)
-	r := resolve(p, e)
+	r := resolved(t, p, e)
 	if len(r.Overlays) != 2 || r.Overlays[0].Manifest != "./k8s/base.yaml" || r.Overlays[1].Patch != "./k8s/staging.yaml" {
 		t.Errorf("overlays must concatenate project-first: %+v", r.Overlays)
 	}

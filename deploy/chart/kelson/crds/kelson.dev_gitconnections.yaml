@@ -117,7 +117,7 @@ spec:
                     - kind
                   properties:
                     kind:
-                      description: who may edit this connection; only instance is enforced today
+                      description: who may edit this document; only instance is enforced today
                       type: string
                       enum:
                         - instance

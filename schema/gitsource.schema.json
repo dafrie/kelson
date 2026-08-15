@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kelson.dev/model/gitsource.schema.json",
+  "properties": {
+    "apiVersion": {
+      "type": "string"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "Project",
+        "Environment",
+        "GitConnection",
+        "GitSource"
+      ]
+    },
+    "metadata": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "maxLength": 63,
+          "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+          "description": "DNS-1123 label"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name"
+      ]
+    },
+    "spec": {
+      "properties": {
+        "git": {
+          "type": "string",
+          "format": "uri",
+          "description": "git URL of the repository this source offers"
+        },
+        "ref": {
+          "type": "string",
+          "default": "main"
+        },
+        "connection": {
+          "type": "string",
+          "description": "name of the GitConnection to authenticate with; resolved by host match against the instance's connections when omitted"
+        },
+        "owner": {
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "instance",
+                "user",
+                "team"
+              ],
+              "description": "who may edit this document; only instance is enforced today"
+            },
+            "name": {
+              "type": "string",
+              "description": "the owning principal; required when kind is user or team and refused when it is instance"
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "kind"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "git"
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ]
+}

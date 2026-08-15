@@ -118,7 +118,7 @@ func decodeDocument(raw *yaml.Node, docIdx int) (any, Errors) {
 	}
 
 	switch tm.Kind {
-	case KindProject, KindEnvironment, KindGitConnection:
+	case KindProject, KindEnvironment, KindGitConnection, KindGitSource:
 	case "":
 		v.err(ErrMissingRequired, "$.kind", "kind is required",
 			"set kind to one of: "+strings.Join(Kinds, ", "))
@@ -142,6 +142,9 @@ func decodeDocument(raw *yaml.Node, docIdx int) (any, Errors) {
 	case KindGitConnection:
 		g := new(GitConnection)
 		doc = g
+	case KindGitSource:
+		g := new(GitSource)
+		doc = g
 	}
 
 	resource := docResource(doc)
@@ -162,6 +165,10 @@ func decodeDocument(raw *yaml.Node, docIdx int) (any, Errors) {
 		vg := validator{resource: resource, kind: KindGitConnection, pos: pos}
 		validateGitConnection(d, &vg)
 		errs = append(errs, vg.errs...)
+	case *GitSource:
+		vs := validator{resource: resource, kind: KindGitSource, pos: pos}
+		validateGitSource(d, &vs)
+		errs = append(errs, vs.errs...)
 	}
 	return doc, errs
 }
@@ -174,6 +181,8 @@ func docResource(doc any) string {
 		return fmt.Sprintf("%s/%s", KindEnvironment, d.Metadata.Name)
 	case *GitConnection:
 		return fmt.Sprintf("%s/%s", KindGitConnection, d.Metadata.Name)
+	case *GitSource:
+		return fmt.Sprintf("%s/%s", KindGitSource, d.Metadata.Name)
 	}
 	return "document"
 }
@@ -214,12 +223,17 @@ func typeErrors(err error, resource string, pos positions) Errors {
 				e.Column = pos[e.Field].Column
 			}
 		}
-		// An env value knows its own remediation and cannot return it: a
+		// A union value knows its own remediation and cannot return it: a
 		// custom unmarshaller reports through a yaml.TypeError string or it
-		// aborts the document. The prefix is the handshake (envvalue.go).
-		if strings.HasPrefix(e.Message, envValueShapePrefix) {
+		// aborts the document. The prefix is the handshake (envvalue.go,
+		// componentsource.go).
+		switch {
+		case strings.HasPrefix(e.Message, envValueShapePrefix):
 			e.Message = strings.TrimPrefix(e.Message, envValueShapePrefix)
 			e.Remediation = EnvValueRemediation
+		case strings.HasPrefix(e.Message, componentSourceShapePrefix):
+			e.Message = strings.TrimPrefix(e.Message, componentSourceShapePrefix)
+			e.Remediation = ComponentSourceRemediation
 		}
 		errs = append(errs, e)
 	}
@@ -266,6 +280,14 @@ func walkUnknown(n *yaml.Node, t reflect.Type, path, resource string, pos positi
 	switch t {
 	case reflect.TypeOf(EnvValue{}):
 		walkEnvValue(n, path, resource, pos, errs)
+		return
+	case reflect.TypeOf(ComponentSource{}):
+		// A scalar is a source name and has no keys to check; a mapping is a
+		// chart source, whose keys are ChartSource's. Walking the union's own
+		// struct instead would report `repository` as an unknown field, because
+		// the union carries the arms and not their spelling
+		// (componentsource.go).
+		walkUnknown(n, reflect.TypeOf(ChartSource{}), path, resource, pos, errs)
 		return
 	case reflect.TypeOf(Resources{}):
 		walkStructNode(n, t, path, resource, pos, errs)

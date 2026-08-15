@@ -7,7 +7,7 @@ This reference is **generated** from the committed JSON Schema [`schema/project.
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `apiVersion` | string | yes |  |  |
-| `kind` | string enum `"Project"`, `"Environment"`, `"GitConnection"` | yes |  |  |
+| `kind` | string enum `"Project"`, `"Environment"`, `"GitConnection"`, `"GitSource"` | yes |  |  |
 | `metadata` | object | yes |  |  |
 | `spec` | object | yes |  |  |
 
@@ -28,6 +28,7 @@ This reference is **generated** from the committed JSON Schema [`schema/project.
 | `image` | string | no |  | pre-built image reference |
 | `overlays` | array of object | no |  |  |
 | `source` | object | no |  |  |
+| `sources` | array of object | no |  | repositories this Project declares for its components to build from; the singular source: is shorthand for one entry named default |
 
 #### `spec.build`
 
@@ -57,7 +58,7 @@ This reference is **generated** from the committed JSON Schema [`schema/project.
 | `replicas` | object | no |  |  |
 | `resources` | object | no |  |  |
 | `schedule` | string | no |  | five-field cron expression |
-| `source` | object | no |  | helm components only; exactly one of repository or oci |
+| `source` | one of: string max length 63, pattern `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`, object {oci, repository} | no |  | a source name for a buildable component (ADR-0035) or the chart source of a helm component — exactly one of repository or oci (ADR-0016) |
 | `tools` | array of string | no |  | agent components only; refused until issue #75 |
 | `values` | object | no |  | helm components only; chart values rendered verbatim into the HelmRelease — plain configuration only and never secret material (put that in valuesFrom) |
 | `valuesFrom` | array of object | no |  | helm components only; Secrets and ConfigMaps merged into the chart values by helm-controller |
@@ -160,4 +161,14 @@ This reference is **generated** from the committed JSON Schema [`schema/project.
 |-------|------|----------|---------|-------------|
 | `connection` | string | no |  | name of the GitConnection to authenticate with; resolved by host match against the instance's connections when omitted |
 | `git` | string format uri | yes |  | git URL of the application source |
+| `name` | string max length 63, pattern `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$` | no |  | DNS-1123 label a component binds to; required in spec.sources and refused on the singular spec.source |
+| `ref` | string | no | `"main"` |  |
+
+#### `spec.sources[]`
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `connection` | string | no |  | name of the GitConnection to authenticate with; resolved by host match against the instance's connections when omitted |
+| `git` | string format uri | yes |  | git URL of the application source |
+| `name` | string max length 63, pattern `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$` | no |  | DNS-1123 label a component binds to; required in spec.sources and refused on the singular spec.source |
 | `ref` | string | no | `"main"` |  |
