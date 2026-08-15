@@ -100,6 +100,21 @@ func (d *FluxDeliverer) ensure(ctx context.Context, rev Revision, repository, ta
 		return err
 	}
 
+	// The previews credential goes in before the Kustomization that applies the
+	// ResourceSetInputProvider reading it (ADR-0033 decision 4). Before rather
+	// than after, because the provider is in the artifact this apply points at
+	// and would otherwise reconcile once against a Secret that is not there
+	// yet — a first-poll failure with a message about a missing Secret, for a
+	// Secret kelson was about to write.
+	//
+	// Only the two failures where kelson tried to write and could not reach
+	// here; everything else is a skip. See previewsecret.go's header.
+	if d.PreviewSecrets != nil {
+		if _, _, err := d.PreviewSecrets.Ensure(ctx, rev); err != nil {
+			return err
+		}
+	}
+
 	if err := d.apply(ctx, d.ociRepository(name, labels, repository, tag, digest)); err != nil {
 		return err
 	}

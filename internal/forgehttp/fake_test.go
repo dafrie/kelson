@@ -158,7 +158,9 @@ func newFakeConnections() *fakeConnections {
 	}
 }
 
-func (f *fakeConnections) List(context.Context) ([]controlstore.StoredConnection, error) { return nil, nil }
+func (f *fakeConnections) List(context.Context) ([]controlstore.StoredConnection, error) {
+	return nil, nil
+}
 
 func (f *fakeConnections) Get(_ context.Context, name string) (controlstore.StoredConnection, error) {
 	spec, ok := f.created[name]

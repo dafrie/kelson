@@ -87,6 +87,8 @@ import (
 	"github.com/dafrie/kelson/internal/clusterprofile"
 	"github.com/dafrie/kelson/internal/clusterprofile/detect"
 	"github.com/dafrie/kelson/internal/controller"
+	"github.com/dafrie/kelson/internal/controlstore"
+	"github.com/dafrie/kelson/internal/forgeconn"
 	"github.com/dafrie/kelson/internal/version"
 )
 
@@ -218,6 +220,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err := (&controller.ProjectReconciler{Client: mgr.GetClient()}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("registering the project reconciler: %w", err)
 	}
+	// The previews credential (ADR-0033 decision 4). It rides a *direct* client
+	// rather than the manager's, for the reason controller.ClientSecrets states:
+	// reading Secrets and GitConnections through the manager's cache would start
+	// an informer over every Secret in the cluster.
+	previewSecrets, err := previewSecretMaterializer(restCfg, cfg)
+	if err != nil {
+		return err
+	}
+
 	if err := (&controller.EnvironmentReconciler{
 		Client:   mgr.GetClient(),
 		Profiles: found.source,
@@ -229,6 +240,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			FluxNamespace:      cfg.fluxNamespace,
 			PullSecret:         cfg.pullSecret,
 			Interval:           cfg.reconcileInterval,
+			PreviewSecrets:     previewSecrets,
 		},
 	}).SetupWithManager(mgr, found.profile.Flux != nil); err != nil {
 		return fmt.Errorf("registering the environment reconciler: %w", err)
@@ -251,6 +263,38 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("running the manager: %w", err)
 	}
 	return nil
+}
+
+// previewSecretMaterializer builds the thing that turns a git connection into
+// the flux-operator Secret an environment's `previews:` block reads (ADR-0033
+// decision 4).
+//
+// It reads GitConnections and their Secrets out of kelson's own namespace,
+// which is `--flux-namespace` — the namespace the chart installs kelson into,
+// where the OCIRepository/Kustomization pair already lives. `KELSON_GIT_TOKEN`
+// joins the resolution as the implicit bootstrap connection here for the same
+// reason it does in the server (ADR-0033 decision 5), so an instance that has
+// not connected a forge yet still gets authenticated previews out of the
+// credential it already had.
+func previewSecretMaterializer(restCfg *rest.Config, cfg config) (controller.PreviewSecrets, error) {
+	crClient, err := controlstore.NewClient(restCfg)
+	if err != nil {
+		return nil, fmt.Errorf("building the connection client: %w", err)
+	}
+	connections, err := controlstore.NewGitConnectionStore(controlstore.GitConnectionStoreOptions{
+		Client:    crClient,
+		Namespace: cfg.fluxNamespace,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("building the connection store: %w", err)
+	}
+	return controller.ConnectionPreviewSecrets{
+		Sources: &forgeconn.Resolver{
+			Store:     connections,
+			Bootstrap: forgeconn.NewBootstrap(os.Getenv(forgeconn.BootstrapEnv), ""),
+		},
+		Client: controller.ClientSecrets(crClient),
+	}, nil
 }
 
 // cacheOptions scopes the manager's cache.
