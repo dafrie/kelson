@@ -82,6 +82,15 @@ type Stored struct {
 	// Environments are the environment names present, sorted, so a caller can
 	// list environments without decoding any YAML.
 	Environments []string
+	// GitOps names the documents of this project that somebody else's Flux is
+	// reconciling from a repository, and the Kustomization doing it (gitops.go).
+	// Empty is the ordinary case: kelson's store is the only writer.
+	//
+	// It is on Stored rather than beside Documents because it is true of a
+	// document whether or not the caller asked for the bytes — ListSpecs omits
+	// the documents and still reports this, so a project listing can say which
+	// projects kelson does not own.
+	GitOps []GitOpsOwner
 }
 
 // PutOptions carries the write-time controls every mutating RPC shares
@@ -541,6 +550,7 @@ func storedFrom(set resourceSet) (Stored, error) {
 		Documents: Documents{
 			Environments: map[string][]byte{},
 		},
+		GitOps: gitOpsOwners(set),
 	}
 	doc, err := encodeDocument(&model.Project{
 		TypeMeta: typeMeta(v1alpha1.KindProject),
