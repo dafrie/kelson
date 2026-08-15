@@ -111,6 +111,14 @@ func (f *fakeServer) DeleteSpec(context.Context, *connect.Request[kelsonv1alpha1
 	return nil, notWired("DeleteSpec")
 }
 
+// ProposeSpec is unwired here because no MCP tool reaches it (#248): the agent
+// surface's answer to a GitOps-managed document is still the diff ADR-0025
+// describes, and giving an agent a route to open pull requests is the
+// propose-only flow's own decision to make.
+func (f *fakeServer) ProposeSpec(context.Context, *connect.Request[kelsonv1alpha1.ProposeSpecRequest]) (*connect.Response[kelsonv1alpha1.ProposeSpecResponse], error) {
+	return nil, notWired("ProposeSpec")
+}
+
 func (f *fakeServer) Status(_ context.Context, req *connect.Request[kelsonv1alpha1.StatusRequest]) (*connect.Response[kelsonv1alpha1.StatusResponse], error) {
 	if f.status == nil {
 		return nil, notWired("Status")

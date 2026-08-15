@@ -138,6 +138,27 @@ var rpcScopes = map[string]methodScope{
 			return project(req.GetProject())
 		},
 	},
+	// ProposeSpec is `mutate` although it writes nothing kelson owns: it
+	// creates a branch and a pull request in the user's repository, through a
+	// credential kelson holds. A read scope must not reach it — "this
+	// credential may look at the spec" is not "this credential may push to the
+	// repository the spec came from" — and mutate is the class that says so.
+	//
+	// Unlike PutSpec it carries its project as a field rather than inside the
+	// YAML, so a restricted credential is checked rather than refused: the
+	// paragraph above about unknowable targets is a statement about request
+	// shapes, and this request has the field.
+	kelsonv1alpha1connect.SpecServiceProposeSpecProcedure: {
+		Operation: controlstore.OpMutate,
+		Reach:     reachTargeted,
+		Targets: func(msg any) ([]scopeTarget, bool) {
+			req, ok := msg.(*kelsonv1alpha1.ProposeSpecRequest)
+			if !ok {
+				return nil, false
+			}
+			return project(req.GetProject())
+		},
+	},
 
 	// RenderService. Rendering touches no cluster, but it reads a stored spec
 	// and returns it as manifests, so it is a read of the project it names.

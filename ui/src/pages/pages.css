@@ -1459,3 +1459,121 @@
   flex-direction: column;
   gap: 16px;
 }
+
+/* --------------------------------------------------------------- GitOps (#248)
+
+   The edit screen when somebody else's Flux owns the document. The banner is
+   `degraded` rather than `failed` on purpose: nothing is broken, and a red
+   panel over a working project would read as an incident. */
+
+.k-gitops {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0 0 22px;
+  padding: 14px 16px;
+  background: var(--kelson-degraded-fill);
+  border: 1px solid var(--kelson-degraded-border);
+  border-radius: 5px;
+}
+
+.k-gitops__title {
+  margin: 0;
+  font-weight: 600;
+  color: var(--kelson-text);
+}
+
+.k-gitops__body,
+.k-gitops__warn {
+  margin: 0;
+  max-width: 78ch;
+  font-size: 13.5px;
+  color: var(--kelson-text-2);
+}
+
+/* ADR-0036 decision 5's collision. Set apart from the body because it is a
+   second, independent problem — a reader who has understood the banner still
+   has to act on this one. */
+.k-gitops__warn {
+  padding-top: 10px;
+  border-top: 1px solid var(--kelson-degraded-border);
+}
+
+.k-gitops__section {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 24px 0 0;
+  padding: 16px;
+  background: var(--kelson-panel-dim);
+  border: 1px solid var(--kelson-border);
+  border-radius: 5px;
+}
+
+.k-gitops__heading {
+  margin: 0;
+  font-size: 15px;
+}
+
+.k-gitops__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.k-gitops__docs {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.k-gitops__doc {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.k-gitops__toggle {
+  padding: 0;
+  font: inherit;
+  color: var(--kelson-text);
+  background: none;
+  border: 0;
+  border-bottom: 1px dotted var(--kelson-border);
+  cursor: pointer;
+}
+
+.k-gitops__owner {
+  color: var(--kelson-muted-deep);
+  font-size: 12px;
+}
+
+.k-gitops__files {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--kelson-border);
+  border-radius: 5px;
+}
+
+.k-gitops__file {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.k-gitops__file .k-input {
+  flex: 1 1 22ch;
+}
+
+.k-gitops__confirm {
+  max-width: 78ch;
+}

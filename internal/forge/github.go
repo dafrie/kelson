@@ -101,6 +101,7 @@ var (
 	_ RepoBrowser    = (*gitHubProvider)(nil)
 	_ WebhookSource  = (*gitHubProvider)(nil)
 	_ StatusReporter = (*gitHubProvider)(nil)
+	_ PRProposer     = (*gitHubProvider)(nil)
 )
 
 // MintCloneCredential implements [Provider].

@@ -165,11 +165,19 @@ func (s *Server) DeleteSpec(ctx context.Context, req *connect.Request[kelsonv1al
 	return connect.NewResponse(&kelsonv1alpha1.DeleteSpecResponse{}), nil
 }
 
+// wireSpec projects a stored spec onto the wire.
+//
+// `gitops` rides on both shapes, documents or not (#248). It is the answer to
+// "is kelson the writer of this document, or is somebody's Flux?", and a
+// listing that omitted it would make the project page unable to say what the
+// edit page is about to refuse. It costs two labels per stored object, already
+// read.
 func wireSpec(stored controlstore.Stored, withDocuments bool) *kelsonv1alpha1.Spec {
 	spec := &kelsonv1alpha1.Spec{
 		Project:      stored.Project,
 		Version:      stored.Version,
 		Environments: stored.Environments,
+		Gitops:       wireGitOps(stored.GitOps),
 	}
 	if withDocuments {
 		spec.Documents = &kelsonv1alpha1.SpecDocuments{
@@ -178,6 +186,21 @@ func wireSpec(stored controlstore.Stored, withDocuments bool) *kelsonv1alpha1.Sp
 		}
 	}
 	return spec
+}
+
+func wireGitOps(owners []controlstore.GitOpsOwner) []*kelsonv1alpha1.GitOpsOwnership {
+	if len(owners) == 0 {
+		return nil
+	}
+	out := make([]*kelsonv1alpha1.GitOpsOwnership, 0, len(owners))
+	for _, o := range owners {
+		out = append(out, &kelsonv1alpha1.GitOpsOwnership{
+			Document:      o.Document,
+			Kustomization: o.Kustomization,
+			Namespace:     o.Namespace,
+		})
+	}
+	return out
 }
 
 func environmentNames(spec decoded) []string {

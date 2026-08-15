@@ -5,8 +5,12 @@ import { Code, ConnectError, createRouterTransport } from "@connectrpc/connect";
 import { create } from "@bufbuild/protobuf";
 
 import { ErrorSchema } from "../gen/kelson/v1alpha1/common_pb";
-import type { PutSpecRequest } from "../gen/kelson/v1alpha1/spec_pb";
+import type {
+  ProposeSpecRequest,
+  PutSpecRequest,
+} from "../gen/kelson/v1alpha1/spec_pb";
 import { SpecService } from "../gen/kelson/v1alpha1/spec_pb";
+import { GitConnectionService } from "../gen/kelson/v1alpha1/gitconnection_pb";
 import { RenderService } from "../gen/kelson/v1alpha1/render_pb";
 import { DryRun } from "../gen/kelson/v1alpha1/common_pb";
 import { renderAt } from "../test/render";
@@ -108,22 +112,45 @@ interface Stub {
   /** How many real (non-dry-run) writes fail with a version conflict first. */
   conflicts?: number;
   project?: string;
+  environment?: string;
   version?: string;
+  /** Documents somebody else's Flux reconciles, as GetSpec reports them (#248). */
+  gitops?: { document: string; kustomization: string; namespace: string }[];
+  /** Findings ProposeSpec answers with instead of opening anything. */
+  proposalFindings?: ReturnType<typeof create<typeof ErrorSchema>>[];
 }
 
 interface Recorder {
   writes: PutSpecRequest[];
   diffs: { environment: string; from: string; spec: string }[];
   gets: number;
+  proposals: ProposeSpecRequest[];
 }
 
 function stubTransport(stub: Stub = {}) {
-  const recorder: Recorder = { writes: [], diffs: [], gets: 0 };
+  const recorder: Recorder = { writes: [], diffs: [], gets: 0, proposals: [] };
   let conflicts = stub.conflicts ?? 0;
   let version = stub.version ?? "42";
 
   const transport = createRouterTransport((router) => {
+    router.service(GitConnectionService, {
+      listConnections: () => ({
+        connections: [{ name: "acme-github", host: "https://github.com", provider: "github" }],
+      }),
+    });
+
     router.service(SpecService, {
+      proposeSpec: (req) => {
+        recorder.proposals.push(req);
+        if ((stub.proposalFindings ?? []).length > 0) {
+          return { errors: stub.proposalFindings ?? [] };
+        }
+        return {
+          url: "https://github.test/acme/gitops/pull/7",
+          branch: "kelson/hello-abcd1234",
+          baseBranch: req.baseBranch,
+        };
+      },
       getSpec: () => {
         recorder.gets += 1;
         return {
@@ -131,9 +158,12 @@ function stubTransport(stub: Stub = {}) {
             project: "hello",
             version,
             environments: ["development"],
+            gitops: stub.gitops ?? [],
             documents: {
               project: ENCODER.encode(stub.project ?? UI_PROJECT),
-              environments: { development: ENCODER.encode(UI_ENVIRONMENT) },
+              environments: {
+                development: ENCODER.encode(stub.environment ?? UI_ENVIRONMENT),
+              },
             },
           },
         };
@@ -865,5 +895,180 @@ describe("EditSpecPage · adding a component", () => {
     await openedOnForm();
     expect(panel().getByLabelText("Component name")).toBeTruthy();
     expect(panel().queryByRole("button", { name: "Add component" })).toBeNull();
+  });
+});
+
+/**
+ * The GitOps half (#248, ADR-0033 decision 3).
+ *
+ * The screen's contract for a document another Flux reconciles: say who owns
+ * it, take Save away, and put the two things that do survive in its place.
+ */
+describe("EditSpecPage, GitOps-managed", () => {
+  const OWNED = [
+    { document: "project", kustomization: "apps", namespace: "flux-system" },
+    { document: "development", kustomization: "apps", namespace: "flux-system" },
+  ];
+
+  /** An environment document declaring the field ADR-0036 decision 5 warns about. */
+  const TRACKING_ENVIRONMENT = `apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: development
+
+spec:
+  project: hello
+  autoDeploy: true
+`;
+
+  async function edited(stub: Stub) {
+    const view = renderEditor(stub);
+    await openedOnForm();
+    fireEvent.change(screen.getByLabelText("Image"), {
+      target: { value: "ghcr.io/acme/hello:2.0.0" },
+    });
+    return view;
+  }
+
+  const saveButton = /^Save hello$/;
+  const proposeHeading = "Propose as a pull request";
+
+  it("names the Kustomization and takes Save away", async () => {
+    renderEditor({ gitops: OWNED });
+    await openedOnForm();
+
+    expect(screen.getByText(/reconciled from a repository by/)).toBeTruthy();
+    // Named in the banner and again beside each document in the export.
+    expect(screen.getAllByText(/flux-system.apps/).length).toBeGreaterThan(0);
+    // No Save at all, rather than a Save that can never be pressed: a dead
+    // button above a panel explaining why is two things to read for one answer.
+    expect(screen.queryByRole("button", { name: saveButton })).toBeNull();
+    // …and the export is there without checking anything first, because it is
+    // bytes the page already holds.
+    expect(screen.getByRole("heading", { name: "Export" })).toBeTruthy();
+  });
+
+  it("leaves an ordinary project alone", async () => {
+    renderEditor();
+    await openedOnForm();
+
+    expect(screen.queryByText(/reconciled from a repository by/)).toBeNull();
+    expect(screen.getByRole("button", { name: saveButton })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Export" })).toBeNull();
+  });
+
+  it("warns that autoDeploy does not compose with a git-reconciled Environment", async () => {
+    renderEditor({ gitops: OWNED, environment: TRACKING_ENVIRONMENT });
+
+    // Not `openedOnForm`: an environment document carrying `autoDeploy` is
+    // outside the shape the form rebuilds, so this screen opens read-only —
+    // which is exactly the reader who most needs to be told the field does not
+    // compose with what git is doing to the same document.
+    expect(
+      await screen.findByText(/does not compose with a git-reconciled Environment/),
+    ).toBeTruthy();
+    expect(screen.getByText(/ADR-0036 decision/)).toBeTruthy();
+  });
+
+  it("does not warn about autoDeploy when no document declares it", async () => {
+    renderEditor({ gitops: OWNED });
+    await openedOnForm();
+
+    expect(
+      screen.queryByText(/does not compose with a git-reconciled Environment/),
+    ).toBeNull();
+  });
+
+  it("shows the diff before it offers the proposal", async () => {
+    await edited({ gitops: OWNED });
+
+    expect(screen.queryByRole("heading", { name: proposeHeading })).toBeNull();
+    expect(screen.getByText(/Check the spec to see what the change does/)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Check and preview the diff" }));
+    await screen.findByRole("heading", { name: proposeHeading });
+  });
+
+  it("proposes the edited documents at the paths the reader named", async () => {
+    const { recorder } = await edited({ gitops: OWNED });
+    fireEvent.click(screen.getByRole("button", { name: "Check and preview the diff" }));
+    await screen.findByRole("heading", { name: proposeHeading });
+
+    // The connection list is an async read, so the option has to exist before
+    // a change event can select it.
+    await screen.findByRole("option", { name: /acme-github/ });
+    fireEvent.change(screen.getByLabelText("Connection"), {
+      target: { value: "acme-github" },
+    });
+    fireEvent.change(screen.getByLabelText("Repository"), {
+      target: { value: "acme/gitops" },
+    });
+    fireEvent.change(screen.getByLabelText("Base branch"), {
+      target: { value: "main" },
+    });
+    fireEvent.change(
+      screen.getByLabelText("repository path for the project document"),
+      { target: { value: "clusters/prod/hello.yaml" } },
+    );
+
+    const propose = screen.getByRole("button", { name: proposeHeading });
+    // The whole-file disclosure is a gate, not decoration: kelson holds the
+    // document and not the file, and the reviewer is the last person who can
+    // catch a path that also held something else.
+    expect((propose as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("checkbox", { name: /replaced whole/ }));
+    fireEvent.click(propose);
+
+    await screen.findByRole("link", { name: "Open the pull request" });
+    expect(recorder.proposals).toHaveLength(1);
+    const sent = recorder.proposals[0]!;
+    expect(sent.project).toBe("hello");
+    expect(sent.connection).toBe("acme-github");
+    expect(sent.repository).toBe("acme/gitops");
+    expect(sent.baseBranch).toBe("main");
+    // Both documents ride because git owns both; the unit test covers a
+    // document kelson writes itself staying out.
+    expect(sent.files.map((f) => f.path).sort()).toEqual([
+      "clusters/prod/hello.yaml",
+      "hello-development.yaml",
+    ]);
+    const project = sent.files.find((f) => f.path === "clusters/prod/hello.yaml")!;
+    expect(DECODER.decode(project.content)).toContain("ghcr.io/acme/hello:2.0.0");
+    // Nothing was stored: a managed project's edit never reaches PutSpec except
+    // as the dry run that produced the diff.
+    expect(recorder.writes.every((w) => w.dryRun === DryRun.RENDER)).toBe(true);
+  });
+
+  it("shows the findings when the server would not propose the documents", async () => {
+    await edited({
+      gitops: OWNED,
+      proposalFindings: [
+        create(ErrorSchema, {
+          code: "schema/invalid-name",
+          resource: "Project/hello",
+          message: "component names must be DNS labels",
+          remediation: "rename it",
+        }),
+      ],
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Check and preview the diff" }));
+    await screen.findByRole("heading", { name: proposeHeading });
+
+    // The connection list is an async read, so the option has to exist before
+    // a change event can select it.
+    await screen.findByRole("option", { name: /acme-github/ });
+    fireEvent.change(screen.getByLabelText("Connection"), {
+      target: { value: "acme-github" },
+    });
+    fireEvent.change(screen.getByLabelText("Repository"), {
+      target: { value: "acme/gitops" },
+    });
+    fireEvent.click(screen.getByRole("checkbox", { name: /replaced whole/ }));
+    fireEvent.click(screen.getByRole("button", { name: proposeHeading }));
+
+    expect(
+      await screen.findByText("The server would not propose these documents"),
+    ).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Open the pull request" })).toBeNull();
   });
 });
