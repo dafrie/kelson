@@ -13,11 +13,13 @@ import (
 // newHistoryCmd builds `kelson history` (R2, issue #225): what an environment
 // has published, newest first.
 //
-// DeployService.History reads Environment.status.history — a bounded mirror
-// of the most recent revisions (ADR-0028 decision 4), not the local rendered
-// history journal ADR-0027 deleted. Anything older than the mirror's window
-// is still in the registry, immutably, and reading it is a registry query
-// this command does not make.
+// DeployService.History reads two sources and says which is which (ADR-0028
+// decision 4, issue #241). `Environment.status.history` is a bounded mirror of
+// the most recent revisions; the registry holds every artifact ever published,
+// immutably, and *that* is the record. The server pages past the mirror into
+// the registry's tag list, so this command prints revisions the cluster has
+// forgotten — and prints them apart from the rest, because all it knows about
+// one of those is that it exists.
 //
 // Every column is a field of `HistoryEntry`; none of them is read out of the
 // entry's prose `message`, which the server still fills only for clients built
@@ -29,10 +31,12 @@ func newHistoryCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "history (-f spec.yaml | --project <name>) --env <name>",
 		Short: "List what an environment has published, newest first",
-		Long: "History lists the revisions an environment has published, newest first, from\n" +
-			"Environment.status — a bounded mirror of the most recent revisions kept in the cluster\n" +
-			"(ADR-0028 decision 4). Anything older is still in the OCI registry, immutably; reading it\n" +
-			"is a registry query this command does not make.",
+		Long: "History lists the revisions an environment has published, newest first.\n\n" +
+			"Environment.status keeps a bounded mirror of the most recent ones, with the digest,\n" +
+			"the images and the outcome of each (ADR-0028 decision 4). The OCI registry keeps every\n" +
+			"artifact ever published, immutably, and it is the record: revisions older than the\n" +
+			"mirror are listed from it, separately, because the registry knows they exist and\n" +
+			"nothing more. Any of them can still be restored with `kelson rollback --to`.",
 		Example: "  kelson history -f project.yaml -f production.yaml --env production\n" +
 			"  kelson history --project shop --env production",
 		Args: cobra.NoArgs,
@@ -75,13 +79,50 @@ func runHistory(cmd *cobra.Command, opts *historyOptions) error {
 		out.printf("no revisions recorded for this environment\n")
 		return out.err
 	}
-	out.printf("%-16s %-22s %-12s %-20s %s\n", "REVISION", "COMMITTED", "OUTCOME", "DIGEST", "IMAGES")
-	for _, e := range entries {
-		out.printf("%-16s %-22s %-12s %-20s %s\n",
-			e.GetRevision(), orDash(e.GetCommittedAt()), orDash(e.GetOutcome()),
-			orDash(shortDigest(e.GetDigest())), orDash(historyImages(e)))
-	}
+	printHistory(out, entries)
 	return out.err
+}
+
+// printHistory prints the two sources as two things, because they answer
+// different amounts.
+//
+// A mirrored revision fills every column. A revision only the registry
+// remembers fills one, and putting it in the same table would print four
+// dashes that read as "this deployment had no outcome" rather than "nothing
+// recorded what its outcome was" — the distinction `beyond_window` exists to
+// carry (proto/kelson/v1alpha1/deploy.proto). So they get their own list, under
+// a line that says what is known about them and that they are still restorable.
+func printHistory(out *printer, entries []*kelsonv1alpha1.HistoryEntry) {
+	var registryOnly []*kelsonv1alpha1.HistoryEntry
+	mirrored := make([]*kelsonv1alpha1.HistoryEntry, 0, len(entries))
+	for _, e := range entries {
+		if e.GetBeyondWindow() {
+			registryOnly = append(registryOnly, e)
+			continue
+		}
+		mirrored = append(mirrored, e)
+	}
+
+	if len(mirrored) > 0 {
+		out.printf("%-16s %-22s %-12s %-20s %s\n", "REVISION", "COMMITTED", "OUTCOME", "DIGEST", "IMAGES")
+		for _, e := range mirrored {
+			out.printf("%-16s %-22s %-12s %-20s %s\n",
+				e.GetRevision(), orDash(e.GetCommittedAt()), orDash(e.GetOutcome()),
+				orDash(shortDigest(e.GetDigest())), orDash(historyImages(e)))
+		}
+	}
+	if len(registryOnly) == 0 {
+		return
+	}
+	if len(mirrored) > 0 {
+		out.printf("\n")
+	}
+	out.printf("Older than the cluster's mirror — the registry's tag list confirms these revisions and\n" +
+		"nothing recorded when they were published, what they ran or how they ended. Each is still\n" +
+		"restorable: kelson rollback --to <revision>.\n")
+	for _, e := range registryOnly {
+		out.printf("  %s\n", e.GetRevision())
+	}
 }
 
 // shortDigest is a digest at reading length: sha256:0123456789ab. Only an
