@@ -425,10 +425,7 @@ function Editor({
             {rebuildable ? null : (
               <p className="k-note k-edit__readonly" role="status">
                 This document was hand-edited — use the YAML tab to keep its
-                formatting. Editing through these fields would rewrite the file
-                from what the form understands, dropping comments and key order
-                the store is keeping for you (ADR-0013 §1). The fields below are
-                shown read-only.
+                comments and key order. The fields below are read-only.
               </p>
             )}
             <SpecForm
@@ -508,8 +505,8 @@ function Editor({
             />
           ) : (
             <p className="k-note">
-              Check the spec to see what the change does before proposing it —
-              the pull request carries the bytes the diff above was about.
+              Check the spec first. The pull request carries exactly the bytes
+              the diff was about.
             </p>
           )}
         </>
@@ -550,8 +547,7 @@ function Editor({
             Save {project}
           </button>
           <span className="k-mono k-deploy__note">
-            check the spec first — Save writes what the check and the diff were
-            about
+            check the spec first — Save writes what the diff was about
           </span>
         </div>
       )}
@@ -622,7 +618,7 @@ function SpecForm({
               readOnly={readOnly}
               placeholder="ghcr.io/acme/hello:1.4.2"
               errors={errorsFor("project.image")}
-              note="shared by every component; a component's own image wins (rule P3)"
+              note="shared by every component; a component's own image wins"
             />
           </div>
           <EnvRows
@@ -632,7 +628,7 @@ function SpecForm({
             readOnly={readOnly}
             onChange={(env) => setProject({ env })}
             errorsFor={(name) => errorsFor(`project.env.${name}`)}
-            note="shared by every component (rule P1); a value is a plain string, a reference is a mapping — never a credential (ADR-0009, ADR-0018)"
+            note="shared by every component; a component's own value of the same name wins"
           />
         </div>
       </section>
@@ -780,8 +776,8 @@ function PreviewsFields({
       <span className="k-field__note k-mono">
         {p.enabled
           ? fluxMode
-            ? "flux-operator polls the forge and stands up <project>-<environment>-pr<id> per change request. The manifests come from a CI step running `kelson preview publish` — without it, every preview waits for an artifact nobody pushed."
-            : "previews render in flux delivery mode only (ADR-0017): set the mode above, or Check will refuse this document with render/previews-require-flux."
+            ? "one environment per open pull request. A CI step running `kelson preview publish` supplies its manifests — without it, every preview waits for an artifact nobody pushed."
+            : "previews need the flux delivery mode — set it above, or Check will refuse this document."
           : "off: this environment has no per-pull-request children."}
       </span>
 
@@ -814,7 +810,7 @@ function PreviewsFields({
               readOnly={readOnly}
               placeholder="github-auth"
               errors={field("secretRef")}
-              note="the NAME of a Secret in this environment's namespace; never a token (ADR-0009)"
+              note="the NAME of a Secret in this environment's namespace; never a token"
             />
           </div>
 
@@ -836,7 +832,7 @@ function PreviewsFields({
               readOnly={readOnly}
               placeholder="deploy/preview"
               errors={field("filterLabels")}
-              note="comma-separated; blank means every open change request, which is why the ceiling exists"
+              note="comma-separated; blank means every open pull request"
             />
             <EditField
               label="Simultaneous previews"
@@ -846,7 +842,7 @@ function PreviewsFields({
               readOnly={readOnly}
               placeholder="10"
               errors={field("limit")}
-              note="blank means 10 — a cost control, deliberately below flux-operator's own 100"
+              note="blank means 10"
             />
           </div>
 
@@ -926,11 +922,9 @@ function DataComponentRow({ component }: { component: ComponentEdit }) {
       </div>
       <div className="k-section__body k-edit__group">
         <p className="k-note">
-          A managed data service. Its topology is a preset its operator
-          implements, so there is nothing here to scale or roll — the preset and
-          what it means are on the project page, in the data services section,
-          and the YAML tab is where a `preset:` is written. A workload reaches
-          it with{" "}
+          A managed data service — nothing here to scale or roll. Its preset
+          lives on the project page, under data services. A workload reaches it
+          with{" "}
           <span className="k-mono">
             {`{ from: { service: ${component.name}, key: uri } }`}
           </span>
@@ -1038,12 +1032,10 @@ function AddComponent({
             This document cannot be rebuilt from the form
           </span>
           <p className="k-note">
-            It carries something these fields do not model — a comment, a key
-            order, a kind this form does not write — so appending through them
-            would rewrite your file from what the form understood (ADR-0013 §1).
-            Here is the entry instead: paste it under{" "}
-            <span className="k-mono">spec.components:</span> in the YAML tab,
-            where the rest of the document keeps its formatting.
+            It carries something these fields do not model, so appending through
+            them would rewrite your file. Paste this entry under{" "}
+            <span className="k-mono">spec.components:</span> in the YAML tab
+            instead.
           </p>
           <YamlBlock bytes={handoff} />
           <div className="k-actions">
@@ -1057,9 +1049,8 @@ function AddComponent({
 
       {!open ? (
         <span className="k-field__note k-mono">
-          a project is a container of components (ADR-0014): a service, its
-          worker, a nightly job and the database they share are one Project and
-          one spec
+          a service, its worker, a nightly job and the database they share are
+          one project
         </span>
       ) : (
         <div className="k-section__body k-edit__group">
@@ -1080,11 +1071,7 @@ function AddComponent({
               {KIND_CHOICES.find((c) => c.kind === draft.kind)?.note}
             </span>
             <span className="k-field__note k-mono">
-              `helm` and `agent` are components too and are not offered here: a
-              chart needs its own `chart:` and `values:`, which these fields do
-              not have (ADR-0016), and an agent is worker-shaped until its
-              `tools:` policy stops being rejected (#75, M7). Both are written on
-              the YAML tab.
+              `helm` and `agent` components are written on the YAML tab
             </span>
           </fieldset>
 
@@ -1097,7 +1084,7 @@ function AddComponent({
               placeholder={data ? "db" : "worker"}
               problem={problemFor("name")}
               errors={[]}
-              note="a DNS-1123 label, unique within this project — it names the workload or the database in the namespace"
+              note="unique in this project — lowercase letters, digits and dashes"
             />
             {draft.kind === "service" ? (
               <EditField
@@ -1109,7 +1096,7 @@ function AddComponent({
                 placeholder="8080"
                 problem={problemFor("port")}
                 errors={[]}
-                note="the port the container listens on — what makes this a service: Deployment + Service + routing"
+                note="the port the container listens on — what makes this a web service"
               />
             ) : null}
             {draft.kind === "cron" ? (
@@ -1121,18 +1108,16 @@ function AddComponent({
                 placeholder="0 3 * * *"
                 problem={problemFor("schedule")}
                 errors={[]}
-                note="a five-field cron expression — what makes this a CronJob"
+                note="a five-field cron expression — what makes this a scheduled job"
               />
             ) : null}
           </div>
 
           {data ? (
             <p className="k-field__note k-mono">
-              that is the whole component: a data service's configuration is its
-              preset, and leaving it out takes the model's default. What each
-              preset means — instances, CPU, storage, replication — is on the
-              project page, in the data services section, and a preset is
-              written there or on the YAML tab.
+              that is the whole component — a data service's configuration is
+              its preset, and leaving it out takes the default. Presets are on
+              the project page, under data services.
             </p>
           ) : (
             <>
@@ -1158,8 +1143,8 @@ function AddComponent({
                 </label>
                 <span className="k-field__note k-mono">
                   {draft.ownImage
-                    ? "an `image:` on the component, which wins over the project's (rule P3)"
-                    : "no `image:` at all: this component runs the project's image, or the artifact its source and build produce (rule P3) — which is how one repository ships a web process and a worker"}
+                    ? "an `image:` on the component, which wins over the project's"
+                    : "runs the project's image — how one repository ships a web process and a worker"}
                 </span>
               </fieldset>
 
@@ -1192,8 +1177,7 @@ function AddComponent({
               Cancel
             </button>
             <span className="k-mono k-deploy__note">
-              appends one entry to spec.components · stores nothing, deploys
-              nothing — the check and the save below do that
+              appends one entry to spec.components · stores nothing
             </span>
           </div>
         </div>
@@ -1211,27 +1195,27 @@ const KIND_CHOICES: {
   {
     kind: "service",
     label: "Web service",
-    note: "a port makes it a service: Deployment + Service + routing",
+    note: "a port makes it a web service: it gets routing and a hostname",
   },
   {
     kind: "worker",
     label: "Worker",
-    note: "no port and no schedule: a Deployment that serves no traffic",
+    note: "no port and no schedule: runs continuously, serves no traffic",
   },
   {
     kind: "cron",
     label: "Cron job",
-    note: "a schedule makes it a CronJob; a job that also serves traffic is two components",
+    note: "runs on a schedule; a job that also serves traffic is two components",
   },
   {
     kind: "postgres",
     label: "PostgreSQL",
-    note: "a managed database, rendered as a CloudNativePG Cluster its operator runs (ADR-0007)",
+    note: "a managed database, run for you by its operator",
   },
   {
     kind: "valkey",
     label: "Valkey",
-    note: "a managed cache, rendered as a ValkeyCluster its operator runs (ADR-0015)",
+    note: "a managed cache, run for you by its operator",
   },
 ];
 
@@ -1266,7 +1250,7 @@ function ComponentForm({
             readOnly={readOnly}
             placeholder="inherits the project image"
             errors={errorsFor(`component.${index}.image`)}
-            note="blank means the project's image (rule P3)"
+            note="blank means the project's image"
           />
           {kind === "cron" ? (
             <EditField
@@ -1289,8 +1273,8 @@ function ComponentForm({
               errors={errorsFor(`component.${index}.port`)}
               note={
                 kind === "service"
-                  ? "a port makes this a web service: Deployment + Service + routing"
-                  : "empty: a worker — Deployment, no routing"
+                  ? "a port makes this a web service: it gets routing and a hostname"
+                  : "empty: a worker, which serves no traffic"
               }
             />
           )}
@@ -1350,7 +1334,7 @@ function ComponentForm({
           readOnly={readOnly}
           onChange={(env) => onChange({ env })}
           errorsFor={(name) => errorsFor(`component.${index}.env.${name}`)}
-          note="this component only; it overrides a project-level key of the same name (rule P1)"
+          note="this component only; overrides a project-level key of the same name"
         />
       </div>
     </section>
@@ -1516,8 +1500,8 @@ function EnvRows({
           on the project page (#116). */}
       <span className="k-field__note k-mono">
         a reference carries no value — write the Secret itself in the{" "}
-        <Link to={`/projects/${encodeURIComponent(project)}`}>Secrets panel</Link> on
-        this project's page, or with `kelson secret set`
+        <Link to={`/projects/${encodeURIComponent(project)}`}>Secrets panel</Link>,
+        or with `kelson secret set`
       </span>
     </div>
   );
@@ -1662,10 +1646,9 @@ function ChangePreview({ diffs }: { diffs: EnvDiff[] }) {
     <section className="k-section">
       <div className="k-eyebrow">What changes ({diffs.length})</div>
       <p className="k-note">
-        Today's stored documents against the edited ones, rendered — every
-        environment, because a Project edit reaches all of them. This is a pure
-        render and says nothing about what is live in a cluster; the Diff screen
-        is the one that asks a cluster.
+        The stored documents against your edits, rendered for every
+        environment. Nothing is read from the cluster — the Diff screen is the
+        one that asks it.
       </p>
       <div className="k-section__body k-edit__diffs">
         {diffs.map((d) => (
@@ -1754,9 +1737,8 @@ function ConflictState({
         </span>
       </div>
       <p className="k-edit__conflict-body">
-        Someone — another browser, the CLI, a controller — stored a new version
-        of {project} after this page read it, so the write was refused rather
-        than silently overwriting theirs. Nothing has been saved.
+        Something else stored a new version of {project} after this page read
+        it, so the write was refused. Nothing has been saved.
       </p>
 
       <div className="k-eyebrow">Keep your work first</div>
@@ -1790,9 +1772,8 @@ function ConflictState({
         </button>
       </div>
       <span className="k-mono k-deploy__note">
-        Reloading fetches the current bytes and starts over — your edits here are
-        discarded, not merged. Overwriting stores your documents with force=true
-        and their change is lost.
+        Reloading starts over from the stored bytes — your edits are discarded,
+        not merged. Overwriting stores yours and their change is lost.
       </span>
     </div>
   );

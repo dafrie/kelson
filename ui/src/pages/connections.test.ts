@@ -113,7 +113,7 @@ describe("appIdentity", () => {
           installationId: 0n,
         }),
       ),
-    ).toBe("app 12345 · no installation yet — the id arrives on the installation webhook");
+    ).toBe("app 12345 · not installed yet");
   });
 
   it("names the installation once one exists", () => {
@@ -227,7 +227,7 @@ describe("formProblems", () => {
   it("requires a host, because a default would silently claim github.com", () => {
     const problem = formProblems({ ...good, host: "  " })[0];
     expect(problem?.field).toBe("host");
-    expect(problem?.message).toContain("silently claim github.com");
+    expect(problem?.message).toContain("a forge base URL is required");
   });
 
   it("refuses a bare hostname, which is what a reader types first", () => {

@@ -114,11 +114,12 @@ export function SecretsPanel({
       <div className="k-eyebrow">
         Secrets{list.data !== undefined ? ` (${secrets.length})` : ""}
       </div>
+      {/* kelson stores no value — the cluster does (ADR-0009). This is the
+          masked read-back. */}
       <p className="k-secrets__lede">
-        The Secrets kelson manages in this environment's namespace — what a{" "}
+        The Secrets kelson manages in this environment — what a{" "}
         <code className="k-mono">{"{ secret: <name>, key: <key> }"}</code>{" "}
-        reference in the spec points at. kelson stores no value: the cluster
-        does, and this is the masked read-back (ADR-0009).
+        reference in the spec points at. Values are never shown.
       </p>
 
       {list.loading && list.data === undefined ? (
@@ -135,9 +136,8 @@ export function SecretsPanel({
       {list.data !== undefined && secrets.length === 0 ? (
         <p className="k-env__note">
           kelson manages no Secrets in namespace{" "}
-          <span className="k-mono">{namespace || "—"}</span>. A namespace's TLS
-          material, service-account tokens and image-pull credentials are not
-          kelson's to enumerate, so they are absent rather than filtered.
+          <span className="k-mono">{namespace || "—"}</span>. Secrets it did not
+          write are not listed here.
         </p>
       ) : null}
 
@@ -241,9 +241,8 @@ export function SecretsPanel({
             {set.running ? "Writing…" : "Write the Secret"}
           </button>
           <span className="k-mono k-deploy__note">
-            values are write-only — they go to the cluster's API server and
-            nothing reads one back through kelson · keys not named here are kept,
-            because a write merges rather than replaces
+            values are write-only, and nothing reads one back through kelson ·
+            a write merges, so keys not named here are kept
           </span>
         </div>
       </form>
@@ -313,9 +312,9 @@ function SecretRow({
         <div className="k-secrets__confirm" role="alert">
           <span>
             Delete <span className="k-mono">{secret.name}</span> from{" "}
-            <span className="k-mono">{secret.namespace}</span>? kelson does not
-            look for referrers: a component whose env names this Secret keeps
-            rendering and fails at pod start instead (ADR-0018).
+            <span className="k-mono">{secret.namespace}</span>? Components
+            referencing it are not checked first — they keep rendering and fail
+            when they start.
           </span>
           <div className="k-actions">
             <button type="button" className="k-button" onClick={onCancel}>
@@ -368,9 +367,8 @@ function Written({ response }: { response: SetSecretResponse }) {
         </span>
       ) : null}
       <span className="k-mono">
-        values are write-only: nothing in kelson reads one back, and this
-        read-back is names, keys and ages only. Reading a value is `kubectl get
-        secret`, with the cluster's own RBAC behind it.
+        values are write-only — nothing in kelson reads one back. Reading a
+        value is `kubectl get secret`.
       </span>
 
       <div className="k-eyebrow">Reference a key from a component's env</div>

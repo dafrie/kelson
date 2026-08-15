@@ -339,7 +339,7 @@ export function NewProjectPage() {
             placeholder="hello"
             problem={problemFor("project")}
             errors={errorsFor("project")}
-            note="becomes metadata.name — a DNS-1123 label"
+            note="lowercase letters, digits and dashes"
           >
             {taken ? (
               <span className="k-field__problem k-mono" role="alert">
@@ -378,8 +378,8 @@ export function NewProjectPage() {
                 errors={errorsFor("git")}
                 note={
                   form.connection === ""
-                    ? "cloned inside the cluster at build time; a private repository resolves its credential by matching this host against the instance's git connections"
-                    : `cloned inside the cluster at build time, through connection ${form.connection}`
+                    ? "cloned in the cluster at build time; a private repository matches this host against your git connections"
+                    : `cloned in the cluster at build time, through connection ${form.connection}`
                 }
               />
               <Field
@@ -405,10 +405,10 @@ export function NewProjectPage() {
             errors={errorsFor("port")}
             note={
               kind === "cron"
-                ? "unused: a schedule makes this a CronJob"
+                ? "unused: a schedule makes this a scheduled job"
                 : routed
-                  ? "a port makes this a web service: Deployment + Service + routing"
-                  : "empty: a worker — Deployment, no routing"
+                  ? "a port makes this a web service: it gets routing and a hostname"
+                  : "empty: a worker, which serves no traffic"
             }
           />
         </div>
@@ -434,7 +434,7 @@ export function NewProjectPage() {
                 placeholder="development"
                 problem={problemFor("environment")}
                 errors={errorsFor("environment")}
-                note="the Environment document's name; every flow in this UI is addressed by (project, environment)"
+                note="the first environment this project gets"
               />
               <Field
                 label="Namespace"
@@ -477,7 +477,7 @@ export function NewProjectPage() {
             {routed ? (
               <Rows
                 label="Domains"
-                note="explicit FQDNs. A cluster with no Gateway API cannot serve them, and the check below says so rather than falling back to Ingress (#140)."
+                note="explicit hostnames — the check below says so if this cluster cannot serve them"
                 addLabel="Add domain"
                 problem={problemFor("domains")}
                 errors={errorsFor("domains")}
@@ -496,7 +496,7 @@ export function NewProjectPage() {
                   placeholder="0 3 * * *"
                   problem={problemFor("schedule")}
                   errors={errorsFor("schedule")}
-                  note="a five-field cron expression makes this a CronJob instead of a worker"
+                  note="a five-field cron expression makes this a scheduled job instead of a worker"
                 />
               </div>
             ) : null}
@@ -801,12 +801,12 @@ function EnvRows({
           Add variable
         </button>
       </div>
+      {/* A plain value is stored in the spec as written, so it can never be a
+          credential (ADR-0009) — a secret-shaped name is rejected. */}
       <span className="k-field__note k-mono">
         a plain value is stored in the spec as written, so it is never a
-        credential (ADR-0009) — a secret-shaped name is rejected. Choose “secret
-        ref” for a credential: it writes {"{ secret: <name>, key: <key> }"} and
-        the value goes into the Secret itself, in the project's Secrets panel or
-        with `kelson secret set`.
+        credential. Choose “secret ref” for one: the value goes into the Secret
+        itself, in the project's Secrets panel or with `kelson secret set`.
       </span>
     </div>
   );
@@ -858,8 +858,8 @@ function SourceToggle({
       </label>
       <span className="k-field__note k-mono">
         {mode === "git"
-          ? "kelson clones it and builds the image in the cluster, rootless, then pushes it to the server's registry — how it is built is the choice below"
-          : "an image someone or something else already built and pushed"}
+          ? "kelson clones it, builds the image in the cluster and pushes it — how it is built is the choice below"
+          : "an image something else already built and pushed"}
       </span>
     </fieldset>
   );
@@ -917,11 +917,10 @@ function StrategyToggle({
           language and builds a rootless image
         </span>
       </div>
+      {/* `auto` — look at the tree and decide — is ADR-0010's own default and
+          is not offered: the tree only exists inside the build pod (#50). */}
       <span className="k-field__note k-mono k-new__strategy-note">
-        the answer is written into the spec as `spec.build.strategy`. ADR-0010's
-        own default — `auto`, look at the tree and decide — is not offered here,
-        because the tree only exists inside the build pod and the server has
-        nothing to look at until it does (#50).
+        written into the spec as `spec.build.strategy`
       </span>
     </fieldset>
   );
@@ -969,9 +968,8 @@ function Preview({
               </span>
             ))}
             <span className="k-mono">
-              storing a spec does not render it, so this create succeeds — the
-              image arrives when a build produces one, which is the next step
-              after Create.
+              storing a spec does not render it, so this create succeeds. The
+              image arrives when the build below produces one.
             </span>
           </div>
         ) : null}
@@ -990,8 +988,7 @@ function Preview({
             {running ? "Creating…" : `Create ${documents.projectName}`}
           </button>
           <span className="k-mono k-deploy__note">
-            the check passed · nothing has been written yet, and nothing is
-            deployed by creating
+            the check passed · nothing is written or deployed yet
           </span>
         </div>
       </div>
@@ -1020,8 +1017,8 @@ function Stored({ created }: { created: Created }) {
         </div>
         <span className="k-mono">
           {created.buildsFromSource
-            ? "nothing has been built and nothing has been applied to a cluster — building comes first, because this project has no image until a build produces one"
-            : "nothing has been applied to a cluster yet — deploying is the next, separate step"}
+            ? "nothing is built or deployed yet — this project has no image until a build produces one"
+            : "nothing has been deployed yet — that is the next, separate step"}
         </span>
         <div className="k-actions">
           {created.buildsFromSource ? null : (
@@ -1140,10 +1137,8 @@ function BuildAndDeploy({
             </button>
           ) : null}
           <span className="k-mono k-deploy__note">
-            a rootless Job in the cluster, running the strategy the spec asked
-            for · the registry and the push credential are the server's
-            configuration, not this form's · stopping stops the watching, not
-            the Job
+            builds in the cluster with the strategy above · stopping stops the
+            watching, not the build
           </span>
         </div>
 

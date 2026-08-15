@@ -126,26 +126,20 @@ function NotConfigured({ mode }: { mode: string }) {
   return (
     <div className="k-previews__empty">
       <p className="k-previews__lede">
-        This environment spawns no per-pull-request children. An environment with
-        a <code className="k-mono">previews:</code> block renders a flux-operator{" "}
-        <span className="k-mono">ResourceSetInputProvider</span> that polls the
-        forge and a <span className="k-mono">ResourceSet</span> that stands up one
-        namespace per open change request.
+        This environment spawns no per-pull-request children. Turning previews
+        on gives every open pull request its own copy of it.
       </p>
       <p className="k-previews__lede">
-        <strong>Two halves have to be in place.</strong> The block above says
-        which change requests get a preview; a CI step running{" "}
-        <code className="k-mono">kelson preview publish --pr … --sha …</code> is
-        what pushes the manifests each preview applies. Without the CI step
-        flux-operator finds the change requests and reports an artifact that does
-        not exist.
+        <strong>Two halves have to be in place.</strong> A{" "}
+        <code className="k-mono">previews:</code> block on the Environment says
+        which pull requests qualify, and a CI step running{" "}
+        <code className="k-mono">kelson preview publish --pr … --sha …</code>{" "}
+        pushes the manifests each preview applies.
       </p>
       <p className="k-previews__lede">
-        Previews are available in <span className="k-mono">flux</span> delivery
-        mode only, and this environment is{" "}
-        <span className="k-mono">{mode || "unset"}</span>. Configure them on the
-        Environment document — the edit screen has the fields, or the YAML tab
-        takes the block whole.
+        Previews need the <span className="k-mono">flux</span> delivery mode;
+        this environment is <span className="k-mono">{mode || "unset"}</span>.
+        The edit screen has the fields.
       </p>
       <a
         className="k-previews__docs k-mono"
@@ -182,8 +176,7 @@ function Configured({
     <>
       <p className="k-previews__lede">{settingsLine(settings)}</p>
       <p className="k-mono k-previews__artifacts">
-        artifacts: {settings.artifactsRepository} · tagged with each change
-        request's head commit
+        artifacts: {settings.artifactsRepository}
       </p>
       {settings.skipLabels.length > 0 ? (
         <p className="k-mono k-previews__artifacts">
@@ -202,10 +195,8 @@ function Configured({
 
       {!gated && previews.length === 0 && response?.lifecycle?.present === true ? (
         <p className="k-env__note">
-          No change request has a preview right now. That is the answer when
-          nothing open matches the filter — and also when CI has not published an
-          artifact for any of them, in which case flux-operator has not created
-          the objects this list reads.
+          No change request has a preview right now — nothing open matches the
+          filter, or CI has published for none of them.
         </p>
       ) : null}
 
@@ -318,9 +309,8 @@ function PreviewRow({
         </div>
       ) : (
         <p className="k-mono k-previews__muted">
-          no hostnames — this preview's set declares no routes, or kelson cannot
-          read routes in its namespace. Absence here is not a claim that the
-          preview serves nothing.
+          no hostnames — this preview declares no routes, or kelson cannot read
+          them in its namespace
         </p>
       )}
 

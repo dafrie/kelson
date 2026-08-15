@@ -289,7 +289,9 @@ describe("NewProjectPage", () => {
     // No value input exists for a reference, so there is nothing on this screen
     // that could put a credential into the document.
     expect(screen.queryByLabelText("Variable 1 value")).toBeNull();
-    expect(field("Variable 1 name")).toContain("valueFrom.secretKeyRef");
+    expect(field("Variable 1 name")).toContain(
+      "reads one key of a Secret in this environment's namespace",
+    );
   });
 
   it("refuses to write half a reference", async () => {
@@ -445,7 +447,7 @@ describe("NewProjectPage", () => {
     expect(field("Port")).toContain("empty: a worker");
 
     type("Schedule", "0 3 * * *");
-    expect(field("Port")).toContain("a schedule makes this a CronJob");
+    expect(field("Port")).toContain("a schedule makes this a scheduled job");
 
     type("Port", "8080");
     expect(field("Schedule")).toContain("port and schedule are mutually exclusive");

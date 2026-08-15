@@ -48,7 +48,7 @@ export const DEFAULT_GITHUB_HOST = "https://github.com";
  * the screen says so rather than picking the more alarming of the two.
  */
 export const NOT_OBSERVED =
-  "not observed: both conditions are false and the connection carries no message, which is what a connection no probe has reached looks like — and also what one that failed without saying why looks like";
+  "nothing has probed this connection yet, or a probe failed without saying why";
 
 const NO_MESSAGE = "the connection reports no reason";
 
@@ -75,8 +75,7 @@ export function connectionHealth(connection: GitConnection): ConnectionHealth {
     return {
       status: "synced",
       label: "ready",
-      detail:
-        message || "the last probe authenticated and the forge answered",
+      detail: message || "the last probe authenticated",
     };
   }
   if (connection.ready) {
@@ -128,7 +127,7 @@ export function appIdentity(connection: GitConnection): string | undefined {
   if (connection.authKind !== GitAuthKind.GITHUB_APP) return undefined;
   const installed =
     connection.installationId === 0n
-      ? "no installation yet — the id arrives on the installation webhook"
+      ? "not installed yet"
       : `installation ${connection.installationId}`;
   return `app ${connection.appId} · ${installed}`;
 }
@@ -249,13 +248,15 @@ export function formProblems(form: ConnectionForm): ConnectionProblem[] {
   if (host === "") {
     out.push({
       field: "host",
-      message:
-        "a forge base URL is required — the host is what resolves a project's source to this connection, and a default would silently claim github.com",
+      // No default: kelson will not silently claim github.com for a forge
+      // nobody named.
+      message: "a forge base URL is required",
     });
   } else if (!/^https?:\/\/\S+$/.test(host)) {
+    // HTTP(S) only — an SSH remote is a different credential class.
     out.push({
       field: "host",
-      message: `"${host}" is not a forge base URL — give the scheme too, e.g. ${DEFAULT_GITHUB_HOST}. Everything here is HTTPS: an SSH remote is a different credential class (ADR-0033)`,
+      message: `"${host}" is not a forge base URL — include the scheme, e.g. ${DEFAULT_GITHUB_HOST}`,
     });
   }
 

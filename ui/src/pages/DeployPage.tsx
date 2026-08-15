@@ -147,15 +147,14 @@ export function DeployPage() {
             <Copyable value={image} />
           </span>
           <span className="k-mono k-deploy__note">
-            this deploy renders with the image above instead of the spec's —
-            it is what a build produced, and it is why a project that builds
-            from source can be deployed at all
+            this deploy renders with the image above instead of the spec's — it
+            is what the build produced
           </span>
         </div>
       ) : null}
 
       <section className="k-section">
-        <div className="k-eyebrow">Step 1 · Preview (dry run: render)</div>
+        <div className="k-eyebrow">Step 1 · Preview</div>
         <div className="k-section__body">
           {preview.loading && preview.data === undefined ? (
             <LoadingState what="the rendered manifests" />
@@ -322,8 +321,7 @@ function ServerDiff({
             {run.running ? "Asking the cluster…" : "Run server dry-run diff"}
           </button>
           <span className="k-mono k-deploy__note">
-            a rendered-vs-rendered diff needs a `from` spec, which a stored spec
-            does not have — that is the CLI's `kelson diff --from` flow
+            asks the cluster what this deploy would change
           </span>
         </div>
 

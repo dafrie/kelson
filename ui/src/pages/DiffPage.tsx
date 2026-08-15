@@ -79,8 +79,8 @@ export function DiffPage() {
 
       <p className="k-note">
         {mode === "server"
-          ? "The cluster's own dry-run verdict on today's render: what a deploy would meet, including defaulting and admission. It needs a reachable cluster and never falls back to an offline answer."
-          : "Today's render against the manifests that revision actually rendered — the recorded bytes, not a re-render of the old spec. It needs a delivery mode whose rendered history kelson can read."}
+          ? "What a deploy would change, asked of the cluster itself. Needs a reachable cluster."
+          : "Today's render against what that revision actually deployed — the recorded manifests, not a re-render of the old spec."}
       </p>
 
       {mode === "server" ? (
@@ -168,10 +168,9 @@ function RevisionDiff({
             />
           ) : null}
           {history.data !== undefined && entries.length === 0 ? (
-            <EmptyState title="No recorded history">
-              Nothing has been deployed for this environment, so there is no
-              rendered output to compare against. The live cluster's dry-run
-              verdict is the other tab.
+            <EmptyState title="No deploys yet">
+              There is nothing to compare against. The other tab asks the live
+              cluster instead.
             </EmptyState>
           ) : null}
           {entries.length > 0 ? (

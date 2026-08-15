@@ -586,7 +586,7 @@ export function formProblems(form: NewProjectForm): FieldProblem[] {
     out.push({
       field: "schedule",
       message:
-        "port and schedule are mutually exclusive: a port makes this a web service, a schedule makes it a CronJob. Clear one — a job that also serves traffic is two components (docs/model.md).",
+        "port and schedule are mutually exclusive: a port makes this a web service, a schedule makes it a scheduled job. Clear one — a job that also serves traffic is two components.",
     });
   }
 

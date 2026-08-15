@@ -86,9 +86,9 @@ export function ProjectDetailPage() {
       ) : null}
 
       {spec.data !== undefined && environments.length === 0 ? (
-        <EmptyState title="This project declares no environments">
-          An Environment document is what names a namespace and a delivery mode.
-          Without one there is nothing to deploy, diff or roll back.
+        <EmptyState title="No environments yet">
+          Add one on the edit screen — until then there is nothing to deploy,
+          diff or roll back.
         </EmptyState>
       ) : null}
 
@@ -181,10 +181,8 @@ function Components({
       <div className="k-section__body">
         {components.length === 0 ? (
           <p className="k-note">
-            No components were read from the stored Project document. A Project
-            is a container of components — a service, its worker, a nightly job
-            and the database they share are one Project (ADR-0014) — and the
-            documents below are what this list is read from.
+            No components were read from the stored Project document — the
+            documents below are what this list comes from.
           </p>
         ) : (
           <ul className="k-components">
@@ -444,7 +442,7 @@ function EnvironmentPanel({
                 type="button"
                 className="k-button"
                 disabled
-                title={`${project} declares no other environment to promote from — a promotion has a source and a target`}
+                title={`${project} declares no other environment to promote from`}
               >
                 Promote into this environment
               </button>
@@ -508,9 +506,8 @@ function EnvironmentPanel({
               <div className="k-eyebrow">Workloads ({workloads.length})</div>
               {workloads.length === 0 ? (
                 <p className="k-mono k-env__note">
-                  no verdicts — this build has no health probe wired, or the set
-                  declares no Deployments. That is not the same as “nothing is
-                  failing”.
+                  no verdicts — nothing here is being watched, which is not the
+                  same as nothing failing
                 </p>
               ) : (
                 <ul className="k-verdicts">

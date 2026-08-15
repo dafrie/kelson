@@ -191,7 +191,9 @@ describe("ConnectionsPage: the list", () => {
     await screen.findByText("internal-gitlab");
 
     expect(screen.getByText("not observed")).toBeTruthy();
-    expect(screen.getByText(/both conditions are false/)).toBeTruthy();
+    expect(
+      screen.getByText(/nothing has probed this connection yet/),
+    ).toBeTruthy();
     // A count nobody reported is absent rather than printed as zero.
     expect(
       screen.getAllByText("not reported — no probe has succeeded"),
@@ -208,10 +210,10 @@ describe("ConnectionsPage: the list", () => {
     expect(
       screen.getByText(/Every connection below is visible to\s+everyone on this instance/),
     ).toBeTruthy();
-    expect(screen.getByText(/a recorded owner and not a boundary/)).toBeTruthy();
+    expect(screen.getByText(/a recorded owner, not a boundary/)).toBeTruthy();
   });
 
-  it("explains what a connection is and offers both paths when there are none", async () => {
+  it("says what is missing and offers both paths when there are none", async () => {
     const transport = createRouterTransport((router) => {
       router.service(GitConnectionService, {
         listConnections: () => ({ connections: [] }),
@@ -219,12 +221,10 @@ describe("ConnectionsPage: the list", () => {
     });
     renderAt(transport, "/connections", "/connections", <ConnectionsPage />);
 
+    expect(await screen.findByText("No connections yet")).toBeTruthy();
     expect(
-      await screen.findByText(
-        /kelson can clone public repositories and nothing else/,
-      ),
+      screen.getByText(/kelson can clone public repositories and nothing else/),
     ).toBeTruthy();
-    expect(screen.getByText(/GitHub's app-manifest flow/)).toBeTruthy();
     expect(screen.getByText(/the token form below/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Connect GitHub" })).toBeTruthy();
   });
@@ -551,7 +551,9 @@ describe("ConnectionsPage: deleting a connection", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Delete acme-github" }));
     expect(seen.deletes).toEqual([]);
-    expect(screen.getByText(/the delete is not\s+blocked by them/)).toBeTruthy();
+    expect(
+      screen.getByText(/are named once it is gone/),
+    ).toBeTruthy();
     expect(screen.getByText(/The Secret it references stays/)).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
