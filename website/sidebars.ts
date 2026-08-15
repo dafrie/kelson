@@ -224,6 +224,11 @@ const sidebars: SidebarsConfig = {
           id: 'adr/0034-forge-driven-delivery',
           label: '0034 — Forge-driven delivery',
         },
+        {
+          type: 'doc',
+          id: 'adr/0035-sources',
+          label: '0035 — Sources',
+        },
       ],
     },
   ],
