@@ -131,6 +131,15 @@ func planeErrors(err error) []*kelsonv1alpha1.Error {
 	if errors.As(err, &policyErr) {
 		return []*kelsonv1alpha1.Error{policyErr.wire()}
 	}
+
+	// The build-report plane (ADR-0034 decision 3). Also the api plane's own
+	// vocabulary, with its own prefix: `report/image-not-pinned` is a statement
+	// about what CI sent, where `build/no-source` is one about what the Project
+	// says — and an agent that conflated them would edit the wrong file.
+	var reportErr reportError
+	if errors.As(err, &reportErr) {
+		return []*kelsonv1alpha1.Error{reportErr.wire()}
+	}
 	return nil
 }
 

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -196,21 +197,42 @@ func (s *Server) Build(ctx context.Context, req *connect.Request[kelsonv1alpha1.
 	})
 }
 
-// ReportBuild is gated (ADR-0034 decision 3).
+// ReportBuild validates the CI hand-off in full, and then refuses it
+// (ADR-0034 decision 3).
 //
-// The RPC exists on the wire because the schema is the contract CI is written
-// against, and a pipeline cannot be built against a method that is not there.
-// What is behind it is not: recording images for a commit, resolving which
-// environments and previews that commit feeds, and driving the server-side
-// render→publish are the trigger pipeline of
-// [ADR-0034](docs/adr/0034-forge-driven-delivery.md) decision 1, which stands on
-// the [ADR-0028](docs/adr/0028-delivery-spine.md) spine and starts after it.
+// # Why validate something that cannot succeed
+//
+// The schema is the contract CI is written against, and a pipeline is written
+// long before the trigger pipeline behind this method exists. A method that
+// answered Unimplemented to *everything* would teach a pipeline author nothing:
+// they would wire up a report with a truncated SHA, a tag instead of a digest
+// and a component name the Project never declared, see the same refusal a
+// correct request gets, and discover all three on the day the slot is filled.
+// So every check the report's own contract states runs here and answers
+// InvalidArgument, and only a report kelson would have *acted* on reaches the
+// gate. The two answers are different codes on purpose: an agent retries
+// neither, and a human reads which one they got.
+//
+// # What is behind the gate, and is not built
+//
+// Recording images for a commit, resolving which environments and previews that
+// commit feeds, and driving the server-side render→publish are the trigger
+// pipeline of [ADR-0034](docs/adr/0034-forge-driven-delivery.md) decision 1,
+// which stands on the [ADR-0028](docs/adr/0028-delivery-spine.md) spine.
 //
 // It refuses rather than accepting and dropping the report. `accepted: true`
 // with nothing triggered is a lie a pipeline would believe — CI would go green
 // having published nothing — and ADR-0034 names "why didn't my preview update"
 // as the question this whole path must stay answerable for. Unimplemented tells
 // an agent to stop; a cheerful empty response would tell it to carry on.
+//
+// The preview publish for `pr > 0` was considered here and deliberately not
+// wired: this plane's only publish-shaped seam is the L2 dry-run
+// [PreviewEngine], which computes a diff and applies nothing, and PreviewService
+// reads previews rather than creating them. Reaching past those to the delivery
+// plane is exactly what the api plane's seam discipline forbids, and a
+// half-wired path that published a preview while recording no image-for-commit
+// mapping would answer "why didn't my preview update" with a state nothing owns.
 //
 // The tracking slot names the ADR's pipeline rather than an issue, which is the
 // one place this departs from [delivery.NotImplemented]'s contract. That
@@ -219,12 +241,197 @@ func (s *Server) Build(ctx context.Context, req *connect.Request[kelsonv1alpha1.
 // explicitly left to the tracker ("Revisit when: R2 lands and the first slice
 // ships") — so no issue exists to name yet. Naming the ADR is the findable
 // reference that does exist; the issue replaces it when the slice is filed.
-func (s *Server) ReportBuild(_ context.Context, _ *connect.Request[kelsonv1alpha1.ReportBuildRequest]) (*connect.Response[kelsonv1alpha1.ReportBuildResponse], error) {
+func (s *Server) ReportBuild(ctx context.Context, req *connect.Request[kelsonv1alpha1.ReportBuildRequest]) (*connect.Response[kelsonv1alpha1.ReportBuildResponse], error) {
+	msg := req.Msg
+	auditIdempotencyKey(ctx, msg.GetIdempotencyKey())
+	auditTarget(ctx, msg.GetProject(), "")
+
+	if err := validateReport(msg); err != nil {
+		return nil, failRequest(err)
+	}
+	// Agent policy (ADR-0025), filed under `deploy` because that is what a
+	// report's effect is (policy.go's agentOperations says why at length). The
+	// report names no environment, so every stored environment of the project
+	// gets a say — the same reach DeleteSpec has, for the same reason: what the
+	// call sets in motion is not scoped to one of them.
+	if err := s.guardStored(ctx, model.AgentOpDeploy, msg.GetProject()); err != nil {
+		return nil, err
+	}
+	if err := s.checkReportedComponents(ctx, msg); err != nil {
+		return nil, failRequest(err)
+	}
+
+	// Everything above this line judged the request. Nothing below it exists.
+	//
+	// The idempotency key needs no handling of its own here, and that is a
+	// consequence rather than an omission: a replay is only ambiguous when the
+	// first attempt changed something, and this call changes nothing. It is
+	// recorded on the audit entry above so a retry and the report it repeats
+	// are visibly the same one (#71), and the moment the trigger pipeline
+	// records an image-for-commit mapping, the key becomes that record's
+	// replay token — which is what CreateConnectionRequest's comment describes
+	// for a call that does write.
 	return nil, fail(connect.CodeUnimplemented, delivery.NotImplemented("report-build",
-		"kelson cannot accept a build report: the trigger pipeline that turns one into a server-side "+
-			"render and publish (ADR-0034) is not built, and neither is the image-for-commit record it "+
-			"reads",
+		"kelson cannot accept a build report: the report is well-formed, and the trigger pipeline that turns "+
+			"one into a server-side render and publish (ADR-0034) is not built, nor is the image-for-commit "+
+			"record it reads",
 		"the ADR-0034 trigger pipeline"))
+}
+
+// The report's own refusals. They are the api plane's vocabulary rather than
+// internal/build's, for the reason authzError and policyError are: a report is
+// not a build — nothing is compiled and no registry is written — and filing its
+// mistakes under `build/` would make `build/*` mean two different things to an
+// agent branching on it.
+const (
+	// ErrReportShaInvalid: `sha` is not a 40-character commit.
+	ErrReportShaInvalid = "report/sha-invalid"
+	// ErrReportNoImages: the report carries no images.
+	ErrReportNoImages = "report/no-images"
+	// ErrReportImageNotPinned: an image is named by tag rather than by digest.
+	ErrReportImageNotPinned = "report/image-not-pinned"
+	// ErrReportUnknownComponent: an image names a component the Project does
+	// not declare.
+	ErrReportUnknownComponent = "report/unknown-component"
+)
+
+const reportDocsBase = "https://kelson.dev/server/errors"
+
+// reportError is one refusal of a build report. It rides the same wire shape as
+// every other plane's error (errors.go) and carries its own prefix, so an agent
+// branching on `report/sha-invalid` reads it exactly where it reads
+// `store/not-found`.
+type reportError struct {
+	Code        string
+	Field       string
+	Message     string
+	Remediation string
+}
+
+func (e reportError) Error() string {
+	return fmt.Sprintf("report-build [%s] %s: %s", e.Code, e.Message, e.Remediation)
+}
+
+func (e reportError) wire() *kelsonv1alpha1.Error {
+	return &kelsonv1alpha1.Error{
+		Code:        e.Code,
+		Resource:    "report-build",
+		Field:       e.Field,
+		Message:     e.Message,
+		Remediation: e.Remediation,
+		DocsUrl:     reportDocsBase + "/" + e.Code,
+	}
+}
+
+func refusedReport(code, field, message, remediation string) error {
+	return reportError{Code: code, Field: field, Message: message, Remediation: remediation}
+}
+
+// validateReport checks what the request can be judged on without reading
+// anything: the join key, and the images.
+//
+// The digest rule is the one worth stating twice. A mutable tag would make the
+// artifact kelson publishes describe something that can change underneath it,
+// which is the single guarantee the build plane exists to provide (#51,
+// ADR-0010) — and a report is the one path where the image comes from outside,
+// so it is the one place that guarantee can be lost by accident.
+func validateReport(msg *kelsonv1alpha1.ReportBuildRequest) error {
+	if strings.TrimSpace(msg.GetProject()) == "" {
+		return fmt.Errorf("api: ReportBuild needs a project: a report triggers a render of the spec the server " +
+			"holds, so it must say whose")
+	}
+	if !build.IsCommit(msg.GetSha()) {
+		return refusedReport(ErrReportShaInvalid, "sha",
+			fmt.Sprintf("sha is %q, and a report's commit is a full 40-character hexadecimal SHA", msg.GetSha()),
+			"send the commit the images were built from in full. It is the join key of the whole hand-off — the "+
+				"preview publishes at it, and a tracking environment redeploys only if it is the head of the "+
+				"ref it follows — and an abbreviation cannot be compared against either")
+	}
+	if len(msg.GetImages()) == 0 {
+		return refusedReport(ErrReportNoImages, "images",
+			"the report names no images",
+			"map each built component to the image it produced, e.g. {\"web\": \"ghcr.io/acme/checkout-web@sha256:…\"}. "+
+				"A report with nothing in it would trigger a publish of exactly what is already deployed")
+	}
+
+	// Sorted, so a report with two bad images always names the same one first:
+	// a refusal that varied with Go's map order is a refusal nobody can fix
+	// twice the same way.
+	for _, component := range sortedKeys(msg.GetImages()) {
+		ref := strings.TrimSpace(msg.GetImages()[component])
+		if ref == "" {
+			return refusedReport(ErrReportImageNotPinned, "images."+component,
+				fmt.Sprintf("component %q reports an empty image reference", component),
+				"remove the entry, or give it the digest-pinned reference the build produced. A component the "+
+					"Project declares and the report omits keeps whatever the spec resolves for it")
+		}
+		if registry.Mutable(ref) {
+			return refusedReport(ErrReportImageNotPinned, "images."+component,
+				fmt.Sprintf("component %q reports %s, which is not pinned by digest", component, ref),
+				"report the reference your push resolved to — `repository@sha256:…`. A tag can be moved after "+
+					"the report, which would make the artifact kelson publishes describe something else "+
+					"entirely (#51, ADR-0010)")
+		}
+	}
+	return nil
+}
+
+// checkReportedComponents refuses a report naming a component the Project does
+// not declare, which the proto asks for by name: "a key the Project does not
+// declare is an error naming it, not a silent drop".
+//
+// The reverse is not an error and is deliberately not checked: a component the
+// Project declares and the report omits keeps whatever the spec resolves for
+// it, so a partial report is a partial pin rather than a broken render.
+func (s *Server) checkReportedComponents(ctx context.Context, msg *kelsonv1alpha1.ReportBuildRequest) error {
+	if s.specs == nil {
+		return unimplemented("the spec store")
+	}
+	stored, err := s.specs.Get(ctx, msg.GetProject())
+	if err != nil {
+		return err
+	}
+	project, ok := decodeProjectDocument(stored.Documents.Project)
+	if !ok {
+		return fmt.Errorf("api: the stored Project document for %q could not be decoded, so the report cannot be "+
+			"checked against the components it declares", msg.GetProject())
+	}
+	declared := make(map[string]bool, len(project.Spec.Components))
+	for _, c := range project.Spec.Components {
+		declared[c.Name] = true
+	}
+	for _, component := range sortedKeys(msg.GetImages()) {
+		if declared[component] {
+			continue
+		}
+		return refusedReport(ErrReportUnknownComponent, "images."+component,
+			fmt.Sprintf("Project %s declares no component named %q", msg.GetProject(), component),
+			fmt.Sprintf("report images for the components the Project declares (%s), or add this one to "+
+				"spec.components. An image for a component that does not exist has nothing to pin",
+				componentList(project)))
+	}
+	return nil
+}
+
+func componentList(project *model.Project) string {
+	names := make([]string, 0, len(project.Spec.Components))
+	for _, c := range project.Spec.Components {
+		names = append(names, c.Name)
+	}
+	if len(names) == 0 {
+		return "none"
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
+}
+
+func sortedKeys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // runBuild runs the builder on its own goroutine and pumps its output onto the
