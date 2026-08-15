@@ -9,6 +9,7 @@ import type {
   Error as WireError,
   SpecDocuments,
 } from "../gen/kelson/v1alpha1/common_pb";
+import type { GitOpsOwnership } from "../gen/kelson/v1alpha1/spec_pb";
 import type { DiffResponse } from "../gen/kelson/v1alpha1/render_pb";
 import { Copyable } from "../components/Copyable";
 import { YamlBlock } from "../components/Disclosure";
@@ -41,6 +42,8 @@ import {
 } from "../spec/edit";
 import { parseComponents } from "../spec/components";
 import { plainEnv, type EnvVar } from "../spec/documents";
+import { autoDeployDocuments, isGitOpsManaged } from "../spec/gitops";
+import { ExportPanel, GitOpsBanner, ProposePanel } from "./GitOpsPanel";
 
 /**
  * Editing a stored spec: environment variables and configuration (#65).
@@ -141,6 +144,7 @@ export function EditSpecPage() {
           project={project}
           version={stored?.version ?? ""}
           stored={toText(documents)}
+          gitops={stored?.gitops ?? []}
           onReload={spec.reload}
         />
       ) : null}
@@ -152,11 +156,14 @@ function Editor({
   project,
   version,
   stored,
+  gitops,
   onReload,
 }: {
   project: string;
   version: string;
   stored: SpecTextSet;
+  /** Documents somebody else's Flux reconciles (#248). */
+  gitops: readonly GitOpsOwnership[];
   onReload: () => void;
 }) {
   const clients = useClients();
@@ -195,6 +202,17 @@ function Editor({
 
   const rebuildable = useMemo(() => isRebuildable(text), [text]);
   const dirty = !sameText(text, stored);
+  /**
+   * Whether git owns any of these documents, and where `autoDeploy` collides
+   * with that (#248, ADR-0036 decision 5).
+   *
+   * `managed` gates Save rather than the whole screen. Editing is still worth
+   * doing here — the form and the YAML tab are how the change gets written, the
+   * check and the diff are how it gets reviewed — and only the last step
+   * changes: the bytes go to a pull request instead of to the store.
+   */
+  const managed = isGitOpsManaged(gitops);
+  const tracked = useMemo(() => autoDeployDocuments(text), [text]);
   const mapped = useMemo(() => mapEditErrors(wire), [wire]);
   const environments = useMemo(
     () => Object.keys(text.environments).sort(),
@@ -375,6 +393,8 @@ function Editor({
         </div>
       ) : null}
 
+      {managed ? <GitOpsBanner gitops={gitops} autoDeploy={tracked} /> : null}
+
       <nav className="k-tabs" aria-label="Editing mode">
         <button
           type="button"
@@ -469,10 +489,32 @@ function Editor({
         </span>
       </div>
 
-      {checked !== undefined ? (
-        <>
-          <ChangePreview diffs={checked.diffs} />
+      {checked !== undefined ? <ChangePreview diffs={checked.diffs} /> : null}
 
+      {/* A managed project never reaches the store from here, so the whole save
+          half is replaced rather than disabled in place: a Save button that
+          could never be pressed, above a panel explaining why, is two things to
+          read for one answer. The diff still comes first — the export and the
+          proposal are both about bytes the reader has just seen rendered. */}
+      {managed ? (
+        <>
+          <ExportPanel project={project} text={text} gitops={gitops} />
+          {checked !== undefined ? (
+            <ProposePanel
+              project={project}
+              text={checked.text}
+              gitops={gitops}
+              dirty={dirty}
+            />
+          ) : (
+            <p className="k-note">
+              Check the spec to see what the change does before proposing it —
+              the pull request carries the bytes the diff above was about.
+            </p>
+          )}
+        </>
+      ) : checked !== undefined ? (
+        <>
           {conflict ? (
             <ConflictState
               project={project}
