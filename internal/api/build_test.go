@@ -17,7 +17,6 @@ import (
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
 	"github.com/dafrie/kelson/internal/build"
 	"github.com/dafrie/kelson/internal/controlstore"
-	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/model"
 	"github.com/dafrie/kelson/internal/preview"
 )
@@ -840,6 +839,11 @@ type reportPlane struct {
 	publisher *fakePublisher
 	poker     *fakePoker
 	outcomes  *fakeOutcomes
+	// specs is the store itself, because the tracking half of a report writes
+	// its whole outcome there (autodeploy.go): the pins go into the environment
+	// document and the controller renders from it, so what the trigger did is
+	// read back out of the store rather than off a publisher.
+	specs *fakeSpecStore
 }
 
 // reportServerWith stores one project and serves it with the trigger seams
@@ -857,6 +861,7 @@ func reportServerWith(t *testing.T, project string, envs map[string][]byte) repo
 		publisher: &fakePublisher{errs: map[string]error{}},
 		poker:     &fakePoker{},
 		outcomes:  &fakeOutcomes{externalURL: "https://kelson.acme.com"},
+		specs:     specs,
 	}
 	plane.clients = serve(t, Options{
 		Specs:    specs,
@@ -1450,29 +1455,26 @@ func TestReportBuildAcceptsAProjectKelsonCannotBuild(t *testing.T) {
 	}
 }
 
-// --- the tracking half, still refused ---------------------------------------
+// --- the tracking half -------------------------------------------------------
 
-// A report with no `pr` is for the environments that track the ref it was built
-// from, and `autoDeploy` is not in the model. The refusal names that field and
-// the issue rather than the whole pipeline, half of which now exists.
-func TestReportBuildRefusesABranchReport(t *testing.T) {
+// A report with no `pr` and a ref no environment follows is accepted and
+// triggers nothing. It is the ordinary shape of a report for a feature branch,
+// and the schema pins the answer: `accepted: true` with an empty `triggered`,
+// and a message saying what would have made it move.
+func TestReportBuildAtARefNothingFollows(t *testing.T) {
 	p := previewReportServer(t)
-	err := reportBuild(t, p.clients, &kelsonv1alpha1.ReportBuildRequest{
+	res := report(t, p.clients, &kelsonv1alpha1.ReportBuildRequest{
 		Project: "checkout",
 		Sha:     reportSHA,
 		Ref:     "refs/heads/main",
 		Images:  map[string]string{"web": pinnedImage()},
 	})
-	if connect.CodeOf(err) != connect.CodeUnimplemented {
-		t.Fatalf("a branch report = %v (code %s), want unimplemented", err, connect.CodeOf(err))
+	if !res.GetAccepted() || len(res.GetTriggered()) != 0 {
+		t.Fatalf("accepted=%v triggered=%v, want an accepted report that moved nothing",
+			res.GetAccepted(), res.GetTriggered())
 	}
-	if !hasCode(detailCodes(err), string(delivery.ErrNotImplemented)) {
-		t.Errorf("the refusal does not carry %s: %v", delivery.ErrNotImplemented, detailCodes(err))
-	}
-	for _, want := range []string{"autoDeploy", "#248"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the refusal does not name %s: %v", want, err)
-		}
+	if !strings.Contains(res.GetMessage(), "autoDeploy") {
+		t.Errorf("the message does not name the opt-in that would have moved it: %s", res.GetMessage())
 	}
 	if p.publisher.count() != 0 {
 		t.Error("a branch report published a preview")
@@ -1615,17 +1617,22 @@ func TestReportBuildIsRefusedByProposeOnly(t *testing.T) {
 
 // And a human is never refused by agent policy, which is the other half of
 // ADR-0025's criterion: the report reaches the handler and is answered on its
-// merits instead. This one carries no `pr`, so what it reaches is the tracking
-// half's refusal.
+// merits instead. This one carries neither `pr` nor `ref`, so what it reaches is
+// the tracking half answering that there is nothing for it to follow.
 func TestReportBuildFromAHumanReachesTheGate(t *testing.T) {
 	g := policyServer(t, Options{})
-	err := reportBuild(t, g.as(testPassword), &kelsonv1alpha1.ReportBuildRequest{
-		Project: "shop",
-		Sha:     reportSHA,
-		Images:  map[string]string{"web": pinnedImage()},
-	})
-	if connect.CodeOf(err) != connect.CodeUnimplemented {
-		t.Fatalf("a human's report = %v (code %s), want unimplemented", err, connect.CodeOf(err))
+	res, err := g.as(testPassword).builds.ReportBuild(t.Context(),
+		connect.NewRequest(&kelsonv1alpha1.ReportBuildRequest{
+			Project: "shop",
+			Sha:     reportSHA,
+			Images:  map[string]string{"web": pinnedImage()},
+		}))
+	if err != nil {
+		t.Fatalf("a human's report = %v (code %s), want the handler's own answer", err, connect.CodeOf(err))
+	}
+	if !res.Msg.GetAccepted() || len(res.Msg.GetTriggered()) != 0 {
+		t.Fatalf("accepted=%v triggered=%v, want an accepted report with no target",
+			res.Msg.GetAccepted(), res.Msg.GetTriggered())
 	}
 }
 

@@ -1966,6 +1966,13 @@ func workloadOverrideFields(ov ComponentOverride) []string {
 	if ov.Image != "" {
 		set = append(set, "image")
 	}
+	// The marker qualifies an image, so it belongs to exactly the kinds an
+	// image does: a data component runs what its operator runs and a chart runs
+	// what helm-controller installs, and neither has an image for tracking to
+	// advance (ADR-0036 decision 5).
+	if ov.ImageTracked {
+		set = append(set, "imageTracked")
+	}
 	if ov.Replicas != nil {
 		set = append(set, "replicas")
 	}
@@ -1974,6 +1981,12 @@ func workloadOverrideFields(ov ComponentOverride) []string {
 	}
 	if len(ov.Env) > 0 {
 		set = append(set, "env")
+	}
+	// Tracking a source is a workload question too (ADR-0036 decision 1): the
+	// kinds that build nothing of ours are bound to no source, so there is no
+	// push that could move one and the flag would resolve into nothing.
+	if ov.AutoDeploy != nil {
+		set = append(set, "autoDeploy")
 	}
 	return set
 }

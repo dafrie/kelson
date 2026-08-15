@@ -406,8 +406,131 @@ what it says — nothing is bound — rather than "this project spelled its sour
 > repositories is refused with `build/several-sources` and pointed at the path that does produce
 > per-component images: `spec.build.by: ci` and `kelson ci report-build`
 > ([ADR-0034](adr/0034-forge-driven-delivery.md) §3). Per-component image production in kelson's own
-> build plane, and `autoDeploy`'s new subject — a push to repository X re-renders what is bound to sources
-> matching X — are that issue.
+> build plane is that issue; `autoDeploy`'s subject — a push to repository X re-renders what is bound to
+> sources matching X — is [below](#auto-deploy-an-environment-follows-its-sources).
+
+## Auto-deploy: an environment follows its sources
+
+**Every kelson deploy is deliberate until an environment says otherwise.** `autoDeploy` is that
+otherwise ([ADR-0036](adr/0036-autodeploy.md)): with it, a push to a repository one of the
+environment's components is bound to re-renders and republishes the environment, instead of waiting
+for a person or a pipeline verb. Absent means `false`, so an environment that says nothing about
+tracking behaves exactly as every environment does today.
+
+The flag lives at two scopes and the innermost wins — the same instinct as P1–P3:
+
+```yaml
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata: { name: staging }
+spec:
+  project: checkout
+  autoDeploy: true                 # this environment follows its components' sources
+  components:
+    - name: worker
+      autoDeploy: false            # …except this one, which stays manual
+```
+
+A component's effective setting is **its own if it set one, else the environment's, else `false`**.
+Nothing between the levels is an error and both directions are legal: `false` under a tracking
+environment keeps one risky component manual, and `true` under an environment that sets nothing is how
+single-component tracking is written. It is a workload field — `postgres`, `valkey` and `kind: helm`
+components are bound to no source, so there is no push that could move one, and `autoDeploy` on one is
+`schema/mutually-exclusive` rather than a field that resolves into nothing.
+
+### What a push moves
+
+**The binding does the routing.** On a push, the *stale set* is the components for which all of these
+hold ([ADR-0036](adr/0036-autodeploy.md) decision 2):
+
+| The component… | …because |
+|---|---|
+| is bound to the repository that moved | its `source:` says which repository it builds from ([above](#sources-declared-once-bound-per-component)); a second per-component ref field would be one more thing to disagree with it |
+| binds a source whose `ref` is the ref that moved | compared as short names — `main`, `v1.2.3` |
+| binds a source whose `ref` is not a commit | a SHA-pinned source names one revision forever, so there is nothing about it to track |
+| tracks | the effective flag above |
+| is not pinned | an `image:` on the environment override or on the component beats `--image` (rule P3), so a build cannot move it — production moves when a person moves its pin ([below](#promotion)). An image the override marks `imageTracked` is not such a pin ([below](#a-marked-pin-names-where-a-component-starts-not-that-it-stays)) |
+
+An environment whose stale set is empty does nothing, silently: a push to a repository it happens to
+build from is not news.
+
+`internal/model` answers exactly that and nothing beyond it. `Resolved.AutoDeploy` carries the effective
+setting per component — so a UI shows what a component *does*, rather than making a reader merge two
+levels in their head — and `Resolved.StaleComponents(repo, ref)` is the set, both pure functions of the
+resolved spec. The ref arrives already reduced to its short name: stripping `refs/heads/` belongs to
+whichever surface read the delivery, because this package parses no payloads
+([ADR-0001](adr/0001-hybrid-state-model.md)).
+
+### How a push gets in, and what happens when it does not
+
+Two paths, one pipeline ([ADR-0036](adr/0036-autodeploy.md) decision 3): a forge **webhook** `push`, and
+**`kelson ci report-build`** with a `--ref` and no `--pr` for projects whose images are built by CI
+(`build.by: ci`). Components a report names that are *not* stale — not bound, not tracking, pinned —
+are named back in the response rather than quietly deployed, and a kelson-built project with several
+sources still refuses with `build/several-sources` ([#252](https://github.com/dafrie/kelson/issues/252)),
+named in full in the delivery's own answer, on a `kelson/deploy` commit status and in the audit trail.
+
+**There is no poller, and the docs will not imply one.** An instance that can neither receive webhooks
+nor report builds keeps manual deploys, which is exactly today's behaviour; webhook loss degrades
+tracking to manual without an error, and the delivery-state surface (last delivery, last report) is what
+makes that visible.
+
+### How an environment is actually moved
+
+kelson-server publishes no environment artifact and must not: under
+[ADR-0028](adr/0028-delivery-spine.md) a revision is a `<generation>-<spec-hash>` artifact tag plus an
+`OCIRepository` pinned to it, and kelson-controller derives and applies both inside one reconcile. So the
+trigger writes the reported (or freshly built) digests into
+`Environment.spec.components[].image` and stores the document. That is a spec write, it bumps
+`.metadata.generation`, and the reconcile that follows renders and publishes — the same mechanism
+`kelson deploy --image` and `kelson promote` already use, through the same splice.
+
+### A marked pin names where a component starts, not that it stays
+
+That field is a *pin*, and a pinned component is not in the stale set — so without more, auto-deploy
+would move each component once and then report it as pinned forever after. The fix is not for the
+trigger to ignore pins it believes it wrote; it is for the pin to **say who wrote it**
+([ADR-0036](adr/0036-autodeploy.md) decision 5):
+
+```yaml
+components:
+  - name: web
+    image: ghcr.io/acme/checkout@sha256:9f6ad2c1…   # what runs right now
+    imageTracked: true                              # …and tracking may advance it
+```
+
+`imageTracked` marks the image as a starting point rather than a hold. It changes nothing about
+rendering — rule P3 is untouched and the revision it names is exactly what runs — but the component
+stays out of the pin list, so a later push moves it again and the trigger overwrites its own pin.
+**The trigger writes it with every image it splices**, which is what makes auto-deploy tracking rather
+than one move.
+
+Without the marker, an `image:` means what it has always meant:
+
+- **an unmarked pin is a person's**, whether it came from an author's `image:`,
+  [`kelson promote`](#promotion) or `kelson deploy --image`. No trigger overwrites one — not by
+  checking, but because a pinned component is not in the stale set at all. A push that was asked to
+  move it says so instead: *"an image pin holds it, and a pinned component ignores everything"*.
+  Tracking resumes when the pin is removed.
+- **a promotion into a tracking environment takes the component back.** Pinning over a marked image
+  writes `imageTracked: false` beside it, because a person deciding what runs outranks the next push.
+  A document that has never auto-deployed gains no such key: a promotion there is still one image line
+  and nothing else.
+
+You may write the marker yourself, and image-plus-marker is a coherent thing to say: *start here, and
+let tracking advance it* — a fresh environment seeded at a known-good digest that then follows its
+branch. It is a workload field, refused on data components and charts like the `image:` it qualifies.
+
+> **One re-tag, disclosed.** `imageTracked` is spec, so it reaches the `<generation>-<spec-hash>`
+> artifact tag ([ADR-0028](adr/0028-delivery-spine.md) decision 2) — through the resolved pin list,
+> which is what it changes. An environment that marks a pin publishes one new revision and then stays
+> put; an environment that never writes the field hashes exactly as it did before the field existed.
+
+> **GitOps-managed installs do not compose with this.** Where Environment documents are reconciled
+> from a repository, the trigger's spec writes fight the git reconciler and one of them loses silently.
+> `autoDeploy` is for instances whose specs kelson owns; the ownership-detection UX on
+> [#248](https://github.com/dafrie/kelson/issues/248) has to say so rather than let the two overwrite
+> each other.
 
 ## Promotion
 
@@ -441,7 +564,9 @@ Four consequences worth stating before they surprise anyone:
 - **A pinned environment stops moving.** `--image` stands in for Project `image:` and therefore loses
   to a pin: a CI job passing a fresh digest will not change a pinned environment. Unpinning is deleting
   the field. This is what "pinned" means, and it is the point — production changes when someone
-  promotes to it.
+  promotes to it. The one image that does not hold a component still is one marked
+  [`imageTracked`](#a-marked-pin-names-where-a-component-starts-not-that-it-stays), which says so in
+  the document rather than leaving a reader to work out which pins a trigger considers its own.
 - **The promotion stamps where it came from.** The patched `Environment` carries
   `kelson.dev/promoted-from: <source-environment>@<revision>`. This is a deliberate walk-back of
   ADR-0016's *"promotion keeps no record of its own"*, and a small one: an annotation has no lifecycle,
@@ -956,8 +1081,8 @@ artifact-registry credential.
 > method itself ([#248](https://github.com/dafrie/kelson/issues/248)). A report for a project whose
 > `build.by` is `kelson` (the default for a project with `source:`) is answered `accepted: false`
 > naming the field, because those images come from kelson's own build plane; a report with no
-> `--pr` is refused, because the tracking environments it would feed (`autoDeploy`, decision 4) are
-> not in the model yet.
+> `--pr` moves the environments that follow the reported ref
+> ([above](#auto-deploy-an-environment-follows-its-sources)).
 
 **Or CI publishes, with `kelson preview publish`, run in the application repository's CI on pull
 request events** — that is where the pull request's checkout and the image built from it already are
@@ -1307,6 +1432,7 @@ metadata:
 spec:
   project: checkout                  # required: the Project this environment deploys
   namespace: checkout-prod           # target namespace
+  autoDeploy: true                   # follow the components' sources; default false
   routing:
     domainSuffix: acme.run
     gatewayClass: envoy              # Gateway API only (#140); a spec with `ingressClass` is rejected
@@ -1333,12 +1459,15 @@ spec:
   components:                        # one override list, matched by name
     - name: web                      # must name a Component in the Project
       image: ghcr.io/acme/checkout@sha256:9f6ad2c1…   # P3: the promotion pin
+      imageTracked: false            # true = a starting point tracking may advance; the trigger writes it
       replicas: { min: 3, max: 20 }
       resources:
         requests: { cpu: 500m, memory: 512Mi }
         limits:   { memory: 1Gi }
       env:
         LOG_LEVEL: warning
+    - name: worker
+      autoDeploy: false              # …except this one; workloads only
     - name: db                       # P5: per-environment topology override
       preset: ha-small
 ```

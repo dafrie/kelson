@@ -10,6 +10,31 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// PinOption adjusts what a pin says about itself. There is one, and it is the
+// distinction ADR-0036 decision 5 turns on: whether the pin is a person holding
+// a component still or a trigger recording where it currently is.
+type PinOption func(*pinOptions)
+
+type pinOptions struct{ tracked bool }
+
+// Tracked marks the pin as one tracking may advance: it writes `imageTracked:
+// true` beside the image, which keeps the component in the stale set so the
+// *next* push moves it too (ADR-0036 decision 5).
+//
+// It is the auto-deploy trigger's option and nothing else's. A promotion, a
+// `--image` deploy and an author's own `image:` are all somebody deciding what
+// runs, and [Pin] without it says so: it clears a marker it finds, so a person
+// pinning over a trigger's pin takes the component back rather than handing the
+// next push a pin it believes it wrote.
+func Tracked() PinOption { return func(o *pinOptions) { o.tracked = true } }
+
+// trackedKey is the marker's spelling in the document
+// ([model.ComponentOverride.ImageTracked]). It is written here rather than
+// imported as a constant because this package splices *text*: what it needs is
+// the key as an author would type it, and the model owns whether that key means
+// anything.
+const trackedKey = "imageTracked"
+
 // Pin writes image as component's per-environment image pin in the Environment
 // document doc, and returns the edited bytes.
 //
@@ -26,14 +51,14 @@ import (
 // lines, flow-mapping spacing and trailing-comment columns — a yaml.v3 Node
 // round-trip of examples/checkout-multi/production.yaml changes eleven lines
 // without changing a single value. The spec is the user's document
-// (ADR-0013 §1); a promotion may write one line of it and nothing else.
+// (ADR-0013 §1); a pin may write the line or two it means and nothing else.
 //
 // Four shapes are handled, in the order they are met:
 //
-//  1. the component override already carries `image:` — the scalar is replaced
+//  1. the component override already carries the key — the scalar is replaced
 //     in place, keeping any trailing comment;
-//  2. the override exists without one — a new `image:` line is inserted under
-//     it, at the override's own indentation;
+//  2. the override exists without one — a new line is inserted under it, at the
+//     override's own indentation;
 //  3. `spec.components` exists without this component — a new override is
 //     appended to the sequence;
 //  4. `spec.components` is absent — a minimal one is appended to `spec`.
@@ -41,7 +66,20 @@ import (
 // A document whose shape none of those fit — a flow-style components list, a
 // `components:` key that is not a sequence — is refused with
 // promote/document-unwritable rather than rewritten.
-func Pin(doc []byte, environment, component, image string) ([]byte, error) {
+//
+// # Why the marker is a second pass rather than a second line
+//
+// [Tracked] makes this write two keys, and each one is its own splice over a
+// freshly parsed document. Writing both at once would be one pass only for
+// shapes 2–4; shape 1 replaces a scalar wherever the author put it, and the
+// marker may be somewhere else entirely or nowhere at all. Re-locating from the
+// edited bytes is what keeps every shape on one code path — the node positions
+// a splice invalidates are the positions the next splice needs.
+//
+// The marker is written first so the image ends up above it: both are inserted
+// on the line after the override's `name:`, so the *last* key written is the one
+// that sits closest to the name.
+func Pin(doc []byte, environment, component, image string, opts ...PinOption) ([]byte, error) {
 	if component == "" {
 		return nil, fmt.Errorf("promote: a component name is required to write a pin")
 	}
@@ -49,7 +87,32 @@ func Pin(doc []byte, environment, component, image string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	var options pinOptions
+	for _, opt := range opts {
+		opt(&options)
+	}
 
+	// An unmarked pin is a person's, so a marker left over from a trigger's is
+	// cleared rather than inherited — but only where one is already written. The
+	// alternative, stamping `imageTracked: false` onto every promotion, would put
+	// a key in every document to say the thing its absence already says.
+	edited, err := spliceKey(doc, environment, component, trackedKey, boolText(options.tracked), options.tracked)
+	if err != nil {
+		return nil, err
+	}
+	if edited, err = spliceKey(edited, environment, component, "image", scalar, true); err != nil {
+		return nil, err
+	}
+	if err := verifyPin(edited, environment, component, image, options.tracked); err != nil {
+		return nil, err
+	}
+	return edited, nil
+}
+
+// spliceKey writes one key of one component's override. insert says what to do
+// when the override does not carry the key yet: add it, or leave the document
+// alone — which is how an unmarked pin clears a marker without writing one.
+func spliceKey(doc []byte, environment, component, key, scalar string, insert bool) ([]byte, error) {
 	root, err := environmentDocument(doc, environment)
 	if err != nil {
 		return nil, err
@@ -61,23 +124,18 @@ func Pin(doc []byte, environment, component, image string) ([]byte, error) {
 		return nil, unwritable(environment, "$.spec",
 			"the Environment document has no spec mapping to write a pin into")
 	}
-
-	edited, err := pinInto(src, spec, environment, component, scalar)
-	if err != nil {
-		return nil, err
-	}
-	if err := verifyPin(edited, environment, component, image); err != nil {
-		return nil, err
-	}
-	return edited, nil
+	return pinInto(src, spec, environment, component, key, scalar, insert)
 }
 
 // pinInto dispatches to the four shapes, innermost first.
-func pinInto(src *source, spec *yaml.Node, environment, component, scalar string) ([]byte, error) {
+func pinInto(src *source, spec *yaml.Node, environment, component, key, scalar string, insert bool) ([]byte, error) {
 	components := childValue(spec, "components")
 	switch {
 	case components == nil, isNull(components):
-		return appendComponentList(src, spec, components, environment, component, scalar)
+		if !insert {
+			return src.data, nil
+		}
+		return appendComponentList(src, spec, components, environment, component, key, scalar)
 	case components.Kind != yaml.SequenceNode || components.Style&yaml.FlowStyle != 0:
 		return nil, unwritable(environment, "$.spec.components",
 			"spec.components is not a block sequence, so a pin cannot be spliced into it")
@@ -91,18 +149,32 @@ func pinInto(src *source, spec *yaml.Node, environment, component, scalar string
 			return nil, unwritable(environment, "$.spec.components["+component+"]",
 				"this component override is written as a flow mapping, so a pin cannot be spliced into it")
 		}
-		if value := childValue(item, "image"); value != nil {
-			return src.replaceScalar(value, scalar, environment, component)
+		if value := childValue(item, key); value != nil {
+			return src.replaceScalar(value, scalar, environment, component, key)
 		}
-		return insertImageKey(src, item, environment, component, scalar)
+		if !insert {
+			return src.data, nil
+		}
+		return insertKey(src, item, environment, component, key, scalar)
 	}
-	return appendComponentOverride(src, components, environment, component, scalar)
+	if !insert {
+		return src.data, nil
+	}
+	return appendComponentOverride(src, components, environment, component, key, scalar)
 }
 
-// insertImageKey adds `image:` to an override that has none, on the line after
-// the override's first key. Placing it there rather than at the end keeps the
-// pin next to the name it belongs to, which is where a reader looks for it.
-func insertImageKey(src *source, item *yaml.Node, environment, component, scalar string) ([]byte, error) {
+// boolText is a YAML boolean, spelled the one way this package writes one.
+func boolText(v bool) string {
+	if v {
+		return "true"
+	}
+	return "false"
+}
+
+// insertKey adds a key to an override that has none, on the line after the
+// override's first key. Placing it there rather than at the end keeps the pin
+// next to the name it belongs to, which is where a reader looks for it.
+func insertKey(src *source, item *yaml.Node, environment, component, key, scalar string) ([]byte, error) {
 	first := item.Content[0]
 	// The key's own column, not the line's leading whitespace: an override's
 	// first key shares its line with the sequence marker ("    - name: web"),
@@ -113,12 +185,12 @@ func insertImageKey(src *source, item *yaml.Node, environment, component, scalar
 			"the component override does not start on a line of its own")
 	}
 	end := src.blockEnd(first.Line, indent)
-	return src.insertAfter(end, fmt.Sprintf("%simage: %s", strings.Repeat(" ", indent), scalar)), nil
+	return src.insertAfter(end, fmt.Sprintf("%s%s: %s", strings.Repeat(" ", indent), key, scalar)), nil
 }
 
 // appendComponentOverride adds a whole override for a component the
 // Environment does not mention, after the last entry of the existing list.
-func appendComponentOverride(src *source, components *yaml.Node, environment, component, scalar string) ([]byte, error) {
+func appendComponentOverride(src *source, components *yaml.Node, environment, component, key, scalar string) ([]byte, error) {
 	last := components.Content[len(components.Content)-1]
 	marker := src.markerIndent(last.Line)
 	if marker < 0 {
@@ -129,27 +201,27 @@ func appendComponentOverride(src *source, components *yaml.Node, environment, co
 	pad := strings.Repeat(" ", marker)
 	return src.insertAfter(end,
 		fmt.Sprintf("%s- name: %s", pad, component),
-		fmt.Sprintf("%s  image: %s", pad, scalar),
+		fmt.Sprintf("%s  %s: %s", pad, key, scalar),
 	), nil
 }
 
 // appendComponentList adds the whole `components:` block to a spec that has
 // none, or fills in a `components:` key whose value is empty. The block is the
-// minimum that carries the pin: one override, one name, one image.
-func appendComponentList(src *source, spec, components *yaml.Node, environment, component, scalar string) ([]byte, error) {
+// minimum that carries the pin: one override, one name, one key.
+func appendComponentList(src *source, spec, components *yaml.Node, environment, component, key, scalar string) ([]byte, error) {
 	if components != nil {
 		// `components:` with nothing under it. The key stays; the sequence is
 		// written beneath it.
-		key := keyNode(spec, "components")
-		indent := src.indentOf(key.Line)
+		anchor := keyNode(spec, "components")
+		indent := src.indentOf(anchor.Line)
 		if indent < 0 || !isNull(components) {
 			return nil, unwritable(environment, "$.spec.components",
 				"spec.components carries a value a pin cannot be spliced into")
 		}
 		pad := strings.Repeat(" ", indent+2)
-		return src.insertAfter(src.blockEnd(key.Line, indent),
+		return src.insertAfter(src.blockEnd(anchor.Line, indent),
 			fmt.Sprintf("%s- name: %s", pad, component),
-			fmt.Sprintf("%s  image: %s", pad, scalar),
+			fmt.Sprintf("%s  %s: %s", pad, key, scalar),
 		), nil
 	}
 
@@ -164,7 +236,7 @@ func appendComponentList(src *source, spec, components *yaml.Node, environment, 
 	return src.insertAfter(end,
 		fmt.Sprintf("%scomponents:", pad),
 		fmt.Sprintf("%s  - name: %s", pad, component),
-		fmt.Sprintf("%s    image: %s", pad, scalar),
+		fmt.Sprintf("%s    %s: %s", pad, key, scalar),
 	), nil
 }
 
@@ -287,20 +359,21 @@ func (s *source) insertAfter(n int, added ...string) []byte {
 
 // replaceScalar rewrites one scalar value in place, keeping whatever follows it
 // on the line — the trailing comment and the whitespace that positions it.
-func (s *source) replaceScalar(value *yaml.Node, scalar, environment, component string) ([]byte, error) {
+func (s *source) replaceScalar(value *yaml.Node, scalar, environment, component, key string) ([]byte, error) {
+	field := "$.spec.components[" + component + "]." + key
 	if value.Kind != yaml.ScalarNode || value.Style == yaml.LiteralStyle || value.Style == yaml.FoldedStyle {
-		return nil, unwritable(environment, "$.spec.components["+component+"].image",
-			"the existing image is not a single-line scalar, so it cannot be replaced in place")
+		return nil, unwritable(environment, field,
+			"the existing "+key+" is not a single-line scalar, so it cannot be replaced in place")
 	}
 	if value.Line < 1 || value.Line > s.lines() {
-		return nil, unwritable(environment, "$.spec.components["+component+"].image",
-			"the existing image has no source position to replace")
+		return nil, unwritable(environment, field,
+			"the existing "+key+" has no source position to replace")
 	}
 	text := s.line(value.Line)
 	col := value.Column - 1
 	if col < 0 || col > len(text) {
-		return nil, unwritable(environment, "$.spec.components["+component+"].image",
-			"the existing image's source position is outside its line")
+		return nil, unwritable(environment, field,
+			"the existing "+key+"'s source position is outside its line")
 	}
 
 	rest := text[col:]
@@ -401,7 +474,12 @@ func scalarText(image string) (string, error) {
 // asked for. A splice that produced valid YAML saying something else would be
 // the worst failure this package could have, so it is checked rather than
 // trusted.
-func verifyPin(doc []byte, environment, component, image string) error {
+//
+// The marker is checked as hard as the image, because the two answer different
+// questions and a document that carried the image without it would be a pin that
+// silently stops tracking (ADR-0036 decision 5) — the defect this whole option
+// exists to close.
+func verifyPin(doc []byte, environment, component, image string, tracked bool) error {
 	root, err := environmentDocument(doc, environment)
 	if err != nil {
 		return fmt.Errorf("promote: the pinned document no longer parses: %w", err)
@@ -409,12 +487,20 @@ func verifyPin(doc []byte, environment, component, image string) error {
 	components := mapValue(root, "spec", "components")
 	if components != nil && components.Kind == yaml.SequenceNode {
 		for _, item := range components.Content {
-			if item.Kind == yaml.MappingNode && scalarAt(item, "name") == component {
-				if got := scalarAt(item, "image"); got == image {
-					return nil
-				}
-				return fmt.Errorf("promote: pinning %s wrote %q, not %q", component, scalarAt(item, "image"), image)
+			if item.Kind != yaml.MappingNode || scalarAt(item, "name") != component {
+				continue
 			}
+			if got := scalarAt(item, "image"); got != image {
+				return fmt.Errorf("promote: pinning %s wrote %q, not %q", component, got, image)
+			}
+			// An unmarked pin is satisfied by an absent marker as well as by a
+			// `false` one: absence is what it means, and this package only ever
+			// writes the key where one was already there.
+			if got := scalarAt(item, trackedKey); tracked != (got == "true") {
+				return fmt.Errorf("promote: pinning %s wrote %s: %q, want tracked=%v",
+					component, trackedKey, got, tracked)
+			}
+			return nil
 		}
 	}
 	return fmt.Errorf("promote: pinning %s left no override in the document", component)

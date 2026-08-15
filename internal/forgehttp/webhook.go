@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/dafrie/kelson/internal/controlstore"
 	"github.com/dafrie/kelson/internal/forge"
@@ -99,15 +100,7 @@ func (h *Handler) webhook(w http.ResponseWriter, r *http.Request) {
 		})
 
 	case "push":
-		// Deliberately nothing. `autoDeploy` — ADR-0034 decision 4, "an
-		// environment with autoDeploy: true re-renders and republishes on a push
-		// to the project's source ref" — is the consumer of this event, it is
-		// opt-in, off by default, and not built. Acting on a push before that
-		// field exists would deploy on every push to every environment, which is
-		// the opposite of the posture ADR-0016 holds.
-		h.log.Info("forge webhook push (no-op until autoDeploy, ADR-0034 decision 4)",
-			"connection", verified.Name(), "repository", event.RepoFullName, "ref", event.Ref)
-		writeJSON(w, http.StatusOK, map[string]any{"event": "push", "acted": false, "reason": "autoDeploy is not implemented (ADR-0034 decision 4)"})
+		h.push(r.Context(), w, verified, event)
 
 	case "installation":
 		h.recordInstallation(r.Context(), w, verified, event)
@@ -115,6 +108,197 @@ func (h *Handler) webhook(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSON(w, http.StatusAccepted, map[string]any{"ignored": true, "event": event.Kind})
 	}
+}
+
+// push is the `autoDeploy` trigger (ADR-0036 decision 3), and it is two halves
+// with two deadlines.
+//
+// # Resolution is synchronous; the work is not
+//
+// A forge gives a webhook about ten seconds. Deciding what a push moves is a
+// decode and a resolve of the stored spec — microseconds — and *doing* it can be
+// a container build, which is minutes. So the plan is asked for inside the
+// delivery's own deadline and answered in the response, and the trigger itself
+// is enqueued behind it on a detached context. That is ADR-0034 decision 1's
+// "an event enqueues reconciliation of true state" read literally: what this
+// handler writes is nothing, and what it starts re-derives everything from the
+// stored spec rather than from the payload — the payload contributes a
+// repository, a ref and a commit, and every one of them is compared against the
+// spec before anything happens.
+//
+// # Where a refusal goes, and where it cannot go
+//
+// ADR-0036 decision 3 asks for the `build/several-sources` refusal (#252) to
+// land "on the environment's conditions, rather than vanishing into a webhook
+// 202". It cannot: `Environment.status.conditions` is a status subresource
+// written by kelson-controller alone, and no seam in this process reaches it —
+// internal/api's EnvironmentStore has Get, Watch and Annotate and no third verb,
+// which is deliberate (ADR-0028 decision 1: one authority over what an
+// environment is doing). So the refusal goes to the two surfaces that do exist:
+// this response, named and in full, and a WARN line — plus a red `kelson/deploy`
+// status on the pushed commit, written by the enqueued half through the
+// connection that verified this delivery. The conditions remain the honest gap,
+// and it is recorded on issue #248 rather than papered over with an annotation
+// nothing reads.
+func (h *Handler) push(ctx context.Context, w http.ResponseWriter, conn forgeconn.Resolution, event forge.Event) {
+	repo := pushRepository(conn, event)
+	projects := h.pushProjects(ctx, conn, event)
+
+	answer := map[string]any{
+		"event":      "push",
+		"ref":        event.Ref,
+		"repository": event.RepoFullName,
+	}
+	if h.opts.AutoDeploy == nil || len(projects) == 0 {
+		// No trigger wired, or no stored project builds from this repository.
+		// Both are "nothing here follows this push", which is the ordinary
+		// answer for most pushes to most repositories and is silent by design
+		// (ADR-0036 decision 2).
+		h.log.Info("forge webhook push", "connection", conn.Name(),
+			"repository", event.RepoFullName, "ref", event.Ref, "projects", 0)
+		answer["acted"] = false
+		writeJSON(w, http.StatusOK, answer)
+		return
+	}
+
+	var enqueued, refused []string
+	for _, project := range projects {
+		p := Push{
+			Project:    project,
+			Repo:       repo,
+			Ref:        event.Ref,
+			SHA:        event.HeadSHA,
+			Connection: conn.Name(),
+		}
+		plan, err := h.opts.AutoDeploy.PlanPush(ctx, p)
+		if err != nil {
+			h.log.Warn("could not decide what a push moves", "connection", conn.Name(),
+				"project", project, "ref", event.Ref, "error", err.Error())
+			continue
+		}
+		if plan.Refused != "" {
+			h.log.Warn("a push was refused", "connection", conn.Name(), "project", project,
+				"ref", event.Ref, "code", refusalSeveralSources, "reason", plan.Refused)
+			refused = append(refused, project+": "+plan.Refused)
+		}
+		if len(plan.Environments) == 0 && plan.Refused == "" {
+			continue
+		}
+		enqueued = append(enqueued, project)
+		h.enqueue(ctx, p)
+	}
+
+	sort.Strings(enqueued)
+	sort.Strings(refused)
+	h.log.Info("forge webhook push", "connection", conn.Name(), "repository", event.RepoFullName,
+		"ref", event.Ref, "projects", len(projects), "enqueued", len(enqueued), "refused", len(refused))
+	answer["acted"] = len(enqueued) > 0
+	answer["enqueued"] = enqueued
+	if len(refused) > 0 {
+		answer["refused"] = refused
+	}
+	writeJSON(w, http.StatusAccepted, answer)
+}
+
+// enqueue starts one trigger and returns.
+//
+// The context is detached from the delivery's and given its own budget, for the
+// two reasons the budget exists at all: the delivery's context dies the moment
+// this handler answers, and a build that hangs must not hold a goroutine
+// forever. [autoDeployBudget] is deliberately the same order as the build RPC's
+// own timeout — what runs behind here is that build.
+//
+// Nothing waits for the result and nothing retries it. A trigger that fails says
+// so on the commit status and in this process's log, and the next push is the
+// next chance; a retry loop here would be a second authority on when a project
+// deploys, which is exactly what the controller is.
+func (h *Handler) enqueue(parent context.Context, p Push) {
+	h.inflight.Add(1)
+	go func() {
+		defer h.inflight.Done()
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), autoDeployBudget)
+		defer cancel()
+		out, err := h.opts.AutoDeploy.RunPush(ctx, p)
+		if err != nil {
+			h.log.Error("an auto-deploy failed", "project", p.Project, "ref", p.Ref,
+				"connection", p.Connection, "error", err.Error())
+			return
+		}
+		h.log.Info("auto-deploy", "project", p.Project, "ref", p.Ref, "connection", p.Connection,
+			"triggered", out.Triggered, "notes", out.Notes)
+	}()
+}
+
+// autoDeployBudget bounds one enqueued trigger. It is the build RPC's own
+// budget plus a little, because a kelson-built project's trigger *is* that build
+// with a resolve and a spec write around it (internal/api's DefaultBuildTimeout).
+const autoDeployBudget = 35 * time.Minute
+
+// pushRepository is the repository a delivery is about, spelled the way a spec
+// spells one, so [model.SameRepository] can compare it against a `source.git`.
+//
+// The connection's host is the authority on where the delivery came from and the
+// payload's own URL is only consulted when the connection declared none — the
+// same order [sameRepository] uses, and for the same reason: the payload is what
+// an attacker would control if the HMAC had not already ruled that out.
+func pushRepository(conn forgeconn.Resolution, event forge.Event) string {
+	host := conn.Stored.Spec.EffectiveHost()
+	if host == "" {
+		host = event.RepoHTMLURL
+	}
+	h, _, ok := splitRepoURL(host)
+	if !ok {
+		return ""
+	}
+	return "https://" + h + "/" + strings.Trim(event.RepoFullName, "/")
+}
+
+// pushProjects names the stored projects that declare a source in the repository
+// this delivery is about, sorted.
+//
+// It is the cheap half of the match and deliberately not the whole of it: which
+// *components* a push makes stale needs the resolver, the instance's GitSource
+// tier and both documents, and that answer belongs to one place
+// ([api.Server.PlanPush]) rather than to two that could disagree. What this
+// narrows is how many projects have to be asked — an instance holds tens of
+// projects and a push is about one repository.
+func (h *Handler) pushProjects(ctx context.Context, conn forgeconn.Resolution, event forge.Event) []string {
+	if h.opts.Specs == nil {
+		return nil
+	}
+	stored, err := h.opts.Specs.List(ctx)
+	if err != nil {
+		h.log.Warn("could not list projects for a push delivery", "error", err.Error())
+		return nil
+	}
+	var out []string
+	for _, s := range stored {
+		project, ok := decodeProject(s.Documents.Project)
+		if !ok {
+			continue
+		}
+		for _, src := range project.Spec.EffectiveSources() {
+			if sameRepository(src.Git, conn.Stored.Spec.EffectiveHost(), event) {
+				out = append(out, s.Project)
+				break
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func decodeProject(doc []byte) (*model.Project, bool) {
+	docs, errs := model.DecodeDocuments(doc)
+	if len(errs) > 0 {
+		return nil, false
+	}
+	for _, d := range docs {
+		if p, ok := d.(*model.Project); ok {
+			return p, true
+		}
+	}
+	return nil, false
 }
 
 // verify finds the connection whose webhook secret signed this delivery.

@@ -267,6 +267,11 @@
             "artifacts"
           ]
         },
+        "autoDeploy": {
+          "type": "boolean",
+          "description": "follow the components' sources — a push to a bound repository re-renders and republishes this environment (ADR-0036)",
+          "default": false
+        },
         "components": {
           "items": {
             "properties": {
@@ -276,6 +281,10 @@
               "image": {
                 "type": "string",
                 "description": "pins this component's image in this environment only; the promotion primitive (rule P3)"
+              },
+              "imageTracked": {
+                "type": "boolean",
+                "description": "workloads only; the image named here is a starting point rather than a hold — tracking may still advance it and the trigger overwrites it on the next push (ADR-0036 decision 5)"
               },
               "replicas": {
                 "properties": {
@@ -382,6 +391,10 @@
                   ]
                 },
                 "type": "object"
+              },
+              "autoDeploy": {
+                "type": "boolean",
+                "description": "workloads only; follow this component's source here — it overrides the environment's own setting (ADR-0036)"
               },
               "preset": {
                 "type": "string",

@@ -18,7 +18,6 @@ import (
 	"github.com/dafrie/kelson/internal/build"
 	"github.com/dafrie/kelson/internal/build/registry"
 	"github.com/dafrie/kelson/internal/controlstore"
-	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/model"
 	"github.com/dafrie/kelson/internal/preview"
 	"github.com/dafrie/kelson/internal/preview/naming"
@@ -351,17 +350,7 @@ func (s *Server) ReportBuild(ctx context.Context, req *connect.Request[kelsonv1a
 	}
 
 	if msg.GetPr() <= 0 {
-		// The tracking half. It names `autoDeploy` and the tracker rather than
-		// "the ADR-0034 pipeline", which is what this refusal used to say when
-		// none of the pipeline existed: half of it does now, and a refusal that
-		// still blamed the whole would send a pipeline author looking for the
-		// wrong thing.
-		return nil, fail(connect.CodeUnimplemented, delivery.NotImplemented("report-build",
-			"kelson accepts this report's images but has nowhere to send them: a report with no `pr` targets the "+
-				"environments that track the ref it was built from, and `Environment.spec.autoDeploy` — the opt-in "+
-				"that makes an environment track its source (ADR-0034 decision 4) — is not in the model yet. "+
-				"Reports for a change request (`--pr`) publish that change request's previews today",
-			"issue #248"))
+		return s.deployReportedRef(ctx, spec, msg)
 	}
 	return s.publishReportedPreviews(ctx, spec, msg)
 }
@@ -572,6 +561,118 @@ func (s *Server) publishReportedPreviews(ctx context.Context, spec decoded, msg 
 	}), nil
 }
 
+// deployReportedRef is the tracking half of the report (ADR-0036 decision 3):
+// the environments that follow the ref these images were built from get them,
+// through the one trigger the spine has — a spec write (autodeploy.go's method
+// comment argues why it is not a publish).
+//
+// # What `accepted` means here, unchanged
+//
+// A report that matched no environment is accepted. The schema pins that
+// meaning — "a report for a ref no environment follows is recorded and triggers
+// nothing, which is exactly what a report for a feature branch should do" — and
+// the tracking half is where the sentence is most load-bearing: most branches of
+// most repositories are followed by nothing, and a red pipeline for each of them
+// would train a team to ignore the field.
+//
+// A *refusal* is different and is not this. `build/several-sources` is a
+// kelson-built project's refusal (#252) and cannot be reached from here at all:
+// [declineReport] has already turned every `by: kelson` project away, and a
+// `by: ci` project reporting per-component images is precisely what that refusal
+// points at.
+//
+// # A write that failed fails the RPC
+//
+// Where kelson had environments to move and moved none because the store refused
+// the write, the RPC fails — the same rule the preview half keeps, and for the
+// same reason: `accepted: true` with nothing triggered is a lie a pipeline would
+// believe.
+func (s *Server) deployReportedRef(ctx context.Context, spec decoded, msg *kelsonv1alpha1.ReportBuildRequest) (*connect.Response[kelsonv1alpha1.ReportBuildResponse], error) {
+	ref := ShortRef(msg.GetRef())
+	if ref == "" {
+		// The proto says so on the field: "Empty reports the images and triggers
+		// no environment." There is nothing to compare a source's `ref:` against,
+		// so this is a well-formed report with no target rather than a mistake.
+		return connect.NewResponse(&kelsonv1alpha1.ReportBuildResponse{
+			Accepted: true,
+			Message: redact.Scrub(fmt.Sprintf("recorded the images for %s and triggered nothing: the report names no "+
+				"ref and no change request, and an environment follows a ref. Send --ref (the branch or tag CI built) "+
+				"or --pr (the change request to preview)", build.NormalizeCommit(msg.GetSha()))),
+		}), nil
+	}
+
+	sha := build.NormalizeCommit(msg.GetSha())
+	trigger := PushTrigger{
+		Project: spec.project.Metadata.Name,
+		// No repository: CI reports what it built, not where from. See
+		// [PushTrigger.Repo].
+		Ref:    ref,
+		SHA:    sha,
+		Images: msg.GetImages(),
+	}
+	// The documents are read again rather than carried down from
+	// [Server.resolveSpec], which decodes and discards the bytes: the write is a
+	// read-modify-write and the version it asserts has to be the one it read
+	// (the rule Promote states at its own Get). It is one more read of a store
+	// this handler has already reached.
+	stored, err := s.specs.Get(ctx, msg.GetProject())
+	if err != nil {
+		return nil, failRequest(err)
+	}
+	out, err := s.applyTrigger(ctx, stored, spec, trigger)
+	if err != nil {
+		return nil, failRequest(err)
+	}
+
+	notes := out.Notes
+	if note := s.reportDeployStatus(ctx, trigger.repositories(spec.project), trigger, out); note != "" {
+		notes = append(notes, note)
+	}
+	if out.moved() {
+		// The audit record's "what did this produce?" is the environments the
+		// write set in motion, against the commit they were moved to (#78). The
+		// delivery revision is the controller's to assign and is deliberately not
+		// invented here.
+		auditChange(ctx, controlstore.AuditChange{
+			Revision: strings.Join(out.Triggered, " "),
+			From:     sha,
+		})
+	}
+	return connect.NewResponse(&kelsonv1alpha1.ReportBuildResponse{
+		Accepted:  true,
+		Triggered: out.Triggered,
+		Message:   deployedMessage(spec, ref, out, notes),
+	}), nil
+}
+
+// deployedMessage is the prose half of the tracking answer: why `triggered` is
+// what it is.
+//
+// It is scrubbed on the way out for [reportMessage]'s reason: it is free text
+// assembled from values kelson resolved — image references among them — on a
+// *successful* response, which never reaches the error boundary where scrubbing
+// otherwise happens (issue #117).
+func deployedMessage(spec decoded, ref string, out PushOutcome, notes []string) string {
+	var clauses []string
+	switch {
+	case len(out.Triggered) == 1:
+		env := out.Triggered[0]
+		clauses = append(clauses, fmt.Sprintf("moved %s in environment %s at %s",
+			strings.Join(out.Components[env], ", "), env, ref))
+	case len(out.Triggered) > 1:
+		clauses = append(clauses, fmt.Sprintf("moved %d environments at %s: %s",
+			len(out.Triggered), ref, strings.Join(out.Triggered, ", ")))
+	case len(notes) > 0:
+		clauses = append(clauses, "deployed nothing at "+ref)
+	default:
+		clauses = append(clauses, fmt.Sprintf("deployed nothing at %s: no component of project %s follows %s here — "+
+			"a component follows its source when the environment (or the component) sets autoDeploy: true and the "+
+			"source it binds is this repository at this ref (ADR-0036 decision 2)",
+			ref, spec.project.Metadata.Name, ref))
+	}
+	return redact.Scrub(strings.Join(append(clauses, notes...), "; "))
+}
+
 // previewsElsewhere reports an environment whose previews are about a different
 // repository than the one this report came from, as the sentence to say so.
 //
@@ -600,7 +701,7 @@ func previewsElsewhere(p *model.Project, env *model.Environment) string {
 		return ""
 	}
 	for _, source := range repositories {
-		if sameRepository(env.Spec.Previews.Repo, source) {
+		if model.SameRepository(env.Spec.Previews.Repo, source) {
 			return ""
 		}
 	}
@@ -753,7 +854,7 @@ func previewPath(project, environment, id string) string {
 // rather than whichever the map happened to yield.
 func statusPath(project string, published []publishedPreview, repo string) string {
 	for _, p := range published {
-		if sameRepository(p.repo, repo) {
+		if model.SameRepository(p.repo, repo) {
 			return previewPath(project, p.environment, p.published.Set.PR)
 		}
 	}
@@ -923,21 +1024,22 @@ func reportMessage(spec decoded, pr string, triggered, notes []string) string {
 	return redact.Scrub(strings.Join(append(clauses, notes...), "; "))
 }
 
-// sameRepository reports whether two repository references name one repository.
+// There is no sameRepository here any more.
 //
-// Host and path must agree, both case-folded, with `.git` and a trailing slash
-// off. The path alone would match `acme/checkout` on gitlab.com against the same
-// path on github.com, which is a real collision for anyone mirroring. It is a
-// separate function from internal/forgehttp's comparison of the same shape
-// because that one answers a different question — whether a *delivery* that
-// arrived through a connection is about an environment's previews, which brings
-// the connection's host into it — and collapsing the two would make one of them
-// carry an argument it has no use for.
-func sameRepository(a, b string) bool {
-	aHost, aPath, aOK := splitRepository(a)
-	bHost, bPath, bOK := splitRepository(b)
-	return aOK && bOK && aHost == bHost && aPath == bPath
-}
+// This package held a private copy of the comparison while there was nowhere
+// else for it: whether two spec-shaped repository references name one
+// repository, host and path both, because the path alone would match
+// `acme/checkout` on gitlab.com against the same path on github.com.
+// [model.SameRepository] is that function now, in the package where a
+// `source.git` and a `previews.repo` are *defined*, and its own doc comment
+// asks the next change that touches this file to collapse the copy onto it —
+// which is this change (ADR-0036 decision 2 asks the same question of the same
+// fields). internal/forgehttp's comparison stays its own: it compares a
+// *delivery* against a spec and brings the connection's host into the answer.
+//
+// splitRepository below is not the same function and stays: what it produces is
+// the `owner/repo` a forge API is keyed by, which is a projection rather than a
+// comparison.
 
 // splitRepository reduces a repository reference to its lowercased host and
 // path. It accepts what a spec actually carries: an https URL, a bare

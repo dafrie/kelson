@@ -792,7 +792,7 @@ an endpoint that is not what it claims to be, not a bound anyone should meet.
 |---|---|
 | `ping` | Answers `200`. GitHub's handshake — confirms the webhook URL is reachable and correctly signed. |
 | `pull_request` | Stamps `reconcile.fluxcd.io/requestedAt` on every environment's `ResourceSetInputProvider` whose `previews.repo` matches this repository, so flux-operator re-polls now instead of at `previews.interval` (ADR-0034 decision 2). |
-| `push` | No-op today: `autoDeploy` (ADR-0034 decision 4) is the feature that would act on it, and it is not built yet. |
+| `push` | Resolves which stored projects build from this repository, asks each what the push makes stale, answers `202` with what it enqueued, and runs the trigger behind the response (ADR-0036 decision 3). An environment with `autoDeploy` moves; everything else is untouched and silent. A kelson-built project with several sources refuses with `build/several-sources` ([#252](https://github.com/dafrie/kelson/issues/252)), named in the answer, in the log, on the commit and in the audit trail — **not** on the environment's conditions, which only kelson-controller writes. |
 | `installation` | Records the installation ID on the connection whose secret verified it — the one fact only this event can supply, because the manifest flow creates the connection before anyone installs the app (ADR-0033 decision 2 step 3). A `deleted` or `suspend` action zeroes it back. |
 | anything else | `202`, `{"ignored": true}`. |
 
@@ -802,6 +802,14 @@ rather than carrying anything itself — so a forged or replayed delivery can at
 reconcile, and losing every delivery costs latency, never correctness. Polling on `previews.interval`
 is the reconciliation backstop, and it is the only path on an instance a firewall or NAT keeps GitHub
 from reaching: previews still work, just as fast as the poll interval rather than as fast as a push.
+
+A `push` is the one delivery that ends in a write, and it keeps the same rule by re-deriving rather
+than trusting: the payload contributes a repository, a ref and a commit, every one of them is compared
+against the stored spec before anything runs, and what is written is the digest of an image kelson
+either built itself or was told about by an authenticated report. **There is no poll backstop for
+`autoDeploy`** ([ADR-0036](adr/0036-autodeploy.md) decision 3): an instance that can neither receive
+deliveries nor report builds keeps manual deploys, which is exactly the behaviour of an environment
+that never set the flag.
 
 A poke that fails is logged and named in the response body's `failed` list, never a `5xx` — GitHub's
 redelivery exists for its own transient failures, not kelson's. The one exception is the `installation`

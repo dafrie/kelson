@@ -718,12 +718,68 @@ func connectServer(cfg config, attribution *slog.Logger) (*serverPlane, error) {
 		Previews:    poker,
 		ExternalURL: cfg.externalURL,
 		Logger:      attribution,
+		// The `autoDeploy` trigger (ADR-0036 decision 3). It is the same
+		// api.Server the RPC routes are served by — one spec store, one resolver,
+		// one answer to "what does this push move" — reached through an adapter
+		// because neither package may import the other (autoDeployer).
+		AutoDeploy: autoDeployer{server: server},
 	})
 	if err != nil {
 		return nil, err
 	}
 
 	return &serverPlane{api: server, agents: agents, sources: sources, forge: forgeEndpoints}, nil
+}
+
+// autoDeployer joins the webhook listener to the trigger pipeline
+// ([ADR-0036](docs/adr/0036-autodeploy.md) decision 3).
+//
+// It is three field copies and no logic, and that is the whole point. Both
+// halves already exist — internal/forgehttp verifies a delivery and decides what
+// to enqueue, internal/api resolves the stale set and moves what it names — and
+// neither may import the other: the api plane's depguard rule forbids the
+// Kubernetes clients that forgehttp holds two of, and an import edge in either
+// direction would hand one plane the other's reach in a rule that only sees
+// direct imports (internal/forgehttp's package doc says so about
+// [forgehttp.Authenticator], which crosses the same gap the same way).
+//
+// So the binary is where they meet, exactly as it is for the authenticator and
+// for [forgeStatuses]. What travels across is a repository, a ref, a commit and
+// a connection name — no client, no store, no credential.
+type autoDeployer struct{ server *api.Server }
+
+var _ forgehttp.AutoDeployer = autoDeployer{}
+
+// PlanPush implements forgehttp.AutoDeployer.
+func (a autoDeployer) PlanPush(ctx context.Context, p forgehttp.Push) (forgehttp.PushPlan, error) {
+	plan, err := a.server.PlanPush(ctx, pushTrigger(p))
+	if err != nil {
+		return forgehttp.PushPlan{}, err
+	}
+	return forgehttp.PushPlan{Environments: plan.Environments, Refused: plan.Refused}, nil
+}
+
+// RunPush implements forgehttp.AutoDeployer.
+func (a autoDeployer) RunPush(ctx context.Context, p forgehttp.Push) (forgehttp.PushOutcome, error) {
+	out, err := a.server.AutoDeployPush(ctx, pushTrigger(p))
+	if err != nil {
+		return forgehttp.PushOutcome{}, err
+	}
+	return forgehttp.PushOutcome{Triggered: out.Triggered, Notes: out.Notes, Refused: out.Refused}, nil
+}
+
+// pushTrigger is the one translation. Images stays nil deliberately: a nil map
+// is what tells the trigger that nobody has built this commit yet, so kelson's
+// own build plane runs at the pushed head — which is the whole difference
+// between the webhook path and a CI report (ADR-0036 decision 3).
+func pushTrigger(p forgehttp.Push) api.PushTrigger {
+	return api.PushTrigger{
+		Project:    p.Project,
+		Repo:       p.Repo,
+		Ref:        p.Ref,
+		SHA:        p.SHA,
+		Connection: p.Connection,
+	}
 }
 
 // observationConnector is the server's connectObservation: one cluster

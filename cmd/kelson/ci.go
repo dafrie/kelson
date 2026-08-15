@@ -90,9 +90,12 @@ func newCIReportBuildCmd() *cobra.Command {
 			"It is what a project with `spec.build.by: ci` uses. A project whose images come from kelson's\n" +
 			"own build plane (`by: kelson`, the default for a project with `source:`) declines the report\n" +
 			"naming the field, because publishing it would publish over that plane.\n\n" +
-			"Give it --pr to publish that change request's previews. A report with only --ref targets the\n" +
-			"environments that track it (`autoDeploy`, ADR-0034 decision 4), which is not in the model yet:\n" +
-			"the server answers that plainly rather than accepting a report it would drop.\n\n" +
+			"Give it --pr to publish that change request's previews. A report with only --ref moves the\n" +
+			"environments that follow it: an environment with `autoDeploy: true` whose components are bound\n" +
+			"to this repository at this ref gets the reported digests, and kelson-controller renders and\n" +
+			"publishes it (ADR-0036). A component that is pinned, does not track, or is bound elsewhere is\n" +
+			"named back in the answer rather than deployed. A ref no environment follows triggers nothing\n" +
+			"and is still a success — most branches are followed by nothing.\n\n" +
 			"Authentication is an agent credential (ADR-0034 decision 6): `kelson agent create ci --project\n" +
 			"<name> --allow mutate` and pass its token as --token or $KELSON_AGENT_TOKEN. The instance's\n" +
 			"shared password works too, but a pipeline that holds it holds everything.\n\n" +
@@ -206,15 +209,16 @@ func reportTarget(opts *reportBuildOptions) string {
 // façade-backed verb already speaks and which carries the server's taxonomy
 // code and remediation through verbatim.
 //
-// Unimplemented is the exception, and it is the reason this function exists. A
-// report with no --pr is well-formed, was understood, and named images kelson
-// had no complaint about; what it reached is a half of the trigger pipeline
-// that does not exist yet (`autoDeploy`, ADR-0034 decision 4, #248).
-// serverError's default branch would render that identically to a spec kelson
-// could not use or a registry that refused the push, and a pipeline author
-// would go looking for a mistake they did not make. So it is framed as a gap in
-// kelson, with the server's own sentence and its `delivery/not-implemented`
-// detail underneath, unedited.
+// Unimplemented is the exception, and it is the reason this function exists. It
+// used to be the `--ref`-only report, which ADR-0036 has since built; what
+// answers Unimplemented now is a *server* missing a seam — no publisher wired,
+// so a change request's preview cannot be published from it. Either way the
+// report was well-formed, was understood, and named images kelson had no
+// complaint about, and serverError's default branch would render that
+// identically to a spec kelson could not use or a registry that refused the
+// push — sending a pipeline author looking for a mistake they did not make. So
+// it is framed as a gap in this kelson server, with the server's own sentence
+// and its `delivery/not-implemented` detail underneath, unedited.
 func reportError(addr string, err error) error {
 	if connect.CodeOf(err) != connect.CodeUnimplemented {
 		return serverError("report-build", addr, err)

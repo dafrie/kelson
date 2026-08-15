@@ -108,6 +108,12 @@ var notImplementedFields = []notImplemented{
 		What:      "human deployer lists",
 		TrackedBy: "milestone M11 · Teams, RBAC & multi-tenancy",
 	},
+	// The two `autoDeploy` rows are gone (ADR-0036 decision 3, issue #248). They
+	// were here while the flag resolved and nothing read the answer; the trigger
+	// paths read it now — internal/api's ReportBuild with a ref and no PR, and
+	// internal/forgehttp's `push` — so an environment that sets the flag is
+	// followed rather than silently ignored, which is the only thing this table
+	// was protecting against.
 }
 
 // gateFor returns the gate covering a canonical path for a document kind.

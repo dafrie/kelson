@@ -55,19 +55,22 @@ func richProject() *ProjectSpec {
 
 func richEnvironment() *EnvironmentSpec {
 	return &EnvironmentSpec{
-		Project:   "checkout",
-		Namespace: "checkout-prod",
-		Routing:   &Routing{DomainSuffix: "example.test"},
-		Delivery:  &Delivery{Mode: DeliveryFlux, Git: &GitTarget{Repo: "https://example.test/deploy.git", Branch: "main"}},
-		Policy:    &Policy{Agents: AgentsProposeOnly, Forbid: []AgentOperation{AgentOpDeploy}},
-		Secrets:   &SecretBackend{Backend: SecretsSOPS, AgeRecipients: []string{"age1abc"}},
+		Project:    "checkout",
+		Namespace:  "checkout-prod",
+		AutoDeploy: ptr(true),
+		Routing:    &Routing{DomainSuffix: "example.test"},
+		Delivery:   &Delivery{Mode: DeliveryFlux, Git: &GitTarget{Repo: "https://example.test/deploy.git", Branch: "main"}},
+		Policy:     &Policy{Agents: AgentsProposeOnly, Forbid: []AgentOperation{AgentOpDeploy}},
+		Secrets:    &SecretBackend{Backend: SecretsSOPS, AgeRecipients: []string{"age1abc"}},
 		Components: []ComponentOverride{
 			{
-				Name:     "web",
-				Image:    "ghcr.io/acme/app@sha256:deadbeef",
-				Replicas: &Replicas{Min: 3, Max: 9},
-				Env:      map[string]EnvValue{"FEATURE": {Literal: "on"}},
+				Name:         "web",
+				Image:        "ghcr.io/acme/app@sha256:deadbeef",
+				ImageTracked: true,
+				Replicas:     &Replicas{Min: 3, Max: 9},
+				Env:          map[string]EnvValue{"FEATURE": {Literal: "on"}},
 			},
+			{Name: "worker", AutoDeploy: ptr(false)},
 			{Name: "db", Preset: PresetHASmall},
 		},
 		Overlays: []Overlay{{Manifest: "overlays/extra.yaml"}},
@@ -137,8 +140,10 @@ func TestEnvironmentSpecDeepCopyIsIndependent(t *testing.T) {
 	out.Delivery.Git.Branch = "mutated"
 	out.Policy.Forbid[0] = AgentOpRollback
 	out.Secrets.AgeRecipients[0] = "mutated"
+	*out.AutoDeploy = false
 	out.Components[0].Replicas.Min = 99
 	out.Components[0].Env["FEATURE"] = EnvValue{Literal: "mutated"}
+	*out.Components[1].AutoDeploy = true
 	out.Components = append(out.Components, ComponentOverride{Name: "added"})
 	out.Overlays[0].Manifest = "mutated"
 
