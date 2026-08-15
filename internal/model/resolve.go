@@ -64,6 +64,45 @@ type Resolved struct {
 	// scope: the *revision* is what a repository and a ref are part of.
 	Sources []ResolvedComponentSource `json:"sources,omitempty"`
 
+	// AutoDeploy names the workload components that follow their source here,
+	// in spec order: the effective answer of ADR-0036 decision 1 — the
+	// component's own override if it set one, else the environment's, else
+	// false. A component that does not track has no entry, so the default
+	// environment (manual deploys) carries nothing at all.
+	//
+	// It is precomputed rather than recomputed by each caller for the reason
+	// [Resolved.SourceFor] exists: the trigger paths hold a resolved spec, and a
+	// second derivation of the same two-level rule is a second answer. It is
+	// also the *effective* setting a UI has to show per component, so nobody
+	// reading a dashboard has to merge two levels in their head (ADR-0036
+	// consequences).
+	//
+	// Data components and charts never appear. They are bound to no source
+	// (ADR-0035 decision 3), so there is no push that could move one.
+	//
+	// It lives on the envelope rather than on [ResolvedComponent] for the reason
+	// Sources does: the renderer never reads it and nothing about it reaches a
+	// manifest, so on the component it would enter `kelson.dev/spec-hash` and
+	// churn every workload in every cluster over a field that changes no
+	// rendered byte. Here it enters the artifact tag instead, so an environment
+	// that turns tracking on republishes once and then stays put.
+	AutoDeploy []string `json:"autoDeploy,omitempty"`
+
+	// ImagePins names the workload components whose image the spec itself
+	// names, and which a build therefore cannot move: the Environment's
+	// per-component `image:` — the promotion primitive (ADR-0016) — or the
+	// component's own. Both beat `--image`, which stands in for the Project's
+	// (rule P3), so a build that produces something new leaves them exactly
+	// where a person put them.
+	//
+	// It is recorded because resolution is deliberately lossy about it:
+	// [ResolvedComponent.Image] is the merged answer and no longer says which
+	// scope named it. ADR-0036 decision 2 needs that distinction — a pinned
+	// component never auto-deploys regardless of the flag — and decision 3 needs
+	// it again to tell a reporter *why* a component it built did not move, which
+	// one merged string cannot answer.
+	ImagePins []string `json:"imagePins,omitempty"`
+
 	Environment  ResolvedEnvironment
 	Components   []ResolvedComponent
 	DataServices []ResolvedDataService
@@ -369,8 +408,10 @@ func resolve(p *Project, e *Environment, globals []Source) (*Resolved, Errors) {
 		case kind.IsChart():
 			r.Charts = append(r.Charts, resolveChart(c))
 		default:
+			ov := overrides[c.Name]
 			builtFromSource := builds && r.SourceFor(c.Name) != nil
-			r.Components = append(r.Components, resolveComponent(p, r, c, overrides[c.Name], builtFromSource))
+			resolveTracking(r, c, ov, e.Spec.AutoDeploy)
+			r.Components = append(r.Components, resolveComponent(p, r, c, ov, builtFromSource))
 		}
 	}
 

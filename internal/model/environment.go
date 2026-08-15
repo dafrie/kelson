@@ -32,10 +32,29 @@ type EnvironmentSpec struct {
 	// same gate shape `kind: helm` carries.
 	Previews *Previews `yaml:"previews,omitempty" json:"previews,omitempty"`
 
-	// Components carry per-Component overrides, matched by name. Names must
-	// exist in the Project, and what an override may set follows the kind of
-	// the component it names: image/replicas/resources/env for a workload
-	// (rules P1, P2, P3), preset for a data component (rule P5).
+	// AutoDeploy opts this environment into following its components' sources:
+	// a push to a repository a component is bound to re-renders and republishes
+	// this environment, instead of waiting for a person or a pipeline verb
+	// (ADR-0036 decision 1). Absent means false — every kelson deploy is
+	// initiated deliberately until an environment says otherwise, and manual
+	// stays the default.
+	//
+	// It is a pointer so that "unset" and "false" are different documents. That
+	// is what makes the per-component field in Components an *override* rather
+	// than a merge: a component may set it either way under an environment that
+	// says nothing, and the resolver can tell "this level declined to decide"
+	// from "this level decided no".
+	AutoDeploy *bool `yaml:"autoDeploy,omitempty" json:"autoDeploy,omitempty" jsonschema:"default=false,description=follow the components' sources — a push to a bound repository re-renders and republishes this environment (ADR-0036)"`
+
+	// Components carry per-Component overrides, matched by name. It is a list
+	// keyed by `name:`, not a mapping of name to override: one spelling for the
+	// Project's components and the Environment's overrides of them (ADR-0014),
+	// and a list that keeps the order the author wrote.
+	//
+	// Names must exist in the Project, and what an override may set follows the
+	// kind of the component it names: image/replicas/resources/env for a
+	// workload (rules P1, P2, P3) plus autoDeploy (ADR-0036), preset for a data
+	// component (rule P5).
 	Components []ComponentOverride `yaml:"components,omitempty" json:"components,omitempty"`
 
 	// Overlays concatenate after the Project's own overlays (rule P6).
@@ -64,9 +83,9 @@ type Routing struct {
 //
 // It is one type for both halves of the component list, matching the spec's
 // one list (ADR-0014). The fields are disjoint by kind and validation says so:
-// a workload override sets image/replicas/resources/env and a data override
-// sets preset, and each is an error on the other side rather than a field that
-// resolves into nothing.
+// a workload override sets image/replicas/resources/env/autoDeploy and a data
+// override sets preset, and each is an error on the other side rather than a
+// field that resolves into nothing.
 type ComponentOverride struct {
 	Name string `yaml:"name" json:"name" jsonschema:"required"`
 
@@ -81,6 +100,19 @@ type ComponentOverride struct {
 	Replicas  *Replicas           `yaml:"replicas,omitempty" json:"replicas,omitempty"`
 	Resources *Resources          `yaml:"resources,omitempty" json:"resources,omitempty"`
 	Env       map[string]EnvValue `yaml:"env,omitempty" json:"env,omitempty"`
+
+	// AutoDeploy narrows or widens the Environment's own tracking for this
+	// component alone: its value if set, else the environment's, else false
+	// (ADR-0036 decision 1). Nothing between the two levels is an error, in
+	// either direction — `false` keeps one risky component manual while the
+	// environment tracks, and `true` under an environment that sets nothing is
+	// how single-component tracking is written.
+	//
+	// It is a workload field. A data component and a chart build nothing of
+	// ours and are bound to no source (ADR-0035 decision 3), so there is no
+	// push that could move one, and setting it on either is refused with the
+	// same code as an image on a database rather than resolved into nothing.
+	AutoDeploy *bool `yaml:"autoDeploy,omitempty" json:"autoDeploy,omitempty" jsonschema:"description=workloads only; follow this component's source here — it overrides the environment's own setting (ADR-0036)"`
 
 	// Preset overrides a data component's topology for this Environment
 	// (rule P5): `shared` in development, `ha-small` in production, from one

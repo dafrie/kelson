@@ -303,6 +303,20 @@ spec:
 spec:
   project: p
   policy: {agents: allow, require: [dry-run], deployers: [team]}`,
+
+	KindEnvironment + " $.spec.autoDeploy": `
+spec:
+  project: p
+  autoDeploy: true`,
+
+	// autoDeploy: false is the case worth pinning: the gate is on the field
+	// being *written*, not on the value, because a document that says "do not
+	// track" is still a document whose author believes the flag is read.
+	KindEnvironment + " $.spec.components[].autoDeploy": `
+spec:
+  project: p
+  components:
+    - {name: web, autoDeploy: false}`,
 }
 
 // TestGateTableIsEnforced renders each gated field into a document and demands

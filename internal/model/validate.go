@@ -1646,6 +1646,9 @@ func validateEnvironmentShape(e *Environment, v *validator) {
 	if s.Cluster != "" {
 		v.gate("$.spec.cluster", "$.spec.cluster")
 	}
+	if s.AutoDeploy != nil {
+		v.gate("$.spec.autoDeploy", "$.spec.autoDeploy")
+	}
 
 	if r := s.Routing; r != nil {
 		if r.DomainSuffix != "" {
@@ -1672,6 +1675,9 @@ func validateEnvironmentShape(e *Environment, v *validator) {
 		v.replicas(f+".replicas", ov.Replicas)
 		v.resources(f+".resources", ov.Resources)
 		v.envMap(f+".env", ov.Env, nil) // binding targets re-checked against the Project in ValidateEnvironment
+		if ov.AutoDeploy != nil {
+			v.gate("$.spec.components[].autoDeploy", f+".autoDeploy")
+		}
 		switch ov.Preset {
 		case "", PresetShared, PresetSmall, PresetHASmall, PresetHAMedium, PresetBranch:
 		default:
@@ -1974,6 +1980,12 @@ func workloadOverrideFields(ov ComponentOverride) []string {
 	}
 	if len(ov.Env) > 0 {
 		set = append(set, "env")
+	}
+	// Tracking a source is a workload question too (ADR-0036 decision 1): the
+	// kinds that build nothing of ours are bound to no source, so there is no
+	// push that could move one and the flag would resolve into nothing.
+	if ov.AutoDeploy != nil {
+		set = append(set, "autoDeploy")
 	}
 	return set
 }

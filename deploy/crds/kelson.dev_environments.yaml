@@ -63,6 +63,9 @@ spec:
               required:
                 - project
               properties:
+                autoDeploy:
+                  description: follow the components' sources — a push to a bound repository re-renders and republishes this environment (ADR-0036)
+                  type: boolean
                 cluster:
                   type: string
                 components:
@@ -72,6 +75,9 @@ spec:
                     required:
                       - name
                     properties:
+                      autoDeploy:
+                        description: workloads only; follow this component's source here — it overrides the environment's own setting (ADR-0036)
+                        type: boolean
                       env:
                         type: object
                         additionalProperties:
