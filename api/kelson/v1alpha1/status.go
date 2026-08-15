@@ -50,6 +50,42 @@ const ConditionReachable = "Reachable"
 // `kelson rollback` is porcelain over this.
 const AnnotationRollbackTo = "kelson.dev/rollback-to"
 
+// AnnotationOrphanOnDelete makes deleting an Environment leave its workloads
+// running (issue #242, ADR-0028's 2026-08-15 amendment):
+//
+//	kubectl annotate environment production kelson.dev/orphan-on-delete=true
+//
+// The default is the opposite and stays the default: deleting an Environment
+// deletes kelson's Kustomization, the Kustomization prunes everything it
+// applied, and the running application goes with it (ADR-0028's 2026-08-14
+// amendment). That is the one place where deleting a kelson custom resource
+// destroys something — `kelson uninstall` removes kelson and leaves every
+// application running (issue #59) — and the asymmetry is exactly why there is an
+// opt-out for a single environment.
+//
+// With the annotation in force the finalizer still runs and still releases
+// itself; the only thing it skips is the teardown. The OCIRepository and the
+// Kustomization stay where they are, keep their kelson.dev provenance labels,
+// and keep reconciling the last artifact kelson published — with nothing left
+// that declares them, which is what *orphaned* means here. Re-applying an
+// Environment of the same name in the same namespace adopts the pair back;
+// deleting the Kustomization by hand tears the workloads down after all
+// (docs/delivery.md).
+//
+// It is read at deletion time, not at apply time, so it can be added to an
+// Environment that is already Terminating — which is how an operator releases
+// one whose teardown is stuck. It skips whatever teardown has not happened yet
+// and cannot restore what has.
+//
+// Any value Go's strconv.ParseBool reads as true opts in, and "false" is the
+// default said out loud. A value it cannot read at all — `ture`, `yes`, or an
+// empty string — opts in as well, and the controller records that it did:
+// kelson will not prune a production namespace because somebody mistyped the
+// annotation whose whole purpose was to prevent that, and deleting the
+// Kustomization afterwards is one command where restoring what it pruned is an
+// outage.
+const AnnotationOrphanOnDelete = "kelson.dev/orphan-on-delete"
+
 // The reasons ConditionReady takes. They are a closed set on purpose: a reason
 // is what a `kubectl get -o jsonpath` or an agent branches on, so an ad-hoc
 // string invented at a call site is a value nobody can write a check against.

@@ -30,10 +30,12 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -412,7 +414,9 @@ func TestReconcileDeliversTheFluxPair(t *testing.T) {
 	}
 
 	// And deleting the Environment takes the pair with it: the finalizer runs
-	// the teardown, and both objects leave the API server for real.
+	// the teardown, and both objects leave the API server for real. This is the
+	// default and the only behaviour without an opt-in — the other side of it is
+	// TestReconcileOrphansTheFluxPairWhenAnnotated (issue #242).
 	if err := c.Delete(ctx, &env); err != nil {
 		t.Fatalf("deleting the environment: %v", err)
 	}
@@ -429,6 +433,120 @@ func TestReconcileDeliversTheFluxPair(t *testing.T) {
 	}
 	if err := c.Get(ctx, req.NamespacedName, &env); !apierrors.IsNotFound(err) {
 		t.Errorf("the Environment is still there after its finalizer ran: %v", err)
+	}
+}
+
+// TestReconcileOrphansTheFluxPairWhenAnnotated is the escape hatch against the
+// same real schemas (issue #242): the spine up to a live pair, then a deletion
+// that deliberately leaves it.
+//
+// It is the counterpart of TestReconcileDeliversTheFluxPair's tail, and it is
+// worth running here rather than only against the fake client for one reason
+// beyond symmetry: "the pair is still there" is only interesting if the objects
+// were real ones an API server stored and could have deleted. It then re-applies
+// an Environment of the same name and reconciles again, because *adopt it back*
+// is a claim the documentation makes and a server-side apply over an object with
+// somebody's field manager on it is exactly the operation that could refuse.
+func TestReconcileOrphansTheFluxPairWhenAnnotated(t *testing.T) {
+	c := envtestClient(t)
+	crNS, fluxNS := deliveryNamespaces(t, c)
+	ctx := context.Background()
+
+	p := validProject()
+	p.Namespace, p.Generation = crNS, 0
+	if err := c.Create(ctx, p); err != nil {
+		t.Fatalf("creating the project: %v", err)
+	}
+	e := validEnvironment()
+	e.Namespace, e.Generation = crNS, 0
+	e.Annotations = map[string]string{v1alpha1.AnnotationOrphanOnDelete: "true"}
+	if err := c.Create(ctx, e); err != nil {
+		t.Fatalf("creating the environment: %v", err)
+	}
+
+	push := &fakePusher{}
+	recorder := record.NewFakeRecorder(10)
+	r := &EnvironmentReconciler{
+		Client: c,
+		Profiles: StaticProfileSource{ClusterProfile: clusterprofile.ClusterProfile{
+			Flux: &clusterprofile.Component{Version: "v2.9.4", Namespace: "flux-system"},
+		}},
+		Delivery: envtestDeliverer(t, c, fluxNS, push),
+		Recorder: recorder,
+	}
+	req := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(e)}
+	if _, err := r.Reconcile(ctx, req); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	name := ObjectName("checkout", "production")
+	var env v1alpha1.Environment
+	if err := c.Get(ctx, req.NamespacedName, &env); err != nil {
+		t.Fatalf("reading the environment back: %v", err)
+	}
+	if !hasFinalizer(env.Finalizers) {
+		t.Fatalf("finalizers = %v; the escape hatch changes what the finalizer does, not whether there is one",
+			env.Finalizers)
+	}
+	published := env.Status.Revision
+	if published == "" {
+		t.Fatal("the status records no revision, so there is no pair to orphan")
+	}
+
+	if err := c.Delete(ctx, &env); err != nil {
+		t.Fatalf("deleting the environment: %v", err)
+	}
+	if _, err := r.Reconcile(ctx, req); err != nil {
+		t.Fatalf("Reconcile of the deleting environment: %v", err)
+	}
+	if err := c.Get(ctx, req.NamespacedName, &env); !apierrors.IsNotFound(err) {
+		t.Fatalf("the Environment is still there: %v — an opt-out that blocks deletion is a worse trap "+
+			"than the behaviour it opts out of", err)
+	}
+
+	// The pair outlived the Environment, which is the whole point, and it is
+	// still recognisably kelson's: the provenance labels are what make an
+	// orphaned deployment findable with
+	// `kubectl get kustomizations -n kelson-system -l kelson.dev/managed-by=kelson`.
+	ks := liveFluxObject(t, c, kustomizationGVK, fluxNS, name)
+	oci := liveFluxObject(t, c, ociRepositoryGVK, fluxNS, name)
+	labels := ks.GetLabels()
+	if labels[delivery.LabelManagedBy] != delivery.ManagedByKelson ||
+		labels[delivery.LabelEnvironment] != "production" ||
+		labels[delivery.LabelEnvironmentNamespace] != crNS {
+		t.Errorf("the orphaned Kustomization's labels are %v; without them nothing in the cluster says "+
+			"which environment it came from", labels)
+	}
+	if pinned := nestedString(t, oci, "spec", "ref", "tag"); pinned != published {
+		t.Errorf("the orphaned OCIRepository is pinned to %q, want the last artifact kelson published (%q)",
+			pinned, published)
+	}
+	if got := nextEvent(t, recorder); !strings.Contains(got, EventReasonOrphaned) {
+		t.Errorf("event = %q, want the orphan record — with the Environment gone it is the only thing "+
+			"left that explains the pair", got)
+	}
+
+	// And adoption back: the same document, re-applied, converges on the objects
+	// that were left behind rather than colliding with them.
+	adopted := validEnvironment()
+	adopted.Namespace, adopted.Generation = crNS, 0
+	if err := c.Create(ctx, adopted); err != nil {
+		t.Fatalf("re-applying the environment: %v", err)
+	}
+	if _, err := r.Reconcile(ctx, req); err != nil {
+		t.Fatalf("Reconcile of the re-applied environment: %v", err)
+	}
+	if err := c.Get(ctx, req.NamespacedName, &env); err != nil {
+		t.Fatalf("reading the re-applied environment back: %v", err)
+	}
+	ready := meta.FindStatusCondition(env.Status.Conditions, v1alpha1.ConditionReady)
+	if ready == nil || ready.Status != metav1.ConditionTrue {
+		t.Fatalf("Ready = %+v after adopting an orphaned pair; a NameConflict here would mean the "+
+			"documented way back does not work", ready)
+	}
+	if pinned := nestedString(t, liveFluxObject(t, c, ociRepositoryGVK, fluxNS, name),
+		"spec", "ref", "tag"); pinned != env.Status.Revision {
+		t.Errorf("the adopted OCIRepository is pinned to %q and the status claims %q", pinned, env.Status.Revision)
 	}
 }
 
