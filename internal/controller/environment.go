@@ -335,7 +335,7 @@ func (r *EnvironmentReconciler) setConditions(env *v1alpha1.Environment, rb roll
 		// result is unhealthy. Either way the cause is Flux's own words, and
 		// relaying them verbatim is what makes the status actionable.
 		setReady(&env.Status.Conditions, env.Generation, metav1.ConditionFalse,
-			v1alpha1.ReasonRenderFailed, outcome.Cause)
+			settledFailureReason(outcome), outcome.Cause)
 
 	case outcome.Phase == v1alpha1.PhaseHealthy:
 		setReady(&env.Status.Conditions, env.Generation, metav1.ConditionTrue, v1alpha1.ReasonReady,
@@ -366,6 +366,32 @@ func (r *EnvironmentReconciler) setConditions(env *v1alpha1.Environment, rb roll
 	setProgressing(&env.Status.Conditions, env.Generation, metav1.ConditionTrue,
 		v1alpha1.ReasonReconciling, joinMessages(defaultString(outcome.Cause,
 			"waiting for Flux to reconcile revision "+outcome.Revision), message))
+}
+
+// settledFailureReason names what put a settled delivery in a failed phase:
+// the apply Flux refused, or the workloads that are live and wrong (issue
+// #256).
+//
+// Both facts reach here on the outcome, so nothing is threaded for this: the
+// phase is Flux's verdict and Outcome.Workloads is the readback's, and which of
+// the two degraded the environment is exactly the difference between "your
+// manifests did not go on the cluster" and "they did, and a pod is
+// crash-looping".
+//
+// The readback wins whenever it has a verdict, including over a Kustomization
+// that had already called itself unhealthy. Both are true of the same
+// environment — Flux's health check and kelson's classifier are looking at the
+// same failing pods — and only one of them can say *which* pod, so the specific
+// one becomes the reason and Flux's sentence stays in the message.
+func settledFailureReason(outcome Outcome) string {
+	switch {
+	case outcome.Phase == v1alpha1.PhaseRejected:
+		return v1alpha1.ReasonApplyFailed
+	case outcome.Workloads != nil && outcome.Workloads.Degraded > 0:
+		return v1alpha1.ReasonWorkloadDegraded
+	default:
+		return v1alpha1.ReasonUnhealthy
+	}
 }
 
 // halt is the refusal that happens *before* delivery: an unresolvable Project,

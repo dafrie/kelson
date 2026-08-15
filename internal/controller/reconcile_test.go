@@ -818,6 +818,128 @@ func TestRollbackRefusalLeavesACoherentStatus(t *testing.T) {
 	}
 }
 
+// --- what a settled failure is called ----------------------------------------
+
+// TestASettledFailureNamesWhatWentWrong is issue #256. Every badly-ended phase
+// carried ReasonRenderFailed, which the workload readback (#240) made visibly
+// wrong: a crash-looping Deployment produced `reason: RenderFailed` beside
+// `message: "Deployment/… is crash-loop-back-off"` — a message that named the
+// pod and a reason that blamed the renderer for a document it had rendered
+// perfectly.
+//
+// The message is prose and the reason is not: it is what a `kubectl get -o
+// jsonpath` or an agent branches on, so each cause gets its own, and the three
+// causes here are three different things to go and do.
+func TestASettledFailureNamesWhatWentWrong(t *testing.T) {
+	degraded := &v1alpha1.WorkloadsStatus{
+		Checked: 2, Healthy: 1, Degraded: 1,
+		Unhealthy: []v1alpha1.UnhealthyWorkload{{
+			Resource: "Deployment/checkout-production/web",
+			Code:     v1alpha1.WorkloadCrashLoopBackOff,
+			Reason:   "CrashLoopBackOff",
+		}},
+	}
+	for _, tc := range []struct {
+		name    string
+		outcome Outcome
+		want    string
+	}{
+		{
+			name: "Flux would not put the revision on the cluster",
+			outcome: Outcome{
+				Revision: "8-99887766", Phase: v1alpha1.PhaseRejected, Published: true,
+				Cause: "flux: Kustomization kelson-system/checkout-production rejected the change " +
+					"(BuildFailed): kustomize build failed",
+			},
+			want: v1alpha1.ReasonApplyFailed,
+		},
+		{
+			name: "a workload of the live revision is failing",
+			outcome: Outcome{
+				Revision: "8-99887766", Phase: v1alpha1.PhaseDegraded, Published: true,
+				Cause:     "Deployment/checkout-production/web is crash-loop-back-off (CrashLoopBackOff)",
+				Workloads: degraded,
+			},
+			want: v1alpha1.ReasonWorkloadDegraded,
+		},
+		{
+			name: "unhealthy, with no readback to name a workload",
+			outcome: Outcome{
+				Revision: "8-99887766", Phase: v1alpha1.PhaseDegraded, Published: true,
+				Cause: "flux: Kustomization kelson-system/checkout-production applied the change but " +
+					"it is unhealthy (HealthCheckFailed): timeout waiting for condition",
+			},
+			want: v1alpha1.ReasonUnhealthy,
+		},
+		{
+			name: "a readback that could not be done names no workload either",
+			outcome: Outcome{
+				Revision: "8-99887766", Phase: v1alpha1.PhaseDegraded, Published: true,
+				Cause:     "flux: Kustomization kelson-system/checkout-production applied the change but it is unhealthy",
+				Workloads: &v1alpha1.WorkloadsStatus{Unavailable: `pods is forbidden: User "kelson-controller" cannot list`},
+			},
+			want: v1alpha1.ReasonUnhealthy,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newClient(t, validProject(), validEnvironment())
+			r := &EnvironmentReconciler{
+				Client: c, Profiles: StaticProfileSource{},
+				Delivery: &spyDeliverer{outcome: tc.outcome},
+			}
+			if _, err := r.Reconcile(context.Background(), request("production")); err != nil {
+				t.Fatalf("Reconcile: %v", err)
+			}
+
+			condition := ready(t, readEnvironment(t, c, "production").Status.Conditions)
+			if condition.Status != metav1.ConditionFalse {
+				t.Fatalf("Ready = %s, want False for phase %s", condition.Status, tc.outcome.Phase)
+			}
+			if condition.Reason != tc.want {
+				t.Errorf("Ready reason = %q, want %q", condition.Reason, tc.want)
+			}
+			if condition.Reason == v1alpha1.ReasonRenderFailed {
+				t.Errorf("a delivery that rendered, published and applied is reported as a render "+
+					"failure (%s): the renderer is the one thing that did not fail here", tc.outcome.Phase)
+			}
+			// The reason is the new half; the message was always right and stays
+			// verbatim, because those are Flux's own words or the readback's.
+			if condition.Message != tc.outcome.Cause {
+				t.Errorf("message = %q, want the cause relayed verbatim: %q", condition.Message, tc.outcome.Cause)
+			}
+		})
+	}
+}
+
+// TestSettledFailureReasonPrefersTheWorkloadItCanName: a Kustomization whose
+// own health check failed *and* a readback that found the crash loop are the
+// same failure seen twice, and only one of the two can say which pod. The
+// coarse answer would be true and useless.
+func TestSettledFailureReasonPrefersTheWorkloadItCanName(t *testing.T) {
+	got := settledFailureReason(Outcome{
+		Phase: v1alpha1.PhaseDegraded,
+		Cause: "flux: Kustomization kelson-system/checkout-production applied the change but it is unhealthy",
+		Workloads: &v1alpha1.WorkloadsStatus{Checked: 1, Degraded: 1, Unhealthy: []v1alpha1.UnhealthyWorkload{
+			{Resource: "Deployment/checkout-production/web", Code: v1alpha1.WorkloadCrashLoopBackOff},
+		}},
+	})
+	if got != v1alpha1.ReasonWorkloadDegraded {
+		t.Errorf("reason = %q, want %q: status.workloads names the pod and the health check does not",
+			got, v1alpha1.ReasonWorkloadDegraded)
+	}
+
+	// And the readback never argues a refused apply into a workload problem:
+	// nothing of this revision is running to be degraded.
+	rejected := settledFailureReason(Outcome{
+		Phase:     v1alpha1.PhaseRejected,
+		Workloads: &v1alpha1.WorkloadsStatus{Checked: 1, Degraded: 1},
+	})
+	if rejected != v1alpha1.ReasonApplyFailed {
+		t.Errorf("reason = %q, want %q: a set that was never applied has no workloads of this revision",
+			rejected, v1alpha1.ReasonApplyFailed)
+	}
+}
+
 // --- the finalizer -----------------------------------------------------------
 
 // TestFinalizerIsAddedAfterTheFirstSuccessfulEnsure: adding it earlier would

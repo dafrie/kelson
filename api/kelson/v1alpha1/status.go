@@ -172,6 +172,51 @@ const (
 	ReasonRegistryReadDenied = "RegistryReadDenied"
 )
 
+// The reasons ConditionReady takes when step 6 observed a delivery that ended
+// badly (ADR-0028 decision 1, step 6). They are as closed as the two sets above
+// and they are their own block because none of them is a *refusal*: the render,
+// the publish and the apply of the Flux pair all succeeded, and what is being
+// reported is what the cluster then did with them. That is also why
+// internal/controller/errors.go holds no requeue row for them — there is no
+// error to return and nothing to back off from, only a phase to re-observe.
+//
+// One reason per cause is the whole point of the block. Before it, every
+// badly-ended phase carried ReasonRenderFailed, so a crash-looping Deployment
+// was reported as a renderer that had refused a document it rendered perfectly
+// (issue #256).
+const (
+	// ReasonApplyFailed — kelson published the revision and Flux would not put
+	// it on the cluster: the kustomize build, the decryption, the dry-run or
+	// the apply itself failed (phase Rejected). The message is Flux's own
+	// words, which is what makes it actionable.
+	//
+	// It is not ReasonFluxApplyForbidden, which is the other end of the
+	// pipeline: that one is the API server refusing *kelson's* write of the
+	// OCIRepository and the Kustomization, before Flux has seen the revision at
+	// all.
+	ReasonApplyFailed = "ApplyFailed"
+
+	// ReasonWorkloadDegraded — the revision is live and the workload readback
+	// found a definitive failure under it (phase Degraded; issue #240).
+	// status.workloads carries the counts and names the workload, the pod and
+	// the container; the condition message names the first of them.
+	ReasonWorkloadDegraded = "WorkloadDegraded"
+
+	// ReasonUnhealthy — the revision is live and reported unhealthy, and kelson
+	// cannot name a workload for it (phase Degraded): a Kustomization health
+	// check or a prune that failed over a kind the readback does not classify
+	// (a CronJob, a CNPG Cluster), or a readback that was never wired or was
+	// refused.
+	//
+	// It is the coarse half of a pair on purpose. ReasonWorkloadDegraded is
+	// what a reader gets when kelson *can* say which workload, and collapsing
+	// the two would make "something under this environment is unhealthy" and
+	// "Deployment/…/web is crash-looping, and status.workloads names the pod"
+	// the same answer — which is the distinction the whole readback exists to
+	// draw.
+	ReasonUnhealthy = "Unhealthy"
+)
+
 // The reasons ConditionProgressing takes.
 const (
 	// ReasonRollbackPinned — re-rendering is suspended because

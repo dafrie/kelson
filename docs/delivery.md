@@ -252,6 +252,21 @@ watch-based `Source` over the Flux objects and the workloads. The third answer
 is the one [the workload readback](#the-workload-readback-which-pod-which-container)
 makes specific.
 
+A phase that settled badly reaches `Ready=False` with a reason of its own, and
+the three are three different things to go and do
+([#256](https://github.com/dafrie/kelson/issues/256)):
+
+| Phase | `Ready` reason | What happened |
+|---|---|---|
+| `Rejected` | `ApplyFailed` | kelson published the revision and Flux would not put it on the cluster: the build, the decryption, the dry-run or the apply. It is not `FluxApplyForbidden`, which is the API server refusing *kelson's* write of the two Flux objects, before Flux has seen anything |
+| `Degraded` | `WorkloadDegraded` | it is live and a workload under it is definitively failing; `status.workloads` names the workload, the Pod and the container, and the message names the first of them |
+| `Degraded` | `Unhealthy` | it is live and reported unhealthy with no workload kelson can name: a health check or a prune that failed over a kind the readback does not classify, or a readback that is not wired or was refused |
+
+The message stays Flux's own words — or the readback's — in every case. The
+reason is the half a `kubectl get -o jsonpath` or an agent branches on, which
+is why the readback's verdict wins whenever it has one: both are true of the
+same environment, and only one of them can say which Pod.
+
 ### The workload readback: which Pod, which container
 
 `Ready=False` on a `Kustomization` is true and not actionable. Step 6 therefore
@@ -305,7 +320,8 @@ Five properties, each of which is a decision:
   zero — the [`ClusterProfile`](detection.md)'s discipline — and never
   fails the reconcile that already delivered the revision.
 - **It may only downgrade, and only after Flux has settled.** A definitive
-  failure turns a settled `Healthy` or `Applied` into `Degraded`, because
+  failure turns a settled `Healthy` or `Applied` into `Degraded` — with
+  `Ready=False`, `reason: WorkloadDegraded` — because
   `wait: true` reports on the moment the set converged and says nothing about
   the Pod that started crash-looping ten minutes later. It never upgrades, and
   it never touches `Committed` or `Reconciling`: while Flux is still working the
