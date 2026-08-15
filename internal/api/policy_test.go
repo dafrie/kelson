@@ -783,3 +783,37 @@ func TestAnInlineDeployIsAlsoASpecWrite(t *testing.T) {
 		t.Errorf("a deploy of the stored spec was refused as a spec write: %v", detailCodes(err))
 	}
 }
+
+// TestAStoredDeployCarryingAnImageIsAlsoASpecWrite: the stored-spec exemption
+// above holds only while the deploy changes no document, and `--image` changes
+// one. The override has to be written to be honoured — the render happens in
+// the controller, from the custom resource — so the deploy edits the
+// environment's component pins, which is a spec write and is guarded as one.
+//
+// Left ungated, `forbid: [spec-write]` and `propose-only` were advisory for the
+// one field an agent most wants to change: the image every component runs.
+func TestAStoredDeployCarryingAnImageIsAlsoASpecWrite(t *testing.T) {
+	connector, _ := connectorFor(nil)
+	g := policyServer(t, Options{
+		Delivery:     connector,
+		Environments: newFakeEnvironments(healthyEnvironment("shop", "development", "1-abcdef01")),
+	})
+	agent := g.as(g.mint(t, "deploybot", controlstore.Scope{
+		Operations: []controlstore.Operation{controlstore.OpMutate},
+	}))
+
+	stream, err := agent.deploy.Deploy(t.Context(), connect.NewRequest(&kelsonv1alpha1.DeployRequest{
+		Spec:        specRefFor("shop"),
+		Environment: "development",
+		Image:       "ghcr.io/acme/shop:agent-built",
+	}))
+	if err == nil {
+		defer stream.Close() //nolint:errcheck // the test only wants the first error
+		for stream.Receive() {
+		}
+		err = stream.Err()
+	}
+	if !hasCode(detailCodes(err), ErrPolicyProposeOnly) {
+		t.Fatalf("a stored deploy carrying --image was not refused as a spec write: %v", detailCodes(err))
+	}
+}

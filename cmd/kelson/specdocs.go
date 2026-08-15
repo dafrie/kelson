@@ -185,10 +185,13 @@ func resolveSpecRef(files []string, project, env string) (*kelsonv1alpha1.SpecRe
 }
 
 // inlineProfileRef maps the CLI's familiar --profile flag onto ProfileRef:
-// unset is the zero profile (matching every offline command), from-cluster
-// asks kelson-server to capture ITS OWN cluster connection (these RPCs render
-// server-side now, so there is no CLI-side kubeconfig in this path at all),
-// and anything else is a file to read and send verbatim.
+// unset sends no ProfileRef at all, which the server answers with the profile
+// it detected on its own cluster (internal/api's resolveProfile) — these RPCs
+// render server-side against what kelson-controller will render against, so the
+// default has to be the server's cluster and not the zero profile the offline
+// commands use. from-cluster asks for that capture explicitly (there is no
+// CLI-side kubeconfig in this path at all), and anything else is a file to read
+// and send verbatim.
 func inlineProfileRef(flag string) (*kelsonv1alpha1.ProfileRef, error) {
 	switch flag {
 	case "":

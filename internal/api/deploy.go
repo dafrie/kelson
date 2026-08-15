@@ -16,6 +16,7 @@ import (
 	"github.com/dafrie/kelson/internal/diff"
 	"github.com/dafrie/kelson/internal/model"
 	"github.com/dafrie/kelson/internal/observation"
+	"github.com/dafrie/kelson/internal/promote"
 )
 
 // Deploy writes the spec and then streams what the controller does with it.
@@ -91,10 +92,17 @@ func (s *Server) Deploy(ctx context.Context, req *connect.Request[kelsonv1alpha1
 		// could rewrite it through this RPC could set `agents: allow` and then
 		// do anything, which would make every other refusal here advisory.
 		//
-		// A deploy of a *stored* spec changes no document and is exempt, which
-		// is what the agent surface actually sends (internal/mcp names a
-		// stored project).
-		if _, inline := msg.GetSpec().GetSpec().(*kelsonv1alpha1.SpecRef_Documents); inline {
+		// A deploy of a *stored* spec is exempt only while it changes no
+		// document, which is what the agent surface usually sends
+		// (internal/mcp names a stored project). `--image` is the exception and
+		// it is a real one: an image override has to be written to be honoured
+		// — the render happens in the controller, from the custom resource —
+		// so a stored deploy carrying one edits the environment's document
+		// (writeSpec) and is a spec write like any other. Guarding only the
+		// inline shape let an agent under `forbid: [spec-write]` change the
+		// image every component runs, which is most of what a spec says.
+		_, inline := msg.GetSpec().GetSpec().(*kelsonv1alpha1.SpecRef_Documents)
+		if inline || msg.GetImage() != "" {
 			if err := s.guardStored(ctx, model.AgentOpSpecWrite, set.Project); err != nil {
 				return err
 			}
@@ -133,7 +141,7 @@ func (s *Server) Deploy(ctx context.Context, req *connect.Request[kelsonv1alpha1
 		return err
 	}
 
-	if err := s.writeSpec(ctx, msg, set.Project); err != nil {
+	if err := s.writeSpec(ctx, msg, out); err != nil {
 		return failRequest(err)
 	}
 	return s.followEnvironment(ctx, set.Project, set.Environment, msg.GetTimeoutSeconds(), stream)
@@ -148,20 +156,112 @@ func (s *Server) Deploy(ctx context.Context, req *connect.Request[kelsonv1alpha1
 // refuse. A spec that changed between the read and the write comes back as
 // store/version-conflict, which is the honest answer: something else deployed
 // while this request was in flight.
-func (s *Server) writeSpec(ctx context.Context, msg *kelsonv1alpha1.DeployRequest, project string) error {
+func (s *Server) writeSpec(ctx context.Context, msg *kelsonv1alpha1.DeployRequest, out *rendered) error {
 	if s.specs == nil {
 		return unimplemented("the spec store")
 	}
+	project := out.project.Metadata.Name
 	docs, version, err := s.deployDocuments(ctx, msg.GetSpec(), project, msg.GetEnvironment())
 	if err != nil {
+		return err
+	}
+	if docs, err = pinDeployImage(docs, out, msg.GetImage()); err != nil {
 		return err
 	}
 	_, err = s.specs.Put(ctx, project, docs, controlstore.PutOptions{
 		ExpectedVersion: version,
 		IdempotencyKey:  msg.GetIdempotencyKey(),
-		Image:           msg.GetImage(),
 	})
 	return err
+}
+
+// pinDeployImage writes a deploy's `--image` into the one environment the
+// deploy names, as the per-component pins rule P3 says it stands in for.
+//
+// # Why the image is written at all
+//
+// Under the spine the render happens in the controller, from the custom
+// resource. An override applied only to this server's own pre-flight render
+// would be silently dropped on the way to the cluster: the deploy would report
+// one image in its Proposed event and the cluster would run another. Writing it
+// is what makes it true.
+//
+// # Why it is written HERE and not on the Project
+//
+// It used to be `Project.spec.image` (controlstore's PutOptions.Image), and that
+// is a project-wide, every-environment fact: `kelson deploy --env development
+// --image …:pr-417` durably changed what production's next deploy would resolve
+// to. A deploy names one environment; ADR-0016's whole point is that an image
+// belongs to an environment, and `Environment.spec.components[].image` is the
+// field that says so (docs/model.md rule P3, the innermost scope). So the
+// override lands there, spliced by the same internal/promote.Pin a promotion
+// uses — one line per component, the rest of the document byte-identical.
+//
+// # Which components it maps onto, and where that stops
+//
+// `--image` stands in for `Project.spec.image`, so it applies to exactly the
+// components that would have resolved to it: workloads that name no image of
+// their own and carry no pin in this environment already. A component with its
+// own `image:` still wins, as rule P3 says, and an existing pin is untouched —
+// pinning those would make `--image` beat scopes it is documented to lose to.
+// Data and helm components are skipped because an image on their override is a
+// validation error (`schema/mutually-exclusive`), not a no-op.
+//
+// One `--image` therefore lands on every component that took the project image,
+// which is what writing `Project.spec.image` did too — a multi-component project
+// deployed with one `--image` runs that image everywhere it applied, and now
+// says so per component instead of once for every environment at the top.
+//
+// What this costs, stated: the pin outlives the deploy that wrote it, the same
+// way the project-wide write did, and unlike the project-wide write it also
+// outranks a component `image:` added to the Project later. That is the price of
+// recording the override where it took effect, and `kelson promote` and an edit
+// to the environment document are both ways back out of it.
+func pinDeployImage(docs controlstore.Documents, out *rendered, image string) (controlstore.Documents, error) {
+	if image == "" {
+		return docs, nil
+	}
+	components := componentsTakingProjectImage(out.project, out.environment)
+	if len(components) == 0 {
+		// Every component names its own image or is already pinned here, so
+		// `--image` changed nothing about this render either. Writing a pin
+		// nobody resolved would be inventing a change the deploy did not make.
+		return docs, nil
+	}
+	environment := out.environment.Metadata.Name
+	key, doc, err := environmentDocument(docs, environment)
+	if err != nil {
+		return controlstore.Documents{}, err
+	}
+	for _, name := range components {
+		if doc, err = promote.Pin(doc, environment, name, image); err != nil {
+			return controlstore.Documents{}, err
+		}
+	}
+	written := copyDocuments(docs)
+	written.Environments[key] = doc
+	return written, nil
+}
+
+// componentsTakingProjectImage names the components `--image` actually reaches,
+// in spec order: workloads with no image of their own and no pin in this
+// environment. It is rule P3 read backwards — the scopes that beat
+// `Project.spec.image` are exactly the ones that beat `--image`.
+func componentsTakingProjectImage(project *model.Project, environment *model.Environment) []string {
+	pinned := make(map[string]bool, len(environment.Spec.Components))
+	for _, ov := range environment.Spec.Components {
+		if ov.Image != "" {
+			pinned[ov.Name] = true
+		}
+	}
+	var out []string
+	for _, c := range project.Spec.Components {
+		if !c.EffectiveKind().IsWorkload() || c.Image != "" || pinned[c.Name] {
+			continue
+		}
+		out = append(out, c.Name)
+	}
+	return out
 }
 
 // deployDocuments assembles the document set the deploy writes, and the version
@@ -557,7 +657,14 @@ func observeWorkloads(ctx context.Context, plane *Plane, set delivery.ManifestSe
 // the mirror first and refuses in the caller's own request, so a typo is an
 // InvalidArgument with the known revisions listed and nothing is written.
 // A target that passes that check and is still refused by the controller — the
-// history moved under the request — arrives as the Settled event's error.
+// history moved under the request — arrives as the Settled event's error, which
+// followRollback reads from the controller's own Ready condition.
+//
+// # Writing the pin is not always writing the annotation
+//
+// Re-requesting a pin the controller has declared inert is the case one
+// annotation patch cannot express, because the patch would be a no-op. See
+// [Server.armRollback], which is where the whole of that is decided.
 func (s *Server) Rollback(ctx context.Context, req *connect.Request[kelsonv1alpha1.RollbackRequest], stream *connect.ServerStream[kelsonv1alpha1.RollbackResponse]) error {
 	msg := req.Msg
 	auditDryRun(ctx, msg.GetDryRun())
@@ -608,9 +715,7 @@ func (s *Server) Rollback(ctx context.Context, req *connect.Request[kelsonv1alph
 		return nil
 	}
 
-	if _, err := environments.Annotate(ctx, name, envName, map[string]string{
-		annotationRollbackTo: revision.Revision,
-	}); err != nil {
+	if err := s.armRollback(ctx, environments, name, envName, st, revision.Revision); err != nil {
 		return failRequest(err)
 	}
 	auditChange(ctx, controlstore.AuditChange{Revision: revision.Revision, From: st.Revision})
@@ -627,8 +732,131 @@ func (s *Server) Rollback(ctx context.Context, req *connect.Request[kelsonv1alph
 	}); err != nil {
 		return err
 	}
-	return s.followRollback(ctx, name, envName, revision.Revision, stream)
+	return s.followRollback(ctx, name, envName, revision.Revision, st, stream)
 }
+
+// armRollback writes the pin, and re-arms one the controller has already
+// declared inert.
+//
+// # The bug this exists for
+//
+// The controller reads the annotation against its own bookkeeping
+// (internal/controller's rollbackFor). A pin whose value it has already acted
+// on and whose generation has since moved is *inert*: the spec was edited after
+// the rollback, which resumes normal publishing, and the annotation stays on
+// the object doing nothing (ADR-0028 decision 5). The status keeps naming it,
+// deliberately — dropping `status.rollbackRevision` would make the next
+// reconcile read the annotation as a brand-new rollback and pin again, flapping
+// the environment back off the edit that fixed it.
+//
+// So the obvious re-request is a silent no-op: roll back, edit the spec, watch
+// the edit make things worse, roll back to the same revision again — and the
+// second request merge-patches a value the object already carries. An identical
+// annotation value changes nothing, annotations do not bump `.metadata.
+// generation`, and the controller's verdict on the unchanged pair is still
+// "inert". Nothing reconciles, and the stream times out claiming the controller
+// "has not reported acting on it yet".
+//
+// # Clearing is what re-arms it
+//
+// Removing the annotation is the one input that makes the controller drop the
+// bookkeeping (`env.Status.RollbackRevision, ... = "", 0` on the no-annotation
+// path). Once it has, writing the pin back is case 1 of rollbackFor — a target
+// nobody has acted on — and it pins at the *current* generation, which is
+// exactly the new rollback the caller asked for.
+//
+// The wait between the two writes is not optional and it is not a race
+// tolerance: reconciles are level-triggered, so a clear and a set the controller
+// collapses into one reconcile leave it looking at the same annotation and the
+// same status it already called inert. Waiting for it to let go is what makes
+// the second write mean something.
+//
+// What the window costs is stated rather than hidden: with no annotation the
+// environment tracks its spec again, so a controller that reconciles inside it
+// may republish the current spec — the one the caller is rolling back *from* —
+// before the pin returns. That is the same brief republish an operator gets from
+// `kubectl annotate --remove` followed by `kubectl annotate`, it is bounded by
+// this function, and the pin that follows restores the target. A wait that
+// expires writes the pin anyway: no worse than today's single patch, and
+// followRollback then reports what the controller does or does not do with it.
+func (s *Server) armRollback(ctx context.Context, environments EnvironmentStore, project, environment string,
+	st controlstore.EnvironmentState, revision string) error {
+	pin := func() error {
+		_, err := environments.Annotate(ctx, project, environment, map[string]string{annotationRollbackTo: revision})
+		return err
+	}
+	if !inertPin(st, revision) {
+		// A new target, or the standing active pin. Both are one patch: a new
+		// target is case 1 for the controller whatever the status says, and
+		// re-requesting the pin that is currently in force is a no-op the
+		// controller is right to ignore — clearing and re-setting *that* one
+		// would unpin a healthy environment onto its spec for no reason.
+		return pin()
+	}
+	if _, err := environments.Annotate(ctx, project, environment,
+		map[string]string{annotationRollbackTo: ""}); err != nil {
+		return err
+	}
+	if err := s.awaitPinReleased(ctx, environments, project, environment, revision); err != nil {
+		return err
+	}
+	return pin()
+}
+
+// inertPin reports whether the controller has already declared this exact pin
+// inert. It is rollbackFor's second case read from the other side: the status
+// names the requested revision, and the spec has moved since the reconcile that
+// applied it.
+func inertPin(st controlstore.EnvironmentState, revision string) bool {
+	return st.RollbackRevision == revision && st.Generation > st.RollbackGeneration
+}
+
+// awaitPinReleased waits for the controller to drop the bookkeeping the cleared
+// annotation invalidates, so the pin written after it reads as a new rollback.
+//
+// An expiry is not an error: the caller writes the pin regardless and the
+// stream that follows is what reports the outcome. The budget is deliberately
+// far shorter than a deployment's — this is one reconcile of one object, and a
+// controller that cannot manage it in that time is a controller the rollback
+// stream is about to report on anyway.
+func (s *Server) awaitPinReleased(ctx context.Context, environments EnvironmentStore, project, environment, revision string) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	states, err := environments.Watch(ctx, project, environment)
+	if err != nil {
+		return err
+	}
+	budget := time.NewTimer(s.rearmBudget())
+	defer budget.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-budget.C:
+			return nil
+		case st, ok := <-states:
+			if !ok {
+				return nil
+			}
+			if st.RollbackRevision != revision {
+				return nil
+			}
+		}
+	}
+}
+
+// rearmBudget bounds the wait between the two halves of a re-arm.
+func (s *Server) rearmBudget() time.Duration {
+	if s.deployTimeout < rollbackRearmBudget {
+		return s.deployTimeout
+	}
+	return rollbackRearmBudget
+}
+
+// rollbackRearmBudget is how long a re-arm waits for the controller to let go
+// of a pin before writing the new one anyway.
+const rollbackRearmBudget = 30 * time.Second
 
 // followRollback waits for the controller to act on the annotation and reports
 // how it went.
@@ -637,7 +865,28 @@ func (s *Server) Rollback(ctx context.Context, req *connect.Request[kelsonv1alph
 // is *not* cancelled — the annotation is in force and the controller will
 // honour it — so the Settled error says exactly that rather than claiming a
 // failure.
-func (s *Server) followRollback(ctx context.Context, project, environment, revision string, stream *connect.ServerStream[kelsonv1alpha1.RollbackResponse]) error {
+//
+// # Two ways the controller answers, and both have to end the wait
+//
+// The ordinary answer is the bookkeeping: `status.rollbackRevision` becomes the
+// target, and the conditions beside it say whether it is serving. The other is a
+// refusal — the target left the bounded history mirror between this server's
+// pre-flight check and the reconcile — and a refusal writes `Ready=False` with
+// reason [reasonRollbackTargetUnknown] and *no* rollbackRevision, because the
+// controller refuses before it records anything (internal/controller's
+// verifyRollbackTarget, reached from the Active branch). Gating everything on
+// the bookkeeping alone would make that refusal invisible: the stream would run
+// out its whole budget and settle with `delivery/not-watched` saying the
+// controller had not reported acting on the pin, when it had reported declining
+// it. This handler's own doc promises that answer "arrives as the Settled
+// event's error", so it is read here.
+//
+// `before` is the state as it stood before the annotation was written, and it is
+// carried in for one job: a refusal already sitting in the status when this
+// request arrived is a previous request's answer, not this one's, and settling
+// on it would report the wrong target as unknown.
+func (s *Server) followRollback(ctx context.Context, project, environment, revision string,
+	before controlstore.EnvironmentState, stream *connect.ServerStream[kelsonv1alpha1.RollbackResponse]) error {
 	environments, err := s.environmentStore()
 	if err != nil {
 		return err
@@ -680,6 +929,9 @@ func (s *Server) followRollback(ctx context.Context, project, environment, revis
 				return settle(unavailable("api: the watch on %s/%s ended before the rollback settled",
 					project, environment))
 			}
+			if refusedRollback(before, st, revision) {
+				return settle(settledError(st, deliveryState(st, false)))
+			}
 			if st.RollbackRevision != revision {
 				continue
 			}
@@ -691,6 +943,31 @@ func (s *Server) followRollback(ctx context.Context, project, environment, revis
 			}
 		}
 	}
+}
+
+// refusedRollback reports whether this status is the controller declining THIS
+// rollback.
+//
+// The reason is the controller's own ([reasonRollbackTargetUnknown]) and a
+// refusal records no rollbackRevision, so the reason is the whole signal — which
+// makes staleness the only thing left to rule out. A refusal already present
+// before the annotation was written, still verbatim identical, and written while
+// the object carried some other pin, is the previous request's answer about a
+// different target: this one has not been read yet, and settling on it would
+// name the wrong revision as unknown. The same refusal under an annotation that
+// already named this revision is not stale at all — the write was a no-op, no
+// reconcile is coming, and the standing refusal *is* the answer.
+func refusedRollback(before, st controlstore.EnvironmentState, revision string) bool {
+	ready, ok := st.Ready()
+	if !ok || ready.True() || ready.Reason != reasonRollbackTargetUnknown {
+		return false
+	}
+	prior, had := before.Ready()
+	if had && prior.Reason == ready.Reason && prior.Message == ready.Message &&
+		before.Annotations[annotationRollbackTo] != revision {
+		return false
+	}
+	return true
 }
 
 // rollbackTarget decides which revision a rollback restores, and refuses every

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -274,12 +275,13 @@ func TestDeployLeavesTheOtherEnvironmentsAlone(t *testing.T) {
 	}
 }
 
-// TestDeployWritesTheImageOverride: --image stands in for spec.image, and under
-// the spine the render happens in the controller — so an override that was not
-// written would report one image and run another.
-func TestDeployWritesTheImageOverride(t *testing.T) {
+// TestDeployWritesTheImageAsAnEnvironmentPin: --image stands in for spec.image,
+// and under the spine the render happens in the controller — so an override
+// that was not written would report one image and run another. What is written
+// is the *named environment's* component pin, not the shared project document.
+func TestDeployWritesTheImageAsAnEnvironmentPin(t *testing.T) {
 	connector, _ := connectorFor(nil)
-	specs := &recordingSpecStore{fakeSpecStore: newFakeSpecStore()}
+	specs := newFakeSpecStore()
 	c := serve(t, Options{Delivery: connector, Specs: specs,
 		Environments: newFakeEnvironments(healthyEnvironment("hello", "development", "3-9f0a1b2c"))})
 
@@ -291,9 +293,179 @@ func TestDeployWritesTheImageOverride(t *testing.T) {
 		t.Fatalf("Deploy: %v", err)
 	}
 	eventKinds(t, stream)
-	if len(specs.puts) != 1 || specs.puts[0].Image != "ghcr.io/acme/hello:2.0.0" {
-		t.Fatalf("the store received %+v, want the image override carried into the write", specs.puts)
+
+	stored, err := specs.Get(context.Background(), "hello")
+	if err != nil {
+		t.Fatal(err)
 	}
+	if got := storedPin(t, stored, "development", "web"); got != "ghcr.io/acme/hello:2.0.0" {
+		t.Errorf("development pin for web = %q, want the deployed image", got)
+	}
+	// The project document is the author's. Rewriting spec.image here is what
+	// leaked a one-environment override into every environment.
+	if got := storedProjectImage(t, stored); got != "ghcr.io/acme/hello:1.4.2" {
+		t.Errorf("project spec.image = %q, want the authored value untouched", got)
+	}
+}
+
+// TestDeployImageDoesNotReachSiblingEnvironments: the pin is scoped, so the
+// next deploy of staging resolves the image staging's spec names — the failure
+// the project-wide write had, and the reason a deploy names one environment.
+func TestDeployImageDoesNotReachSiblingEnvironments(t *testing.T) {
+	connector, _ := connectorFor(nil)
+	specs := newFakeSpecStore()
+	if _, err := specs.Put(context.Background(), "hello", controlstore.Documents{
+		Project: []byte(projectDoc),
+		Environments: map[string][]byte{
+			"development": []byte(developmentDoc),
+			"staging":     []byte(stagingDoc),
+		},
+	}, controlstore.PutOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	envs := newFakeEnvironments(
+		healthyEnvironment("hello", "development", "3-9f0a1b2c"),
+		healthyEnvironment("hello", "staging", "3-9f0a1b2c"))
+	c := serve(t, Options{Delivery: connector, Specs: specs, Environments: envs})
+
+	dev := &kelsonv1alpha1.DeployRequest{
+		Spec:        specRefFor("hello"),
+		Environment: "development",
+		Profile:     profileRef(),
+		DryRun:      kelsonv1alpha1.DryRun_DRY_RUN_NONE,
+		Image:       "ghcr.io/acme/hello:pr-417",
+	}
+	stream, err := c.deploy.Deploy(context.Background(), connect.NewRequest(dev))
+	if err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	eventKinds(t, stream)
+
+	stored, err := specs.Get(context.Background(), "hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := storedPin(t, stored, "development", "web"); got != "ghcr.io/acme/hello:pr-417" {
+		t.Fatalf("development pin = %q, want the deployed image", got)
+	}
+	if got := storedPin(t, stored, "staging", "web"); got != "" {
+		t.Errorf("staging inherited the development deploy's image (%q)", got)
+	}
+	if got := storedProjectImage(t, stored); got != "ghcr.io/acme/hello:1.4.2" {
+		t.Errorf("project spec.image = %q, want the authored value untouched", got)
+	}
+
+	// And the render staging's own next deploy proposes is still the authored
+	// image, which is the whole claim: nothing leaked.
+	staging := &kelsonv1alpha1.DeployRequest{
+		Spec:        specRefFor("hello"),
+		Environment: "staging",
+		Profile:     profileRef(),
+		DryRun:      kelsonv1alpha1.DryRun_DRY_RUN_RENDER,
+	}
+	stream, err = c.deploy.Deploy(context.Background(), connect.NewRequest(staging))
+	if err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	_, msgs := eventKinds(t, stream)
+	var rendered string
+	for _, m := range msgs[0].GetProposed().GetManifests() {
+		rendered += string(m.GetYaml())
+	}
+	if strings.Contains(rendered, "pr-417") {
+		t.Errorf("staging's render carries the development deploy's image:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "ghcr.io/acme/hello:1.4.2") {
+		t.Errorf("staging's render lost the authored image:\n%s", rendered)
+	}
+}
+
+// TestDeployImageOnAPinnedComponentLosesToThePin: --image stands in for
+// Project.spec.image, so every scope that beats that one still beats it — a
+// component with its own image, and an environment pin a promotion wrote.
+// Writing the deploy's image over those would make --image win a fight
+// docs/model.md rule P3 says it loses.
+func TestDeployImageOnAPinnedComponentLosesToThePin(t *testing.T) {
+	const pinnedDoc = `apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: development
+spec:
+  project: hello
+  routing:
+    domainSuffix: dev.acme.run
+  components:
+    - name: web
+      image: ghcr.io/acme/hello@sha256:promoted
+`
+	connector, _ := connectorFor(nil)
+	specs := newFakeSpecStore()
+	c := serve(t, Options{Delivery: connector, Specs: specs,
+		Environments: newFakeEnvironments(healthyEnvironment("hello", "development", "3-9f0a1b2c"))})
+
+	req := &kelsonv1alpha1.DeployRequest{
+		Spec:        inlineSpec(projectDoc, map[string]string{"development": pinnedDoc}),
+		Environment: "development",
+		Profile:     profileRef(),
+		DryRun:      kelsonv1alpha1.DryRun_DRY_RUN_NONE,
+		Image:       "ghcr.io/acme/hello:2.0.0",
+	}
+	stream, err := c.deploy.Deploy(context.Background(), connect.NewRequest(req))
+	if err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	eventKinds(t, stream)
+
+	stored, err := specs.Get(context.Background(), "hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := storedPin(t, stored, "development", "web"); got != "ghcr.io/acme/hello@sha256:promoted" {
+		t.Errorf("pin = %q, want the promotion's digest: --image loses to an environment pin", got)
+	}
+}
+
+// storedPin reads one component's image pin out of a stored environment
+// document, decoding rather than matching text: what is asserted is the model
+// the controller will read, not the shape of the splice.
+func storedPin(t *testing.T, stored controlstore.Stored, environment, component string) string {
+	t.Helper()
+	doc, ok := stored.Documents.Environments[environment]
+	if !ok {
+		t.Fatalf("no stored document for environment %q (have %v)", environment, stored.Environments)
+	}
+	parsed, errs := model.DecodeDocuments(doc)
+	if len(errs) > 0 {
+		t.Fatalf("decoding %s: %v", environment, errs)
+	}
+	for _, d := range parsed {
+		env, ok := d.(*model.Environment)
+		if !ok {
+			continue
+		}
+		for _, ov := range env.Spec.Components {
+			if ov.Name == component {
+				return ov.Image
+			}
+		}
+	}
+	return ""
+}
+
+// storedProjectImage reads spec.image back out of the stored project document.
+func storedProjectImage(t *testing.T, stored controlstore.Stored) string {
+	t.Helper()
+	parsed, errs := model.DecodeDocuments(stored.Documents.Project)
+	if len(errs) > 0 {
+		t.Fatalf("decoding the project document: %v", errs)
+	}
+	for _, d := range parsed {
+		if p, ok := d.(*model.Project); ok {
+			return p.Spec.Image
+		}
+	}
+	t.Fatal("the stored document set has no project document")
+	return ""
 }
 
 // TestDeployWithoutTheStatusSeamNamesIt: a partially-wired server refuses by
@@ -500,6 +672,295 @@ func TestRollbackRefusesATargetTheControllerWouldRefuse(t *testing.T) {
 				t.Fatalf("a refused rollback wrote %+v", envs.annotated)
 			}
 		})
+	}
+}
+
+// reconcilingController is fakeEnvironments' stand-in for the controller's
+// rollback bookkeeping: the three readings of the annotation in
+// internal/controller's rollbackFor, and the status each one leaves behind.
+//
+// Modelling all three is the point. The inert reading is the one the server has
+// to work around — the pin is on the object, the status still names it, and the
+// controller deliberately keeps that bookkeeping so a spec edit does not flap
+// back onto the pinned tag.
+func reconcilingController(st controlstore.EnvironmentState, _ map[string]string) controlstore.EnvironmentState {
+	requested := strings.TrimSpace(st.Annotations[annotationRollbackTo])
+	switch {
+	case requested == "":
+		// No annotation: tracking resumes and the bookkeeping goes with it.
+		st.RollbackRevision, st.RollbackGeneration = "", 0
+		st.Revision = st.History[0].Revision
+		st.Conditions = []controlstore.Condition{
+			{Type: "Ready", Status: "True", Reason: "Ready",
+				Message: "revision " + st.Revision + " is live", ObservedGeneration: st.Generation},
+			{Type: "Progressing", Status: "False", Reason: "Settled",
+				Message: "nothing is in flight", ObservedGeneration: st.Generation},
+		}
+	case requested != st.RollbackRevision:
+		// Case 1: a target nobody has acted on, pinned at this generation.
+		st.RollbackRevision, st.RollbackGeneration = requested, st.Generation
+		st.Revision = requested
+		st.Conditions = []controlstore.Condition{
+			{Type: "Ready", Status: "True", Reason: "RolledBack",
+				Message: "serving revision " + requested, ObservedGeneration: st.Generation},
+			{Type: "Progressing", Status: "False", Reason: "RollbackPinned",
+				Message: "pinned to revision " + requested, ObservedGeneration: st.Generation},
+		}
+	case st.Generation > st.RollbackGeneration:
+		// Case 2: inert. The annotation stands, the bookkeeping stands, and
+		// nothing about the deployment changes.
+	default:
+		// Case 3: the standing pin. Nothing is re-applied.
+	}
+	return st
+}
+
+// inertRollback is an environment carrying a pin the controller has declared
+// inert: it was rolled back to 3-9f0a1b2c at generation 4, the spec was then
+// edited (generation 5) and normal publishing resumed onto 4-b2c3d4e5.
+func inertRollback() controlstore.EnvironmentState {
+	st := twoRevisions()
+	st.Generation, st.ObservedGeneration = 5, 5
+	st.RollbackRevision, st.RollbackGeneration = "3-9f0a1b2c", 4
+	st.Annotations = map[string]string{annotationRollbackTo: "3-9f0a1b2c"}
+	st.Conditions = []controlstore.Condition{
+		{Type: "Ready", Status: "True", Reason: "Ready",
+			Message: "revision 4-b2c3d4e5 is live and healthy", ObservedGeneration: 5},
+		{Type: "Progressing", Status: "False", Reason: "Settled",
+			Message: "kelson.dev/rollback-to=3-9f0a1b2c is inert", ObservedGeneration: 5},
+	}
+	return st
+}
+
+// TestRollbackReArmsAnInertPin is the fix for the silent no-op: roll back, edit
+// the spec (which makes the pin inert by design), find the edit is worse, and
+// roll back to the same revision again. Writing the annotation the object
+// already carries changes nothing — an identical merge patch is not a change,
+// and annotations do not bump .metadata.generation — so the controller's verdict
+// stays "inert" and the caller is told nothing happened yet. Clearing the pin
+// first is what makes the second write a new rollback.
+func TestRollbackReArmsAnInertPin(t *testing.T) {
+	envs := newFakeEnvironments(inertRollback())
+	envs.controller = reconcilingController
+	c := serve(t, Options{Specs: newFakeSpecStore(), Environments: envs})
+
+	stream, err := c.deploy.Rollback(context.Background(), connect.NewRequest(rollbackRequest("3-9f0a1b2c")))
+	if err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	kinds, msgs := rollbackEvents(t, stream)
+	want := []string{"preview", "committed", "settled"}
+	if strings.Join(kinds, ",") != strings.Join(want, ",") {
+		t.Fatalf("events = %v, want %v", kinds, want)
+	}
+	if got := msgs[2].GetSettled().GetError(); got != nil {
+		t.Fatalf("the re-armed rollback settled with an error: %v", got)
+	}
+
+	if len(envs.annotated) != 2 {
+		t.Fatalf("annotations written = %+v, want the clear and then the pin", envs.annotated)
+	}
+	if got, ok := envs.annotated[0].Annotations[annotationRollbackTo]; !ok || got != "" {
+		t.Errorf("first patch wrote %q, want the removal that drops the bookkeeping", got)
+	}
+	if got := envs.annotated[1].Annotations[annotationRollbackTo]; got != "3-9f0a1b2c" {
+		t.Errorf("second patch wrote %q, want the target", got)
+	}
+
+	// What the two patches bought: the pin is live again, recorded at the
+	// generation it was re-armed at rather than the one it went inert under.
+	final, err := envs.Get(context.Background(), "hello", "development")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if final.RollbackRevision != "3-9f0a1b2c" || final.RollbackGeneration != 5 {
+		t.Errorf("rollback bookkeeping = %q at generation %d, want 3-9f0a1b2c at 5",
+			final.RollbackRevision, final.RollbackGeneration)
+	}
+	if final.Revision != "3-9f0a1b2c" {
+		t.Errorf("serving revision = %q, want the rollback target", final.Revision)
+	}
+}
+
+// TestRollbackToTheActivePinStaysANoOp: re-requesting the rollback that is
+// currently in force must not clear it. Unpinning a healthy environment onto
+// its spec — even for the moment between two patches — is a real change to what
+// runs, and this request asked for no change at all.
+func TestRollbackToTheActivePinStaysANoOp(t *testing.T) {
+	st := twoRevisions()
+	st.RollbackRevision, st.RollbackGeneration = "3-9f0a1b2c", st.Generation
+	st.Revision = "3-9f0a1b2c"
+	st.Annotations = map[string]string{annotationRollbackTo: "3-9f0a1b2c"}
+	st.Conditions = []controlstore.Condition{
+		{Type: "Ready", Status: "True", Reason: "RolledBack",
+			Message: "serving revision 3-9f0a1b2c", ObservedGeneration: st.Generation},
+		{Type: "Progressing", Status: "False", Reason: "RollbackPinned",
+			Message: "pinned to revision 3-9f0a1b2c", ObservedGeneration: st.Generation},
+	}
+	envs := newFakeEnvironments(st)
+	envs.controller = reconcilingController
+	c := serve(t, Options{Specs: newFakeSpecStore(), Environments: envs})
+
+	stream, err := c.deploy.Rollback(context.Background(), connect.NewRequest(rollbackRequest("3-9f0a1b2c")))
+	if err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	_, msgs := rollbackEvents(t, stream)
+	if got := msgs[len(msgs)-1].GetSettled().GetError(); got != nil {
+		t.Fatalf("re-requesting the standing pin failed: %v", got)
+	}
+	if len(envs.annotated) != 1 {
+		t.Fatalf("annotations written = %+v, want the single idempotent patch", envs.annotated)
+	}
+	if got := envs.annotated[0].Annotations[annotationRollbackTo]; got != "3-9f0a1b2c" {
+		t.Errorf("patch wrote %q, want the target", got)
+	}
+}
+
+// TestRollbackToANewTargetWhileInert: a different target is a new rollback
+// whatever the status says (case 1 of rollbackFor), so it takes the ordinary
+// single patch and no re-arm.
+func TestRollbackToANewTargetWhileInert(t *testing.T) {
+	st := inertRollback()
+	st.History = append(st.History, controlstore.Revision{
+		Revision: "2-1a2b3c4d",
+		Digest:   "sha256:c0ffee",
+		Outcome:  string(delivery.PhaseHealthy),
+	})
+	envs := newFakeEnvironments(st)
+	envs.controller = reconcilingController
+	c := serve(t, Options{Specs: newFakeSpecStore(), Environments: envs})
+
+	stream, err := c.deploy.Rollback(context.Background(), connect.NewRequest(rollbackRequest("2-1a2b3c4d")))
+	if err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	_, msgs := rollbackEvents(t, stream)
+	if got := msgs[len(msgs)-1].GetSettled().GetError(); got != nil {
+		t.Fatalf("the rollback settled with an error: %v", got)
+	}
+	if len(envs.annotated) != 1 {
+		t.Fatalf("annotations written = %+v, want one: a new target needs no re-arm", envs.annotated)
+	}
+	final, err := envs.Get(context.Background(), "hello", "development")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if final.RollbackRevision != "2-1a2b3c4d" || final.Revision != "2-1a2b3c4d" {
+		t.Errorf("pinned to %q serving %q, want 2-1a2b3c4d", final.RollbackRevision, final.Revision)
+	}
+}
+
+// TestRollbackReArmWritesThePinWhenTheControllerIsSilent: the wait between the
+// two patches is bounded, and expiring it is not a failure — the pin is written
+// anyway, which is no worse than the single patch this replaced, and the stream
+// then reports whatever the controller does with it.
+func TestRollbackReArmWritesThePinWhenTheControllerIsSilent(t *testing.T) {
+	envs := newFakeEnvironments(inertRollback())
+	c := serve(t, Options{Specs: newFakeSpecStore(), Environments: envs, DeployTimeout: 50 * time.Millisecond})
+
+	stream, err := c.deploy.Rollback(context.Background(), connect.NewRequest(rollbackRequest("3-9f0a1b2c")))
+	if err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	kinds, msgs := rollbackEvents(t, stream)
+	if kinds[len(kinds)-1] != "settled" {
+		t.Fatalf("events = %v, want a settled event last", kinds)
+	}
+	if len(envs.annotated) != 2 {
+		t.Fatalf("annotations written = %+v, want the clear and the pin", envs.annotated)
+	}
+	// Nothing reconciled, so the honest answer is the one the timeout gives:
+	// the pin is in force and nobody has reported acting on it.
+	if got := msgs[len(msgs)-1].GetSettled().GetError().GetCode(); got != string(delivery.ErrNotWatched) {
+		t.Errorf("settled code = %q, want %s", got, delivery.ErrNotWatched)
+	}
+}
+
+// refusingController is the controller declining a target that left the history
+// mirror between this server's pre-flight check and the reconcile: Ready=False
+// with its own reason, and no rollbackRevision, because it refuses before it
+// records anything (internal/controller's verifyRollbackTarget).
+func refusingController(st controlstore.EnvironmentState, annotations map[string]string) controlstore.EnvironmentState {
+	st.Conditions = []controlstore.Condition{
+		{Type: "Ready", Status: "False", Reason: reasonRollbackTargetUnknown,
+			Message: "kelson.dev/rollback-to names revision " + strconv.Quote(annotations[annotationRollbackTo]) +
+				", and status.history holds 4-b2c3d4e5", ObservedGeneration: st.Generation},
+		{Type: "Progressing", Status: "False", Reason: "Settled",
+			Message: "nothing is in flight", ObservedGeneration: st.Generation},
+	}
+	return st
+}
+
+// TestRollbackSettlesOnTheControllersRefusal: the handler's own contract says a
+// target this server accepted and the controller then refused "arrives as the
+// Settled event's error". A refusal records no rollbackRevision, so a watch
+// gated on that field alone would wait out its whole budget and report
+// delivery/not-watched — kelson claiming not to know, about the one thing it had
+// been told.
+func TestRollbackSettlesOnTheControllersRefusal(t *testing.T) {
+	envs := newFakeEnvironments(twoRevisions())
+	envs.controller = refusingController
+	c := serve(t, Options{Specs: newFakeSpecStore(), Environments: envs,
+		// Short enough that a regression times out into a failing assertion
+		// rather than into a five-minute test.
+		DeployTimeout: 2 * time.Second})
+
+	start := time.Now()
+	stream, err := c.deploy.Rollback(context.Background(), connect.NewRequest(rollbackRequest("3-9f0a1b2c")))
+	if err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	kinds, msgs := rollbackEvents(t, stream)
+	if kinds[len(kinds)-1] != "settled" {
+		t.Fatalf("events = %v, want a settled event last", kinds)
+	}
+	settled := msgs[len(msgs)-1].GetSettled()
+	if settled.GetError() == nil {
+		t.Fatal("a refused rollback settled cleanly")
+	}
+	if got := settled.GetError().GetCode(); got == string(delivery.ErrNotWatched) {
+		t.Errorf("settled with %s: the refusal was never observed", got)
+	}
+	if !strings.Contains(settled.GetError().GetMessage(), "status.history") {
+		t.Errorf("the settled error does not carry the controller's own account: %q",
+			settled.GetError().GetMessage())
+	}
+	if elapsed := time.Since(start); elapsed >= 2*time.Second {
+		t.Errorf("the refusal took %s to surface: it waited out the budget", elapsed)
+	}
+}
+
+// TestRollbackIgnoresAPreviousRefusal: a refusal already in the status when the
+// request arrived is the previous request's answer about a different target.
+// Settling on it would name the wrong revision as unknown, so the wait
+// continues until the controller answers this one.
+func TestRollbackIgnoresAPreviousRefusal(t *testing.T) {
+	stale := twoRevisions()
+	stale.Annotations = map[string]string{annotationRollbackTo: "9-aaaaaaaa"}
+	stale.Conditions = []controlstore.Condition{
+		{Type: "Ready", Status: "False", Reason: reasonRollbackTargetUnknown,
+			Message:            `kelson.dev/rollback-to names revision "9-aaaaaaaa", and status.history holds 4-b2c3d4e5`,
+			ObservedGeneration: stale.Generation},
+		{Type: "Progressing", Status: "False", Reason: "Settled",
+			Message: "nothing is in flight", ObservedGeneration: stale.Generation},
+	}
+	envs := newFakeEnvironments(stale)
+	// No controller hook: the annotation lands and the status still carries the
+	// stale refusal, which is the window this test is about. The reconcile that
+	// honours the new pin arrives as the next watch state.
+	honoured := rolledBack(stale, map[string]string{annotationRollbackTo: "3-9f0a1b2c"})
+	honoured.Annotations = map[string]string{annotationRollbackTo: "3-9f0a1b2c"}
+	envs.queue("hello", "development", honoured)
+	c := serve(t, Options{Specs: newFakeSpecStore(), Environments: envs, DeployTimeout: 2 * time.Second})
+
+	stream, err := c.deploy.Rollback(context.Background(), connect.NewRequest(rollbackRequest("3-9f0a1b2c")))
+	if err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	_, msgs := rollbackEvents(t, stream)
+	if got := msgs[len(msgs)-1].GetSettled().GetError(); got != nil {
+		t.Fatalf("the rollback settled on the previous request's refusal: %v", got)
 	}
 }
 

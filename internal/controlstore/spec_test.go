@@ -511,39 +511,25 @@ func equalStrings(got, want []string) bool {
 	return true
 }
 
-// The deploy-time image override is written, not merely rendered with. Under
-// the spine the render happens in the controller, from the custom resource, so
-// an override that only reached the server's own render would report one image
-// and run another.
-func TestSpecPutAppliesTheImageOverride(t *testing.T) {
+// TestSpecPutWritesTheAuthoredImage: the store edits nothing on the way in. It
+// used to accept a PutOptions.Image and rewrite `Project.spec.image` with it
+// for a Deploy carrying `--image`, which made a one-environment override a
+// project-wide fact and left GetSpec returning a project document nobody
+// authored. The override is a per-environment component pin now
+// (internal/api's pinDeployImage), and what reaches this store is documents.
+func TestSpecPutWritesTheAuthoredImage(t *testing.T) {
 	ctx := context.Background()
 	c := newCRClient(t)
 	store := newSpecStore(t, c)
 
-	if _, err := store.Put(ctx, testProject, testDocuments(), PutOptions{Image: "ghcr.io/acme/shop:v9"}); err != nil {
+	if _, err := store.Put(ctx, testProject, testDocuments(), PutOptions{}); err != nil {
 		t.Fatalf("put: %v", err)
 	}
 	var project v1alpha1.Project
 	if err := c.Get(ctx, client.ObjectKey{Namespace: testNamespace, Name: testProject}, &project); err != nil {
 		t.Fatal(err)
 	}
-	if project.Spec.Image != "ghcr.io/acme/shop:v9" {
-		t.Errorf("spec.image = %q, want the override", project.Spec.Image)
-	}
-
-	// It stands in for spec.image and is not sticky: a write without one
-	// restores the authored value rather than inheriting the last deploy's.
-	stored, err := store.Get(ctx, testProject)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.Put(ctx, testProject, testDocuments(), PutOptions{ExpectedVersion: stored.Version}); err != nil {
-		t.Fatalf("put: %v", err)
-	}
-	if err := c.Get(ctx, client.ObjectKey{Namespace: testNamespace, Name: testProject}, &project); err != nil {
-		t.Fatal(err)
-	}
 	if project.Spec.Image != "ghcr.io/acme/shop:v1" {
-		t.Errorf("spec.image = %q, want the authored value back", project.Spec.Image)
+		t.Errorf("spec.image = %q, want the authored value", project.Spec.Image)
 	}
 }

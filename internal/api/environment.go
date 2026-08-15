@@ -65,6 +65,18 @@ const (
 	annotationPromotedFrom = "kelson.dev/promoted-from"
 )
 
+// reasonRollbackTargetUnknown is the controller's Ready reason for a rollback
+// target it will not honour: the tag is not in `status.history`, so kelson
+// cannot confirm it published it (internal/controller's verifyRollbackTarget).
+//
+// It is spelled here for the same reason the annotations above are, and it is
+// asserted against the custom resource's own constant in environment_test.go.
+// Rollback needs it because a refusal is the one controller answer that leaves
+// `status.rollbackRevision` empty: the refusal happens before the bookkeeping,
+// so a watcher that only looked at that field would wait out its whole budget
+// for a rollback the controller has already declined (followRollback).
+const reasonRollbackTargetUnknown = "RollbackTargetUnknown"
+
 // adapterName is what Committed.adapter carries. There is one reconciliation
 // path now (ADR-0028 decision 1), so it is a constant rather than a selection —
 // and it is still reported, because a client that renders "deployed via …"

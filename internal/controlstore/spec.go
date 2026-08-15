@@ -99,20 +99,20 @@ type PutOptions struct {
 	// makes this call a replay: the stored state is returned as success and
 	// nothing is written.
 	IdempotencyKey string
-	// Image replaces the Project's `spec.image` before the objects are built.
-	//
-	// It exists for one caller: a Deploy carrying `--image`. Under the spine
-	// the render happens in the controller, from the custom resource, so an
-	// image override that was applied only to the server's own render would be
-	// silently dropped on the way to the cluster — the deploy would report one
-	// image and run another. Writing it is what makes it real, and it is the
-	// same substitution the pipeline does (rule P3: it stands in for
-	// `spec.image`, so a component or environment pin still wins).
-	//
-	// Empty means "leave the authored image alone", which is every other
-	// caller.
-	Image string
 }
+
+// There is deliberately no Image option here any more.
+//
+// There was one, for a single caller: a Deploy carrying `--image` wrote it to
+// `Project.spec.image` before the objects were built. That made a per-deploy
+// override a project-wide, every-environment fact — deploying a pull request's
+// image into development durably changed what production's next deploy would
+// resolve to — and it did it under a Put whose documents said nothing of the
+// kind, so `GetSpec` came back with a project document the author never wrote.
+// A deploy names one environment, and ADR-0016 already has the field that scopes
+// an image to one: `Environment.spec.components[].image`. internal/api splices
+// the override there (pinDeployImage) and this store writes the documents it is
+// given, unedited.
 
 // DeleteOptions carries the same controls for a delete.
 type DeleteOptions struct {
@@ -173,7 +173,7 @@ func (s *SpecStore) Put(ctx context.Context, project string, docs Documents, opt
 	if err := validSegment("project", project); err != nil {
 		return Stored{}, err
 	}
-	desired, err := s.resources(project, docs, opts.Image)
+	desired, err := s.resources(project, docs)
 	if err != nil {
 		return Stored{}, err
 	}
@@ -456,7 +456,7 @@ func (s *SpecStore) read(ctx context.Context, project string) (resourceSet, bool
 }
 
 // resources decodes the authored documents into the objects a Put applies.
-func (s *SpecStore) resources(project string, docs Documents, image string) (resourceSet, error) {
+func (s *SpecStore) resources(project string, docs Documents) (resourceSet, error) {
 	if len(docs.Project) == 0 {
 		return resourceSet{}, fmt.Errorf("controlstore: project %q has no project document", project)
 	}
@@ -468,10 +468,6 @@ func (s *SpecStore) resources(project string, docs Documents, image string) (res
 		return resourceSet{}, fmt.Errorf("controlstore: the project document names %q and the request names %q",
 			mp.Metadata.Name, project)
 	}
-	if image != "" {
-		mp.Spec.Image = image
-	}
-
 	out := resourceSet{
 		project:      &v1alpha1.Project{Spec: mp.Spec},
 		environments: map[string]*v1alpha1.Environment{},

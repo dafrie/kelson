@@ -29,6 +29,15 @@ func TestAnnotationKeysMatchTheCustomResource(t *testing.T) {
 	}
 }
 
+// TestRollbackRefusalReasonMatchesTheCustomResource: followRollback terminates
+// on the controller's own refusal reason, which this plane also spells itself.
+// A mistyped copy would restore the timeout this check exists to remove.
+func TestRollbackRefusalReasonMatchesTheCustomResource(t *testing.T) {
+	if reasonRollbackTargetUnknown != v1alpha1.ReasonRollbackTargetUnknown {
+		t.Errorf("refusal reason = %q, want %q", reasonRollbackTargetUnknown, v1alpha1.ReasonRollbackTargetUnknown)
+	}
+}
+
 // TestPhasesMatchTheCustomResource: the wire's phase strings come from
 // internal/delivery and the controller writes api/kelson/v1alpha1's. The two
 // lists are asserted identical in the resource's own package; this is the third

@@ -462,10 +462,15 @@ func (f *fakeEnvironments) Annotate(_ context.Context, project, environment stri
 		return controlstore.EnvironmentState{}, controlstore.NotFound("environment/"+key, "no Environment resource exists", "store the spec with PutSpec")
 	}
 	f.annotated = append(f.annotated, fakeAnnotation{Project: project, Environment: environment, Annotations: maps.Clone(annotations)})
-	if st.Annotations == nil {
-		st.Annotations = map[string]string{}
+	// Cloned, not mutated in place: the real store answers every read with a
+	// freshly decoded object, so a state a handler read *before* this patch must
+	// not see the patch appear underneath it.
+	next := maps.Clone(st.Annotations)
+	if next == nil {
+		next = map[string]string{}
 	}
-	maps.Copy(st.Annotations, annotations)
+	maps.Copy(next, annotations)
+	st.Annotations = next
 	if f.controller != nil {
 		st = f.controller(st, annotations)
 	}
@@ -497,18 +502,13 @@ func healthyEnvironment(project, environment, revision string) controlstore.Envi
 	}
 }
 
-// recordingSpecStore is a fakeSpecStore that remembers the options every write
-// carried, for the assertions that are about what reached the store rather than
-// about what it did.
-type recordingSpecStore struct {
-	*fakeSpecStore
-	puts []controlstore.PutOptions
-}
-
-func (r *recordingSpecStore) Put(ctx context.Context, project string, docs controlstore.Documents, opts controlstore.PutOptions) (controlstore.Stored, error) {
-	r.puts = append(r.puts, opts)
-	return r.fakeSpecStore.Put(ctx, project, docs, opts)
-}
+// There was a recordingSpecStore here, remembering the PutOptions each write
+// carried. Its one reader asserted that a Deploy's `--image` reached
+// PutOptions.Image, and that option is gone: the override is a per-environment
+// component pin the handler splices into the documents now
+// (internal/api's pinDeployImage), so what a deploy did with an image is
+// asserted by reading the stored documents back rather than by watching the
+// options go past.
 
 // refusingSpecStore is a SpecStore whose writes always lose the
 // optimistic-concurrency check, so a handler's failure path can be driven
