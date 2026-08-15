@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { Code, ConnectError, createRouterTransport } from "@connectrpc/connect";
 
@@ -130,6 +130,16 @@ function renderPage(options: { refuseCreate?: boolean; affected?: string[] } = {
 }
 
 /**
+ * Same as [renderPage], at a path a test chooses — the manifest callback's own
+ * shape (`/connections?connected=…`) — and with the router handed back, which
+ * is what the URL-clearing tests need to look at.
+ */
+function renderPageAt(path: string) {
+  const { transport } = transportFor();
+  return renderAt(transport, path, "/connections", <ConnectionsPage />);
+}
+
+/**
  * One connection's row. Scoped rather than global, because the create form's
  * provider select carries the same two words the rows' provider chips do — and
  * a query that matched either would pass for the wrong reason.
@@ -139,6 +149,18 @@ function row(name: string): HTMLElement {
   if (item === null) throw new Error(`no row for ${name}`);
   return item;
 }
+
+// `startManifestSession` and the button's `window.location.assign` both go
+// around the router transport entirely (POST /forge/github/manifest/session
+// is not a ConnectRPC call), so they are stubbed the same way auth.test.tsx
+// stubs /auth/*: a fetch mock and a cleared global between tests.
+beforeEach(() => {
+  vi.unstubAllGlobals();
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe("ConnectionsPage: the list", () => {
   it("renders provider, host, account, owner, health and the reported count", async () => {
@@ -204,7 +226,7 @@ describe("ConnectionsPage: the list", () => {
     ).toBeTruthy();
     expect(screen.getByText(/GitHub's app-manifest flow/)).toBeTruthy();
     expect(screen.getByText(/the token form below/)).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Connect GitHub" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Connect GitHub" })).toBeTruthy();
   });
 
   it("surfaces a failed list as the server's own structured error", async () => {
@@ -235,28 +257,159 @@ describe("ConnectionsPage: the list", () => {
   });
 });
 
-describe("ConnectionsPage: the manifest flow", () => {
-  /**
-   * A browser redirect, not an RPC (ADR-0033 decision 2): the credential is
-   * minted by GitHub and handed to the server, so the only thing this page can
-   * do is leave. An anchor is what leaves; a <Link> would stay inside the SPA.
-   */
-  it("starts the flow as a plain navigation to the server's own path", async () => {
-    renderPage();
-    const link = await screen.findByRole("link", { name: "Connect GitHub" });
+/** A one-shot fetch mock for `POST /forge/github/manifest/session`. */
+function stubManifestSession(answer: { status: number; body?: unknown }) {
+  const calls: (RequestInit | undefined)[] = [];
+  const fetchMock = vi.fn(
+    async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      calls.push(init);
+      return new Response(
+        answer.body === undefined ? null : JSON.stringify(answer.body),
+        { status: answer.status, headers: { "Content-Type": "application/json" } },
+      );
+    },
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  return { calls, fetchMock };
+}
 
-    expect(link.getAttribute("href")).toBe("/forge/github/manifest/start");
-    expect(link.tagName).toBe("A");
+describe("ConnectionsPage: the authenticated start", () => {
+  // jsdom's `Location.assign` cannot be spied on directly (it is not
+  // configurable), so the whole property is replaced for the duration of the
+  // one test that navigates, and put back afterwards.
+  const originalLocation = window.location;
+  afterEach(() => {
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: originalLocation,
+    });
   });
 
-  it("is honest that the flow finishes on GitHub and that the endpoint is not here yet", async () => {
+  /**
+   * The fixed contract (#248): a `POST` carrying the session cookie, answering
+   * a one-time `startUrl` this button then top-level-navigates to. Nothing
+   * about the ticket is this page's to invent, so the test only pins the shape
+   * of the request and that the exact `startUrl` the server names is where the
+   * browser goes — never a path this page reconstructs itself.
+   */
+  it("fetches a ticket, says it is working, and navigates to the startUrl it names", async () => {
+    const assign = vi.fn();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...originalLocation, assign },
+    });
+
+    let resolveFetch!: (res: Response) => void;
+    const fetchMock = vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveFetch = resolve;
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
     renderPage();
+    await screen.findByText("acme-github");
+
+    const button = screen.getByRole("button", { name: "Connect GitHub" });
+    fireEvent.click(button);
+
+    expect(await screen.findByRole("button", { name: "Connecting…" })).toBeTruthy();
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/forge/github/manifest/session",
+      expect.objectContaining({ method: "POST", credentials: "same-origin" }),
+    );
+
+    resolveFetch(
+      new Response(
+        JSON.stringify({ startUrl: "/forge/github/manifest/start?ticket=abc123" }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    await waitFor(() =>
+      expect(assign).toHaveBeenCalledWith("/forge/github/manifest/start?ticket=abc123"),
+    );
+    expect(await screen.findByRole("button", { name: "Connect GitHub" })).toBeTruthy();
+  });
+
+  it("surfaces a failed fetch through the page's own error panel", async () => {
+    stubManifestSession({ status: 404 });
+    renderPage();
+    await screen.findByText("acme-github");
+
+    fireEvent.click(screen.getByRole("button", { name: "Connect GitHub" }));
 
     expect(
-      await screen.findByText(/GitHub redirects\s+back here with a one-time code/),
+      await screen.findByText("Could not start the GitHub connection"),
     ).toBeTruthy();
-    expect(screen.getByText(/is\s+server-side and lands in a later slice/)).toBeTruthy();
-    expect(screen.getByText(/the\s+button answers 404/)).toBeTruthy();
+    expect(screen.getByText(/404/)).toBeTruthy();
+  });
+
+  it("is honest that a 401 means the session password is wrong or expired", async () => {
+    stubManifestSession({ status: 401 });
+    renderPage();
+    await screen.findByText("acme-github");
+
+    fireEvent.click(screen.getByRole("button", { name: "Connect GitHub" }));
+
+    expect(
+      await screen.findByText(/the session password is wrong or has expired/),
+    ).toBeTruthy();
+  });
+});
+
+describe("ConnectionsPage: the manifest callback", () => {
+  /**
+   * `internal/forgehttp`'s `redirectToConnections` always pairs `connected`
+   * with `install` on a success (the app exists, but nothing is installed
+   * yet) — ADR-0033 decision 2 step 3, the half of the ceremony GitHub's own
+   * site finishes.
+   */
+  it("announces the new connection and prompts to finish installing it on GitHub", async () => {
+    renderPageAt(
+      "/connections?connected=acme-github&install=" +
+        encodeURIComponent("https://github.com/apps/kelson-acme/installations/new"),
+    );
+
+    expect(await screen.findByText("acme-github is connected")).toBeTruthy();
+    expect(screen.getByText(/shows unreachable/)).toBeTruthy();
+    const install = screen.getByRole("link", { name: "Install the app on GitHub" });
+    expect(install.getAttribute("href")).toBe(
+      "https://github.com/apps/kelson-acme/installations/new",
+    );
+  });
+
+  it("announces the connection without an install prompt when the callback named none", async () => {
+    renderPageAt("/connections?connected=acme-github");
+
+    expect(await screen.findByText("acme-github is connected")).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Install the app on GitHub" })).toBeNull();
+  });
+
+  it("renders the server's own message on a refused flow", async () => {
+    renderPageAt(
+      "/connections?error=exchange&message=" +
+        encodeURIComponent(
+          "GitHub refused the one-time code; the code is single-use and expires an hour after the redirect, so start again",
+        ),
+    );
+
+    expect(await screen.findByText("Connect GitHub did not finish")).toBeTruthy();
+    expect(screen.getByText(/GitHub refused the one-time code/)).toBeTruthy();
+  });
+
+  it("clears the params from the URL once rendered, so a refresh does not repeat the announcement", async () => {
+    const { router } = renderPageAt(
+      "/connections?connected=acme-github&install=" +
+        encodeURIComponent("https://github.com/apps/kelson-acme/installations/new"),
+    );
+
+    expect(await screen.findByText("acme-github is connected")).toBeTruthy();
+    await waitFor(() => expect(router.state.location.search).toBe(""));
+    // The announcement itself survives the clearing — it is state, not a
+    // read of the (now scrubbed) URL.
+    expect(screen.getByText("acme-github is connected")).toBeTruthy();
   });
 });
 

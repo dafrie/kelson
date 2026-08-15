@@ -1,5 +1,7 @@
-import { useCallback, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 
+import { notifyUnauthenticated } from "../api/auth";
 import { useAsync, useClients } from "../api/data";
 import { useRun } from "../api/stream";
 import { ErrorPanel } from "../components/ErrorPanel";
@@ -37,24 +39,33 @@ import {
  * direction (ADR-0009, ADR-0033 decision 1). What the token form below asks for
  * is the name of a Secret that already exists in `kelson-system`.
  *
- * # Two connect paths, and only one of them is an RPC
+ * # Two connect paths, and only one of them is a plain RPC
  *
- * **Connect GitHub** is the flagship (ADR-0033 decision 2) and it is a browser
- * redirect, not a call: the server builds an app manifest, GitHub asks the user
- * to approve creating the app, and a one-time code comes back to the server's
- * own callback, which mints the Secret and writes the CR. The credential is
- * handed to the *server* by GitHub and never passes through this page, which is
- * exactly why `CreateConnection` has no app variant. So the button is an
- * ordinary anchor to a server path and the SPA router is deliberately not
- * involved — a `<Link>` would keep the navigation client-side and nothing would
- * happen.
+ * **Connect GitHub** is the flagship (ADR-0033 decision 2) and it still ends in
+ * a browser redirect, not a call: the server builds an app manifest, GitHub
+ * asks the user to approve creating the app, and a one-time code comes back to
+ * the server's own callback, which mints the Secret and writes the CR. The
+ * credential is handed to the *server* by GitHub and never passes through this
+ * page, which is exactly why `CreateConnection` has no app variant.
  *
- * That endpoint is server-side work that lands in a later slice, and the copy
- * beside the button says so rather than letting a 404 be the first thing anyone
- * learns about it. Two things will make it answer: the handler itself, and a
- * `/forge/` entry in the dev proxy (`ui/vite.config.ts` forwards
- * `/kelson.v1alpha1.`, `/auth/` and `/healthz` and nothing else), so under
- * `npm run dev` the link reaches Vite rather than kelson-server until then.
+ * What precedes that redirect is one authenticated step (#248's fixed
+ * contract): the button is `POST /forge/github/manifest/session`, carrying the
+ * session cookie the same way every RPC does (`credentials: "same-origin"`,
+ * `src/api/clients.ts`), which answers a short-lived, single-use `startUrl`.
+ * Only that URL is navigated to, with `window.location.assign` rather than a
+ * `<Link>` or a static anchor `href` — the flow leaves this app for GitHub, so
+ * it has to be a real, top-level navigation, and it must go to a ticket this
+ * click actually minted rather than to a bare path a second click, a bookmark
+ * or a prefetcher could replay. A 401 here means the same thing it means
+ * everywhere else in this UI (docs/server.md): the shared session password is
+ * wrong or has expired, and the panel says so rather than a bare error code.
+ *
+ * The callback lands back here as `/connections?connected=…` — with `install`
+ * beside it for the post-install hop ADR-0033 decision 2 step 3 still asks for
+ * — or `/connections?error=…&message=…` on a refusal. `useManifestOutcome`
+ * below reads those once, renders them as a banner, and clears them from the
+ * URL (`replace: true`) so a refresh shows the connection list rather than
+ * replaying an announcement about a flow that already finished.
  *
  * **A token connection** is the universal fallback and the only path for every
  * forge whose adapter has not landed. It is one `CreateConnection` — four
@@ -81,14 +92,109 @@ import {
  */
 
 /**
- * Where the app-manifest flow starts (ADR-0033 decision 2, #248).
+ * Where the button's fetch goes before anything is navigated to (#248's fixed
+ * contract, agreed byte-identical with the server-side agent implementing it).
  *
- * A path on kelson-server, not a URL: the flow's redirect URL has to come back
- * to this instance, and the server is the only thing that knows what it is
- * reachable at. The manifest itself is built there too, because it carries the
- * webhook URL and the permission set — none of which is a browser's to decide.
+ * `POST`, not `GET`: a ticket is worth an authenticated request, not something
+ * a prefetcher, a link preview or a stray GET could mint by accident. The
+ * response's `startUrl` — `/forge/github/manifest/start?ticket=…` — is where
+ * the app-manifest flow actually starts; that path is not a constant of its
+ * own here because the UI never builds it, it only navigates to what the
+ * server minted.
  */
-const MANIFEST_START = "/forge/github/manifest/start";
+const MANIFEST_SESSION = "/forge/github/manifest/session";
+
+/**
+ * Mints a one-time ticket for the app-manifest flow and says where to send the
+ * browser next.
+ *
+ * Authenticated the same way every RPC in this UI is — a same-origin fetch
+ * carrying the session cookie, `src/api/clients.ts`'s own rule restated
+ * because a plain REST endpoint has no ConnectRPC `Transport` to share. A 401
+ * is reported to the same listener the RPC transport's interceptor uses
+ * (`notifyUnauthenticated`, `src/api/auth.tsx`) so an expired session flips the
+ * whole app to logged-out exactly as an RPC 401 would, and it is also said
+ * here in words, because the caller is one button press away from being told
+ * nothing more specific than "unauthorized".
+ *
+ * Until the server side of #248 lands this 404s, which needs no special case:
+ * a non-2xx status is a failure like any other fetch's, and it reaches the
+ * page through the same `ErrorPanel` every other refusal does.
+ */
+async function startManifestSession(signal: AbortSignal): Promise<string> {
+  const res = await fetch(MANIFEST_SESSION, {
+    method: "POST",
+    credentials: "same-origin",
+    signal,
+  });
+  if (res.status === 401) {
+    notifyUnauthenticated();
+    throw new Error(
+      "the session password is wrong or has expired — sign in again, then press Connect GitHub",
+    );
+  }
+  if (!res.ok) {
+    throw new Error(`${MANIFEST_SESSION} returned ${res.status} ${res.statusText}`);
+  }
+  const body = (await res.json()) as { startUrl?: string };
+  if (!body.startUrl) {
+    throw new Error(`${MANIFEST_SESSION} answered with no startUrl`);
+  }
+  return body.startUrl;
+}
+
+/** The four params the manifest callback's redirect can land here with. */
+interface ManifestOutcome {
+  connected: string | undefined;
+  install: string | undefined;
+  error: string | undefined;
+  message: string | undefined;
+}
+
+/**
+ * What the manifest callback said, read once from the query string
+ * `internal/forgehttp`'s `redirectToConnections` landed here with, and cleared
+ * from the URL the moment it is captured.
+ *
+ * The clearing is `replace: true`, not a plain navigation: a `push` would
+ * leave a back button that lands on the announcement a second time, and
+ * leaving the params in place at all would mean a refresh re-announces a flow
+ * that already finished. Reading happens once, at mount — the `[]` dependency
+ * list is deliberate, not an omission — because these params describe the
+ * redirect that just landed, not something to keep re-deriving as the reader
+ * clicks around the same screen afterwards.
+ */
+function useManifestOutcome(): ManifestOutcome | undefined {
+  const [params, setSearchParams] = useSearchParams();
+  const [outcome, setOutcome] = useState<ManifestOutcome | undefined>(undefined);
+
+  useEffect(() => {
+    const connected = params.get("connected") ?? undefined;
+    const install = params.get("install") ?? undefined;
+    const error = params.get("error") ?? undefined;
+    const message = params.get("message") ?? undefined;
+    if (
+      connected === undefined &&
+      install === undefined &&
+      error === undefined &&
+      message === undefined
+    ) {
+      return;
+    }
+
+    setOutcome({ connected, install, error, message });
+    const next = new URLSearchParams(params);
+    next.delete("connected");
+    next.delete("install");
+    next.delete("error");
+    next.delete("message");
+    setSearchParams(next, { replace: true });
+    // `[]` is deliberate: this reads the params the redirect landed with,
+    // once, rather than re-deriving them as the reader clicks around after.
+  }, []);
+
+  return outcome;
+}
 
 export function ConnectionsPage() {
   const clients = useClients();
@@ -100,6 +206,8 @@ export function ConnectionsPage() {
   const [confirming, setConfirming] = useState<string | undefined>(undefined);
   const [removed, setRemoved] = useState<Removed | undefined>(undefined);
   const remove = useRun();
+  const manifestStart = useRun();
+  const outcome = useManifestOutcome();
   const reload = list.reload;
 
   const del = useCallback(
@@ -117,19 +225,34 @@ export function ConnectionsPage() {
     [clients, reload, remove],
   );
 
+  const startManifest = useCallback(() => {
+    manifestStart.start(async (signal) => {
+      const startUrl = await startManifestSession(signal);
+      // A real top-level navigation, not `navigate()`: the ticket is
+      // single-use and the destination is off this app entirely.
+      window.location.assign(startUrl);
+    });
+  }, [manifestStart]);
+
   const connections = list.data?.connections ?? [];
 
   return (
     <>
       <div className="k-page-head">
         <h1>Git connections</h1>
-        {/* An anchor and not a Link: the flow leaves this app for GitHub and
-            comes back through the server's own callback, so the navigation has
-            to be a real one. It stays in the head whether the list is full or
-            empty, exactly as "New project" does — it is the primary way in. */}
-        <a className="k-button k-button--primary" href={MANIFEST_START}>
-          Connect GitHub
-        </a>
+        {/* Not an anchor: the ticket this navigates with is minted per click
+            by an authenticated fetch, so a static href would either go stale
+            or have to be pre-fetched on every render for nothing. It stays in
+            the head whether the list is full or empty, exactly as "New
+            project" does — it is the primary way in. */}
+        <button
+          type="button"
+          className="k-button k-button--primary"
+          onClick={startManifest}
+          disabled={manifestStart.running}
+        >
+          {manifestStart.running ? "Connecting…" : "Connect GitHub"}
+        </button>
       </div>
 
       <div className="k-page-sub">
@@ -140,6 +263,15 @@ export function ConnectionsPage() {
         <span>·</span>
         <span>what this instance can clone, and act as, on a forge</span>
       </div>
+
+      {manifestStart.error !== undefined ? (
+        <ErrorPanel
+          title="Could not start the GitHub connection"
+          error={manifestStart.error}
+        />
+      ) : null}
+
+      {outcome !== undefined ? <ManifestOutcomeBanner outcome={outcome} /> : null}
 
       <p className="k-note">
         A connection names a forge, its host and the Secret holding the
@@ -205,10 +337,10 @@ export function ConnectionsPage() {
 /**
  * What pressing “Connect GitHub” actually does, said before it is pressed.
  *
- * The flow leaves for github.com and finishes on a server endpoint this slice
- * does not implement. A button that silently 404s teaches somebody that the
- * feature is broken; saying which half is missing costs three sentences and
- * keeps the token form below legible as the path that works today.
+ * A reader who is asked to press a button and leave the app for GitHub is
+ * entitled to know what it does with the session it is about to spend — this
+ * costs three sentences and keeps the flow legible before the redirect makes
+ * it unrecoverable to read again.
  */
 function ManifestNote() {
   return (
@@ -223,11 +355,87 @@ function ManifestNote() {
         relay is involved. You then pick the repositories the app may see.
       </p>
       <p className="k-connect__body k-mono">
-        The endpoint that starts it —{" "}
-        <code className="k-field__code">{MANIFEST_START}</code> — is
-        server-side and lands in a later slice of #248. Until it does, the
-        button answers 404 and a token connection is the path that works.
+        The button first asks this server for a one-time ticket — a{" "}
+        <code className="k-field__code">POST</code> that carries your session,
+        same as every other action on this page — then leaves for GitHub with
+        it. The ticket is single-use and short-lived, so it is minted at the
+        moment you press the button, never before.
       </p>
+    </div>
+  );
+}
+
+/**
+ * The banner that answers "what just happened" for a browser that returned
+ * from the app-manifest flow.
+ *
+ * `error` and `connected` are mutually exclusive on the wire
+ * (`internal/forgehttp`'s two `redirectToConnections` call sites never set
+ * both), so this reads as an if/else rather than stacking two banners that
+ * could never both be true.
+ */
+function ManifestOutcomeBanner({ outcome }: { outcome: ManifestOutcome }) {
+  if (outcome.error !== undefined) {
+    const detail =
+      outcome.message?.trim() || `the flow reported "${outcome.error}" with no further detail`;
+    return (
+      <ErrorPanel title="Connect GitHub did not finish" error={new Error(detail)} />
+    );
+  }
+  if (outcome.connected !== undefined) {
+    return <ManifestConnected name={outcome.connected} install={outcome.install} />;
+  }
+  return null;
+}
+
+/**
+ * The app exists on GitHub and its key is stored here — the row below, named
+ * the same, is the proof. What it does not yet have is a reader.
+ *
+ * `install` names ADR-0033 decision 2 step 3, the half of the ceremony that
+ * happens on GitHub's own site: no repositories are chosen yet, so the
+ * connection reads as unreachable on its row below until that finishes, and
+ * the button here is the honest continuation rather than a second surprise.
+ * The link opens in a new tab because GitHub's installation page has nowhere
+ * configured to send the browser back to — the `installation` webhook is what
+ * closes this loop, not a redirect — so closing this tab must not cost the
+ * connections list.
+ */
+function ManifestConnected({
+  name,
+  install,
+}: {
+  name: string;
+  install: string | undefined;
+}) {
+  return (
+    <div className="k-settled" role="status">
+      <div className="k-settled__head">
+        <StatusPill status="synced" label="connected" />
+        <span className="k-settled__title">{name} is connected</span>
+      </div>
+      <span className="k-mono">
+        the app-manifest flow created the app on GitHub and wrote its key here
+        — {name}, in the list below, is it.
+      </span>
+      {install !== undefined ? (
+        <>
+          <span className="k-mono">
+            it has no repositories chosen yet, so its row shows unreachable
+            until you install it (ADR-0033 decision 2 step 3) — pick the
+            repositories the app may see, then “Test connection” on its row
+            confirms it.
+          </span>
+          <a
+            className="k-button k-button--primary"
+            href={install}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Install the app on GitHub
+          </a>
+        </>
+      ) : null}
     </div>
   );
 }
