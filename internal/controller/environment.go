@@ -69,6 +69,13 @@ type EnvironmentReconciler struct {
 	// the Flux finding that decides whether publishing happens at all.
 	Profiles ProfileSource
 
+	// Sources supplies the instance's declared repositories, which resolution
+	// needs to turn a component's `source: <name>` into a repository when the
+	// name is a GitSource's rather than one of the Project's (ADR-0035
+	// decision 3). Nil is a controller with no global tier; see
+	// [GitSourceLister].
+	Sources GitSourceLister
+
 	// Delivery publishes the rendered set and applies the Flux objects. Never
 	// nil in production; [NoopDeliverer] is what a zero-value reconciler falls
 	// back to, so a test about validation needs no registry.
@@ -133,6 +140,25 @@ func (r *EnvironmentReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return r.halt(ctx, &env, base, v1alpha1.ReasonSpecInvalid, summarize(errs))
 	}
 
+	// The instance's declared sources, read before resolution because a
+	// component may bind to one by name and resolution is what turns that name
+	// into a repository (ADR-0035 decisions 2 and 3). It is the same join
+	// internal/api does before a build, against the same GitSources: a
+	// component that builds from `tools` and then fails to deploy with
+	// `ref/unknown-source` is the two planes disagreeing about one binding.
+	globals, err := r.globalSources(ctx)
+	if err != nil {
+		logger.Info("the instance's declared sources could not be listed", "error", err)
+		if _, patchErr := r.halt(ctx, &env, base, v1alpha1.ReasonSourcesUnavailable,
+			fmt.Sprintf("kelson could not read the GitSources this instance offers, so it cannot tell whether a "+
+				"component binds to one: %v. Nothing was rendered — resolving against an empty global tier would "+
+				"refuse a component bound to a GitSource as if the instance declared none. The controller retries "+
+				"with backoff.", err)); patchErr != nil {
+			return ctrl.Result{}, patchErr
+		}
+		return ctrl.Result{}, fmt.Errorf("listing the instance's GitSources: %w", err)
+	}
+
 	// Step 3a: resolve. Resolution can still produce taxonomy errors — an image
 	// that resolves to nothing, for instance — and they are the same kind of
 	// answer as a validation failure, so they land in the same place.
@@ -142,7 +168,7 @@ func (r *EnvironmentReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	// secret backend on every reconcile, including the ones where nothing is
 	// rendered. What a rollback suspends is producing *new bytes to publish*,
 	// which is the render and the push.
-	resolved, errs := model.Resolve(mp, me)
+	resolved, errs := model.Resolve(mp, me, globals...)
 	if len(errs) > 0 {
 		logger.Info("environment spec does not resolve", "errors", len(errs))
 		env.Status.ValidationErrors = validationErrors(errs)
@@ -570,6 +596,27 @@ func (r *EnvironmentReconciler) deliverer() Deliverer {
 		return NoopDeliverer{}
 	}
 	return r.Delivery
+}
+
+// globalSources reads the instance's tier for one reconcile.
+//
+// A failure is reported rather than swallowed, which is the rule internal/api
+// states at its own copy of this function and the reason this one exists at
+// all: resolving against an empty global tier after a failed listing would
+// refuse a component bound to a GitSource with `ref/unknown-source` — "this
+// instance offers: nothing" — which is a truthful sentence about a lookup that
+// failed and a false one about the instance. An environment told its spec is
+// invalid would then be told to edit a spec that is fine, and the edit would
+// not help.
+//
+// A nil lister is not that case: it is a controller wired without a global
+// tier, which resolves projects against their own declared sources and is the
+// pre-ADR-0035 posture (see [GitSourceLister]).
+func (r *EnvironmentReconciler) globalSources(ctx context.Context) ([]model.Source, error) {
+	if r.Sources == nil {
+		return nil, nil
+	}
+	return r.Sources.ListSources(ctx)
 }
 
 // SetupWithManager registers the reconciler and the watches it needs beyond its
