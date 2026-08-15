@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"strings"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -118,8 +119,11 @@ func TestRollbackFailureCarriesTheCode(t *testing.T) {
 	mustContain(t, out, "code: delivery/apply-failed", "remediation: check the cluster's admission policy")
 }
 
-// TestRollbackWithoutRecordedManifests: a mode kelson cannot read the recorded
-// manifests for says so. An empty diff must never read as "nothing changes".
+// TestRollbackWithoutRecordedManifests: a preview that carries no findings and
+// no diff still says so explicitly. An empty diff must never read as "nothing
+// changes" (this shape does not arrive from the real server, which always
+// sends the preview-unavailable finding below, but the tool must not assume
+// that and skip the "none" answer if it ever did not).
 func TestRollbackWithoutRecordedManifests(t *testing.T) {
 	h := start(t, &fakeServer{
 		rollback: func(_ *kelsonv1alpha1.RollbackRequest, stream *connect.ServerStream[kelsonv1alpha1.RollbackResponse]) error {
@@ -133,6 +137,68 @@ func TestRollbackWithoutRecordedManifests(t *testing.T) {
 	mustContain(t, out,
 		"FINDINGS (0, 0 unrecoverable)",
 		"none: the server found nothing this rollback cannot revert",
-		"none: this delivery mode records no manifests kelson can compare",
+		"none: revisions are immutable OCI artifacts",
 	)
+}
+
+// TestRollbackPreviewUnavailableFindingReadsAsInformational: the one finding
+// the real server always sends (rollback/preview-unavailable, ADR-0028) is
+// marked INFO rather than UNRECOVERABLE — it says what kelson could not
+// compare, not something this rollback will fail to revert.
+func TestRollbackPreviewUnavailableFindingReadsAsInformational(t *testing.T) {
+	h := start(t, &fakeServer{
+		rollback: func(_ *kelsonv1alpha1.RollbackRequest, stream *connect.ServerStream[kelsonv1alpha1.RollbackResponse]) error {
+			return stream.Send(&kelsonv1alpha1.RollbackResponse{
+				Event: &kelsonv1alpha1.RollbackResponse_Preview_{Preview: &kelsonv1alpha1.RollbackResponse_Preview{
+					ToRevision: "41",
+					Findings: []*kelsonv1alpha1.RollbackResponse_Finding{{
+						Resource: "hello/production", Cause: "rollback/preview-unavailable",
+						Message: "kelson cannot show what changes between 41 and 40", Unrecoverable: false,
+					}},
+				}},
+			})
+		},
+	})
+
+	out := h.call(t, "rollback", map[string]any{"project": "hello", "environment": "production"})
+	mustContain(t, out,
+		"FINDINGS (1, 0 unrecoverable)",
+		"INFO          hello/production",
+		"cause: rollback/preview-unavailable",
+	)
+	if strings.Contains(out, "UNRECOVERABLE") {
+		t.Errorf("the preview-unavailable finding must not read as an unrecoverable risk:\n%s", out)
+	}
+}
+
+// TestRollbackExecutesRecordsNoNewRevision: the real server always leaves
+// Committed.as_revision empty for a rollback (it publishes nothing), and the
+// tool must say so rather than print "recorded as revision " with nothing
+// after it.
+func TestRollbackExecutesRecordsNoNewRevision(t *testing.T) {
+	h := start(t, &fakeServer{
+		rollback: func(_ *kelsonv1alpha1.RollbackRequest, stream *connect.ServerStream[kelsonv1alpha1.RollbackResponse]) error {
+			if err := stream.Send(previewEvent(t)); err != nil {
+				return err
+			}
+			if err := stream.Send(&kelsonv1alpha1.RollbackResponse{
+				Event: &kelsonv1alpha1.RollbackResponse_Committed_{Committed: &kelsonv1alpha1.RollbackResponse_Committed{
+					RestoredRevision: "41",
+				}},
+			}); err != nil {
+				return err
+			}
+			return stream.Send(&kelsonv1alpha1.RollbackResponse{
+				Event: &kelsonv1alpha1.RollbackResponse_Settled_{Settled: &kelsonv1alpha1.RollbackResponse_Settled{}},
+			})
+		},
+	})
+
+	out := h.call(t, "rollback", map[string]any{
+		"project": "hello", "environment": "production", "to_revision": "41", "execute": true,
+	})
+	mustContain(t, out, "restored revision 41 (a rollback publishes nothing, so no new revision was recorded)")
+	if strings.Contains(out, "recorded as revision \n") || strings.Contains(out, "recorded as revision  ") {
+		t.Errorf("an empty as_revision must not be printed as a blank value:\n%s", out)
+	}
 }

@@ -12,13 +12,19 @@ import (
 	"github.com/dafrie/kelson/internal/diff"
 )
 
-const rollbackDescription = `NOT AVAILABLE. Rolling back an environment is refused while kelson's delivery spine is rebuilt.
+const rollbackDescription = `Restore an environment to a previously recorded revision.
 
-MUTATES THE CLUSTER when execute=true, in principle. In practice it CHANGES NOTHING in every mode, including execute=false: every call is refused with the code delivery/not-implemented, naming issue #224. Do not retry it and do not work around it.
+MUTATES THE CLUSTER when execute=true: kelson patches an annotation naming the target revision, and kelson-controller repoints Flux at that revision's immutable artifact. execute=false (the default) only previews.
 
-Why the preview is refused too, and not answered as "no findings": the preview lists what a rollback cannot revert — data written, a volume resized, an external side effect — and it was computed by comparing two recorded revisions. The store that kept them is deleted (ADR-0027), so an empty preview would report "nothing to worry about" for a question nothing looked at. That is the exact failure the preview exists to prevent.
+The preview never carries a diff. Every recorded revision is an immutable OCI artifact in the registry, and this server does not fetch two of them to compare — so the preview always answers with one finding, coded rollback/preview-unavailable, saying so plainly rather than returning an empty findings list that could be misread as "nothing to worry about". The rollback itself is exact regardless: it repoints at bytes that already exist and cannot have changed since they were published.
 
-What to do instead: diagnose_application to find out what is wrong, and tell the human that the environment needs a rollback a person must perform.`
+RESULT.restored is the revision now applied; kelson does not record a new revision for a rollback (it publishes nothing), so there is no second id to report.
+
+Preconditions: the project must be stored and declare the environment. to_revision must be one History reports for it; omitted, it restores the revision immediately before the one currently live.
+
+Cost: one server call, held open by execute=true until the controller reports the pinned revision serving or the timeout expires.
+
+Pass reason to say why you are rolling back. It is recorded in kelson's audit trail beside the action.`
 
 type rollbackInput struct {
 	Project        string `json:"project" jsonschema:"the stored project name"`
@@ -104,7 +110,17 @@ func (c *clients) rollbackEnvironment(ctx context.Context, in rollbackInput) (*m
 
 	if committed != nil {
 		r.section("RESULT")
-		r.addf("  restored revision %s, recorded as revision %s", committed.GetRestoredRevision(), committed.GetAsRevision())
+		// AsRevision is empty by construction (ADR-0028 decision 5): a rollback
+		// publishes nothing and prepends no history entry, so there is no second
+		// id to report. Printing "recorded as revision " with nothing after it
+		// would read as a value that was dropped rather than one that never
+		// existed.
+		if as := committed.GetAsRevision(); as != "" {
+			r.addf("  restored revision %s, recorded as revision %s", committed.GetRestoredRevision(), as)
+		} else {
+			r.addf("  restored revision %s (a rollback publishes nothing, so no new revision was recorded)",
+				committed.GetRestoredRevision())
+		}
 	}
 	if settled != nil && settled.GetError() != nil {
 		r.section("ERROR")
@@ -116,8 +132,11 @@ func (c *clients) rollbackEnvironment(ctx context.Context, in rollbackInput) (*m
 // writeFindings lists what the rollback cannot revert, unrecoverable first.
 //
 // An absent warning must never read as "nothing to warn about": a preview event
-// with no findings says so explicitly, and a delivery mode whose recorded
-// history kelson cannot read says that instead of showing an empty list.
+// with no findings says so explicitly. In practice the server always sends
+// exactly one today — coded rollback/preview-unavailable, marked INFO rather
+// than UNRECOVERABLE below — because every recorded revision is an immutable
+// OCI artifact and this server does not fetch two of them to diff; that is a
+// statement about what kelson looked at, not a claim that nothing is at risk.
 func writeFindings(r *report, preview *kelsonv1alpha1.RollbackResponse_Preview) {
 	if preview == nil {
 		r.section("FINDINGS")
@@ -139,7 +158,12 @@ func writeFindings(r *report, preview *kelsonv1alpha1.RollbackResponse_Preview) 
 	shown, dropped := limit(findings, maxFindings)
 	for _, f := range shown {
 		marker := "recoverable  "
-		if f.GetUnrecoverable() {
+		switch {
+		case f.GetCause() == "rollback/preview-unavailable":
+			// Informational, not a risk: it names what the server could not
+			// compare, never something this rollback will fail to revert.
+			marker = "INFO         "
+		case f.GetUnrecoverable():
 			marker = "UNRECOVERABLE"
 		}
 		r.addf("  %s %s %s", marker, pad(f.GetResource(), 40), f.GetPath())
@@ -158,7 +182,8 @@ func writeDiffSummary(r *report, preview *kelsonv1alpha1.RollbackResponse_Previe
 	r.section("DIFF")
 	encoded := preview.GetDiffJson()
 	if len(encoded) == 0 {
-		r.addf("  none: this delivery mode records no manifests kelson can compare, so the change set is unknown.")
+		r.addf("  none: revisions are immutable OCI artifacts and this server does not fetch two of them to " +
+			"compute a change set; see FINDINGS above for why.")
 		return
 	}
 	var d diff.Diff

@@ -8,13 +8,7 @@ import { ErrorPanel } from "../components/ErrorPanel";
 import { StatusPill } from "../components/StatusPill";
 import { phaseToStatus } from "../components/phase";
 import { EmptyState, LoadingState } from "../components/States";
-import {
-  classifyRecord,
-  formatWhen,
-  isCommitRevision,
-  shortRevision,
-  shortSpecHash,
-} from "./history";
+import { formatWhen, shortSpecHash } from "./history";
 
 /**
  * The release history: what was deployed to this environment, newest first.
@@ -24,30 +18,23 @@ import {
  * `DeployService.History` returns five strings per revision — revision, spec
  * hash, committed-at, message, author — and the screen shows those five and
  * derives nothing beyond them (see ./history.ts, which holds the derivations and
- * the reasons each one is conservative). Three absences shape the whole layout
- * and are stated on the screen rather than papered over:
+ * the reasons each one is conservative). Under the rebuilt delivery spine
+ * (ADR-0028), `message` is where the outcome, the digest and the images the
+ * revision resolved to travel — `HistoryEntry` has no field of its own for any
+ * of them yet — so it is rendered as the server's own prose, unparsed. Two
+ * absences still shape the layout and are stated on the screen rather than
+ * papered over:
  *
- *  1. **No per-revision outcome is recorded.** Nothing on `HistoryEntry` says
- *     whether a revision became healthy, got stuck, or was rolled back out an
- *     hour later. So the phase pill — the same vocabulary as everywhere else —
- *     appears on exactly one row: the revision `DeployService.Status` reports as
- *     live, which is the only revision anything can currently answer for. Every
- *     other row gets the act it was (deploy or rollback, from the recorded
- *     message) and no health claim at all. A green pill down the whole column
- *     would be an invention.
- *  2. **No author, in half the deployment modes.** Direct mode never writes one
- *     (internal/delivery/direct records `deploy <spec-hash>` with an empty
- *     author); the Git modes write the commit signature. Neither records whether
- *     a human or an agent deployed — the Git modes put that in `Kelson-Actor`
- *     and `Kelson-Agent-Id` trailers, which `History()` does not project — so an
- *     entry without an author reads "unattributed" and the note says why. That
- *     attribution is #74's work, and until it lands, guessing it here would
- *     invent an audit trail.
- *  3. **No repository URL.** A revision that is a full commit sha *is* the
- *     manifests-repository commit (the Git modes record it as the revision), so
- *     it is labelled as one and offered for copying. It is not a hyperlink, and
- *     no pull request is named: History carries no remote URL and no PR number,
- *     so both would be a guess at someone else's forge.
+ *  1. **`message`'s outcome is a snapshot, not a live answer.** It is what was
+ *     true when the entry was captured, and nothing refreshes it afterwards. So
+ *     the phase pill — the same vocabulary as everywhere else — appears on
+ *     exactly one row: the revision `DeployService.Status` reports as live,
+ *     which is the only revision anything can currently answer *for right now*.
+ *     A green pill down the whole column would be an invention.
+ *  2. **No author yet.** The spine records who deployed nothing
+ *     (`internal/api`'s `History`), human or agent, so every entry reads
+ *     "unattributed" and the note says why rather than guessing. That
+ *     attribution is #74's work.
  *
  * # The two actions are links, not copies
  *
@@ -126,10 +113,11 @@ export function HistoryPage() {
       </div>
 
       <p className="k-note">
-        Every revision kelson recorded for this environment, as the delivery mode
-        wrote it down. The record is the same five facts in direct and Git mode;
-        what differs is that Git commits carry an author and direct-mode journal
-        entries do not.
+        Every revision kelson published to this environment, newest first. Each
+        one is an immutable artifact tagged with the generation that produced it
+        and a short hash of the spec that rendered it; the message underneath is
+        what the controller recorded about it — the outcome at the time, the
+        artifact digest, the images it resolved to.
       </p>
 
       {/* Promotion is the one action here that is not about a revision in this
@@ -162,9 +150,10 @@ export function HistoryPage() {
       {history.data !== undefined && entries.length === 0 ? (
         <EmptyState title="No recorded history">
           Nothing has been deployed for this environment yet. A revision is
-          recorded when a deploy or a rollback lands, so an empty history means
-          the environment has never been written to — not that the record was
-          lost.
+          recorded when a deploy publishes one — a rollback repoints Flux at a
+          revision that is already here and adds no entry of its own — so an
+          empty history means the environment has never been written to, not
+          that the record was lost.
         </EmptyState>
       ) : null}
 
@@ -208,12 +197,11 @@ export function HistoryPage() {
                     : "the phase pill is the live revision’s current state — recorded history holds no outcome for the revisions above it"}
             </p>
             <p className="k-mono k-timeline__note">
-              authorship is recorded by the delivery mode, not by kelson: Git
-              modes carry the commit signature, direct mode records none, and
-              neither distinguishes a human from an agent (
+              kelson does not record who deployed yet, human or agent (
               <a href="https://github.com/dafrie/kelson/issues/74">#74</a>).
-              Commit and pull-request links are absent for the same reason —
-              History carries no repository URL to build one from.
+              There is no commit or pull-request link either: a revision is an
+              OCI artifact in a registry, not a commit in a repository, so
+              there is no forge to point at.
             </p>
           </div>
         </section>
@@ -239,25 +227,14 @@ function Revision({
   livePhase: string;
   newest: boolean;
 }) {
-  const kind = classifyRecord(entry.message);
   const when = formatWhen(entry.committedAt);
-  const commit = isCommitRevision(entry.revision);
-  const short = shortRevision(entry.revision);
 
   return (
     <li className={live ? "k-timeline__item k-timeline__item--live" : "k-timeline__item"}>
       <div className="k-timeline__head">
-        {/* A shortened sha gets the short form as its label; the click still
-            copies the whole id, and a revision that was never shortened keeps
-            Copyable's own "copy <value>" accessible name. */}
-        <Copyable
-          value={entry.revision}
-          {...(short === entry.revision ? {} : { label: short })}
-          className="k-timeline__rev"
-        />
-        {kind !== "unknown" ? (
-          <span className="k-chip k-mono">{kind}</span>
-        ) : null}
+        {/* The revision id is already short — <generation>-<hash8>
+            (ADR-0028 decision 2) — so it needs no further abbreviation. */}
+        <Copyable value={entry.revision} className="k-timeline__rev" />
         {live ? (
           <>
             <span className="k-chip k-mono k-timeline__live">deployed now</span>
@@ -274,17 +251,14 @@ function Revision({
         {entry.specHash !== "" ? (
           <span title={entry.specHash}>spec {shortSpecHash(entry.specHash)}</span>
         ) : null}
-        {commit ? (
-          <span title={entry.revision}>manifests commit {short}</span>
-        ) : null}
         <span
           className={
             entry.author === "" ? "k-timeline__unattributed" : undefined
           }
           title={
             entry.author === ""
-              ? "This delivery mode records no author. Agent and human identities are not recorded yet (#74)."
-              : "The commit signature the delivery mode wrote. It does not say whether a human or an agent deployed."
+              ? "kelson does not record who deployed yet. Agent and human identities are not recorded yet (#74)."
+              : entry.author
           }
         >
           {entry.author === "" ? "unattributed" : entry.author}

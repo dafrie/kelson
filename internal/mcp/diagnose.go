@@ -16,7 +16,7 @@ import (
 
 const diagnoseComponentDescription = `Answer "what is wrong with this environment, and why" in one call.
 
-Composes, for one (project, environment): the server's own causal answer — WHY — with a confidence and the evidence behind each cause; the namespace and status (the delivery phase and revision read "-" until issue #224 restores them); every workload's health verdict with the server's own remediation; a bounded window of the failing workload's logs (the lines before it terminated, when it is failing); the deployment history (unavailable until issue #224); a compact summary of what the spec declares (components, images, kinds); the Secrets kelson manages in the namespace, by name and key; and the cluster's version skew against what kelson renders against.
+Composes, for one (project, environment): the server's own causal answer — WHY — with a confidence and the evidence behind each cause; the namespace and status (the delivery phase and revision, from the environment's own record); every workload's health verdict with the server's own remediation; a bounded window of the failing workload's logs (the lines before it terminated, when it is failing); the deployment history (the last few recorded revisions, newest first); a compact summary of what the spec declares (components, images, kinds); the Secrets kelson manages in the namespace, by name and key; and the cluster's version skew against what kelson renders against.
 
 Read the WHY section first, and weigh each cause by its confidence rather than by its position. "high" means a controller named the reason — a kubelet waiting reason, a scheduler message, an external-secrets condition, an API-server rejection — or that two independent signals agreed; act on it. "medium" means one signal only, or a heuristic the server itself calls one, and its sentence says which half is a correlation; verify before acting. "low" is an audit-mode policy finding that vetoed nothing. Each cause carries the evidence it rests on (the controller's own words, a bounded log excerpt, a field reference in the rendered manifest) and, where the recorded history shows one, the revision that introduced the change being blamed. That change correlation is unavailable while kelson's delivery spine is rebuilt (issue #224), and the section says so: it lists what the server could not read, so a partial answer is never mistaken for a complete one.
 
@@ -80,10 +80,11 @@ func (c *clients) diagnoseComponent(ctx context.Context, in diagnoseComponentInp
 	c.reportWhy(ctx, &r, in)
 
 	r.section("STATUS")
-	// The phase and the revision are empty until issue #224 restores them
-	// (ADR-0028 deleted what reported them; the server states the reason in
-	// `cause`). They print as "-" rather than as an empty column, so a reader
-	// sees "not reported" rather than a value that looks like a blank answer.
+	// The phase and the revision come from Environment.status (ADR-0028); they
+	// print as "-" rather than an empty column on a server started without the
+	// seam that reports it or an environment that has never been deployed —
+	// either way `cause` states the reason, so a reader sees "not reported"
+	// rather than a value that looks like a blank answer.
 	r.addf("  phase      %s", orDash(status.GetPhase()))
 	r.addf("  revision   %s", orDash(status.GetRevision()))
 	r.addf("  namespace  %s", orDash(status.GetNamespace()))
@@ -108,9 +109,10 @@ func verdictLine(status *kelsonv1alpha1.StatusResponse) string {
 	verdicts := status.GetVerdicts()
 	failing := failingVerdicts(verdicts)
 	// The phase and the revision prefix the line only when the server reported
-	// them. They are empty until issue #224 restores them, and printing
-	// " at revision -" for every environment would put noise where the answer
-	// goes — the workload counts are the answer either way.
+	// them — a server without the status seam, or an environment never
+	// deployed, reports neither, and printing " at revision -" for every such
+	// environment would put noise where the answer goes: the workload counts
+	// are the answer either way.
 	switch {
 	case len(verdicts) == 0:
 		return phasePrefix(status) + "no workload verdicts (the server reported no observable workloads for this environment)"

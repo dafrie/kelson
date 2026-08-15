@@ -8,65 +8,42 @@
  * and returns it rather than guessing, because a history screen that guesses is
  * worse than one that admits a gap.
  *
+ * # What changed when the delivery spine was rebuilt (ADR-0028, R2 #225)
+ *
+ * `revision` is now `<generation>-<hash8>`, the OCI artifact tag the controller
+ * published (ADR-0028 decision 2) — never a git commit sha, because there is no
+ * git writer left to commit one. The history entry it names is a publish: a
+ * rollback repoints Flux at bytes that already exist and prepends no entry of
+ * its own (ADR-0028 decision 5, `internal/controller/history.go`), so every row
+ * this screen shows is something that was deployed, not restored.
+ *
+ * `message` is where the outcome, the digest and the images travel, because
+ * `HistoryEntry` has no field of its own for any of them yet
+ * (`internal/api`'s `revisionSummary`): a snippet like
+ * `Healthy · serving · sha256:deadbeef · ghcr.io/acme/hello:1.4.2` is a
+ * captured snapshot, not a live health check, and it is rendered as the
+ * server's own prose rather than parsed apart — there is no reliable seam in
+ * free text to parse one out of.
+ *
  * What is deliberately NOT here, because the wire does not carry it:
  *
- *   - **The image.** `HistoryEntry` has no image field, so the commit a built
- *     image embeds in its tag (internal/build's DestinationTag, which is the
- *     short revision) cannot be recovered here. The revision id itself is the
- *     only provenance a recorded entry carries.
- *   - **An outcome.** No phase, no health, no exit status is recorded per
- *     revision. `DeployService.Status` answers that for the one revision the
- *     cluster reports as live, and for no other, which is why the screen puts a
- *     phase pill on exactly one row.
+ *   - **An outcome you can rely on for every row.** `message`'s outcome is what
+ *     was true when the entry was captured, and only `DeployService.Status`
+ *     answers for what is true *now* — and only for the one revision the
+ *     cluster reports as live, which is why the phase pill appears on exactly
+ *     one row.
  *   - **The rendered manifests.** They are not on `HistoryEntry`, so a
  *     client-side revision-A-vs-revision-B diff cannot be assembled here. The
  *     server diffs the *current* spec against a recorded revision
  *     (`DiffRequest.from_revision`) and offers no A-vs-B call, so that is the
  *     comparison the screen links to, unfaked.
- *   - **Human-vs-agent attribution.** The Git modes do write `Kelson-Actor` and
- *     `Kelson-Agent-Id` commit trailers (internal/delivery/git/identity.go), but
- *     `History()` reads only the spec-hash/project/environment trailers and
- *     projects the commit *signature* as `author`. The distinction exists in the
- *     repository and not on this wire.
+ *   - **Human-vs-agent attribution.** The spine records who deployed nothing
+ *     yet (`author` arrives empty on every entry) — that is #74's work, not a
+ *     property of which entry this is.
  */
 
-/** The length of a full git object id in hex — internal/build's commitLength. */
-const COMMIT_LENGTH = 40;
-
-/** How much of a 40-hex revision is shown, matching internal/build's tag rule. */
+/** How much of a long hash is shown, e.g. a spec hash's digest half. */
 const SHORT_LENGTH = 12;
-
-/**
- * Whether a revision id is a git commit.
- *
- * The Git and Flux modes record the manifests-repository commit sha as the
- * revision (internal/delivery/git's History), so a revision that is a full
- * commit hash *is* the source commit of the manifests — surfacing it as one is
- * a fact, not a parse. Direct mode records a zero-padded counter ("rev-00000007")
- * and this returns false for it.
- *
- * The predicate is internal/build's `IsCommit`, verbatim: exactly forty hex
- * digits. An abbreviated sha is not accepted — a 12-character hex string is
- * indistinguishable from any other short token, and claiming it is a commit is
- * exactly the guess this screen must not make.
- */
-export function isCommitRevision(revision: string): boolean {
-  return (
-    revision.length === COMMIT_LENGTH && /^[0-9a-f]+$/i.test(revision)
-  );
-}
-
-/**
- * A revision id at reading length: a commit sha abbreviated, anything else
- * returned untouched. Direct mode's counter is already short and every
- * character of it is meaningful, so shortening it would only lose the padding
- * that makes it sort.
- */
-export function shortRevision(revision: string): string {
-  return isCommitRevision(revision)
-    ? revision.slice(0, SHORT_LENGTH)
-    : revision;
-}
 
 /**
  * A spec hash at reading length: `sha256:0123456789ab`.
@@ -83,35 +60,6 @@ export function shortSpecHash(specHash: string): string {
   const [, algorithm = "", hex = ""] = match;
   if (hex.length <= SHORT_LENGTH) return specHash;
   return `${algorithm}:${hex.slice(0, SHORT_LENGTH)}`;
-}
-
-/**
- * What kind of act a recorded entry was: a deploy, a rollback, or unknown.
- *
- * This is not an outcome — nothing on the wire says whether a revision ended up
- * healthy — it is what the adapter wrote down about the act itself, and it is
- * the one distinction every mode records, which is what lets the screen read
- * the same in direct and Git modes:
- *
- *   direct     `deploy <spec-hash>`                     `rollback to <revision>`
- *   git/flux   `kelson: update <project>/<environment>` `kelson: rollback <project>/<environment> to <short>`
- *
- * The four prefixes above are matched and nothing else is. The subject is a
- * human sentence — internal/delivery/git's Message says outright that "nothing
- * downstream parses the subject" — so a message from an older build, a
- * hand-written commit on the manifests branch, or a subject that merely starts
- * with a similar word ("deployment tuning") is `unknown`, and the screen shows
- * no chip rather than a wrong one.
- */
-export type RecordKind = "deploy" | "rollback" | "unknown";
-
-export function classifyRecord(message: string): RecordKind {
-  const subject = message.trim();
-  if (/^kelson:\s+rollback\b/i.test(subject)) return "rollback";
-  if (/^kelson:\s+update\b/i.test(subject)) return "deploy";
-  if (/^rollback\b/i.test(subject)) return "rollback";
-  if (/^deploy\b/i.test(subject)) return "deploy";
-  return "unknown";
 }
 
 /**

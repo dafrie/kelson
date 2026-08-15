@@ -138,16 +138,17 @@ function indexOfPhase(phase: string): number {
 /**
  * Reconciler names we can print because the server named the adapter.
  *
- * The keys are internal/delivery's adapter names (`Adapter.Name()`); the values
- * name the controller that actually does the work, which is what a reader needs
- * in order to know where to look. A mode outside this table is printed verbatim
- * — it is still the server's word, not ours — and only an EMPTY mode degrades
- * to the unnamed "reconciler".
+ * Flux is the only reconciler kelson has (ADR-0028: "delivery mode ceases to
+ * be a concept"), and `Committed.adapter` is hardcoded to `"flux"` server-side
+ * (`internal/api`'s `adapterName`) — so this table has one entry. It stays a
+ * table, and a name outside it is still printed verbatim rather than hidden,
+ * because the wire's word must never be silently discarded: an older server or
+ * a value this build has not seen yet is still worth showing, just without a
+ * friendly translation. Only an EMPTY mode degrades to the unnamed
+ * "reconciler".
  */
 const RECONCILERS: Record<string, string> = {
-  direct: "kelson (direct apply)",
   flux: "Flux (kustomize-controller)",
-  argocd: "Argo CD",
 };
 
 /**

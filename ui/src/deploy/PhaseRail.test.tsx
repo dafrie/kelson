@@ -138,7 +138,7 @@ describe("PhaseRail", () => {
   it("shows an applied-but-unhealthy revision with the workload step and a logs link", () => {
     renderRail({
       phase: "Degraded",
-      adapter: "direct",
+      adapter: "flux",
       cause: {
         component: "kubernetes",
         reason: "ProgressDeadlineExceeded",
@@ -176,7 +176,7 @@ describe("PhaseRail", () => {
     renderRail(
       {
         phase: "Degraded",
-        adapter: "direct",
+        adapter: "flux",
         cause: { component: "kubernetes", reason: "NotReady", message: "1/3 ready" },
       },
       { compact: true },
@@ -185,7 +185,9 @@ describe("PhaseRail", () => {
     expect(document.querySelector(".k-rail--compact")).toBeTruthy();
     // Compact drops the per-stage state word and nothing else.
     expect(stage("Healthy").dataset.state).toBe("failed");
-    expect(within(stage("Reconciling")).getByText("kelson (direct apply)")).toBeTruthy();
+    expect(
+      within(stage("Reconciling")).getByText("Flux (kustomize-controller)"),
+    ).toBeTruthy();
     expect(screen.getByText(/Debug the workload/)).toBeTruthy();
     expect(screen.getByRole("link", { name: "Open logs" })).toBeTruthy();
   });

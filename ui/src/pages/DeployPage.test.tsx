@@ -37,7 +37,7 @@ function transportFor(events: () => AsyncIterable<unknown>, seen?: DeployRequest
                 project: "checkout",
                 environment: "production",
                 resources: 2,
-                mode: "direct",
+                mode: "flux",
                 manifests: [
                   {
                     apiVersion: "v1",
@@ -68,11 +68,11 @@ async function* unhealthyDeploy() {
   yield create(DeployResponseSchema, {
     event: {
       case: "proposed",
-      value: { project: "checkout", environment: "production", resources: 2, mode: "direct" },
+      value: { project: "checkout", environment: "production", resources: 2, mode: "flux" },
     },
   });
   yield create(DeployResponseSchema, {
-    event: { case: "committed", value: { revision: "rev-9", adapter: "direct" } },
+    event: { case: "committed", value: { revision: "rev-9", adapter: "flux" } },
   });
   yield create(DeployResponseSchema, {
     event: {
@@ -86,7 +86,7 @@ async function* unhealthyDeploy() {
       value: {
         phase: "Reconciling",
         answer: "progressing",
-        cause: { component: "direct", reason: "rolling-out", message: "1 of 3 replicas updated" },
+        cause: { component: "flux", reason: "rolling-out", message: "1 of 3 replicas updated" },
       },
     },
   });
@@ -122,7 +122,7 @@ describe("DeployPage", () => {
   it("previews with a render dry-run: resource count, mode and manifests", async () => {
     renderDeploy(unhealthyDeploy);
 
-    expect(await screen.findByText("direct")).toBeTruthy();
+    expect(await screen.findByText("flux")).toBeTruthy();
     expect(screen.getByText("Namespace/checkout-production")).toBeTruthy();
     expect(screen.getByText("Deployment/web")).toBeTruthy();
     // The byte-faithful YAML is there, collapsed behind its disclosure.
@@ -154,7 +154,7 @@ describe("DeployPage", () => {
     expect(screen.getByText("committed", { selector: ".k-pill" })).toBeTruthy();
     expect(screen.getByText("reconciling", { selector: ".k-pill" })).toBeTruthy();
     expect(
-      screen.getByText("direct/rolling-out: 1 of 3 replicas updated"),
+      screen.getByText("flux/rolling-out: 1 of 3 replicas updated"),
     ).toBeTruthy();
 
     // The terminal state is the deploy's answer, structured error and all —
@@ -184,16 +184,16 @@ describe("DeployPage", () => {
       }),
     );
 
-    // Committed.adapter is "direct": the reconciling stage is kelson itself,
-    // and saying so is what tells a reader there is no Flux to go look at.
-    expect(await screen.findByText("kelson (direct apply)")).toBeTruthy();
+    // Committed.adapter is "flux" (internal/api hardcodes it, ADR-0028): the
+    // reconciling stage names Flux rather than reading "not reported".
+    expect(await screen.findByText("Flux (kustomize-controller)")).toBeTruthy();
     expect(screen.queryByText(/not reported/)).toBeNull();
   });
 
   it("renders a healthy deployment as a success, not as an error", async () => {
     renderDeploy(async function* () {
       yield create(DeployResponseSchema, {
-        event: { case: "committed", value: { revision: "rev-10", adapter: "direct" } },
+        event: { case: "committed", value: { revision: "rev-10", adapter: "flux" } },
       });
       yield create(DeployResponseSchema, {
         event: {
@@ -225,7 +225,7 @@ describe("DeployPage", () => {
     renderDeploy(
       async function* () {
         yield create(DeployResponseSchema, {
-          event: { case: "committed", value: { revision: "rev-11", adapter: "direct" } },
+          event: { case: "committed", value: { revision: "rev-11", adapter: "flux" } },
         });
         yield create(DeployResponseSchema, {
           event: { case: "settled", value: { final: { phase: "Healthy", answer: "live" } } },

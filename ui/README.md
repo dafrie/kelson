@@ -75,7 +75,7 @@ a deploy or a log tail is a link that keeps working.
 | `/projects/:project/edit` | Edit the stored spec: a form tab and a raw YAML tab, a diff before saving, an optimistic-concurrency save. The form reaches `spec.previews` and the `delivery:` stanza it needs (ADR-0017), and appends a component to `spec.components` (`?add=component` opens on it) | `GetSpec`, `PutSpec` at `RENDER` then for real, `Diff` |
 | `/projects/:project/:env/deploy` | Preview (render dry-run) then a confirm that streams the deployment live | `Deploy` at `RENDER`, then at `NONE`; optional `Diff` at `SERVER` |
 | `/projects/:project/:env/diff` | Two tabs: the live cluster's own dry-run verdict, or today's render against a recorded revision. `?from=<revision>` opens the second one preselected | `Diff` at `SERVER`, or with `from_revision`; `History` for the picker |
-| `/projects/:project/:env/history` | The recorded revisions, newest first: what each was, when, the spec hash, the author the mode recorded, and a phase pill on the live one. Links out to diff and rollback | `History`, `Status` |
+| `/projects/:project/:env/history` | The recorded revisions, newest first: what each was, when, the spec hash, the recorded author (unattributed today, #74), and a phase pill on the live one. Links out to diff and rollback | `History`, `Status` |
 | `/projects/:project/:env/logs` | Bounded Query, and a live tail that pauses, filters, reconnects and saves. `?component=<name>` opens on one component — the link the project page's component list carries | `QueryLogs`, `FollowLogs` |
 | `/projects/:project/:env/promote` | The environment in the path is the **target**: pick a source, read the plan and the diff it produces, then write the pins. It never deploys | `GetSpec`, `Promote` at `RENDER` then `NONE` |
 | `/projects/:project/:env/rollback` | Revision picker, irreversibility preview, then the apply. `?to=<revision>` preselects and previews a target, never applies it | `History`, `Rollback` at `RENDER` then `NONE` |
@@ -85,28 +85,32 @@ a deploy or a log tail is a link that keeps working.
 The history screen ([#67](https://github.com/dafrie/kelson/issues/67)) is bounded
 by what `DeployService.History` actually returns, which is five strings per
 revision — `revision`, `spec_hash`, `committed_at`, `message`, `author` — and
-nothing else. Four consequences are visible on the screen rather than hidden by
+nothing else. Under the rebuilt delivery spine ([ADR-0028](../docs/adr/0028-delivery-spine.md),
+R2 [#225](https://github.com/dafrie/kelson/issues/225)), a revision id is
+`<generation>-<hash8>`, the OCI artifact tag the controller published — never a
+git commit sha, because there is no git writer left to commit one — and
+`message` is where the outcome, the digest and the images the revision
+resolved to travel, because `HistoryEntry` has no field of its own for any of
+them yet (`internal/api`'s `revisionSummary`). It is rendered as the server's
+own prose rather than parsed apart: there is no reliable seam to parse an *act*
+(deploy versus rollback) out of free text, and there is no such act to find in
+the first place — a rollback repoints Flux at a revision that is already here
+and prepends no history entry of its own, so every row on this screen is a
+publish. Two consequences are still visible on the screen rather than hidden by
 it:
 
-- **No per-revision outcome is recorded.** Nothing on `HistoryEntry` says whether
-  a revision became healthy or was stuck. The phase pill therefore appears on
-  exactly one row — the revision `Status` reports as live, the only one anything
-  can currently answer for — and the other rows carry the *act* the mode wrote
-  down (deploy or rollback, parsed conservatively from the recorded message) and
-  no health claim at all.
-- **No image, so no image-embedded commit.** A built image's tag carries the
-  short revision (`internal/build`'s `DestinationTag`), but History does not
-  carry the image. What it does carry is the revision id, and in the Git modes
-  that id *is* the manifests-repository commit — so it is labelled as one when
-  it is a full forty-character sha, and never otherwise.
-- **No repository URL, so no commit or pull-request links.** Both would be a
-  guess at someone else's forge. The sha is shown and copyable instead, and a
-  muted line says why there is no link.
-- **No human-vs-agent attribution.** The Git modes write `Kelson-Actor` and
-  `Kelson-Agent-Id` commit trailers, but `History()` projects only the commit
-  *signature* as `author`, and direct mode records no author at all — so an entry
-  without one reads "unattributed" rather than being attributed to anybody.
-  Agent identity is [#74](https://github.com/dafrie/kelson/issues/74).
+- **`message`'s outcome is a snapshot, not a live answer.** It is what was true
+  when the entry was captured, and nothing refreshes it afterwards. The phase
+  pill therefore appears on exactly one row — the revision `Status` reports as
+  live, the only one anything can currently answer for *right now* — and no
+  other row carries a health claim, even though its own `message` happens to
+  mention an outcome too.
+- **No human-vs-agent attribution.** The spine records who deployed nothing yet,
+  human or agent, so every entry reads "unattributed" rather than being
+  attributed to anybody. Agent identity is [#74](https://github.com/dafrie/kelson/issues/74).
+
+There is also no commit or pull-request link: a revision is an OCI artifact in a
+registry, not a commit in a repository, so there is no forge to point at.
 
 The same absence rules out an A-against-B revision diff: `RenderService.Diff`
 compares the *current* spec against one recorded revision (`from_revision`) and
