@@ -1,6 +1,6 @@
 # ADR-0034: Forge-driven delivery — webhooks, the CI hand-off, and server-side preview publishing
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-15
 
 > Amends [ADR-0017](0017-pr-previews.md) decision 8: the publisher gains two server-side trigger

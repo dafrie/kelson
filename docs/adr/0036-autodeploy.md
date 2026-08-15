@@ -1,6 +1,6 @@
 # ADR-0036: autoDeploy — an environment opts in, its components follow their sources
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-15
 
 > Completes [ADR-0034](0034-forge-driven-delivery.md) decision 4, whose `autoDeploy` was deliberately

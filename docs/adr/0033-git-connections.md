@@ -1,6 +1,6 @@
 # ADR-0033: Git connections — the forge credentials kelson holds, and how they are scoped
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-15
 
 > Amends [ADR-0009](0009-secrets.md)'s boundary — *"credentials in Secrets somebody else manages, and
