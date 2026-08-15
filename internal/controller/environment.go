@@ -660,6 +660,18 @@ func (r *EnvironmentReconciler) SetupWithManager(mgr ctrl.Manager, fluxPresent b
 		Watches(&v1alpha1.Project{}, handler.EnqueueRequestsFromMapFunc(r.environmentsOfProject)).
 		Named("environment")
 
+	// The GitSource watch, for the reason the Project watch exists: a component
+	// bound to a source the instance had not declared yet is refused with
+	// `ref/unknown-source`, and that refusal does not requeue — so without this,
+	// applying the GitSource would fix nothing until somebody edited the spec or
+	// the controller restarted. It is gated on the lister because a controller
+	// with no global tier does not read GitSources at all, and a watch whose
+	// events cannot change an answer is load with no question behind it.
+	if r.Sources != nil {
+		builder = builder.Watches(&v1alpha1.GitSource{},
+			handler.EnqueueRequestsFromMapFunc(r.environmentsOfGitSource))
+	}
+
 	if fluxPresent {
 		for _, gvk := range []struct{ group, version, kind string }{
 			{ociRepositoryGVK.Group, ociRepositoryGVK.Version, ociRepositoryGVK.Kind},
@@ -694,6 +706,81 @@ func environmentOfFluxObject(_ context.Context, obj client.Object) []reconcile.R
 		return nil
 	}
 	return []reconcile.Request{{NamespacedName: types.NamespacedName{Namespace: namespace, Name: name}}}
+}
+
+// environmentsOfGitSource enqueues the Environments whose render could change
+// because one of the instance's declared sources did.
+//
+// A GitSource is instance-wide, so the naive mapping is "every Environment in
+// the cluster". This narrows it to the Projects that actually have the source in
+// scope — a component bound to that name, and no project-local source shadowing
+// it (ADR-0035 decision 3) — because the alternative is re-reconciling every
+// environment on the cluster each time an operator edits one global source, and
+// almost none of them are about it.
+//
+// A deleted GitSource maps the same way, deliberately: the environments bound to
+// it are exactly the ones that must now report that their binding resolves
+// nowhere.
+//
+// Both lists are served from the manager's cache, which already holds kelson's
+// own kinds cluster-wide, so this costs no API call.
+func (r *EnvironmentReconciler) environmentsOfGitSource(ctx context.Context, source client.Object) []reconcile.Request {
+	logger := log.FromContext(ctx)
+	var projects v1alpha1.ProjectList
+	if err := r.Client.List(ctx, &projects); err != nil {
+		logger.Error(err, "listing projects for a git source change", "gitsource", source.GetName())
+		return nil
+	}
+	bound := map[types.NamespacedName]bool{}
+	for i := range projects.Items {
+		p := &projects.Items[i]
+		if bindsGlobalSource(p.Spec, source.GetName()) {
+			bound[types.NamespacedName{Namespace: p.Namespace, Name: p.Name}] = true
+		}
+	}
+	if len(bound) == 0 {
+		return nil
+	}
+
+	var envs v1alpha1.EnvironmentList
+	if err := r.Client.List(ctx, &envs); err != nil {
+		logger.Error(err, "listing environments for a git source change", "gitsource", source.GetName())
+		return nil
+	}
+	var out []reconcile.Request
+	for i := range envs.Items {
+		env := &envs.Items[i]
+		if !bound[types.NamespacedName{Namespace: env.Namespace, Name: env.Spec.Project}] {
+			continue
+		}
+		out = append(out, reconcile.Request{
+			NamespacedName: types.NamespacedName{Namespace: env.Namespace, Name: env.Name},
+		})
+	}
+	return out
+}
+
+// bindsGlobalSource reports whether a GitSource of this name is in the Project's
+// scope: some component binds to the name, and the Project declares no source of
+// its own that shadows it. It is the resolver's rule
+// (internal/model's resolveSources) asked the other way round — which projects
+// does *this* source answer for — and it stays a pure function of the spec so
+// the two cannot drift into different answers.
+func bindsGlobalSource(spec model.ProjectSpec, name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, src := range spec.EffectiveSources() {
+		if src.Name == name {
+			return false
+		}
+	}
+	for _, c := range spec.Components {
+		if c.SourceName() == name {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *EnvironmentReconciler) environmentsOfProject(ctx context.Context, project client.Object) []reconcile.Request {

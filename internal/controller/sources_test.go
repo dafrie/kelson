@@ -150,6 +150,49 @@ func TestWithoutAGlobalTierABoundComponentIsRefusedByName(t *testing.T) {
 	}
 }
 
+// Applying the missing GitSource has to be what fixes the environment it was
+// missing from. The refusal it clears — ref/unknown-source — does not requeue,
+// so without this mapping an operator would apply the source and watch nothing
+// happen until they edited a spec that was never wrong.
+func TestAGitSourceEnqueuesTheEnvironmentsBoundToIt(t *testing.T) {
+	// Bound to the global `tools`: its environments must be woken.
+	boundEnv := environment("production", model.EnvironmentSpec{Project: "checkout"})
+	staging := environment("staging", model.EnvironmentSpec{Project: "checkout"})
+	// Declares its own `tools`, which shadows the global: nothing about this
+	// project changes when the instance's source does.
+	shadow := project("shadow", model.ProjectSpec{
+		Image:   "ghcr.io/acme/shadow:1.0.0",
+		Sources: []model.Source{{Name: "tools", Git: "https://gitlab.com/acme/our-own-tools"}},
+		Components: []model.Component{
+			{Name: "web", Port: 8080, Source: &model.ComponentSource{Name: "tools"}},
+		},
+	})
+	shadowEnv := environment("shadow-production", model.EnvironmentSpec{Project: "shadow"})
+	// Binds to nothing global at all.
+	plainEnv := environment("plain-production", model.EnvironmentSpec{Project: "plain"})
+
+	c := newClient(t, boundProject(), shadow, project("plain", model.ProjectSpec{
+		Image:      "ghcr.io/acme/plain:1.0.0",
+		Components: []model.Component{{Name: "web", Port: 8080}},
+	}), boundEnv, staging, shadowEnv, plainEnv)
+	r := &EnvironmentReconciler{Client: c, Profiles: StaticProfileSource{}, Sources: &fakeGitSources{}}
+
+	source := &v1alpha1.GitSource{ObjectMeta: metav1.ObjectMeta{Name: "tools"}}
+	got := map[string]bool{}
+	for _, req := range r.environmentsOfGitSource(context.Background(), source) {
+		got[req.Name] = true
+	}
+	want := map[string]bool{"production": true, "staging": true}
+	if len(got) != len(want) {
+		t.Fatalf("enqueued %v, want %v", got, want)
+	}
+	for name := range want {
+		if !got[name] {
+			t.Errorf("environment %s was not enqueued for a change to the source it is bound to", name)
+		}
+	}
+}
+
 // A project-local name shadows a global one (ADR-0035 decision 3), and the
 // reconciler is the caller that has to hand the resolver both halves for the
 // rule to have anything to apply.
