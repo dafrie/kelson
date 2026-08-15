@@ -87,12 +87,12 @@ The connections screen ([ADR-0033](../docs/adr/0033-git-connections.md),
 [#248](https://github.com/dafrie/kelson/issues/248)) holds the one entry point
 in this UI that is **not** an RPC. "Connect GitHub" runs GitHub's app-manifest
 flow, whose credential is minted by GitHub and handed to the *server* — which is
-why `CreateConnection` has no app variant and why the button is a plain anchor
-to `/forge/github/manifest/start` rather than a call. That endpoint is
-server-side work of a later slice, and the copy beside the button says so; note
-that the dev proxy in `vite.config.ts` forwards `/kelson.v1alpha1.`, `/auth/`
-and `/healthz` only, so a `/forge/` entry has to land with the handler for the
-flow to work under `npm run dev`.
+why `CreateConnection` has no app variant. The button POSTs
+`/forge/github/manifest/session` with the session's credential, then navigates
+to the single-use `startUrl` the server answers with; the callback lands back on
+`/connections` with `connected`/`install`/`error` query parameters the page
+renders once and clears. The dev proxy in `vite.config.ts` forwards `/forge/`
+alongside the RPC prefix, so the whole round trip works under `npm run dev`.
 
 Ownership is displayed and enforced by nothing: ADR-0033 decision 6 fixes the
 semantics now and gives them a subject when tenancy does (#231), so the screen
