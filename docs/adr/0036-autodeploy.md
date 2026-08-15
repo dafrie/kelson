@@ -72,6 +72,37 @@ auto-deploy"). The audit trail records the trigger per [ADR-0026](0026-agent-aud
 an honest principal: the reporting agent identity for `ReportBuild`, and the forge connection (as a
 system principal, not a person) for a webhook push — never an invented human.
 
+### Amendment (2026-08-15): what decision 3 turned out to be
+
+Decision 3 was written as "render with the reported component-keyed pins, publish to the environments'
+artifacts". The implementation ([#248](https://github.com/dafrie/kelson/issues/248)) does the first half
+and cannot do the second, and the substitution is worth recording rather than leaving to a code comment.
+
+**kelson-server publishes no environment artifact.** Under [ADR-0028](0028-delivery-spine.md) a revision
+is a `<generation>-<spec-hash>` artifact tag *and* an `OCIRepository` pinned to it, both derived and
+applied by kelson-controller inside one reconcile. A server-side push would either invent a tag nothing
+points at — an upload no cluster pulls — or write over a tag the controller treats as immutable history.
+Either is a second authority over what an environment serves. So the trigger is the one input that makes
+the controller re-render: the digests are spliced into `Environment.spec.components[].image` and the
+document is stored, which bumps `.metadata.generation`. This is the mechanism `kelson deploy --image` and
+`kelson promote` already use, through the same splice.
+
+**That collides with decision 2, and the collision is not resolved here.** The field written is a pin,
+and decision 2 excludes a pinned component from the stale set — so auto-deploy moves each component once
+and then reports it as pinned. Closing it needs the model to tell an author's pin from a trigger's (a
+provenance marker on the pin, or a component-keyed image input that is not a pin), which is a decision
+this ADR should make rather than one a trigger path takes by ignoring pins it believes it wrote.
+
+**The multi-source refusal does not reach the environment's conditions.** Decision 3 asks for it there;
+`Environment.status.conditions` is a status subresource kelson-controller owns, and no seam in
+kelson-server writes one (internal/api's `EnvironmentStore` has `Get`, `Watch` and `Annotate`, which is
+ADR-0028's single-authority rule enforced by the type). The refusal lands in the delivery's structured
+answer, in the log, on a `kelson/deploy` commit status and in the audit trail instead.
+
+**Decision 4's system principal is a fourth value.** [ADR-0026](0026-agent-audit-trail.md) decision 1
+lists `agent`, `human` and `anonymous`; a webhook trigger records `system` with the connection's name,
+because each of the three would be false. ADR-0026 is owed that amendment.
+
 ## Rationale
 
 - **Environment default + component override** rather than a component list on the flag, because it

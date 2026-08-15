@@ -38,7 +38,6 @@ milestone that will implement the field.
 | `Project.spec.components[].tools` (`kind: agent`) | M7 · Agent surface & MCP ([#75](https://github.com/dafrie/kelson/issues/75)) |
 | `Project.spec.defaults.policy.deployers`, `Environment.spec.policy.deployers` | tenancy ([#231](https://github.com/dafrie/kelson/issues/231)) |
 | `Project.spec.components[].release` | the Flux-native `dependsOn` split ([#227](https://github.com/dafrie/kelson/issues/227), [ADR-0028](adr/0028-delivery-spine.md) decision 8) |
-| `Environment.spec.autoDeploy`, `Environment.spec.components[].autoDeploy` | the trigger paths that act on a push ([ADR-0036](adr/0036-autodeploy.md) decision 3, [#248](https://github.com/dafrie/kelson/issues/248)) |
 
 The rest of `policy:` is enforced as of [ADR-0025](adr/0025-agent-policy.md) — `deployers` stays gated
 because it is about human subjects, which kelson does not model yet
@@ -468,21 +467,32 @@ Two paths, one pipeline ([ADR-0036](adr/0036-autodeploy.md) decision 3): a forge
 **`kelson ci report-build`** with a `--ref` and no `--pr` for projects whose images are built by CI
 (`build.by: ci`). Components a report names that are *not* stale — not bound, not tracking, pinned —
 are named back in the response rather than quietly deployed, and a kelson-built project with several
-sources still refuses with `build/several-sources` ([#252](https://github.com/dafrie/kelson/issues/252))
-on the environment's conditions rather than into a webhook `202`.
+sources still refuses with `build/several-sources` ([#252](https://github.com/dafrie/kelson/issues/252)),
+named in full in the delivery's own answer, on a `kelson/deploy` commit status and in the audit trail.
 
 **There is no poller, and the docs will not imply one.** An instance that can neither receive webhooks
 nor report builds keeps manual deploys, which is exactly today's behaviour; webhook loss degrades
 tracking to manual without an error, and the delivery-state surface (last delivery, last report) is what
 makes that visible.
 
-> **Not implemented yet ([#248](https://github.com/dafrie/kelson/issues/248)).** Both fields are in the
-> model — validated, resolved, and covered by tests — and nothing acts on them, so writing either is a
-> `schema/not-implemented` refusal
-> ([the table above](#what-this-document-describes-and-what-kelson-implements-today)) and the webhook
-> and `ReportBuild` still answer that `autoDeploy` is not implemented. The two gate rows go when the
-> trigger paths land, and precedence and the stale set are already under test — the same way M9 and
-> ADR-0025 landed.
+### How an environment is actually moved, and what it costs
+
+kelson-server publishes no environment artifact and must not: under
+[ADR-0028](adr/0028-delivery-spine.md) a revision is a `<generation>-<spec-hash>` artifact tag plus an
+`OCIRepository` pinned to it, and kelson-controller derives and applies both inside one reconcile. So the
+trigger writes the reported (or freshly built) digests into
+`Environment.spec.components[].image` and stores the document. That is a spec write, it bumps
+`.metadata.generation`, and the reconcile that follows renders and publishes — the same mechanism
+`kelson deploy --image` and `kelson promote` already use, through the same splice.
+
+> **The cost, stated ([#248](https://github.com/dafrie/kelson/issues/248)).** That field is a *pin*, and a
+> pinned component is not in the stale set — so a component an auto-deploy moves is excluded from the next
+> push's, and the answer then names it as pinned. Auto-deploy moves each component once until the pin is
+> removed. It is a collision between two decisions rather than a fault in either: ADR-0036 decision 2 reads
+> "the spec names an image" as "a person is holding this still", and ADR-0028 leaves a spec write as the
+> only way to tell the controller anything. Closing it needs the model to tell an author's pin from a
+> trigger's — which is a design decision, not something a trigger path should decide by ignoring pins it
+> believes it recognises.
 
 ## Promotion
 
@@ -1031,8 +1041,7 @@ artifact-registry credential.
 > method itself ([#248](https://github.com/dafrie/kelson/issues/248)). A report for a project whose
 > `build.by` is `kelson` (the default for a project with `source:`) is answered `accepted: false`
 > naming the field, because those images come from kelson's own build plane; a report with no
-> `--pr` is refused, because nothing acts on the tracking environments it would feed yet — `autoDeploy`
-> is in the model as of [ADR-0036](adr/0036-autodeploy.md) and still gated
+> `--pr` moves the environments that follow the reported ref
 > ([above](#auto-deploy-an-environment-follows-its-sources)).
 
 **Or CI publishes, with `kelson preview publish`, run in the application repository's CI on pull
@@ -1383,7 +1392,7 @@ metadata:
 spec:
   project: checkout                  # required: the Project this environment deploys
   namespace: checkout-prod           # target namespace
-  autoDeploy: true                   # follow the components' sources; default false — still rejected (#248)
+  autoDeploy: true                   # follow the components' sources; default false
   routing:
     domainSuffix: acme.run
     gatewayClass: envoy              # Gateway API only (#140); a spec with `ingressClass` is rejected
@@ -1417,7 +1426,7 @@ spec:
       env:
         LOG_LEVEL: warning
     - name: worker
-      autoDeploy: false              # …except this one; workloads only — still rejected (#248)
+      autoDeploy: false              # …except this one; workloads only
     - name: db                       # P5: per-environment topology override
       preset: ha-small
 ```
