@@ -118,7 +118,7 @@ func decodeDocument(raw *yaml.Node, docIdx int) (any, Errors) {
 	}
 
 	switch tm.Kind {
-	case KindProject, KindEnvironment, KindGitConnection:
+	case KindProject, KindEnvironment, KindGitConnection, KindGitSource:
 	case "":
 		v.err(ErrMissingRequired, "$.kind", "kind is required",
 			"set kind to one of: "+strings.Join(Kinds, ", "))
@@ -142,6 +142,9 @@ func decodeDocument(raw *yaml.Node, docIdx int) (any, Errors) {
 	case KindGitConnection:
 		g := new(GitConnection)
 		doc = g
+	case KindGitSource:
+		g := new(GitSource)
+		doc = g
 	}
 
 	resource := docResource(doc)
@@ -162,6 +165,10 @@ func decodeDocument(raw *yaml.Node, docIdx int) (any, Errors) {
 		vg := validator{resource: resource, kind: KindGitConnection, pos: pos}
 		validateGitConnection(d, &vg)
 		errs = append(errs, vg.errs...)
+	case *GitSource:
+		vs := validator{resource: resource, kind: KindGitSource, pos: pos}
+		validateGitSource(d, &vs)
+		errs = append(errs, vs.errs...)
 	}
 	return doc, errs
 }
@@ -174,6 +181,8 @@ func docResource(doc any) string {
 		return fmt.Sprintf("%s/%s", KindEnvironment, d.Metadata.Name)
 	case *GitConnection:
 		return fmt.Sprintf("%s/%s", KindGitConnection, d.Metadata.Name)
+	case *GitSource:
+		return fmt.Sprintf("%s/%s", KindGitSource, d.Metadata.Name)
 	}
 	return "document"
 }

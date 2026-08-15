@@ -17,6 +17,8 @@ const (
 	KindEnvironmentList   = "EnvironmentList"
 	KindGitConnection     = "GitConnection"
 	KindGitConnectionList = "GitConnectionList"
+	KindGitSource         = "GitSource"
+	KindGitSourceList     = "GitSourceList"
 )
 
 // Project is the shared-configuration document as a custom resource: the
@@ -109,4 +111,37 @@ type GitConnectionList struct {
 	metav1.ListMeta `json:"metadata,omitempty"`
 
 	Items []GitConnection `json:"items"`
+}
+
+// GitSource is a repository the instance offers to every project, as a custom
+// resource (ADR-0035 decision 2).
+//
+// Its name is what a component binds to (`source: <name>`), which is why the
+// spec carries no name of its own: a second copy inside the spec could disagree
+// with the one `kubectl get gitsources` prints. A project declaring a source of
+// the same name shadows this one — a global name is a convenience, not a claim.
+//
+// It is deliberately dumber than a GitConnection: data, not credentials. There
+// is nothing here that could leak, and no status beyond validation, because
+// whether the repository can actually be reached is a property of the connection
+// that serves it (ADR-0033 decision 1).
+//
+// +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
+type GitSource struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+
+	Spec   model.GitSourceSpec `json:"spec,omitempty"`
+	Status GitSourceStatus     `json:"status,omitempty"`
+}
+
+// GitSourceList is a list of GitSources.
+//
+// +kubebuilder:object:root=true
+type GitSourceList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+
+	Items []GitSource `json:"items"`
 }

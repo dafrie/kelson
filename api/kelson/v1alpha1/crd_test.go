@@ -36,6 +36,7 @@ func TestCRDStatusMatchesGoTypes(t *testing.T) {
 		{"kelson.dev_projects.yaml", "Project", reflect.TypeOf(ProjectStatus{})},
 		{"kelson.dev_environments.yaml", "Environment", reflect.TypeOf(EnvironmentStatus{})},
 		{"kelson.dev_gitconnections.yaml", "GitConnection", reflect.TypeOf(GitConnectionStatus{})},
+		{"kelson.dev_gitsources.yaml", "GitSource", reflect.TypeOf(GitSourceStatus{})},
 	}
 	for _, tc := range cases {
 		t.Run(tc.file, func(t *testing.T) {

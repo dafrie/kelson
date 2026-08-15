@@ -10,7 +10,8 @@
       "enum": [
         "Project",
         "Environment",
-        "GitConnection"
+        "GitConnection",
+        "GitSource"
       ]
     },
     "metadata": {
@@ -99,7 +100,7 @@
                 "user",
                 "team"
               ],
-              "description": "who may edit this connection; only instance is enforced today"
+              "description": "who may edit this document; only instance is enforced today"
             },
             "name": {
               "type": "string",

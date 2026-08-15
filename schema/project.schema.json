@@ -10,7 +10,8 @@
       "enum": [
         "Project",
         "Environment",
-        "GitConnection"
+        "GitConnection",
+        "GitSource"
       ]
     },
     "metadata": {

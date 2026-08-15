@@ -2,6 +2,7 @@ package model
 
 import (
 	"encoding/json"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -577,6 +578,143 @@ spec:
 	}
 	if strings.Contains(string(data), `"sources"`) {
 		t.Errorf("an empty binding list must marshal to nothing, or every environment retags: %s", data)
+	}
+}
+
+// gitSourceDoc wraps a spec body in the document envelope, so the cases below
+// read as the YAML an author writes rather than as a Go literal.
+func gitSourceDoc(name, spec string) string {
+	return "apiVersion: " + APIVersion + "\nkind: " + KindGitSource +
+		"\nmetadata: {name: " + name + "}\nspec:\n" + spec
+}
+
+// TestValidGitSource: the global tier of ADR-0035 decision 2, decoded as its own
+// kind and offered to the resolver as a plain Source.
+func TestValidGitSource(t *testing.T) {
+	docs, errs := DecodeDocuments([]byte(gitSourceDoc("build-tools",
+		"  git: https://github.com/acme/build-tools\n  ref: v2\n  connection: acme-github\n  owner: {kind: instance}\n")))
+	if len(errs) != 0 {
+		t.Fatalf("expected a valid source, got:\n%v", errs)
+	}
+	g, ok := docs[0].(*GitSource)
+	if !ok {
+		t.Fatalf("expected *GitSource, got %T", docs[0])
+	}
+	if !g.Spec.IsInstanceOwned() {
+		t.Error("a source with owner.kind instance is instance-owned")
+	}
+	if errs := ValidateGitSource(g); len(errs) != 0 {
+		t.Errorf("ValidateGitSource disagrees with the decode-time pass:\n%v", errs)
+	}
+	want := Source{Name: "build-tools", Git: "https://github.com/acme/build-tools", Ref: "v2", Connection: "acme-github"}
+	if got := g.AsSource(); got != want {
+		t.Errorf("AsSource() = %+v, want %+v — the name comes from metadata", got, want)
+	}
+}
+
+func TestGitSourceValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		docName string
+		spec    string
+		code    Code
+		field   string
+	}{
+		{
+			name:    "no repository",
+			docName: "build-tools",
+			spec:    "  ref: main\n",
+			code:    ErrMissingRequired,
+			field:   "$.spec.git",
+		},
+		{
+			name:    "a name that is not a label",
+			docName: "Build_Tools",
+			spec:    "  git: https://github.com/acme/build-tools\n",
+			code:    ErrInvalidFormat,
+			field:   "$.metadata.name",
+		},
+		{
+			name:    "a connection that is not a name",
+			docName: "build-tools",
+			spec:    "  git: https://github.com/acme/build-tools\n  connection: \"Not A Name\"\n",
+			code:    ErrInvalidFormat,
+			field:   "$.spec.connection",
+		},
+		{
+			name:    "an instance owner naming a principal",
+			docName: "build-tools",
+			spec:    "  git: https://github.com/acme/build-tools\n  owner: {kind: instance, name: alice}\n",
+			code:    ErrMutuallyExclusive,
+			field:   "$.spec.owner.name",
+		},
+		{
+			name:    "a user owner naming nobody",
+			docName: "build-tools",
+			spec:    "  git: https://github.com/acme/build-tools\n  owner: {kind: user}\n",
+			code:    ErrMissingRequired,
+			field:   "$.spec.owner.name",
+		},
+		{
+			name:    "a field the kind does not have",
+			docName: "build-tools",
+			spec:    "  git: https://github.com/acme/build-tools\n  provider: github\n",
+			code:    ErrUnknownField,
+			field:   "$.spec.provider",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, errs := DecodeDocuments([]byte(gitSourceDoc(tc.docName, tc.spec)))
+			e := errorAt(t, errs, tc.code)
+			if e.Field != tc.field {
+				t.Errorf("field = %q, want %q (%v)", e.Field, tc.field, errs)
+			}
+		})
+	}
+}
+
+// TestGitSourceCarriesNoCredential is ADR-0035 decision 2's "dumber than a
+// connection" as a test: a source is data, and the credential it is read with is
+// a name pointing at a GitConnection.
+func TestGitSourceCarriesNoCredential(t *testing.T) {
+	for _, path := range specFieldPaths(reflect.TypeOf(GitSource{})) {
+		for _, forbidden := range []string{"auth", "token", "secret", "key", "password"} {
+			if strings.Contains(strings.ToLower(path), forbidden) {
+				t.Errorf("%s looks like credential material; a GitSource carries none (ADR-0035 decision 2)", path)
+			}
+		}
+	}
+}
+
+// TestGitSourceResolvesAsAGlobal is the seam slice 2 uses: list the GitSources,
+// convert, hand them to Resolve.
+func TestGitSourceResolvesAsAGlobal(t *testing.T) {
+	docs, errs := DecodeDocuments([]byte(gitSourceDoc("build-tools",
+		"  git: https://github.com/acme/build-tools\n  ref: v2\n")))
+	if len(errs) != 0 {
+		t.Fatalf("decoding the source: %v", errs)
+	}
+	global := docs[0].(*GitSource)
+
+	p, e := loadPair(t, `
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata: {name: checkout}
+spec:
+  source: {git: https://github.com/acme/checkout}
+  components:
+    - {name: web, port: 8080}
+    - {name: tools, source: build-tools}
+`, anyEnvironment)
+	r, errs := Resolve(p, e, global.AsSource())
+	if len(errs) > 0 {
+		t.Fatalf("resolve: %v", errs)
+	}
+	if bound := r.SourceFor("tools"); bound == nil || bound.Git != global.Spec.Git || bound.Ref != "v2" {
+		t.Fatalf("tools bound to %+v, want the instance's build-tools source", bound)
+	}
+	if bound := r.SourceFor("web"); bound == nil || bound.Name != DefaultSourceName {
+		t.Fatalf("web bound to %+v, want the project's own default", bound)
 	}
 }
 

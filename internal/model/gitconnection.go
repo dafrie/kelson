@@ -164,9 +164,14 @@ const (
 	TokenUsernameKey = "username"
 )
 
-// ConnectionOwner is who owns a connection — a discriminated reference whose
-// semantics ADR-0033 decision 6 fixes now so that tenancy (#231) does not have
-// to re-litigate them.
+// ConnectionOwner is who owns a control-plane document — a discriminated
+// reference whose semantics ADR-0033 decision 6 fixes now so that tenancy
+// (#231) does not have to re-litigate them.
+//
+// It keeps the name it was born with although a GitSource carries one too
+// (ADR-0035 decision 2): the two documents are owned in exactly the same sense,
+// and reusing the block was the point — a second owner type would be a second
+// answer to a question ADR-0033 already settled.
 //
 // Use is granted by visibility and mutation by ownership: any project that can
 // see a connection may build and preview through it, and editing, rotating or
@@ -176,10 +181,10 @@ const (
 // everyone on this instance" until it is not.
 type ConnectionOwner struct {
 	// Kind is instance, user or team. Only instance is meaningful today.
-	Kind string `yaml:"kind" json:"kind" jsonschema:"required,enum=instance,enum=user,enum=team,description=who may edit this connection; only instance is enforced today"`
+	Kind string `yaml:"kind" json:"kind" jsonschema:"required,enum=instance,enum=user,enum=team,description=who may edit this document; only instance is enforced today"`
 
 	// Name is the principal, and it is required for every kind but instance —
-	// a user-owned connection that names no user owns nothing. It is refused on
+	// a user-owned document that names no user owns nothing. It is refused on
 	// `kind: instance`, which has no principal to name.
 	Name string `yaml:"name,omitempty" json:"name,omitempty" jsonschema:"description=the owning principal; required when kind is user or team and refused when it is instance"`
 }

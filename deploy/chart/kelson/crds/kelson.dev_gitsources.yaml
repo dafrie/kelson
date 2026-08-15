@@ -9,19 +9,19 @@
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
-  name: gitconnections.kelson.dev
+  name: gitsources.kelson.dev
   labels:
     app.kubernetes.io/name: kelson
     app.kubernetes.io/component: crd
 spec:
   group: kelson.dev
   names:
-    kind: GitConnection
-    listKind: GitConnectionList
-    plural: gitconnections
-    singular: gitconnection
+    kind: GitSource
+    listKind: GitSourceList
+    plural: gitsources
+    singular: gitsource
     shortNames:
-      - kconn
+      - ksrc
   scope: Namespaced
   versions:
     - name: v1alpha1
@@ -30,32 +30,28 @@ spec:
       subresources:
         status: {}
       additionalPrinterColumns:
-        - name: Provider
+        - name: Repository
           type: string
-          jsonPath: .spec.provider
-          description: the forge adapter this connection uses
-        - name: Host
+          jsonPath: .spec.git
+          description: the repository this source offers
+        - name: Ref
           type: string
-          jsonPath: .spec.host
-          description: the forge base URL; empty means the provider's default
-        - name: Account
+          jsonPath: .spec.ref
+          description: the branch, tag or commit it is read at
+        - name: Connection
           type: string
-          jsonPath: .status.account
-          description: who the credential acts as, as the provider reports it
-        - name: Repos
-          type: integer
-          jsonPath: .status.repositories
-          description: how many repositories the credential can see
+          jsonPath: .spec.connection
+          description: the GitConnection it is read with; empty means the host match
         - name: Ready
           type: string
           jsonPath: .status.conditions[?(@.type=="Ready")].status
-          description: whether the document validated and the credential resolved
+          description: whether the document validated
         - name: Age
           type: date
           jsonPath: .metadata.creationTimestamp
       schema:
         openAPIV3Schema:
-          description: 'GitConnection is a forge kelson can talk to and the Secret it talks with: which provider and host, which credential kind, and who owns it. It carries identifiers and Secret names and never a credential value (ADR-0033).'
+          description: 'GitSource is a repository the instance offers to every project: where the code is, at which ref, through which connection, and who owns it. Its name is what a component binds to with `source: <name>`, and a project declaring a source of that name shadows it (ADR-0035).'
           type: object
           properties:
             apiVersion:
@@ -69,46 +65,13 @@ spec:
             spec:
               type: object
               required:
-                - provider
-                - auth
+                - git
               properties:
-                auth:
-                  type: object
-                  properties:
-                    githubApp:
-                      description: provider github only; the per-instance GitHub App this connection acts as
-                      type: object
-                      required:
-                        - appID
-                        - secretRef
-                      properties:
-                        appID:
-                          description: the GitHub App's numeric ID as the manifest flow reports it
-                          type: integer
-                          minimum: 1
-                        installationID:
-                          description: the installation this app acts as; 0 is the valid pre-install state before the installation webhook arrives
-                          type: integer
-                          minimum: 0
-                        secretRef:
-                          description: name of the Secret holding the app private key and webhook secret; never a value
-                          type: string
-                          minLength: 1
-                    token:
-                      description: a personal or project access token held in a Secret; the fallback every forge answers
-                      type: object
-                      required:
-                        - secretRef
-                      properties:
-                        secretRef:
-                          description: name of the Secret holding the token; never a value
-                          type: string
-                          minLength: 1
-                  x-kubernetes-validations:
-                    - rule: has(self.githubApp) != has(self.token)
-                      message: 'set exactly one of auth.githubApp or auth.token: they are different credential kinds and not two spellings of one (schema/mutually-exclusive)'
-                host:
-                  description: forge base URL such as https://github.com or https://git.acme.internal; defaults to https://github.com for provider github
+                connection:
+                  description: name of the GitConnection to authenticate with; resolved by host match against the instance's connections when omitted
+                  type: string
+                git:
+                  description: git URL of the repository this source offers
                   type: string
                   format: uri
                 owner:
@@ -130,25 +93,15 @@ spec:
                     - rule: '!has(self.kind) || self.kind == ''instance'' || (has(self.name) && self.name != '''')'
                       message: an owner whose kind is user or team names the principal it belongs to (schema/missing-required)
                     - rule: '!has(self.kind) || self.kind != ''instance'' || !has(self.name) || self.name == '''''
-                      message: 'an instance-owned connection names no principal: remove owner.name, or set owner.kind to user or team (schema/mutually-exclusive)'
-                provider:
-                  description: the forge this connection speaks to; the enum grows one value per adapter
+                      message: 'an instance-owned source names no principal: remove owner.name, or set owner.kind to user or team (schema/mutually-exclusive)'
+                ref:
                   type: string
-                  enum:
-                    - github
-                    - generic
-              x-kubernetes-validations:
-                - rule: '!has(self.auth) || !has(self.auth.githubApp) || (has(self.provider) && self.provider == ''github'')'
-                  message: 'auth.githubApp needs provider github: the app-manifest flow and installation tokens are GitHub''s and no other adapter can mint one (semantic/auth-provider-mismatch)'
             status:
-              description: 'GitConnectionStatus is what the control plane observed about this GitConnection: whether the document is usable, and what the forge said when kelson used it.'
+              description: 'GitSourceStatus is what the control plane observed about this GitSource: whether the document is usable, as of which generation. Reachability belongs to the GitConnection that serves it.'
               type: object
               properties:
-                account:
-                  description: 'who the credential acts as, as the provider reports it: the organization or user the app is installed on, or the account a token belongs to'
-                  type: string
                 conditions:
-                  description: the observed conditions, with Ready as the summary and Reachable as the forge's own answer
+                  description: the observed conditions, with Ready as the summary
                   type: array
                   items:
                     type: object
@@ -197,10 +150,6 @@ spec:
                   description: the .metadata.generation this status describes. A status whose observedGeneration trails the object's generation has not caught up yet.
                   type: integer
                   format: int64
-                repositories:
-                  description: 'how many repositories this credential can see, as the provider reports it. A scope readout rather than a count: an installation that should cover forty repositories and reports one is a picked-the-wrong-repository mistake.'
-                  type: integer
-                  format: int32
                 validationErrors:
                   description: 'what validate.go said about this document. An invalid spec is a status and not a rejection: nothing renders, nothing is published, and the previous revision keeps serving.'
                   type: array

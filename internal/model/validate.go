@@ -1712,7 +1712,34 @@ func validateGitConnection(g *GitConnection, v *validator) {
 
 	v.connectionHost("$.spec.host", s)
 	v.connectionAuth("$.spec.auth", s)
-	v.connectionOwner("$.spec.owner", s.Owner)
+	v.owner("$.spec.owner", s.Owner)
+}
+
+// validateGitSource checks a GitSource (ADR-0035 decision 2). Like a
+// connection it has no cross-document half: what it names is a repository and a
+// connection, and whether either answers is the cluster's and the forge's to
+// know at use time.
+//
+// It is held to exactly what a Project's own source is held to, because it is
+// the same thing declared one tier out — the source of a document that cannot
+// see the other tier must not be judged by a different rule.
+func validateGitSource(g *GitSource, v *validator) {
+	v.name("$.metadata.name", g.Metadata.Name, "source")
+	s := &g.Spec
+
+	if s.Git == "" {
+		v.err(ErrMissingRequired, "$.spec.git",
+			"a GitSource names the repository it offers",
+			"set spec.git to the repository URL. A source is where code is read from; the credential it "+
+				"is read with is a GitConnection, and it is spec.connection (ADR-0033, ADR-0035)")
+	}
+	if s.Connection != "" {
+		// Whether the connection *exists* is cluster state, and validation
+		// deliberately has none (ADR-0001) — the same line a Project's
+		// source.connection is held to.
+		v.name("$.spec.connection", s.Connection, "connection")
+	}
+	v.owner("$.spec.owner", s.Owner)
 }
 
 // connectionHost holds the forge base URL to what kelson can judge without a
@@ -1817,21 +1844,22 @@ func (v *validator) connectionSecretRef(field, name, what string) {
 	v.name(field, name, "secret")
 }
 
-// connectionOwner checks the discriminated owner reference of ADR-0033
-// decision 6.
+// owner checks the discriminated owner reference of ADR-0033 decision 6, on
+// either kind that carries one — a GitConnection, and now a GitSource, which
+// reuses the block rather than designing a second one (ADR-0035 decision 2).
 //
 // It is validated in full today and enforced by nothing, which is the decision
 // and not an oversight: the semantics are fixed now so tenancy (#231) attaches
-// to stored connections rather than migrating them. A malformed owner would
+// to stored documents rather than migrating them. A malformed owner would
 // otherwise be found for the first time by the code that finally enforces it.
-func (v *validator) connectionOwner(field string, o *ConnectionOwner) {
+func (v *validator) owner(field string, o *ConnectionOwner) {
 	if o == nil {
 		return
 	}
 	switch {
 	case o.Kind == "":
 		v.err(ErrMissingRequired, field+".kind",
-			"an owner block names the kind of principal that owns the connection",
+			"an owner block names the kind of principal that owns this document",
 			"set kind to one of: "+strings.Join(OwnerKinds, ", ")+
 				", or remove owner entirely — an absent owner is instance-owned")
 	case !slices.Contains(OwnerKinds, o.Kind):
@@ -1843,12 +1871,12 @@ func (v *validator) connectionOwner(field string, o *ConnectionOwner) {
 			v.err(ErrMutuallyExclusive, field+".name",
 				fmt.Sprintf("owner.kind is %q and names principal %q", o.Kind, o.Name),
 				"remove name, or set kind to "+OwnerUser+" or "+OwnerTeam+" — an instance-owned "+
-					"connection belongs to the instance and there is no principal to name")
+					"document belongs to the instance and there is no principal to name")
 		}
 	case o.Name == "":
 		v.err(ErrMissingRequired, field+".name",
 			fmt.Sprintf("owner.kind is %q and names no principal", o.Kind),
-			"set name to the "+o.Kind+" that owns this connection, or set kind to "+OwnerInstance+
+			"set name to the "+o.Kind+" that owns this document, or set kind to "+OwnerInstance+
 				" — an owner kind with no name owns nothing")
 	}
 }
@@ -2028,6 +2056,16 @@ func ValidateEnvironment(e *Environment, p *Project) Errors {
 func ValidateGitConnection(g *GitConnection) Errors {
 	v := validator{resource: fmt.Sprintf("%s/%s", KindGitConnection, g.Metadata.Name), kind: KindGitConnection}
 	validateGitConnection(g, &v)
+	return v.errs
+}
+
+// ValidateGitSource validates a GitSource (ADR-0035 decision 2). It takes one
+// document for the reason [ValidateGitConnection] does: what references a global
+// source is a component's `source:` name, in a document this one has never heard
+// of, and that binding is resolved where both are in hand rather than here.
+func ValidateGitSource(g *GitSource) Errors {
+	v := validator{resource: fmt.Sprintf("%s/%s", KindGitSource, g.Metadata.Name), kind: KindGitSource}
+	validateGitSource(g, &v)
 	return v.errs
 }
 
