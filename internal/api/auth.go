@@ -70,6 +70,17 @@ import (
 // be anonymous — but it means an agent's scope behaves identically in a local
 // dev server and in production, which is where scope bugs would otherwise hide.
 //
+// # One check, two mount points
+//
+// [Auth.Middleware] gates `/kelson.v1alpha1.*` and passes everything else, so a
+// handler mounted beside the RPCs is ungated unless it asks. The GitHub App
+// manifest flow's session endpoint is one (internal/forgehttp, ADR-0033
+// decision 2, issue #248), and [Auth.CheckRequest] is its ask: the same
+// credential order, the same principals, the same code as an RPC gets. Exported
+// for that single purpose, and deliberately the only per-request check this
+// package exports — a foreign handler that had to re-derive "is this caller
+// authenticated" would be a second answer to a question with one.
+//
 // # What this is not
 //
 // It is not TLS, not per-user identity for humans, and not a defence against
@@ -206,6 +217,24 @@ func (a *Auth) Middleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r.WithContext(WithPrincipal(r.Context(), p)))
 	})
+}
+
+// CheckRequest applies the RPC routes' credential check to one request that is
+// not an RPC, for a handler mounted outside [Auth.Middleware]'s prefix.
+//
+// The returned string is a refusal message, and is empty exactly when the
+// request carries a credential this server accepts — including the case where
+// no password and no agent store are configured, where an RPC is open and so is
+// this. A caller writes the message as the body of its own refusal, in whatever
+// shape its surface speaks.
+//
+// It returns no principal on purpose. Nothing outside this package authorizes,
+// and handing a foreign handler an identity it cannot put through the scope
+// table (scope.go) would invite an authorization decision written somewhere
+// this package could not see.
+func (a *Auth) CheckRequest(r *http.Request) string {
+	_, message := a.principal(r)
+	return message
 }
 
 // noCredential is the refusal a request with nothing usable gets. It names all

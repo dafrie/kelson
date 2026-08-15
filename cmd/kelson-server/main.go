@@ -421,17 +421,23 @@ func newMux(plane *serverPlane, auth *api.Auth) http.Handler {
 	plane.api.Register(mux)
 	auth.Register(mux)
 	// The forge surface (ADR-0033 decision 2, ADR-0034 decisions 1 and 2):
-	// /forge/github/webhook and the two halves of the app-manifest flow. It
+	// /forge/github/webhook and the three parts of the app-manifest flow. It
 	// sits beside the RPC routes rather than inside internal/api because none
 	// of it is an RPC — a webhook body's schema is GitHub's, and the manifest
 	// flow is browser redirects and a form.
 	//
 	// Like /healthz and /auth/*, it is outside the gate's `/kelson.v1alpha1.*`
-	// prefix, which is right for the webhook (its gate is the HMAC) and is a
-	// stated gap for the manifest endpoints — see internal/forgehttp's package
-	// doc.
+	// prefix, so it carries its own (issue #248). The webhook's is the HMAC over
+	// the body. The manifest flow's is the check handed in here — the RPC
+	// routes' own, so "authenticated exactly like an RPC" is one implementation
+	// rather than two — which gates the session endpoint that mints the
+	// one-time ticket /start then requires.
+	//
+	// The check is injected at this line because this is the first moment both
+	// halves exist: the gate is built from the agent store connectServer made,
+	// so the forge Handler could not have been given it at construction.
 	if plane.forge != nil {
-		plane.forge.Register(mux)
+		plane.forge.Register(mux, auth.CheckRequest)
 	}
 	mux.HandleFunc("/healthz", healthz)
 	mux.Handle("/", webui.Handler())
