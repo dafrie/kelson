@@ -1,7 +1,9 @@
 package model
 
 import (
+	"encoding/json"
 	"slices"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -359,6 +361,80 @@ spec:
 	}
 	if got := r.Components[0].Image; got != ImageUnresolved {
 		t.Errorf("image = %q, want %q (built from source, awaiting build)", got, ImageUnresolved)
+	}
+}
+
+// TestResolveCarriesTheProjectSource: the git URL and the named connection
+// reach the resolved spec, so a plane holding only a Resolved can resolve the
+// connection the way the server does (ADR-0033 decision 4). Before this, the
+// preview materializer could match by host and nothing else — the override
+// existed in the spec and stopped at the server.
+func TestResolveCarriesTheProjectSource(t *testing.T) {
+	p, e := loadPair(t, `
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata: {name: hello}
+spec:
+  source:
+    git: https://github.com/acme/hello
+    ref: main
+    connection: acme-github
+  components:
+    - {name: web, port: 8080}
+`, `
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata: {name: dev}
+spec:
+  project: hello
+`)
+	r, errs := Resolve(p, e)
+	if len(errs) != 0 {
+		t.Fatalf("resolve: %v", errs)
+	}
+	if r.Source == nil {
+		t.Fatal("a project with a source resolved to none")
+	}
+	if r.Source.Git != "https://github.com/acme/hello" || r.Source.Connection != "acme-github" {
+		t.Errorf("source = %+v, want the project's git URL and connection", *r.Source)
+	}
+}
+
+// A project deploying a pre-built image has no source, and the field must stay
+// nil so it marshals to nothing: a struct here rather than a pointer would have
+// moved the spec hash of every image-only environment in existence.
+func TestResolveWithoutASourceCarriesNone(t *testing.T) {
+	p, e := loadPair(t, `
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata: {name: hello}
+spec:
+  image: ghcr.io/acme/hello:1
+  components:
+    - {name: web, port: 8080}
+`, `
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata: {name: dev}
+spec:
+  project: hello
+`)
+	r, errs := Resolve(p, e)
+	if len(errs) != 0 {
+		t.Fatalf("resolve: %v", errs)
+	}
+	if r.Source != nil {
+		t.Errorf("source = %+v, want nil", *r.Source)
+	}
+	// The hash is taken over this encoding, so "marshals to nothing" is the
+	// property that kept the artifact tag of every image-only environment where
+	// it was. A struct here rather than a pointer would have moved all of them.
+	encoded, err := json.Marshal(r)
+	if err != nil {
+		t.Fatalf("marshalling: %v", err)
+	}
+	if strings.Contains(string(encoded), `"source"`) {
+		t.Errorf("a project with no source encoded one: %s", encoded)
 	}
 }
 

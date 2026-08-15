@@ -1,6 +1,7 @@
 package forgeconn
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -10,9 +11,17 @@ import (
 	"github.com/dafrie/kelson/internal/preview/naming"
 )
 
-// The flux-operator-shaped Secret a `previews:` block needs, built from a
-// connection ([ADR-0033](docs/adr/0033-git-connections.md) decision 4: "kelson
-// materializes the flux-operator-shaped Secret from it").
+// The previews credential: which connection an environment's previews
+// authenticate with, and the flux-operator-shaped Secret built from it
+// ([ADR-0033](docs/adr/0033-git-connections.md) decision 4: "the same
+// resolution serves previews … kelson materializes the flux-operator-shaped
+// Secret from it").
+//
+// The two halves are here together because they are one question asked twice.
+// [Resolver.ResolvePreviews] picks the connection — the same rule the source
+// path uses, with one documented difference for the repository a preview is
+// allowed to watch instead — and [PreviewSecretData] turns what it picked into
+// the bytes flux-operator reads.
 //
 // # Two shapes, and the difference is staleness
 //
@@ -35,11 +44,12 @@ import (
 // ([ErrNoInstallation]): the app exists and nobody has installed it, which is a
 // state the `installation` webhook ends and not a Secret to write half of.
 //
-// # This function holds no cluster and writes nothing
+// # Nothing here holds a cluster or writes anything
 //
-// It turns a [Resolution] into bytes. Whoever applies them decides where they
-// go and what owns them, which is the same split every other pure part of
-// kelson draws.
+// [PreviewSecretData] turns a [Resolution] into bytes; whoever applies them
+// decides where they go and what owns them, which is the same split every other
+// pure part of kelson draws. The resolution beside it reaches a Secret only
+// through the [Store] seam, exactly as [Resolver.Resolve] does.
 
 // Shape names which of flux-operator's two vocabularies a Secret was written
 // in. It is returned rather than inferred by the caller because the answer is
@@ -73,6 +83,85 @@ const (
 // remedy is a specific one — install the app and pick repositories — and the
 // caller reports it rather than retrying.
 var ErrNoInstallation = fmt.Errorf("the connection's GitHub App is not installed yet, so it can mint nothing")
+
+// ResolvePreviews picks the connection an environment's previews authenticate
+// with (ADR-0033 decision 4: "the same resolution serves previews").
+//
+// previewsRepo is `previews.repo` and source is the Project's `source:` block,
+// or nil for a project that deploys a pre-built image. It answers through the
+// same [Resolver.Resolve] every other caller uses, so an ambiguity is still a
+// refusal naming both connections and a missing name is still a refusal naming
+// the field — the previews path does not get its own idea of what resolution
+// means.
+//
+// # The one thing that is different, and why
+//
+// `previews.repo` is not `source.git`. A preview watches the repository the
+// pull requests are in, which is usually the source repository and is allowed
+// not to be. So the explicit override cannot simply be passed through:
+// `source.connection` is a statement about the *source* repository, and
+// applying it to a previews repo on another forge would authenticate a GitLab
+// poll with a GitHub App because a field two documents away said so.
+//
+// The rule is therefore: **the override applies when the two repositories are
+// on the same forge host, and is ignored otherwise.** Same host is where the
+// author's sentence still holds — "read this forge with that connection" — and
+// it is the case the field was written for, since the overwhelmingly common
+// shape is previews on the very repository the project builds from. A previews
+// repo on a different host falls back to host matching against `previews.repo`
+// alone, which is exactly what happened before the override was reachable here.
+//
+// Host granularity rather than repository granularity is deliberate: a project
+// whose previews watch a sibling repository on the same forge wants the same
+// credential, and requiring the URLs to be equal would make the override useless
+// for the monorepo-adjacent case while protecting nothing — a connection is
+// scoped to a host to begin with.
+func (r *Resolver) ResolvePreviews(ctx context.Context, previewsRepo string, source *model.ResolvedSource) (Resolution, bool, error) {
+	return r.Resolve(ctx, previewsRepo, PreviewsOverride(previewsRepo, source))
+}
+
+// PreviewsOverride is the `source.connection` the previews path may use for one
+// repository, or "" when it may not. It is exported so the rule is testable and
+// quotable on its own; [Resolver.ResolvePreviews] documents it.
+func PreviewsOverride(previewsRepo string, source *model.ResolvedSource) string {
+	if source == nil || source.Connection == "" {
+		return ""
+	}
+	host := remoteHost(previewsRepo)
+	if host == "" || host != remoteHost(source.Git) {
+		return ""
+	}
+	return source.Connection
+}
+
+// remoteHost is a remote URL's host (with port, lowercased), or "" when there
+// is nothing to read.
+//
+// It accepts the scp-like `git@host:owner/repo` spelling as well as a URL,
+// because the two fields being compared are held to different formats:
+// `previews.repo` must be HTTP(S) (it is reached through the forge's API) while
+// `source.git` is commonly written as an SSH remote. They spell the same forge
+// differently, and a comparison that could not see through that would silently
+// drop the override for most projects that set one.
+func remoteHost(remote string) string {
+	raw := strings.TrimSpace(remote)
+	if raw == "" {
+		return ""
+	}
+	if !strings.Contains(raw, "://") {
+		if at := strings.Index(raw, "@"); at >= 0 {
+			if colon := strings.Index(raw[at:], ":"); colon >= 0 {
+				return strings.ToLower(raw[at+1 : at+colon])
+			}
+		}
+		raw = "https://" + raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(u.Host)
+}
 
 // PreviewSecretName is what kelson calls the Secret it materializes for an
 // environment's previews.

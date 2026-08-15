@@ -134,15 +134,20 @@ func (p ConnectionPreviewSecrets) Ensure(ctx context.Context, rev Revision) (str
 		return "", "", nil
 	}
 
-	// Host match only. `previews.repo` is the source repository, so it resolves
-	// through exactly the rule a build's clone does — but the Project's
-	// `source.connection` override is not reachable from here: model.Resolved
-	// carries the environment and the components and not the Project's source
-	// block, so an instance with two connections covering one host resolves
-	// ambiguously and materializes nothing rather than picking. That is the
-	// same refusal every other caller of the matcher makes; carrying the
-	// override into Resolved is internal/model's to do.
-	res, resolved, err := p.Sources.Resolve(ctx, previews.Repo, "")
+	// The same resolution the server runs for a build's clone: the Project's
+	// `source.connection` when the author named one, host matching against
+	// `previews.repo` otherwise, and a refusal — which is a skip here — when
+	// two connections tie.
+	//
+	// The override is honoured only when `previews.repo` and `source.git` are
+	// on the same forge host, because `source.connection` is a sentence about
+	// the *source* repository and a preview is allowed to watch a different
+	// one: applying a GitHub App named for github.com to a previews repo on
+	// gitlab.com would be kelson inventing an authorization the author never
+	// wrote. Same host is where the sentence still holds, and it is the
+	// overwhelmingly common shape — previews on the very repository the project
+	// builds from. [forgeconn.Resolver.ResolvePreviews] owns the rule.
+	res, resolved, err := p.Sources.ResolvePreviews(ctx, previews.Repo, sourceOf(rev))
 	if err != nil || !resolved {
 		// A resolution refusal is not a deploy failure: see the header. The
 		// connection's own conditions are where "two connections cover this
@@ -251,6 +256,17 @@ func sameData(live, desired map[string][]byte) bool {
 // Anything else is somebody's own Secret and is never touched.
 func kelsonManages(secretRef, derived string) bool {
 	return secretRef == "" || secretRef == derived
+}
+
+// sourceOf is the Project's source block as resolution carried it, or nil for a
+// project that deploys a pre-built image. It guards the whole chain for the
+// same reason [previewsOf] does: a Revision is a plain struct, so nothing in
+// the type system says its resolved spec is there.
+func sourceOf(rev Revision) *model.ResolvedSource {
+	if rev.Resolved == nil {
+		return nil
+	}
+	return rev.Resolved.Source
 }
 
 // previewsOf is the environment's resolved previews block, when it has one.

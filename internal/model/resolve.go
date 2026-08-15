@@ -25,7 +25,28 @@ const ImageUnresolved = "@"
 // ordering contract — the things workloads depend on before the workloads — as
 // separate loops rather than passes over one list with a kind test in each.
 type Resolved struct {
-	Project      string
+	Project string
+
+	// Source is the Project's `source:` block, carried through so a plane
+	// holding a resolved spec can resolve its git connection the way the server
+	// does (ADR-0033 decision 4). Nil for a project that deploys a pre-built
+	// image and has no source at all.
+	//
+	// It carries the two fields *resolution* needs and not the ref: which
+	// repository, and which connection the author named for it. Without them
+	// the preview materializer could only match by host, so an instance holding
+	// two connections for one forge had no way to say which credential its
+	// previews act as — the override existed in the spec and stopped at the
+	// server.
+	//
+	// It carries an explicit json tag with omitempty where its siblings carry
+	// none, for the reason [ResolvedComponent.Release] does: this struct is
+	// hashed into the artifact tag, so a nil pointer must marshal to nothing or
+	// adding the field would have retagged every environment in every cluster.
+	// A project that *does* have a source republishes once, which is correct —
+	// where kelson reads the code from is part of what a revision is.
+	Source *ResolvedSource `json:"source,omitempty"`
+
 	Environment  ResolvedEnvironment
 	Components   []ResolvedComponent
 	DataServices []ResolvedDataService
@@ -35,6 +56,18 @@ type Resolved struct {
 	// renderer emits a different pair of resources for them.
 	Charts   []ResolvedChart
 	Overlays []Overlay
+}
+
+// ResolvedSource is where a project's code lives and which connection kelson
+// reads it with. Nothing resolves into it — `source:` has no per-environment
+// override and no default chain — so it is the Project's own two values,
+// carried rather than computed.
+type ResolvedSource struct {
+	Git string `json:"git"`
+	// Connection is `source.connection`: the GitConnection the author named,
+	// or empty for the host match that is the common case (ADR-0033
+	// decision 4).
+	Connection string `json:"connection,omitempty"`
 }
 
 type ResolvedEnvironment struct {
@@ -191,6 +224,10 @@ func resolve(p *Project, e *Environment) *Resolved {
 	r.Environment.Name = e.Metadata.Name
 	r.Environment.Cluster = e.Spec.Cluster
 	r.Environment.Namespace = ns
+
+	if src := p.Spec.Source; src != nil {
+		r.Source = &ResolvedSource{Git: src.Git, Connection: src.Connection}
+	}
 
 	if routing := e.Spec.Routing; routing != nil {
 		r.Environment.Routing.DomainSuffix = routing.DomainSuffix

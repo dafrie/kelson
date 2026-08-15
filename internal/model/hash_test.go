@@ -78,6 +78,13 @@ func TestSpecHashMovesWithTheSpec(t *testing.T) {
 			r.Components[0], r.Components[1] = r.Components[1], r.Components[0]
 		}},
 		{"the project name", func(r *model.Resolved) { r.Project = "checkout-2" }},
+		// Where kelson reads the code from is part of what a revision is
+		// (ADR-0033 decision 4), so acquiring a source moves the hash. An
+		// image-only project keeps its old tag: the field is a nil pointer and
+		// marshals to nothing.
+		{"acquiring a source", func(r *model.Resolved) {
+			r.Source = &model.ResolvedSource{Git: "https://github.com/acme/checkout"}
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

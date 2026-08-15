@@ -264,6 +264,110 @@ func TestAnUninstalledAppDoesNotFailTheDeploy(t *testing.T) {
 	}
 }
 
+// twoGitHubConnections is the instance host matching cannot answer for: both
+// cover github.com, so `previews.repo` alone ties and the materializer writes
+// nothing. `source.connection` is what the author writes to break it (ADR-0033
+// decision 4).
+func twoGitHubConnections() *fakeConnStore {
+	conn := func(name string) controlstore.StoredConnection {
+		return controlstore.StoredConnection{
+			Name: name,
+			Spec: model.GitConnectionSpec{
+				Provider: model.GitProviderGitHub,
+				Auth:     model.GitConnectionAuth{Token: &model.TokenAuth{SecretRef: name + "-token"}},
+			},
+		}
+	}
+	return &fakeConnStore{
+		conns: []controlstore.StoredConnection{conn("acme-github"), conn("contractor-github")},
+		material: map[string]controlstore.AuthMaterial{
+			"acme-github":       {Token: previewToken},
+			"contractor-github": {Token: "ghp_contractor"},
+		},
+	}
+}
+
+// withSource puts the Project's source block on a revision, the way resolution
+// carries it now.
+func withSource(rev Revision, git, connection string) Revision {
+	rev.Resolved.Source = &model.ResolvedSource{Git: git, Connection: connection}
+	return rev
+}
+
+// Two connections covering one host is a refusal, and a refusal materializes
+// nothing rather than failing the deploy.
+func TestAmbiguousConnectionsMaterializeNothing(t *testing.T) {
+	client := newFakeSecretClient()
+	name, _, err := materializer(twoGitHubConnections(), client).Ensure(context.Background(), previewRevision(""))
+	if err != nil {
+		t.Fatalf("an ambiguous resolution failed the deploy: %v", err)
+	}
+	if name != "" || client.creates != 0 {
+		t.Error("kelson picked between two connections covering the same repository")
+	}
+}
+
+// The override reaches the previews path now that model.Resolved carries it:
+// the author named a connection for this repository, and the previews credential
+// is that connection's.
+func TestExplicitSourceConnectionBreaksTheTie(t *testing.T) {
+	client := newFakeSecretClient()
+	rev := withSource(previewRevision(""), "https://github.com/acme/checkout", "contractor-github")
+
+	name, shape, err := materializer(twoGitHubConnections(), client).Ensure(context.Background(), rev)
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	if name != "checkout-staging-previews" || shape != forgeconn.ShapeBasicAuth {
+		t.Fatalf("Ensure = (%q, %q), want the derived name and basic auth", name, shape)
+	}
+	secret := client.objects["checkout-staging/checkout-staging-previews"]
+	if got := string(secret.Data[forgeconn.FluxPasswordKey]); got != "ghp_contractor" {
+		t.Errorf("password = %q, want the connection the author named", got)
+	}
+}
+
+// The edge the rule is written for: `previews.repo` may be a different
+// repository from `source.git`, and `source.connection` is a sentence about the
+// source one. Where the two are on different forges the override is ignored and
+// host matching against previews.repo answers instead — here, ambiguously, so
+// nothing is written. Honouring it would authenticate a github.com poll with a
+// connection the author chose for a self-hosted forge.
+func TestASourceConnectionOnAnotherForgeIsIgnored(t *testing.T) {
+	client := newFakeSecretClient()
+	rev := withSource(previewRevision(""), "https://git.acme.internal/acme/checkout", "contractor-github")
+
+	name, _, err := materializer(twoGitHubConnections(), client).Ensure(context.Background(), rev)
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	if name != "" || client.creates != 0 {
+		t.Error("an override written for another forge was applied to previews.repo")
+	}
+}
+
+// And the same override does travel to a *sibling* repository on the same
+// forge, which is the case host granularity buys: a project whose previews
+// watch a different repo on the same host wants the same credential.
+func TestTheOverrideTravelsToASiblingRepositoryOnTheSameForge(t *testing.T) {
+	client := newFakeSecretClient()
+	rev := previewRevision("")
+	rev.Resolved.Environment.Previews.Repo = "https://github.com/acme/checkout-web"
+	rev = withSource(rev, "https://github.com/acme/checkout", "contractor-github")
+
+	name, _, err := materializer(twoGitHubConnections(), client).Ensure(context.Background(), rev)
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	if name != "checkout-staging-previews" {
+		t.Fatalf("name = %q, want the derived name", name)
+	}
+	secret := client.objects["checkout-staging/checkout-staging-previews"]
+	if got := string(secret.Data[forgeconn.FluxPasswordKey]); got != "ghp_contractor" {
+		t.Errorf("password = %q, want the connection the author named", got)
+	}
+}
+
 // An environment with no previews block asks for nothing.
 func TestNoPreviewsMaterializesNothing(t *testing.T) {
 	client := newFakeSecretClient()
