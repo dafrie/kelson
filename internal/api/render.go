@@ -2,12 +2,13 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"connectrpc.com/connect"
 
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
-	"github.com/dafrie/kelson/internal/delivery"
+	"github.com/dafrie/kelson/internal/artifact"
 	"github.com/dafrie/kelson/internal/diff"
 	"github.com/dafrie/kelson/internal/renderer"
 )
@@ -126,27 +127,143 @@ func checkDiffBefore(msg *kelsonv1alpha1.DiffRequest) error {
 	return nil
 }
 
-// revisionDiff is gated (issue #224).
+// revisionDiff compares today's render against the manifests a recorded
+// revision actually published (issue #247, ADR-0028 decisions 4 and 5).
 //
-// Diffing against a recorded revision compared today's render with the bytes
-// that were actually applied then, read through the rendered-history store.
-// ADR-0027 decision 7 deleted that store, and its replacement — pull the
-// immutable OCI artifact for the revision and compare against its contents
-// (ADR-0028 decision 4) — is not built.
+// # Where the before side comes from, and where it does not
 //
-// It refuses rather than falling back to re-rendering the old spec, which would
-// answer a different question: what that spec produces under TODAY's renderer
-// and ClusterProfile, which is not what was applied. The two other diff modes
-// are unaffected — `from` re-renders documents the caller supplies, and
-// dry_run=SERVER is the live cluster's verdict on the current set — and the
-// refusal names them.
-func (s *Server) revisionDiff(_ context.Context, revision string, cur *rendered) (*diff.Diff, error) {
-	return nil, delivery.NotImplemented("diff",
-		fmt.Sprintf("kelson cannot compare against revision %q: the recorded manifests of a past revision "+
-			"came from the rendered-history store, which was deleted with the old delivery machinery. "+
-			"Diff against documents you supply with `from`, or against the live cluster with "+
-			"dry_run=SERVER, both of which are unaffected", revision),
-		"#224")
+// From the registry, as bytes. Every revision's rendered set is an immutable
+// OCI artifact (ADR-0028 decision 2), so the comparison is against what was
+// applied rather than against what the old spec would produce under today's
+// renderer and ClusterProfile — which is a different question, and the reason
+// this handler refused for two milestones rather than re-rendering a stored
+// spec and calling it a diff.
+//
+// The digest the mirror recorded for the revision is passed to the pull when
+// there is one, so the bytes are checked against what this environment says it
+// published and not only against what the tag points at today. A revision that
+// has aged out of the twenty-entry mirror has no recorded digest here; the pull
+// is still verified end to end against the digest the registry resolves the tag
+// to, and against each layer descriptor.
+//
+// # Beyond the window is served, not refused
+//
+// The mirror is bounded and the registry is the record (ADR-0028 decision 4).
+// Rollback already takes that posture — it *confirms* a target the mirror has
+// forgotten and restores it — and a diff that refused the same revision would
+// make the comparison unavailable for exactly the revisions somebody is
+// auditing, which is what the bound was never meant to mean. So the mirror is
+// consulted for the digest and never for permission: if the artifact is
+// pullable, the diff is served.
+//
+// # What each failure is
+//
+// A revision neither the mirror nor the registry holds is the caller's argument
+// being wrong. A registry that could not be read is this server's dependency
+// failing — Unavailable, never InvalidArgument, because telling a caller their
+// revision is gone on the strength of a registry that never answered is the one
+// answer this path must not give. Bytes that do not match their digest are
+// neither: nothing about them is retryable and no diff may be computed from
+// them, so they are DataLoss and the message names both digests.
+func (s *Server) revisionDiff(ctx context.Context, revision string, cur *rendered) (*diff.Diff, error) {
+	project, environment := cur.project.Metadata.Name, cur.environment.Metadata.Name
+	if s.revisions == nil {
+		return nil, unimplemented("comparing against a published revision")
+	}
+	fetcher, ok := s.revisions.(RevisionFetcher)
+	if !ok {
+		return nil, unimplemented("reading a published revision's artifact back")
+	}
+	// The tag grammar, checked before the registry is asked, for the reason
+	// rollbackTarget checks it: a caller who typed a branch name or a digest
+	// reads that they named the wrong *kind* of thing rather than that their
+	// revision does not exist.
+	if !revisionFormat.MatchString(revision) {
+		return nil, fmt.Errorf(
+			"api: %q is not a revision: a revision is <generation>-<spec-hash-short>, e.g. 7-a1b2c3d4 "+
+				"(`kelson history` lists what %s/%s has published)", revision, project, environment)
+	}
+
+	pulled, found, err := fetcher.Fetch(ctx, project, environment, revision, s.recordedDigest(ctx, project, environment, revision))
+	if err != nil {
+		return nil, fetchFailure(err, project, environment, revision)
+	}
+	if !found {
+		return nil, fmt.Errorf(
+			"api: %s/%s has no revision %q in the registry, which holds every artifact it ever published "+
+				"(ADR-0028 decision 4). `kelson history` lists them; `from` compares against documents you "+
+				"supply and dry_run=SERVER against the live cluster",
+			project, environment, revision)
+	}
+
+	prev := make([][]byte, 0, len(pulled.Files))
+	for _, f := range pulled.Files {
+		prev = append(prev, f.Data)
+	}
+	curDocs, err := renderedDocuments(cur)
+	if err != nil {
+		return nil, err
+	}
+	// BetweenDocuments and not Between: the recorded side is bytes with no
+	// renderer.Manifest behind them, and re-parsing them into one would be a
+	// second reading of a document that already says what it is.
+	return diff.BetweenDocuments(project, environment, prev, curDocs, nil)
+}
+
+// recordedDigest is what the bounded mirror remembers this revision's bytes to
+// be, or empty when it has forgotten (or when this server has no environment
+// store at all).
+//
+// A store that cannot be read costs the cross-check and nothing else, so it is
+// not fatal: the pull still verifies the manifest against the digest the
+// registry resolves the tag to and each layer against its descriptor. What the
+// mirror adds is the stronger claim — that those bytes are the ones this
+// environment recorded publishing — and losing it silently would be wrong only
+// if it were the whole verification, which it is not.
+func (s *Server) recordedDigest(ctx context.Context, project, environment, revision string) string {
+	if s.environments == nil {
+		return ""
+	}
+	environments, err := s.environmentStore()
+	if err != nil {
+		return ""
+	}
+	st, err := environments.Get(ctx, project, environment)
+	if err != nil {
+		return ""
+	}
+	if recorded, ok := st.FindRevision(revision); ok {
+		return recorded.Digest
+	}
+	return ""
+}
+
+// fetchFailure maps a failed artifact read onto the code that tells the caller
+// what to do about it. An integrity failure is DataLoss and carries both
+// digests; everything else the registry did — refused, timed out, was never
+// reachable — is this server's dependency failing.
+func fetchFailure(err error, project, environment, revision string) error {
+	var integrity *artifact.IntegrityError
+	if errors.As(err, &integrity) {
+		return connect.NewError(connect.CodeDataLoss, fmt.Errorf(
+			"api: the artifact for %s/%s revision %s does not match the digest that names it, so kelson will "+
+				"not diff against it: %w", project, environment, revision, err))
+	}
+	return unavailable("api: reading the artifact for %s/%s revision %s: %w", project, environment, revision, err)
+}
+
+// renderedDocuments is the current side of a comparison as bytes, in render
+// order — the same encoding the artifact for this render would carry.
+func renderedDocuments(cur *rendered) ([][]byte, error) {
+	docs := make([][]byte, 0, len(cur.manifests))
+	for _, m := range cur.manifests {
+		body, err := m.YAML()
+		if err != nil {
+			return nil, fmt.Errorf("api: encoding manifest %s/%s: %w", m.Kind, m.Name, err)
+		}
+		docs = append(docs, body)
+	}
+	return docs, nil
 }
 
 // serverDiff drives the L2 engine. It never falls back to a rendered diff on

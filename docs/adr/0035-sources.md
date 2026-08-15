@@ -1,6 +1,6 @@
 # ADR-0035: Sources are declared, then bound — per-component sources and the global tier
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-08-15
 
 > Reframes issue [#239](https://github.com/dafrie/kelson/issues/239) per the owner's clarification:

@@ -1113,6 +1113,84 @@ func TestRollbackInsideTheMirrorNeverAsksTheRegistry(t *testing.T) {
 	}
 }
 
+// TestRollbackPreviewComparesTheTwoRecordedRevisions is issue #247's other
+// half: with a registry it can pull from, the preview is the actual comparison
+// of what is running against what is being restored — the finding that used to
+// stand in for it is gone, and it is gone rather than accompanying an empty
+// diff.
+func TestRollbackPreviewComparesTheTwoRecordedRevisions(t *testing.T) {
+	envs := newFakeEnvironments(twoRevisions())
+	envs.controller = rolledBack
+	record := newFakeArtifacts()
+	record.files["4-b2c3d4e5"] = recordedSet(retiredNamespace)
+	record.files["3-9f0a1b2c"] = recordedSet(`apiVersion: v1
+kind: Namespace
+metadata:
+  name: restored
+`)
+	record.digests["3-9f0a1b2c"] = "sha256:deadbeef"
+	c := serve(t, Options{Specs: newFakeSpecStore(), Environments: envs, Revisions: record})
+
+	stream, err := c.deploy.Rollback(context.Background(), connect.NewRequest(rollbackRequest("3-9f0a1b2c")))
+	if err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	_, msgs := rollbackEvents(t, stream)
+	preview := msgs[0].GetPreview()
+	body := string(preview.GetDiffJson())
+	if body == "" {
+		t.Fatalf("the preview carries no diff: %+v", preview.GetFindings())
+	}
+	// The direction is what changes if the rollback happens: the running
+	// revision's resource goes, the restored one's arrives.
+	if !strings.Contains(body, `"name": "retired"`) || !strings.Contains(body, `"name": "restored"`) {
+		t.Errorf("the diff does not compare the two revisions' recorded sets:\n%s", body)
+	}
+	for _, f := range preview.GetFindings() {
+		if f.GetCause() == "rollback/preview-unavailable" {
+			t.Errorf("the gap finding survived a preview that was computed: %q", f.GetMessage())
+		}
+	}
+	// The digest the mirror recorded travels with the pull, so the bytes are
+	// checked against what this environment published and not only against
+	// what the tag names today.
+	if got := record.asked["3-9f0a1b2c"]; got != "sha256:deadbeef" {
+		t.Errorf("fetched with digest %q, want the recorded one", got)
+	}
+}
+
+// A preview that cannot be computed never fails the rollback: the pointer move
+// is exact and needs nothing from the registry. What it must do is say so, and
+// say why, rather than report an empty diff.
+func TestRollbackPreviewStaysAFindingWhenTheArtifactsCannotBeRead(t *testing.T) {
+	envs := newFakeEnvironments(twoRevisions())
+	envs.controller = rolledBack
+	record := newFakeArtifacts()
+	record.files["3-9f0a1b2c"] = recordedSet(retiredNamespace)
+	record.err = errors.New("dial tcp: no route to host")
+	c := serve(t, Options{Specs: newFakeSpecStore(), Environments: envs, Revisions: record})
+
+	stream, err := c.deploy.Rollback(context.Background(), connect.NewRequest(rollbackRequest("3-9f0a1b2c")))
+	if err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	_, msgs := rollbackEvents(t, stream)
+	preview := msgs[0].GetPreview()
+	if len(preview.GetDiffJson()) != 0 {
+		t.Errorf("a preview that could not be computed carries a diff: %s", preview.GetDiffJson())
+	}
+	if len(preview.GetFindings()) == 0 || preview.GetFindings()[0].GetCause() != "rollback/preview-unavailable" {
+		t.Fatalf("findings = %+v, want the gap named", preview.GetFindings())
+	}
+	if !strings.Contains(preview.GetFindings()[0].GetMessage(), "no route to host") {
+		t.Errorf("the finding does not say why: %q", preview.GetFindings()[0].GetMessage())
+	}
+	// And the rollback itself still happened.
+	if len(envs.annotated) != 1 {
+		t.Errorf("the pin was not written: %+v", envs.annotated)
+	}
+}
+
 // TestRollbackToARevisionNeitherPlaceHolds: with both sources asked, a refusal
 // is a fact about both — and it says so, because "the mirror is bounded" alone
 // would read as "kelson forgot".

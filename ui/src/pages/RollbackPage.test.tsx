@@ -240,10 +240,9 @@ describe("RollbackPage", () => {
 });
 
 /**
- * The shape the real server sends today (internal/api's rollbackPreviewGap,
- * ADR-0028): exactly one finding, coded `rollback/preview-unavailable`, never
- * marked unrecoverable, and no diff — because every recorded revision is an
- * immutable OCI artifact and the server does not fetch two of them to compare.
+ * The shape the server sends when it could not read both revisions' artifacts
+ * back (internal/api's rollbackPreviewGap, ADR-0028, #247): one finding, coded
+ * `rollback/preview-unavailable`, never marked unrecoverable, and no diff.
  */
 const unavailableTransport = createRouterTransport((router) => {
   router.service(DeployService, {

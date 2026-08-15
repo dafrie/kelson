@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -38,6 +40,12 @@ import (
 //
 // The workload namespace and the published artifacts. See the deletion path in
 // [EnvironmentReconciler.finalize] for why.
+//
+// # The one way to make it clean up nothing
+//
+// [v1alpha1.AnnotationOrphanOnDelete] on the Environment. The finalizer still
+// runs and still releases itself; it skips the teardown, and the pair — with the
+// application it reconciles — stays (issue #242).
 const Finalizer = "kelson.dev/environment"
 
 // nonTerminalRequeue is the belt-and-braces poll while a deployment is in
@@ -89,6 +97,16 @@ type EnvironmentReconciler struct {
 	// aged-out target by saying so — which is honest, and is the behaviour
 	// every test that does not care about the registry gets for free.
 	Revisions RevisionLister
+
+	// Recorder is where a deletion that left its workloads running says so
+	// (issue #242). SetupWithManager fills it in from the manager; nil records
+	// nothing, which is what every test that does not assert on events gets.
+	//
+	// It is an event and not a condition because the object it is about is
+	// being deleted: a status written a moment before the finalizer clears is a
+	// status nobody can read afterwards, and an event outlives the object it
+	// references.
+	Recorder record.EventRecorder
 
 	// FluxWatches records whether SetupWithManager registered the watches on
 	// the Flux objects. It is false on a cluster with no Flux, where an
@@ -335,7 +353,7 @@ func (r *EnvironmentReconciler) setConditions(env *v1alpha1.Environment, rb roll
 		// result is unhealthy. Either way the cause is Flux's own words, and
 		// relaying them verbatim is what makes the status actionable.
 		setReady(&env.Status.Conditions, env.Generation, metav1.ConditionFalse,
-			v1alpha1.ReasonRenderFailed, outcome.Cause)
+			settledFailureReason(outcome), outcome.Cause)
 
 	case outcome.Phase == v1alpha1.PhaseHealthy:
 		setReady(&env.Status.Conditions, env.Generation, metav1.ConditionTrue, v1alpha1.ReasonReady,
@@ -366,6 +384,32 @@ func (r *EnvironmentReconciler) setConditions(env *v1alpha1.Environment, rb roll
 	setProgressing(&env.Status.Conditions, env.Generation, metav1.ConditionTrue,
 		v1alpha1.ReasonReconciling, joinMessages(defaultString(outcome.Cause,
 			"waiting for Flux to reconcile revision "+outcome.Revision), message))
+}
+
+// settledFailureReason names what put a settled delivery in a failed phase:
+// the apply Flux refused, or the workloads that are live and wrong (issue
+// #256).
+//
+// Both facts reach here on the outcome, so nothing is threaded for this: the
+// phase is Flux's verdict and Outcome.Workloads is the readback's, and which of
+// the two degraded the environment is exactly the difference between "your
+// manifests did not go on the cluster" and "they did, and a pod is
+// crash-looping".
+//
+// The readback wins whenever it has a verdict, including over a Kustomization
+// that had already called itself unhealthy. Both are true of the same
+// environment — Flux's health check and kelson's classifier are looking at the
+// same failing pods — and only one of them can say *which* pod, so the specific
+// one becomes the reason and Flux's sentence stays in the message.
+func settledFailureReason(outcome Outcome) string {
+	switch {
+	case outcome.Phase == v1alpha1.PhaseRejected:
+		return v1alpha1.ReasonApplyFailed
+	case outcome.Workloads != nil && outcome.Workloads.Degraded > 0:
+		return v1alpha1.ReasonWorkloadDegraded
+	default:
+		return v1alpha1.ReasonUnhealthy
+	}
 }
 
 // halt is the refusal that happens *before* delivery: an unresolvable Project,
@@ -438,9 +482,23 @@ func (r *EnvironmentReconciler) refuse(ctx context.Context, env *v1alpha1.Enviro
 //     and they are immutable. Deleting an Environment must not make its own
 //     record unrecoverable, and re-applying the same spec then finds every
 //     revision it ever published still there.
+//
+// # The escape hatch
+//
+// [v1alpha1.AnnotationOrphanOnDelete] skips the teardown entirely (issue #242).
+// The finalizer still runs and still releases — the custom resource must never
+// become undeletable — and the pair is left exactly as it stands, still labelled
+// and still reconciling the last artifact kelson published. It is the
+// environment-level form of the guarantee `kelson uninstall` already makes for
+// the instance (issue #59): you can delete kelson's record of an application
+// without deleting the application.
 func (r *EnvironmentReconciler) finalize(ctx context.Context, env *v1alpha1.Environment) (ctrl.Result, error) {
 	if !controllerutil.ContainsFinalizer(env, Finalizer) {
 		return ctrl.Result{}, nil
+	}
+	if o := orphanFor(env.Annotations); o.Requested {
+		r.announceOrphan(ctx, env, o)
+		return ctrl.Result{}, r.release(ctx, env)
 	}
 	if err := r.deliverer().Teardown(ctx, env.Spec.Project, env.Name); err != nil {
 		de, ok := asDeliveryError(err)
@@ -453,12 +511,48 @@ func (r *EnvironmentReconciler) finalize(ctx context.Context, env *v1alpha1.Envi
 		log.FromContext(ctx).Info("teardown refused", "reason", de.Reason, "message", de.Message)
 		return ctrl.Result{RequeueAfter: de.Retry}, nil
 	}
+	return ctrl.Result{}, r.release(ctx, env)
+}
+
+// release drops the deletion blocker, which is what lets the API server remove
+// the object. A NotFound is success: something else got there first, and the
+// state this is trying to reach is "the object is gone".
+func (r *EnvironmentReconciler) release(ctx context.Context, env *v1alpha1.Environment) error {
 	patch := client.MergeFrom(env.DeepCopy())
 	controllerutil.RemoveFinalizer(env, Finalizer)
 	if err := r.Client.Patch(ctx, env, patch); err != nil {
-		return ctrl.Result{}, client.IgnoreNotFound(err)
+		return client.IgnoreNotFound(err)
 	}
-	return ctrl.Result{}, nil
+	return nil
+}
+
+// announceOrphan is the record a skipped teardown leaves.
+//
+// Both a log line and an event, because they are read by different people at
+// different times: the log is what an operator watching the controller sees now,
+// and the event is what is still in the cluster afterwards, when the Environment
+// itself is gone and the only remaining question is why there is a Kustomization
+// in kelson-system that nothing owns.
+func (r *EnvironmentReconciler) announceOrphan(ctx context.Context, env *v1alpha1.Environment, o orphan) {
+	logger := log.FromContext(ctx)
+	message := orphanedMessage(env.Spec.Project, env.Name)
+	logger.Info(message, "environment", env.Name, "namespace", env.Namespace,
+		"annotation", v1alpha1.AnnotationOrphanOnDelete, "value", o.Value)
+	r.event(env, corev1.EventTypeNormal, EventReasonOrphaned, message)
+
+	if o.Malformed {
+		malformed := orphanMalformedMessage(o.Value)
+		logger.Info(malformed, "environment", env.Name, "namespace", env.Namespace)
+		r.event(env, corev1.EventTypeWarning, EventReasonOrphanAnnotationMalformed, malformed)
+	}
+}
+
+// event records one, or does nothing when no recorder is wired.
+func (r *EnvironmentReconciler) event(env *v1alpha1.Environment, eventType, reason, message string) {
+	if r.Recorder == nil {
+		return
+	}
+	r.Recorder.Event(env, eventType, reason, message)
 }
 
 // errEnvironmentGone reports that the Environment was deleted between the apply
@@ -537,7 +631,17 @@ func (r *EnvironmentReconciler) isTerminating(ctx context.Context, env *v1alpha1
 // order finalize uses. A failure is returned rather than swallowed: it is the
 // one thing here a log has to show, since no later reconcile of a deleted object
 // will retry it.
+//
+// The escape hatch is honoured here too, and it has to be: this path exists
+// precisely because [EnvironmentReconciler.finalize] never ran, so an operator
+// who annotated the Environment and then deleted it would otherwise have their
+// application torn down by whichever of the two paths won a race they cannot
+// see (issue #242).
 func (r *EnvironmentReconciler) abandon(ctx context.Context, env *v1alpha1.Environment) (ctrl.Result, error) {
+	if o := orphanFor(env.Annotations); o.Requested {
+		r.announceOrphan(ctx, env, o)
+		return ctrl.Result{}, nil
+	}
 	log.FromContext(ctx).Info("the environment was deleted before the finalizer was added; "+
 		"tearing the pair down from this reconcile", "environment", env.Name, "namespace", env.Namespace)
 	if err := r.deliverer().Teardown(ctx, env.Spec.Project, env.Name); err != nil {
@@ -665,6 +769,21 @@ func (r *EnvironmentReconciler) globalSources(ctx context.Context) ([]model.Sour
 func (r *EnvironmentReconciler) SetupWithManager(mgr ctrl.Manager, fluxPresent bool) error {
 	if r.Profiles == nil {
 		r.Profiles = StaticProfileSource{}
+	}
+	// The manager already holds a recorder and the chart already grants what it
+	// writes, so this is defaulted here rather than passed in: a binary that
+	// forgot to wire it would silently lose the only trace an orphaned pair
+	// leaves in the cluster.
+	//
+	// The deprecated accessor is the deliberate one. It records core v1 Events,
+	// which is exactly the grant the chart's controller ClusterRole carries and
+	// the API the manager's leader election already writes to. Its replacement,
+	// GetEventRecorder, writes events.k8s.io/v1 — a different API group, so
+	// switching would need a second RBAC rule before a single event landed, and
+	// that is a chart change to make on purpose rather than a side effect of
+	// this one.
+	if r.Recorder == nil {
+		r.Recorder = mgr.GetEventRecorderFor("kelson-controller") //nolint:staticcheck // see above
 	}
 	r.FluxWatches = fluxPresent
 

@@ -48,4 +48,10 @@
 // registry — not the bounded `status.history` mirror — the record of what an
 // environment has published (issue #241). tags.go says what those two calls can
 // and cannot recover about a revision the mirror has forgotten.
+//
+// [Pusher.Pull] is the third, and the one that recovers the bytes: it fetches an
+// artifact and inverts [Package] exactly, back to the [File] set it was
+// packaged from, with every digest checked along the way (issue #247, pull.go).
+// It is what lets a diff compare against what a revision *actually rendered*
+// rather than against what its spec would render today.
 package artifact

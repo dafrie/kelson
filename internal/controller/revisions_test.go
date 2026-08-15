@@ -22,6 +22,12 @@ type fakeReader struct {
 	found      bool
 	err        error
 	repository string
+
+	// pulled is what a Fetch hands back, and pullErr what it fails with. asked
+	// records the request, so a test can assert the recorded digest travelled.
+	pulled  artifact.Pulled
+	pullErr error
+	asked   artifact.PullRequest
 }
 
 func (f *fakeReader) Tags(_ context.Context, repository string) ([]string, error) {
@@ -32,6 +38,11 @@ func (f *fakeReader) Tags(_ context.Context, repository string) ([]string, error
 func (f *fakeReader) Resolve(_ context.Context, repository, _ string) (string, bool, error) {
 	f.repository = repository
 	return f.digest, f.found, f.err
+}
+
+func (f *fakeReader) Pull(_ context.Context, req artifact.PullRequest) (artifact.Pulled, error) {
+	f.repository, f.asked = req.Repository, req
+	return f.pulled, f.pullErr
 }
 
 func (f *fakeReader) connect(registry.Credential, bool) RegistryReader { return f }
@@ -125,6 +136,78 @@ func TestRegistryRevisionsWithoutARegistryRefuses(t *testing.T) {
 	var refusal *DeliveryError
 	if !errors.As(err, &refusal) || refusal.Reason != v1alpha1.ReasonRegistryNotConfigured {
 		t.Fatalf("Revisions error = %v, want %s", err, v1alpha1.ReasonRegistryNotConfigured)
+	}
+}
+
+// Fetching is the third question (issue #247): the bytes, not the tag list. The
+// repository comes from the same derivation a push uses, and the digest the
+// caller recorded travels with the request — a tag is a pointer, a digest is
+// the content, and the pull verifies the second against the first.
+func TestRegistryRevisionsFetchesTheRecordedBytes(t *testing.T) {
+	reader := &fakeReader{pulled: artifact.Pulled{
+		Digest: "sha256:aa",
+		Files:  []artifact.File{{Path: "001-deployment-api.yaml", Data: []byte("kind: Deployment\n")}},
+	}}
+	record := RegistryRevisions{Registry: "ghcr.io/acme", Reader: reader.connect}
+
+	pulled, found, err := record.Fetch(context.Background(), "shop", "production", "7-a1b2c3d4", "sha256:aa")
+	if err != nil || !found {
+		t.Fatalf("Fetch = %v, %v, want the artifact", found, err)
+	}
+	if len(pulled.Files) != 1 {
+		t.Errorf("pulled %d files, want the recorded set", len(pulled.Files))
+	}
+	if want := "ghcr.io/acme/kelson/shop-production"; reader.asked.Repository != want {
+		t.Errorf("pulled from %q, want %q", reader.asked.Repository, want)
+	}
+	if reader.asked.Reference != "7-a1b2c3d4" || reader.asked.Digest != "sha256:aa" {
+		t.Errorf("pull request = %+v, want the revision and the recorded digest", reader.asked)
+	}
+}
+
+// A revision the registry does not hold is an answer, and it must not arrive as
+// a failure: "there is no such revision" and "kelson could not look" send a
+// caller to two different places.
+func TestRegistryRevisionsFetchReportsAMissingRevision(t *testing.T) {
+	reader := &fakeReader{pullErr: artifact.Error{Reason: artifact.ReasonArtifactNotFound, Message: "no such tag"}}
+	record := RegistryRevisions{Registry: "ghcr.io/acme", Reader: reader.connect}
+
+	_, found, err := record.Fetch(context.Background(), "shop", "production", "9-deadbeef", "")
+	if err != nil || found {
+		t.Fatalf("Fetch of an absent revision = %v, %v; want found=false and no error", found, err)
+	}
+}
+
+// An integrity failure keeps its own type rather than being classified as a
+// delivery reason. None of them describes it: it is not transient, and it is
+// not a credential — the bytes are not the ones that revision was published as.
+func TestRegistryRevisionsFetchKeepsAnIntegrityFailureIntact(t *testing.T) {
+	reader := &fakeReader{pullErr: &artifact.IntegrityError{
+		Doing: "pulling 7-a1b2c3d4", Want: "sha256:aa", Got: "sha256:bb", Source: "the digest kelson recorded",
+	}}
+	record := RegistryRevisions{Registry: "ghcr.io/acme", Reader: reader.connect}
+
+	_, _, err := record.Fetch(context.Background(), "shop", "production", "7-a1b2c3d4", "sha256:aa")
+	var integrity *artifact.IntegrityError
+	if !errors.As(err, &integrity) {
+		t.Fatalf("Fetch error = %v, want an integrity error", err)
+	}
+	var refusal *DeliveryError
+	if errors.As(err, &refusal) {
+		t.Errorf("Fetch error was wrapped as %s, which would tell a caller to retry or fix a credential", refusal.Reason)
+	}
+}
+
+// Everything else is classified exactly as a tag-list read is, because it is
+// the same registry answering the same way.
+func TestRegistryRevisionsFetchClassifiesARefusal(t *testing.T) {
+	reader := &fakeReader{pullErr: &artifact.DeniedError{StatusCode: 403, Status: "403 Forbidden", Doing: "pulling"}}
+	record := RegistryRevisions{Registry: "ghcr.io/acme", Reader: reader.connect}
+
+	_, _, err := record.Fetch(context.Background(), "shop", "production", "7-a1b2c3d4", "")
+	var refusal *DeliveryError
+	if !errors.As(err, &refusal) || refusal.Reason != v1alpha1.ReasonRegistryReadDenied {
+		t.Fatalf("Fetch error = %v, want %s", err, v1alpha1.ReasonRegistryReadDenied)
 	}
 }
 

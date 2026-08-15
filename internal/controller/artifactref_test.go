@@ -155,6 +155,23 @@ func TestDeliveryPolicyCoversEveryReason(t *testing.T) {
 	if len(deliveryPolicy) != len(reasons) {
 		t.Errorf("deliveryPolicy has %d rows for %d reasons: the set is not closed", len(deliveryPolicy), len(reasons))
 	}
+
+	// The other direction, since issue #256 added a second group of delivery
+	// reasons: a phase that settled badly is an *observation* and not a
+	// refusal — nothing was returned as an error, so there is nothing to
+	// requeue and nothing to back off from. A row here would mean somebody had
+	// started refusing with one, and it would take whatever behaviour the row
+	// happened to say.
+	for _, reason := range []string{
+		v1alpha1.ReasonApplyFailed,
+		v1alpha1.ReasonWorkloadDegraded,
+		v1alpha1.ReasonUnhealthy,
+	} {
+		if _, ok := deliveryPolicy[reason]; ok {
+			t.Errorf("%s has a row in deliveryPolicy: it is a phase kelson observed, not a "+
+				"refusal it returned", reason)
+		}
+	}
 }
 
 // TestDeliveryPolicyBehaviours pins the three answers, because getting one

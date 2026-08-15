@@ -35,9 +35,12 @@ a file.
 > an `Environment.status` watch, a `kelson.dev/rollback-to` merge patch, a bounded history mirror, an
 > image-pin splice — and the CLI (`kelson deploy`/`status` (workload half only, see below)
 > `/rollback`/`promote`/`history`) is a ConnectRPC client of this façade again rather than refusing.
-> What has not moved: `Diff`'s `from_revision` still answers `CodeUnimplemented` with a
-> `delivery/not-implemented` detail naming #224 — a rendered-level diff against a past revision needs
-> the rendered-history store ADR-0027 deleted, and nothing has replaced it yet. `Deploy`'s two dry-run
+> `Diff`'s `from_revision` answers for real again ([#247](https://github.com/dafrie/kelson/issues/247)):
+> the before side is the rendered set that revision published, pulled back out of the registry as the
+> immutable artifact it is and verified against the digest `status.history` recorded, rather than the
+> old spec re-rendered — which would answer what that spec produces under *today's* renderer and
+> ClusterProfile. It needs registry **read** access (`--registry-config`, below); without one the RPC
+> answers `CodeUnimplemented` naming the missing seam. `Deploy`'s two dry-run
 > rungs, `Status`'s workload verdicts and everything the renderer does were unaffected throughout. The
 > **agent identity and audit records are not** —
 > they are control-plane records rather than delivery state, and they relocate unchanged to
@@ -68,7 +71,7 @@ In a cluster it is a Helm install, and every flag below is a values knob — see
 | `--registry` | `KELSON_REGISTRY` | unset | Destination registry for builds, e.g. `ghcr.io/acme`. It is also where `History` and `Rollback` read the revisions older than the bounded status mirror ([#241](https://github.com/dafrie/kelson/issues/241)), so it must be the same value kelson-controller publishes under. See [build](build.md). |
 | `--push-secret` | — | unset | Name of an existing `kubernetes.io/dockerconfigjson` Secret authenticating the push. |
 | `--build-namespace` | — | the environment's namespace | Where build Jobs run. |
-| `--registry-config` | `KELSON_REGISTRY_CONFIG` | `/etc/kelson/registry/config.json` | Path to a docker `config.json` holding the credential preview artifacts are published with, and the one `History` and `Rollback` read the registry's tag list under — listing needs pull scope as well as push ([#241](https://github.com/dafrie/kelson/issues/241)). It is a mounted file rather than a Secret name because this process pushes the artifact itself; `--push-secret` above is for the build Job, which pushes from a pod. Same flag, variable and default as [kelson-controller](install.md#configuring-the-controller). A file that is not there is an anonymous push, which is what the Helm chart does until `server.artifactPushSecret` names a `dockerconfigjson` Secret to mount here — the chart provides it exactly as it provides the controller's. |
+| `--registry-config` | `KELSON_REGISTRY_CONFIG` | `/etc/kelson/registry/config.json` | Path to a docker `config.json` holding the credential preview artifacts are published with, and the one every read of the registry uses: the tag list `History` and `Rollback` page past the status mirror with ([#241](https://github.com/dafrie/kelson/issues/241)), and the artifact `Diff(from_revision)` and the rollback preview pull back to compare recorded manifests ([#247](https://github.com/dafrie/kelson/issues/247)). **Those reads need `pull` scope**, so a credential that may only push leaves the comparisons refused with the credential named. It is a mounted file rather than a Secret name because this process pushes the artifact itself; `--push-secret` above is for the build Job, which pushes from a pod. Same flag, variable and default as [kelson-controller](install.md#configuring-the-controller). A file that is not there is an anonymous push, which is what the Helm chart does until `server.artifactPushSecret` names a `dockerconfigjson` Secret to mount here — the chart provides it exactly as it provides the controller's. |
 | `--insecure-registries` | `KELSON_INSECURE_REGISTRIES` | unset | Comma-separated registry hosts served over plain HTTP, e.g. `localhost:5000`. Exactly these; never a request's. See [build](build.md#plain-http-registries). |
 
 `/healthz` reports liveness plus the build (`version`, `commit`) and never requires authentication —
