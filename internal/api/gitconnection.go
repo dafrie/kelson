@@ -586,13 +586,32 @@ func (s *Server) forge(provider string) (forge.Provider, bool) {
 	return forge.For(provider)
 }
 
-// projectsThrough names the stored projects that resolve their source through
-// one connection, using the shared matcher (controlstore.MatchConnection) so
-// this answer and the build plane's choice of credential cannot disagree.
+// projectsThrough names the stored projects that reach a repository through one
+// connection, using the shared matcher (controlstore.MatchConnection) so this
+// answer and the build plane's choice of credential cannot disagree.
+//
+// # Every source a project reaches, not the first one it declares
+//
+// A project's repositories are `spec.source` *and* `spec.sources` (ADR-0035
+// decision 1) — one list written at two ceremonies — plus the GitSources its
+// components bind to by name (decision 3). Reading the singular spelling alone
+// made a plural-spelling project invisible here, so revoking a credential
+// reported "no projects affected" while every build in that project was about
+// to start failing. That is the one sentence this field exists to prevent.
+//
+// The global tier is included on a narrower rule than the project's own, and
+// deliberately: a project's declared sources count as *declared*, because
+// declaring one is the project saying it uses that repository, while an
+// instance's GitSources are offered to everyone — counting them for every
+// project would name the whole instance on every delete. So a GitSource counts
+// for a project when one of its components is *bound* to it, and a project-local
+// name shadows the global one it hides, exactly as resolution reads them.
 //
 // A server with no spec store holds no projects, so the answer is empty rather
 // than an error: the delete is still the right thing to do and there is nothing
-// to warn about.
+// to warn about. A listing that *failed* is not that case and is returned —
+// answering "nothing is affected" out of a failed read is the same lie the
+// build path refuses to tell (see [Server.globalSources]).
 func (s *Server) projectsThrough(ctx context.Context, connection string) ([]string, error) {
 	if s.specs == nil {
 		return nil, nil
@@ -609,23 +628,73 @@ func (s *Server) projectsThrough(ctx context.Context, connection string) ([]stri
 	for _, c := range conns {
 		refs = append(refs, c.Ref())
 	}
+	globals, err := s.globalSources(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	sources := make([]controlstore.ProjectSource, 0, len(stored))
 	for _, st := range stored {
 		project, ok := decodeProjectDocument(st.Documents.Project)
-		if !ok || project.Spec.Source == nil {
+		if !ok {
 			// A project whose document no longer decodes is not evidence about
 			// this connection either way, and refusing the delete over it would
 			// make one broken spec un-revoke every credential.
 			continue
 		}
-		sources = append(sources, controlstore.ProjectSource{
-			Project:    st.Project,
-			Git:        project.Spec.Source.Git,
-			Connection: project.Spec.Source.Connection,
-		})
+		for _, src := range reachedSources(project, globals) {
+			sources = append(sources, controlstore.ProjectSource{
+				Project:    st.Project,
+				Git:        src.Git,
+				Connection: src.Connection,
+			})
+		}
 	}
 	return controlstore.AffectedProjects(connection, sources, refs), nil
+}
+
+// reachedSources is every repository one project reaches: the sources it
+// declares in either spelling, and the GitSources its components bind to.
+//
+// It answers in [model.Source]s where [projectRepositories] answers in URLs,
+// because this caller needs the `connection:` beside the URL — an explicitly
+// named connection is how a project reaches one whose host match would have
+// picked another.
+//
+// [model.ProjectSpec.EffectiveSources] is what expands the singular spelling,
+// rather than a second reading of the same two fields here — the shorthand is
+// shorthand in exactly one place, so this scan and the resolver cannot come to
+// different conclusions about what a project declared.
+//
+// The shadowing rule is the resolver's too (ADR-0035 decision 3): a component
+// bound to `tools` uses the project's `tools` when it has one, so the global of
+// that name is not a repository this project reaches at all.
+func reachedSources(p *model.Project, globals []model.Source) []model.Source {
+	local := p.Spec.EffectiveSources()
+	out := make([]model.Source, 0, len(local))
+	out = append(out, local...)
+	if len(globals) == 0 {
+		return out
+	}
+
+	declared := make(map[string]bool, len(local))
+	for _, src := range local {
+		declared[src.Name] = true
+	}
+	bound := make(map[string]bool, len(p.Spec.Components))
+	for _, c := range p.Spec.Components {
+		// A helm component's `source:` is a chart source and names no
+		// repository kelson clones, which is what SourceName reports as "".
+		if name := c.SourceName(); name != "" && !declared[name] {
+			bound[name] = true
+		}
+	}
+	for _, g := range globals {
+		if bound[g.Name] {
+			out = append(out, g)
+		}
+	}
+	return out
 }
 
 // decodeProjectDocument reads the Project out of a stored document.
