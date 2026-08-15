@@ -311,14 +311,16 @@ function Revision({
 }
 
 /**
- * `rollback/preview-unavailable` is the one finding the server sends on every
- * rollback today (internal/api's Rollback): revisions are immutable OCI
- * artifacts and this server does not fetch two of them to diff, so there is
- * nothing to compare — not nothing to worry about. It is a statement about
- * what kelson looked at, never a claim that this specific rollback is safe, so
- * it is pulled out of the risk list and shown as a note instead: counting it
- * among "what this rollback cannot revert" would misname it as a change this
- * rollback will fail to undo, which is not what it says.
+ * `rollback/preview-unavailable` is the finding the server sends when it could
+ * not compute the comparison (internal/api's rollbackPreview, #247): normally
+ * it pulls both revisions' artifacts and the preview carries a real diff, but a
+ * server with no registry credential, an artifact the registry no longer
+ * serves, or bytes that do not match their digest leaves nothing to compare —
+ * which is not nothing to worry about. It is a statement about what kelson
+ * looked at, never a claim that this specific rollback is safe, so it is pulled
+ * out of the risk list and shown as a note instead: counting it among "what
+ * this rollback cannot revert" would misname it as a change this rollback will
+ * fail to undo, which is not what it says.
  */
 const PREVIEW_UNAVAILABLE_CAUSE = "rollback/preview-unavailable";
 

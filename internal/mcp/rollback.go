@@ -16,7 +16,7 @@ const rollbackDescription = `Restore an environment to a previously recorded rev
 
 MUTATES THE CLUSTER when execute=true: kelson patches an annotation naming the target revision, and kelson-controller repoints Flux at that revision's immutable artifact. execute=false (the default) only previews.
 
-The preview never carries a diff. Every recorded revision is an immutable OCI artifact in the registry, and this server does not fetch two of them to compare — so the preview always answers with one finding, coded rollback/preview-unavailable, saying so plainly rather than returning an empty findings list that could be misread as "nothing to worry about". The rollback itself is exact regardless: it repoints at bytes that already exist and cannot have changed since they were published.
+The preview is the comparison itself: both revisions are immutable OCI artifacts, so the server pulls the one running and the one being restored and diffs their recorded manifests. Where it cannot — no registry credential, an artifact the registry no longer serves, bytes that do not match the digest recorded for them — it sends no diff and one finding, coded rollback/preview-unavailable, naming which and why, rather than an empty findings list that could be misread as "nothing to worry about". The rollback itself is exact either way: it repoints at bytes that already exist and cannot have changed since they were published.
 
 RESULT.restored is the revision now applied; kelson does not record a new revision for a rollback (it publishes nothing), so there is no second id to report.
 
@@ -132,11 +132,11 @@ func (c *clients) rollbackEnvironment(ctx context.Context, in rollbackInput) (*m
 // writeFindings lists what the rollback cannot revert, unrecoverable first.
 //
 // An absent warning must never read as "nothing to warn about": a preview event
-// with no findings says so explicitly. In practice the server always sends
-// exactly one today — coded rollback/preview-unavailable, marked INFO rather
-// than UNRECOVERABLE below — because every recorded revision is an immutable
-// OCI artifact and this server does not fetch two of them to diff; that is a
-// statement about what kelson looked at, not a claim that nothing is at risk.
+// with no findings says so explicitly. One cause is not a risk at all —
+// rollback/preview-unavailable, marked INFO rather than UNRECOVERABLE below —
+// because it names what the server could not compare (an artifact it could not
+// pull, bytes that did not match their digest) rather than something this
+// rollback will fail to revert.
 func writeFindings(r *report, preview *kelsonv1alpha1.RollbackResponse_Preview) {
 	if preview == nil {
 		r.section("FINDINGS")
@@ -182,8 +182,8 @@ func writeDiffSummary(r *report, preview *kelsonv1alpha1.RollbackResponse_Previe
 	r.section("DIFF")
 	encoded := preview.GetDiffJson()
 	if len(encoded) == 0 {
-		r.addf("  none: revisions are immutable OCI artifacts and this server does not fetch two of them to " +
-			"compute a change set; see FINDINGS above for why.")
+		r.addf("  none: the server could not read both revisions' artifacts back to compare them; " +
+			"see FINDINGS above for why.")
 		return
 	}
 	var d diff.Diff
