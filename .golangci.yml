@@ -62,6 +62,7 @@ linters:
             - "!**/api/kelson/**"
             - "!**/internal/controller/**"
             - "!**/cmd/kelson-controller/**"
+            - "!**/internal/forge/**"
           allow:
             - $gostd
             - github.com/dafrie/kelson
@@ -160,6 +161,21 @@ linters:
             - github.com/dafrie/kelson
             - gopkg.in/yaml.v3
             - filippo.io/age
+        # The forge seam (ADR-0033 decision 3). Its allow-list is one entry
+        # narrower than `main`: the standard library and this module, and no
+        # forge SDK now or later. What the seam actually needs is a dozen REST
+        # calls, one RS256-signed assertion and an HMAC — go-github and an OAuth
+        # stack would be an SDK-sized module tree for that, which is the same
+        # dependency-weight rule the sops rule above answers to (ADR-0022,
+        # ADR-0030). It is also the fence a second adapter meets: GitLab and
+        # Forgejo are written against net/http here, not against their vendors'
+        # clients.
+        forge:
+          files:
+            - "**/internal/forge/**"
+          allow:
+            - $gostd
+            - github.com/dafrie/kelson
         # The api plane (ADR-0013 §2): the ConnectRPC handlers and the server
         # binary. It gets the transport and the generated code, and nothing
         # else — the cluster clients stay behind the store interfaces in
