@@ -115,6 +115,12 @@ not a second spec format: it is a small set of fields on the Project (`source`, 
 that act as defaults merged into each workload Component by rule P1 below. A Component written inline in a
 Project and one authored field-by-field against the JSON Schema are the same document.
 
+[ADR-0033](adr/0033-git-connections.md) adds a third kind, `GitConnection`. It does not join the two
+above: it carries forge identifiers and a Secret reference rather than a workload, is never named by a
+Project or Environment, and the renderer never reads one — it is read only by the planes that already
+have cluster access (the server, the controller, the build plane). See
+[its reference](reference/gitconnection.md).
+
 ## Resolutions of ADR-0006's open questions
 
 **1. Precedence when Project and Environment both set a value.**
@@ -1225,6 +1231,7 @@ Stable code taxonomy:
 | `ref/unknown-service-key` | semantic | `from: {service: db, key: tls}` |
 | `secret/literal` | semantic | secret value where a reference belongs |
 | `semantic/no-image-source` | semantic | no image and `build.strategy: none` |
+| `semantic/auth-provider-mismatch` | semantic | GitConnection `auth.githubApp` with `provider: generic` — the app-manifest flow and installation tokens are GitHub's ([ADR-0033](adr/0033-git-connections.md)) |
 
 `semantic/git-target-missing` existed to require a git target for a mode that no longer exists, and goes
 with the `delivery:` block ([ADR-0028](adr/0028-delivery-spine.md) decision 9). The codes are a
