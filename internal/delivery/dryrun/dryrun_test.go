@@ -36,6 +36,10 @@ type cluster struct {
 
 	mu      sync.Mutex
 	applied []string
+	// forced records the Force flag of every dry-run apply the engine sent, so
+	// a test can assert L2 previews the applier kelson actually has rather than
+	// an unforced one it does not (see [DryRun.apply]).
+	forced []bool
 	// handle is the per-resource API-server behaviour: given the submitted
 	// object it returns the object that would persist and an error (nil on
 	// success). It is the single seam every test configures.
@@ -64,6 +68,7 @@ func (c *cluster) reactDryRun(action k8stesting.Action) (bool, runtime.Object, e
 	}
 	c.mu.Lock()
 	c.applied = append(c.applied, obj.GetKind()+"|"+obj.GetNamespace()+"|"+obj.GetName())
+	c.forced = append(c.forced, pa.PatchOptions.Force != nil && *pa.PatchOptions.Force)
 	c.mu.Unlock()
 	if c.handle == nil {
 		return true, obj, nil
@@ -288,6 +293,54 @@ func TestPreviewSuccessfulModify(t *testing.T) {
 // imagePullPolicy on the way in. Those must be attributed OriginAdmission and
 // OriginDefaulting respectively — never mistaken for user edits — while a real
 // user change stays OriginSpec.
+// TestPreviewForcesFieldOwnership pins the one ApplyOption that decides whether
+// L2 answers a real question.
+//
+// kelson's applier forces ownership (internal/controller's
+// FluxDeliverer.ensure), because anything a human ever ran `kubectl apply` over
+// keeps `kubectl-client-side-apply` on those fields forever. An unforced
+// dry-run answers 409 for exactly those resources; a conflict is not a shape
+// [DryRun.rejection] can attribute, so each one came back as an unattributable
+// rejection and the preview reported "blocked" for a change the apply would
+// have made without complaint. That is what took the e2e lifecycle scenario red
+// once its fixture moved from `kelson deploy` to `kubectl apply`.
+func TestPreviewForcesFieldOwnership(t *testing.T) {
+	c := newCluster()
+	c.seedLive(liveDeployment())
+	e := newEngine(t, c)
+
+	dep := manifest(t, "apps/v1", "Deployment", "checkout", tNS,
+		map[string]any{"spec": map[string]any{
+			"selector": map[string]any{"matchLabels": map[string]any{"app": "checkout"}},
+			"replicas": int64(3),
+			"template": map[string]any{
+				"metadata": map[string]any{"labels": map[string]any{"app": "checkout"}},
+				"spec": map[string]any{
+					"containers": []any{map[string]any{"name": "web", "image": "nginx:1.20"}},
+				},
+			},
+		}})
+	_, err := e.Preview(context.Background(), set(
+		manifest(t, "v1", "Namespace", tNS, "", nil),
+		dep,
+	))
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.forced) == 0 {
+		t.Fatal("the preview sent no dry-run apply at all")
+	}
+	for i, f := range c.forced {
+		if !f {
+			t.Errorf("dry-run apply %d (%s) was sent unforced; L2 must preview the applier kelson has, "+
+				"or a field another manager holds reads as a rejection", i, c.applied[i])
+		}
+	}
+}
+
 func TestPreviewDistinguishesMutationFromUserEdit(t *testing.T) {
 	c := newCluster()
 	c.seedLive(liveDeployment())
