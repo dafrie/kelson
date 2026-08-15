@@ -1,6 +1,7 @@
 package preview_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -160,6 +161,35 @@ func TestRenderGivesEachChangeRequestItsOwnHostnames(t *testing.T) {
 		if first[i] == second[i] {
 			t.Errorf("change requests 412 and 413 both claim %q", first[i])
 		}
+	}
+}
+
+// TestRenderRecordsTheHostsItRendered is what the publish's callers report
+// (ADR-0034 decision 5: a preview's comment names its hosts). The claim is that
+// the recorded list and the rendered routes cannot disagree — recording is not
+// a second derivation of the hostnames, it is the same one.
+func TestRenderRecordsTheHostsItRendered(t *testing.T) {
+	set := mustRender(t, testOptions())
+	if len(set.Hosts) == 0 {
+		t.Fatal("the fixture renders hostnames but the set records none")
+	}
+	rendered := hostnames(t, set)
+	slices.Sort(rendered)
+	if !slices.Equal(set.Hosts, rendered) {
+		t.Errorf("Hosts = %v, want the hostnames the HTTPRoutes claim %v", set.Hosts, rendered)
+	}
+}
+
+// A component nothing routes has no host, and the set says so rather than
+// promising a name that answers nothing.
+func TestRenderRecordsNoHostsForAnUnroutedSpec(t *testing.T) {
+	environment := testEnvironment()
+	environment.Spec.Routing = nil
+
+	opts := testOptions()
+	opts.Environment = environment
+	if got := mustRender(t, opts).Hosts; len(got) != 0 {
+		t.Errorf("Hosts = %v, want none for a spec that declares no domains", got)
 	}
 }
 
