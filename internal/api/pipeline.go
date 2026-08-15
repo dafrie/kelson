@@ -191,7 +191,16 @@ func selectEnvironment(environments []*model.Environment, name string) (*model.E
 // rendering. History needs the delivery stanza but no manifests, so it stops
 // here rather than paying for a render (and rather than failing a spec that
 // builds from source and has no image yet, #136).
-func (s *Server) resolve(ctx context.Context, ref *kelsonv1alpha1.SpecRef, envName, image string) (*model.Project, *model.Environment, *model.Resolved, error) {
+//
+// `globals` are the instance's GitSources, the global tier a component may bind
+// to by name (ADR-0035 decision 2). It is variadic and almost every caller
+// passes nothing, which means "resolve against an empty global tier" and is the
+// honest answer for a path that has no reason to read the cluster's sources:
+// nothing about a source reaches a manifest, so a render, a diff and a status
+// resolve identically with or without them. The build path is the one that must
+// pass them, because a component bound to a global name is precisely a build
+// input (build.go's globalSources).
+func (s *Server) resolve(ctx context.Context, ref *kelsonv1alpha1.SpecRef, envName, image string, globals ...model.Source) (*model.Project, *model.Environment, *model.Resolved, error) {
 	spec, err := s.resolveSpec(ctx, ref)
 	if err != nil {
 		return nil, nil, nil, err
@@ -206,7 +215,7 @@ func (s *Server) resolve(ctx context.Context, ref *kelsonv1alpha1.SpecRef, envNa
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	resolved, errs := model.Resolve(spec.project, environment)
+	resolved, errs := model.Resolve(spec.project, environment, globals...)
 	if len(errs) > 0 {
 		return nil, nil, nil, errs
 	}

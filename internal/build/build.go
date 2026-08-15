@@ -23,7 +23,9 @@ type Request struct {
 	Environment string
 	Component   string
 
-	// SourceGit is the repository the build clones, from Project.source.git.
+	// SourceGit is the repository the build clones: the `git` of the source its
+	// components are bound to (ADR-0035 decision 3), which for the singular
+	// `source:` spelling is the Project's own and unchanged.
 	//
 	// An in-cluster build has no local path to read: the build pod starts with
 	// an empty workspace, so the source has to arrive somehow. Cloning inside
@@ -34,6 +36,30 @@ type Request struct {
 	// repository's default branch. Prefer a commit: Revision records what was
 	// built, and a moving ref makes that record a guess.
 	SourceRef string
+
+	// SourceName is the name of the source this build clones — a project's
+	// `sources:` entry, `default` for the singular spelling, or a GitSource the
+	// instance offers (ADR-0035 decisions 1 and 2).
+	//
+	// It is carried so a plan a human reads can say *which* source was built
+	// rather than only which URL, which is the difference between "why is this
+	// cloning the tools repo" being answerable from the build's own output and
+	// being answerable only by re-deriving the binding. Nothing downstream keys
+	// on it: the Job's identity is still the project, the component and the
+	// revision.
+	SourceName string
+
+	// SourceConnection is `connection:` on that source: the GitConnection the
+	// author pinned this repository to, or empty for the host match that is the
+	// common case (ADR-0033 decision 4).
+	//
+	// It is on the Request rather than on the plane because the plane is
+	// assembled per build target and the connection is now per *source*: one
+	// project may read two repositories through two connections. [CloneAuth]
+	// receives the whole Request for exactly this reason, and the ref resolver
+	// beside it must be given the same answer or a build would resolve a commit
+	// it then cannot fetch.
+	SourceConnection string
 
 	// CloneSecret is the name of the per-run Secret holding the credential the
 	// clone fetches with (ADR-0033 decision 5). It is a *name*: the value never

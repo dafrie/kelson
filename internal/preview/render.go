@@ -86,6 +86,16 @@ type Set struct {
 	// SourceRepo is the forge repository whose change requests become previews
 	// (previews.repo), recorded on the artifact as its source annotation.
 	SourceRepo string
+	// Hosts are the hostnames this preview serves once applied, sorted: the
+	// change request's own names, already rewritten by [naming.Host].
+	//
+	// It is recorded here rather than left for a caller to re-derive because
+	// the rewrite and the gate that decides which components are routed at all
+	// are this package's, and a second spelling of them elsewhere would be a
+	// second answer to "what will this preview answer on". The reader that
+	// wants what is *serving* asks the cluster instead (flux.Preview.Hosts);
+	// this is what was rendered, which is the only thing a publish knows.
+	Hosts []string
 
 	// Manifests are the rendered set in apply order, Namespace first.
 	Manifests []renderer.Manifest
@@ -183,8 +193,34 @@ func Render(opts Options) (*Set, error) {
 		Repository:      strings.TrimPrefix(strings.TrimSpace(previews.Artifacts.Repository), ociPrefix),
 		Tag:             naming.Tag(opts.SHA),
 		SourceRepo:      previews.Repo,
+		Hosts:           servedHosts(resolved),
 		Manifests:       manifests,
 	}, nil
+}
+
+// servedHosts are the hostnames the rendered set claims, deduplicated and
+// sorted.
+//
+// It reads the resolved components rather than the rendered HTTPRoutes, and
+// the two agree by construction: a service with domains renders a route with
+// exactly those hostnames, and a cluster with no Gateway API does not render
+// half a set — it fails the render outright (renderer.ErrGatewayAPIMissing).
+// So a Set that exists has a route for every host here, and reading the
+// resolution keeps this from decoding the yaml.Nodes it just encoded.
+func servedHosts(resolved *model.Resolved) []string {
+	seen := map[string]bool{}
+	for i := range resolved.Components {
+		c := &resolved.Components[i]
+		if c.Kind != model.ComponentService {
+			continue
+		}
+		for _, host := range c.Domains {
+			if host = strings.TrimSpace(host); host != "" {
+				seen[host] = true
+			}
+		}
+	}
+	return slices.Sorted(maps.Keys(seen))
 }
 
 // ociPrefix is how the spec spells an OCI repository, matching what the

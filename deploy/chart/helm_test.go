@@ -616,3 +616,82 @@ func remarshal(t *testing.T, from any, into any) {
 		t.Fatalf("re-parsing the rendered rules: %v", err)
 	}
 }
+
+// TestGitSourceRBAC pins the two grants ADR-0035 decision 2 needs and the two
+// it must not have.
+//
+// The server *reads* GitSources: the build path lists them and hands them to
+// the resolver, so a component bound to one by name resolves to a repository
+// (internal/api's globalSources). Without the grant a build of such a project
+// fails with "this instance offers: nothing" — a true sentence about a listing
+// that was forbidden and a false one about the instance, which is exactly the
+// class of confusion RBAC assertions are cheap insurance against.
+//
+// The controller *writes their status*, and only that: GitSourceReconciler
+// validates a document and records the verdict.
+//
+// The two absences are the interesting half. The server may not create,
+// patch or delete a GitSource, because nothing in the schema authors one — an
+// operator applies it with kubectl — and a server that could write one could
+// repoint the repository every project builds from. And the server may not
+// write `gitsources/status`, which is where this differs from the
+// `gitconnections/status` grant beside it: that exception exists because no
+// GitConnection reconciler does, and here one does.
+func TestGitSourceRBAC(t *testing.T) {
+	docs := decodeDocs(t, helmTemplate(t, append(authValues, "--set", "controller.enabled=true")...))
+
+	var serverRules, controllerRules []policyRule
+	for _, doc := range docs {
+		switch {
+		case doc["kind"] == "Role" && nameOf(doc) == "kelson-state":
+			remarshal(t, doc["rules"], &serverRules)
+		case doc["kind"] == "ClusterRole" && nameOf(doc) == "kelson-controller":
+			remarshal(t, doc["rules"], &controllerRules)
+		}
+	}
+	if serverRules == nil {
+		t.Fatal("no kelson-state Role was rendered; the server holds no state grants at all")
+	}
+	if controllerRules == nil {
+		t.Fatal("controller.enabled=true rendered no kelson-controller ClusterRole")
+	}
+
+	for _, verb := range []string{"get", "list"} {
+		if !granted(serverRules, "kelson.dev", "gitsources", verb) {
+			t.Errorf("the server's state Role does not grant %s on gitsources, so the build path cannot "+
+				"read the instance's global tier (ADR-0035 decision 2):\n%s", verb, mustYAML(t, serverRules))
+		}
+	}
+	for _, verb := range []string{"create", "patch", "update", "delete"} {
+		if granted(serverRules, "kelson.dev", "gitsources", verb) {
+			t.Errorf("the server's state Role grants %s on gitsources. Nothing in the schema authors a "+
+				"GitSource, and a server that could write one could repoint what every project builds "+
+				"from:\n%s", verb, mustYAML(t, serverRules))
+		}
+	}
+	if granted(serverRules, "kelson.dev", "gitsources/status", "update") ||
+		granted(serverRules, "kelson.dev", "gitsources/status", "patch") {
+		t.Errorf("the server's state Role writes gitsources/status. That is the reconciler's, unlike "+
+			"gitconnections/status, which the server owns only because no connection reconciler "+
+			"exists:\n%s", mustYAML(t, serverRules))
+	}
+
+	for _, verb := range []string{"get", "list", "watch"} {
+		if !granted(controllerRules, "kelson.dev", "gitsources", verb) {
+			t.Errorf("the controller ClusterRole does not grant %s on gitsources, so the GitSource "+
+				"reconciler's informer never syncs:\n%s", verb, mustYAML(t, controllerRules))
+		}
+	}
+	if !granted(controllerRules, "kelson.dev", "gitsources/status", "patch") {
+		t.Errorf("the controller ClusterRole does not grant patch on gitsources/status, so the "+
+			"validation verdict is computed and never written:\n%s", mustYAML(t, controllerRules))
+	}
+	// And the same bound the Project rule carries: a validation loop must not
+	// be able to edit the document it is judging (ADR-0027 decision 1).
+	for _, verb := range []string{"patch", "update", "create", "delete"} {
+		if granted(controllerRules, "kelson.dev", "gitsources", verb) {
+			t.Errorf("the controller ClusterRole grants %s on gitsources. Only status is the "+
+				"controller's to write:\n%s", verb, mustYAML(t, controllerRules))
+		}
+	}
+}

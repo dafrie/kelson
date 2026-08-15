@@ -68,6 +68,23 @@ rules:
   - apiGroups: ["kelson.dev"]
     resources: ["gitconnections/status"]
     verbs: ["get", "update"]
+  # internal/controlstore's source store (ADR-0035 decision 2, issue #239). A
+  # GitSource is the instance's tier of declared repositories, and the build
+  # path lists them so a component bound to one by name resolves to a
+  # repository. Read only, and no `create`: nothing in this schema authors a
+  # GitSource — an operator applies one with kubectl — so a server that could
+  # write one could repoint the repository every project builds from without
+  # anybody having asked it to.
+  #
+  # No `gitsources/status` either, and that is the difference from the
+  # connection rule above rather than an oversight: a GitSource *has* a
+  # reconciler (internal/controller's GitSourceReconciler), so the exception
+  # granted there — the server writes the status because nothing else does —
+  # does not apply, and granting it would give the two writers a race over one
+  # subresource.
+  - apiGroups: ["kelson.dev"]
+    resources: ["gitsources"]
+    verbs: ["get", "list"]
   # internal/controlstore's agent identity store (issue #74, ADR-0024): one
   # Secret per agent identity, holding a salted HMAC of the credential and never
   # the credential. Get on every request (revocation must be immediate, so no

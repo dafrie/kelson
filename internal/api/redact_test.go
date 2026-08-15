@@ -285,6 +285,32 @@ func TestReportMessageCarriesNoResolvedCredential(t *testing.T) {
 	}
 }
 
+// Surface 8: the comment kelson upserts on a change request (ADR-0034 decision
+// 5). It is the first text this server writes onto somebody else's system, and
+// the only one a reader outside the deployment can see, so it is the surface
+// where a leak is least recoverable — a Secret in a build log lives behind
+// authentication, and a Secret in a pull request comment does not.
+//
+// The value planted is the credential a preview publish authenticates its push
+// with: it is resolved by kelson and registered when it is learned, and the
+// reference the registry reports back is text kelson does not own the shape of.
+func TestThePreviewCommentCarriesNoResolvedCredential(t *testing.T) {
+	redact.Register(resolvedCredential)
+
+	p := previewReportServer(t)
+	p.publisher.reference = "ghcr.io/acme/checkout-previews@sha256:beef?token=" + resolvedCredential
+	report(t, p.clients, previewReport())
+
+	written := p.outcomes.written()
+	if len(written) != 1 {
+		t.Fatalf("wrote %d comments; the surface this test guards was not produced", len(written))
+	}
+	assertNoSentinel(t, "preview comment body", []byte(written[0].Body), resolvedCredential)
+	if !strings.Contains(written[0].Body, "ghcr.io/acme/checkout-previews") {
+		t.Errorf("the scrub took the revision with the credential:\n%s", written[0].Body)
+	}
+}
+
 func assertNoSentinel(t *testing.T, surface string, body []byte, sentinel string) {
 	t.Helper()
 	if bytes.Contains(body, []byte(sentinel)) {

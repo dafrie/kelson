@@ -81,6 +81,33 @@ type ProfileSource interface {
 	Profile(ctx context.Context) (clusterprofile.ClusterProfile, error)
 }
 
+// GitSourceLister reads the repositories the instance offers to every project —
+// the GitSources of ADR-0035 decision 2, the global tier a component may bind
+// to by name.
+//
+// It is a seam rather than a client call for the same reason [ProfileSource]
+// is: a reconciler that decided *which namespace* to list from at the call site
+// would make that decision three times. The binary makes it once
+// (cmd/kelson-controller wires kelson's own namespace, where the chart installs
+// the GitSources beside the connections) and hands the result here.
+//
+// It is spelled exactly as internal/api's lister of the same name, over the
+// same [model.Source] shape, because the two planes must resolve the same
+// binding to the same repository: a component that builds from a GitSource in
+// `kelson build` and fails to deploy with `ref/unknown-source` would be one
+// join written twice.
+//
+// A nil one is a controller with no global tier, which resolves every project
+// against its own declared sources alone. That is the pre-ADR-0035 posture and
+// stays correct for a project that declares what it builds from — but it is not
+// the same thing as a listing that *failed*, which is a refusal
+// ([EnvironmentReconciler.globalSources]).
+type GitSourceLister interface {
+	// ListSources returns every GitSource the instance offers, already in the
+	// shape [model.Resolve] takes (model.GitSource.AsSource).
+	ListSources(ctx context.Context) ([]model.Source, error)
+}
+
 // StaticProfileSource serves one profile, forever: the one
 // cmd/kelson-controller detected at start-up.
 //

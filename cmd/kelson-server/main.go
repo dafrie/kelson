@@ -89,7 +89,6 @@ import (
 	"github.com/dafrie/kelson/internal/forgeconn"
 	"github.com/dafrie/kelson/internal/forgehttp"
 	"github.com/dafrie/kelson/internal/gitref"
-	"github.com/dafrie/kelson/internal/model"
 	"github.com/dafrie/kelson/internal/observation"
 	"github.com/dafrie/kelson/internal/preview"
 	"github.com/dafrie/kelson/internal/secret"
@@ -588,6 +587,18 @@ func connectServer(cfg config, attribution *slog.Logger) (*serverPlane, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The instance's tier of declared sources (ADR-0035 decision 2). Same
+	// client and same namespace again: a GitSource is a custom resource beside
+	// the connections, and the build path hands them to the resolver so a
+	// component bound to one by name resolves to a repository. Read-only —
+	// nothing in the schema authors one.
+	gitSources, err := controlstore.NewGitSourceStore(controlstore.GitSourceStoreOptions{
+		Client:    crClient,
+		Namespace: cfg.namespace,
+	})
+	if err != nil {
+		return nil, err
+	}
 	// One resolver over that store, shared by everything that needs a forge
 	// credential: the ref resolver, the build pod's clone, and the endpoints
 	// under /forge. `KELSON_GIT_TOKEN` joins it as an implicit connection rather
@@ -644,6 +655,7 @@ func connectServer(cfg config, attribution *slog.Logger) (*serverPlane, error) {
 		Agents:       agents,
 		Audit:        audit,
 		Connections:  connections,
+		GitSources:   gitSources,
 		Logger:       attribution,
 		// The ReportBuild trigger (ADR-0034 decision 3). The publisher is
 		// internal/preview's — the same package `kelson preview publish` calls,
@@ -656,7 +668,7 @@ func connectServer(cfg config, attribution *slog.Logger) (*serverPlane, error) {
 			InsecureRegistries: cfg.insecureRegistries,
 		},
 		Poke:     poker,
-		Statuses: forgeStatuses{sources: sources, externalURL: cfg.externalURL},
+		Outcomes: forgeStatuses{sources: sources, externalURL: cfg.externalURL},
 		Profile: api.CaptureFunc(func(context.Context) (clusterprofile.ClusterProfile, error) {
 			return detect.FromCluster(cfg.kubeconfig)
 		}),
@@ -681,7 +693,7 @@ func connectServer(cfg config, attribution *slog.Logger) (*serverPlane, error) {
 		Delivery: observationConnector(cfg),
 		Preview:  previewConnector(cfg),
 		Logs:     api.LogQueryEngine{Engine: logs},
-		Build:    buildConnector(cfg, specs, sources),
+		Build:    buildConnector(cfg, sources),
 		// The secret backend rides the startup clientset for the same reason
 		// the state stores do: it only ever gets, lists, applies and deletes
 		// Secrets, so no discovery mapper is involved and nothing about it goes
@@ -760,28 +772,28 @@ func observationConnector(cfg config) api.DeliveryConnector {
 // with nothing left that could ever report its outcome; if the watch outlived
 // the Job, the server would wait past the moment the answer became impossible.
 //
-// # Why the connection is looked up here and not inside the plane
+// # Why the connection arrives on the target rather than being looked up here
 //
-// `spec.source.connection` is the author's override and it lives on the
-// Project, but api.BuildTarget carries the project's *name* — the plane is
-// assembled from what a build target says, and a target that carried a
-// connection name would put a credential-selection decision in a request field.
-// So the name is read back out of the stored spec, here, where the store
-// already is. A project that names none resolves by host match, which is the
-// zero-configuration case ADR-0033 decision 4 is written for.
-func buildConnector(cfg config, specs *controlstore.SpecStore, sources *forgeconn.Resolver) api.BuildConnector {
-	return func(ctx context.Context, t api.BuildTarget) (*api.BuildPlane, error) {
+// It used to be read back out of the stored Project: `spec.source.connection`
+// is the author's override, api.BuildTarget carried only the project's *name*,
+// and a target that carried a connection would have put a credential-selection
+// decision in a request field. ADR-0035 makes that reading wrong rather than
+// merely indirect — a project may declare several sources with a connection
+// each, and which one a build reads is decided by the component bindings the
+// handler resolved, not by the first `source:` in the document. So the handler
+// resolves it and the target carries it, still a resolution of the spec and
+// still never a field the caller may set. A source that names none resolves by
+// host match, which is the zero-configuration case ADR-0033 decision 4 is
+// written for.
+func buildConnector(cfg config, sources *forgeconn.Resolver) api.BuildConnector {
+	return func(_ context.Context, t api.BuildTarget) (*api.BuildPlane, error) {
 		cluster, err := kube.Connect(cfg.kubeconfig)
 		if err != nil {
 			return nil, err
 		}
-		named, err := projectConnection(ctx, specs, t.Project)
-		if err != nil {
-			return nil, err
-		}
-		credentials := gitref.Connections{Resolver: sources, Connection: named}
+		credentials := gitref.Connections{Resolver: sources, Connection: t.SourceConnection}
 		driver, err := buildDriver(cfg, t, kube.NewBuildExecutor(cluster.Typed),
-			cloneCredentials{sources: sources, connection: named})
+			cloneCredentials{sources: sources})
 		if err != nil {
 			return nil, err
 		}
@@ -795,44 +807,32 @@ func buildConnector(cfg config, specs *controlstore.SpecStore, sources *forgecon
 	}
 }
 
-// projectConnection reads `spec.source.connection` off the stored Project.
+// There is no projectConnection here any more.
 //
-// A project the store does not hold, or one whose document will not decode, is
-// not an error here: the build is about to fail on its own terms with a better
-// message than this one could give, and refusing to *assemble the plane* would
-// replace "no such project" with "could not read the connection of no such
-// project". Empty means host-match resolution, which is also what a project
-// with no source at all wants.
-func projectConnection(ctx context.Context, specs *controlstore.SpecStore, project string) (string, error) {
-	if specs == nil || project == "" {
-		return "", nil
-	}
-	stored, err := specs.Get(ctx, project)
-	if err != nil {
-		return "", nil //nolint:nilerr // see the doc comment: the build reports this better
-	}
-	docs, errs := model.DecodeDocuments(stored.Documents.Project)
-	if len(errs) > 0 {
-		return "", nil
-	}
-	for _, doc := range docs {
-		p, ok := doc.(*model.Project)
-		if !ok || p.Spec.Source == nil {
-			continue
-		}
-		return p.Spec.Source.Connection, nil
-	}
-	return "", nil
-}
+// It re-read the stored Project and returned `spec.source.connection`, which
+// was the whole answer while a project had one source. ADR-0035 gives each
+// declared source its own `connection:`, so the answer depends on which source
+// the build's components are bound to — a question only the resolved spec can
+// settle, and one internal/api's Build handler has already settled by the time
+// this connector runs. It arrives on api.BuildTarget.SourceConnection instead,
+// which also removes a second decode of a document the handler was holding.
 
-// forgeStatuses writes a delivery outcome back onto a commit
-// ([ADR-0034](docs/adr/0034-forge-driven-delivery.md) decision 5).
+// forgeStatuses writes a delivery outcome back to the forge
+// ([ADR-0034](docs/adr/0034-forge-driven-delivery.md) decision 5): the status on
+// the commit, and the one comment a preview keeps on its change request.
 //
 // It lives here rather than in internal/api for the reason every seam
 // implementation does: joining a repository to the connection that covers it
 // and minting a token from that connection's Secret is internal/forgeconn's,
-// which reads cluster state. What the handler holds is [api.CommitStatus] and
-// an interface.
+// which reads cluster state. What the handler holds is [api.CommitStatus],
+// [api.PreviewComment] and an interface.
+//
+// The comment's prose is not assembled here, and that split is the interesting
+// half. The body arrives written, because what kelson tells a pull request is
+// the same voice as what it tells the pipeline in the report's message; what
+// this type contributes to it is the *origin*, through Link, because where this
+// server is reachable from outside is the binary's `--external-url` and nothing
+// in the api plane can know it.
 //
 // # Everything it cannot do is silent
 //
@@ -856,36 +856,65 @@ type forgeStatuses struct {
 	externalURL string
 }
 
-// ReportCommitStatus implements api.CommitStatusReporter.
+var _ api.OutcomeReporter = forgeStatuses{}
+
+// ReportCommitStatus implements api.OutcomeReporter.
 func (f forgeStatuses) ReportCommitStatus(ctx context.Context, s api.CommitStatus) error {
+	reporter, conn, ok, err := f.reporterFor(ctx, s.Repo)
+	if err != nil || !ok {
+		return err
+	}
+	return reporter.ReportStatus(ctx, conn, s.FullName, s.SHA, forge.Status{
+		State:       s.State,
+		Context:     s.Context,
+		Description: s.Description,
+		TargetURL:   f.Link(s.Path),
+	})
+}
+
+// UpsertPreviewComment implements api.OutcomeReporter.
+//
+// It degrades exactly as the status does, through the same resolution and the
+// same capability check — one interface in internal/forge carries both writes,
+// because a provider that can post a status can post a comment. What differs at
+// the forge is only the permission an installation may have been granted, and
+// that difference arrives here as a failure from the API rather than as an
+// absent capability: it is named in the report's message, not swallowed.
+func (f forgeStatuses) UpsertPreviewComment(ctx context.Context, c api.PreviewComment) error {
+	reporter, conn, ok, err := f.reporterFor(ctx, c.Repo)
+	if err != nil || !ok {
+		return err
+	}
+	return reporter.UpsertPRComment(ctx, conn, c.FullName, c.PR, c.Marker, c.Body)
+}
+
+// reporterFor resolves the connection covering a repository and its write-back
+// capability. `ok` false is every silent degradation of ADR-0034 decision 5 —
+// nothing wired, no connection, no capability — and an error is a resolution
+// that failed rather than found nothing.
+func (f forgeStatuses) reporterFor(ctx context.Context, repo string) (forge.StatusReporter, forge.Conn, bool, error) {
 	if f.sources == nil {
-		return nil
+		return nil, forge.Conn{}, false, nil
 	}
 	// No `source.connection` override is consulted, and that is deliberate:
 	// the field pins which connection the project's *source* is read with, and
 	// the repository here is `previews.repo`, which ADR-0017 decision 1 keeps
 	// separate from it with no defaulting either way. Host matching is the
 	// zero-configuration path ADR-0033 decision 4 is written for.
-	res, ok, err := f.sources.Resolve(ctx, s.Repo, "")
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return nil
+	res, ok, err := f.sources.Resolve(ctx, repo, "")
+	if err != nil || !ok {
+		return nil, forge.Conn{}, false, err
 	}
 	reporter, ok := res.Provider.(forge.StatusReporter)
 	if !ok {
-		return nil
+		return nil, forge.Conn{}, false, nil
 	}
-	return reporter.ReportStatus(ctx, res.Conn, s.FullName, s.SHA, forge.Status{
-		State:       s.State,
-		Context:     s.Context,
-		Description: s.Description,
-		TargetURL:   f.link(s.Path),
-	})
+	return reporter, res.Conn, true, nil
 }
 
-func (f forgeStatuses) link(path string) string {
+// Link implements api.OutcomeReporter: the absolute URL of a UI path, or "" for
+// a server that was started without an external URL.
+func (f forgeStatuses) Link(path string) string {
 	base := strings.TrimRight(strings.TrimSpace(f.externalURL), "/")
 	if base == "" || path == "" {
 		return ""
@@ -896,14 +925,18 @@ func (f forgeStatuses) link(path string) string {
 // cloneCredentials mints the credential a build pod's clone init container
 // fetches with (ADR-0033 decision 5, internal/build's CloneAuth).
 //
-// It is the same [forgeconn.Resolver] and the same `source.connection` the ref
+// It is the same [forgeconn.Resolver] and the same `connection:` the ref
 // resolver beside it uses, on purpose: "which commit does main name" and "fetch
 // that commit" are the same repository read, and answering them through two
 // credentials would make a build that resolves and then cannot fetch — which is
 // precisely the gap ADR-0033's Context describes.
+//
+// The connection is read off the Request rather than held here, because it is a
+// property of the *source* since ADR-0035: the plane is assembled once per
+// build and the credential is chosen per repository, so the Request — which is
+// what names the repository — is where the two must agree.
 type cloneCredentials struct {
-	sources    *forgeconn.Resolver
-	connection string
+	sources *forgeconn.Resolver
 }
 
 // CloneCredential implements build.CloneAuth. A source no connection covers
@@ -913,7 +946,7 @@ func (c cloneCredentials) CloneCredential(ctx context.Context, req build.Request
 	if c.sources == nil {
 		return build.CloneCredential{}, nil
 	}
-	cred, _, ok, err := c.sources.Credential(ctx, req.SourceGit, c.connection)
+	cred, _, ok, err := c.sources.Credential(ctx, req.SourceGit, req.SourceConnection)
 	if err != nil || !ok {
 		return build.CloneCredential{}, err
 	}

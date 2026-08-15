@@ -294,12 +294,57 @@ type CommitStatus struct {
 	Context string
 	// Description is one line a human reads beside the check.
 	Description string
-	// Path is the UI path the check links to, e.g. "/projects/checkout".
+	// Path is the UI path the check links to, e.g.
+	// "/projects/checkout/staging/previews/412".
 	Path string
 }
 
-// CommitStatusReporter writes a [CommitStatus] back to the forge through the
-// connection that covers the repository (ADR-0034 decision 5).
+// PreviewComment is the one comment a preview keeps on its change request
+// (ADR-0034 decision 5's second half): "one PR comment per preview, upserted in
+// place — hosts, phase, last revision — never a comment per push".
+//
+// The body arrives rendered because the prose is this plane's: what a preview
+// is worth saying about it is the same question the report's `message` answers,
+// in the same voice, and a wiring that assembled sentences would be a second
+// place to read for "what does kelson tell a pull request". What the wiring
+// owns is the forge conversation — and the origin, which is why the body is
+// built with [OutcomeReporter.Link] rather than around a path.
+type PreviewComment struct {
+	// Repo is the repository the change request lives in as the spec spells it
+	// (`previews.repo`), matched against a connection by host exactly as
+	// [CommitStatus.Repo] is.
+	Repo string
+	// FullName is `owner/repo`, split from [Repo] by the plane that read the
+	// spec, for [CommitStatus.FullName]'s reason.
+	FullName string
+	// PR is the change request number as the forge numbers it.
+	PR int
+	// Marker is the HTML comment that identifies this comment for the upsert:
+	// `<!-- kelson:preview:<project>-<environment> -->`. It is per environment
+	// because two environments may preview one pull request, and one marker
+	// between them would make the second publish overwrite the first's answer
+	// rather than add its own.
+	Marker string
+	// Body is the whole comment including [Marker], already scrubbed of known
+	// credentials (internal/redact).
+	Body string
+}
+
+// OutcomeReporter writes what became of a publish back to the forge through the
+// connection that covers the repository (ADR-0034 decision 5): a commit status
+// per publish, and one upserted comment per preview.
+//
+// # Why the two write-backs are one seam and not two
+//
+// The three trigger seams above are separate interfaces because their absences
+// mean three different things. These two are one interface for the same rule
+// read the other way: their absences mean *exactly* the same thing. Both are
+// resolved from the same repository through the same connection, both are the
+// same forge capability (internal/forge's StatusReporter carries the status and
+// the comment on one interface, because a provider that can write one can write
+// the other), and both degrade identically. Splitting them would let a server be
+// wired with a status reporter and no commenter — a state no wiring can produce
+// and every test would then have to keep consistent.
 //
 // A nil reporter, a connection that does not exist and a provider with no
 // StatusReporter capability are all the same outcome — nothing is written and
@@ -307,8 +352,22 @@ type CommitStatus struct {
 // an accident: "statuses are a courtesy of the integration, not a delivery
 // dependency". Only a reporter that was asked and *failed* is worth saying out
 // loud, and the handler says it in the report's message.
-type CommitStatusReporter interface {
+type OutcomeReporter interface {
 	ReportCommitStatus(ctx context.Context, s CommitStatus) error
+	// UpsertPreviewComment edits the comment carrying c.Marker on the change
+	// request, or writes it if there is none. It is an upsert and never an
+	// append: a comment per push is the failure mode ADR-0034 names.
+	UpsertPreviewComment(ctx context.Context, c PreviewComment) error
+	// Link turns a UI path into an absolute URL, or answers "" when this server
+	// has no external URL configured.
+	//
+	// It sits on this seam rather than beside it because the two halves of a
+	// link belong to different planes — [CommitStatus] carries a path for that
+	// reason — and a comment is the one write-back whose link is *inside* prose
+	// this plane writes. So the plane that knows the origin answers whether
+	// there is one, and the plane that writes the sentence decides what to say
+	// when there is not.
+	Link(path string) string
 }
 
 // LogEngine is the log-query seam. The engine owns the bounding rules and this
@@ -376,6 +435,20 @@ type BuildTarget struct {
 	// a reference, never a value (ADR-0009), and empty means an unauthenticated
 	// push.
 	PushSecret string
+
+	// SourceConnection is `connection:` on the source this build clones, or
+	// empty for the host match that is the common case (ADR-0033 decision 4).
+	//
+	// It travels on the target because the plane's ref resolver has to read the
+	// repository as the same identity the build pod's clone will, and both are
+	// built here. It is a resolution of the *spec* rather than a request field:
+	// BuildRequest has no connection and must not — a caller choosing kelson's
+	// credential is precisely what ADR-0033 decision 4 keeps in the document.
+	// Before ADR-0035 the connector read it off `spec.source.connection`
+	// itself; it now arrives resolved, because a project may read two
+	// repositories through two connections and only the resolved binding knows
+	// which one this build is about.
+	SourceConnection string
 }
 
 // SecretStore is the secret-authoring seam of ADR-0009's cluster backend
@@ -457,11 +530,12 @@ type Options struct {
 	// whose absence refuses anything: a server with no publisher answers
 	// CodeUnimplemented to a change request's report rather than accepting it
 	// and dropping it. A nil Poke costs a preview `previews.interval` of
-	// latency and a nil Statuses costs the commit its check, both of which the
-	// ADR makes degradations rather than failures.
+	// latency and a nil Outcomes costs the commit its check and the change
+	// request its comment, both of which the ADR makes degradations rather than
+	// failures.
 	Publish  PreviewPublisher
 	Poke     PreviewPoker
-	Statuses CommitStatusReporter
+	Outcomes OutcomeReporter
 
 	// Connections is the GitConnection store behind GitConnectionService
 	// (ADR-0033). A nil one is a server that holds no forge credentials: every
@@ -471,6 +545,13 @@ type Options struct {
 	// Forges overrides the adapter registry TestConnection probes through.
 	// Nil selects forge.For, which is what production wants.
 	Forges ForgeLookup
+
+	// GitSources reads the instance's global tier of declared sources
+	// (ADR-0035 decision 2), which the build path hands to the resolver so a
+	// component bound to a GitSource by name resolves to a repository. A nil
+	// one is a server with no global tier: every project resolves against its
+	// own `sources:` alone, which is the pre-ADR-0035 posture exactly.
+	GitSources GitSourceLister
 
 	// Install builds the platform-component installer (issue #60, ADR-0021);
 	// the seam behind InstallService. Nil answers unimplemented.
@@ -524,7 +605,7 @@ type Server struct {
 	nodes        NodeReader
 	publish      PreviewPublisher
 	poke         PreviewPoker
-	statuses     CommitStatusReporter
+	outcomes     OutcomeReporter
 
 	// connections and connectionSecrets are one store seen through two
 	// interfaces. The split is load-bearing: List and Get reach for
@@ -534,6 +615,11 @@ type Server struct {
 	connections       GitConnectionStore
 	connectionSecrets ConnectionSecretReader
 	forges            ForgeLookup
+
+	// gitSources is the instance's global source tier (ADR-0035 decision 2).
+	// Only the build path reads it, because a source is a build input and
+	// nothing else: no rendered byte depends on one.
+	gitSources GitSourceLister
 
 	// authz is the scope, rate-limit and audit interceptor. It is built here
 	// and mounted by Register so no caller can serve these handlers without it
@@ -592,8 +678,9 @@ func New(opts Options) *Server {
 		nodes:         opts.Nodes,
 		publish:       opts.Publish,
 		poke:          opts.Poke,
-		statuses:      opts.Statuses,
+		outcomes:      opts.Outcomes,
 		forges:        opts.Forges,
+		gitSources:    opts.GitSources,
 		authz:         newAuthorizer(opts.Now, opts.Logger, opts.Audit),
 		buildDefaults: opts.BuildDefaults,
 		deployTimeout: opts.DeployTimeout,

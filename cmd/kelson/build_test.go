@@ -15,6 +15,7 @@ import (
 
 	"github.com/dafrie/kelson/internal/build"
 	"github.com/dafrie/kelson/internal/build/detect"
+	"github.com/dafrie/kelson/internal/model"
 )
 
 // `kelson build` is assembly (issues #48, #51): load the spec, resolve the
@@ -707,5 +708,113 @@ func TestBuildReportsAnUnavailablePlane(t *testing.T) {
 	}
 	if !strings.Contains(msg, "no usable cluster credentials") {
 		t.Errorf("the connector's error should reach the user, got: %s", msg)
+	}
+}
+
+// --- per-component sources (ADR-0035) ---------------------------------------
+
+const testToolsGit = "https://gitlab.com/acme/build-tools.git"
+
+// writeMultiSourceSpec writes a Project spelling its sources in the plural,
+// with each component bound to the source it names.
+func writeMultiSourceSpec(t *testing.T, webSource, workerSource string) string {
+	t.Helper()
+	var b strings.Builder
+	b.WriteString("apiVersion: kelson.dev/v1alpha1\nkind: Project\nmetadata:\n  name: shop\n\nspec:\n")
+	b.WriteString("  sources:\n")
+	b.WriteString("    - name: app\n      git: " + testSourceGit + "\n      ref: main\n")
+	b.WriteString("    - name: tools\n      git: " + testToolsGit + "\n      ref: v2\n      connection: acme-gitlab\n")
+	b.WriteString("  build:\n    strategy: dockerfile\n")
+	b.WriteString("\n  components:\n")
+	b.WriteString("    - name: web\n      port: 8080\n      source: " + webSource + "\n")
+	b.WriteString("    - name: worker\n      source: " + workerSource + "\n")
+	b.WriteString("---\napiVersion: kelson.dev/v1alpha1\nkind: Environment\nmetadata:\n  name: production\n\nspec:\n  project: shop\n")
+
+	path := filepath.Join(t.TempDir(), "spec.yaml")
+	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// A plural-spelling project builds — it used to be refused with
+// build/no-source — and it builds what its components are bound to: the tools
+// repository at the tools ref through the tools connection, not the first
+// source declared.
+func TestBuildFollowsTheComponentsSourceBinding(t *testing.T) {
+	builder := &fakeBuilder{}
+	resolver := &fakeResolver{}
+	spec := writeMultiSourceSpec(t, "tools", "tools")
+
+	_, stderr, code, msg := runBuildCmd(t, buildPlaneFor(builder, resolver, nil),
+		"build", "-f", spec, "--registry", "ghcr.io/acme")
+	if code != exitOK {
+		t.Fatalf("exit %d: %s", code, msg)
+	}
+
+	req := builder.lastRequest(t)
+	if req.SourceGit != testToolsGit {
+		t.Errorf("SourceGit = %q, want the bound source %q", req.SourceGit, testToolsGit)
+	}
+	if req.SourceName != "tools" || req.SourceConnection != "acme-gitlab" {
+		t.Errorf("SourceName/SourceConnection = %q/%q, want tools/acme-gitlab", req.SourceName, req.SourceConnection)
+	}
+	if calls := resolver.resolved(); len(calls) != 1 || calls[0] != [2]string{testToolsGit, "v2"} {
+		t.Fatalf("resolver calls = %v, want one call for the bound source at its own ref", calls)
+	}
+	// The plan a human reads names the binding, not merely the URL: with
+	// sources declared and bound by name, "which repository is this cloning"
+	// and "why that one" are two questions.
+	for _, want := range []string{"source      tools ", testToolsGit, "components web, worker"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("the plan should contain %q, got:\n%s", want, stderr)
+		}
+	}
+	if builder.calls() != 1 {
+		t.Errorf("the builder was called %d times, want one build for the shared source", builder.calls())
+	}
+}
+
+// Components bound to different repositories are refused by name rather than
+// half-built: one build pushes one image, and rule P3 pins one image per
+// project.
+func TestBuildRefusesSeveralSources(t *testing.T) {
+	builder := &fakeBuilder{}
+	spec := writeMultiSourceSpec(t, "app", "tools")
+
+	_, _, code, msg := runBuildCmd(t, buildPlaneFor(builder, &fakeResolver{}, nil),
+		"build", "-f", spec, "--registry", "ghcr.io/acme")
+	if code != exitErr {
+		t.Fatalf("exit %d, want %d", code, exitErr)
+	}
+	if !strings.Contains(msg, build.ReasonSeveralSources) {
+		t.Errorf("want the %s reason, got: %s", build.ReasonSeveralSources, msg)
+	}
+	if builder.calls() != 0 {
+		t.Error("a refusal must not reach the build plane")
+	}
+}
+
+// A component bound to a name nothing declares is the resolver's refusal, and
+// it reaches the user as one — the code, the document and the field that names
+// it — rather than being flattened into a build-plane failure. The CLI consults
+// no global tier, because the instance's GitSources are the server's to read,
+// so what it can say about them is that it saw none.
+func TestBuildSurfacesAnUnknownSource(t *testing.T) {
+	builder := &fakeBuilder{}
+	spec := writeMultiSourceSpec(t, "app", "platform")
+
+	_, _, code, msg := runBuildCmd(t, buildPlaneFor(builder, &fakeResolver{}, nil),
+		"build", "-f", spec, "--registry", "ghcr.io/acme")
+	if code != exitErr {
+		t.Fatalf("exit %d, want %d", code, exitErr)
+	}
+	for _, want := range []string{string(model.ErrUnknownSource), "platform", "$.spec.components[1].source"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the refusal should mention %q, got: %s", want, msg)
+		}
+	}
+	if builder.calls() != 0 {
+		t.Error("a spec that does not resolve must not reach the build plane")
 	}
 }

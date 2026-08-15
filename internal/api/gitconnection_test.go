@@ -597,6 +597,158 @@ func TestDeleteConnectionNamesTheProjectsItServed(t *testing.T) {
 	}
 }
 
+// pluralProjectDocument declares the same thing the other way: `spec.sources`,
+// one name per entry (ADR-0035 decision 1). A project spelling it this way used
+// to be invisible to the scan, so revoking a credential said "no projects
+// affected" while every build in it was about to fail.
+func pluralProjectDocument(name string, sources ...model.Source) []byte {
+	doc := fmt.Sprintf(`apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata: {name: %s}
+spec:
+  image: ghcr.io/acme/%s:v1
+  components:
+    - name: web
+      kind: service
+      port: 8080
+      source: %s
+  sources:
+`, name, name, sources[0].Name)
+	for _, src := range sources {
+		doc += fmt.Sprintf("    - name: %s\n      git: %s\n      ref: main\n", src.Name, src.Git)
+		if src.Connection != "" {
+			doc += "      connection: " + src.Connection + "\n"
+		}
+	}
+	return []byte(doc)
+}
+
+// boundProjectDocument declares no sources at all: its component binds by name
+// to whatever the instance offers (ADR-0035 decisions 2 and 3).
+func boundProjectDocument(name, source string) []byte {
+	return []byte(fmt.Sprintf(`apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata: {name: %s}
+spec:
+  image: ghcr.io/acme/%s:v1
+  components:
+    - name: web
+      kind: service
+      port: 8080
+      source: %s
+`, name, name, source))
+}
+
+// Both spellings are one declaration, so both must be seen. The miss case is
+// asserted in the same fixture: a project whose sources are all on another
+// forge is not named, which is what makes the two that *are* named evidence.
+func TestDeleteConnectionSeesBothSourceSpellings(t *testing.T) {
+	specs := newFakeSpecStore()
+	docs := map[string][]byte{
+		// The singular spelling, matched by host.
+		"checkout": projectDocument("checkout", "https://github.com/acme/checkout", ""),
+		// The plural spelling: the connection serves the second entry, which the
+		// old scan never looked at.
+		"platform": pluralProjectDocument("platform",
+			model.Source{Name: "default", Git: "https://gitlab.com/acme/site"},
+			model.Source{Name: "tools", Git: "https://github.com/acme/build-tools"}),
+		// The plural spelling with an explicit connection, against a repository
+		// the host match would have given to nobody.
+		"billing": pluralProjectDocument("billing",
+			model.Source{Name: "app", Git: "https://git.acme.internal/acme/billing", Connection: "acme-github"}),
+		// The miss: declared, plural, and nothing here is on this connection's
+		// host.
+		"site": pluralProjectDocument("site",
+			model.Source{Name: "default", Git: "https://gitlab.com/acme/site"}),
+	}
+	for name, doc := range docs {
+		if _, err := specs.Put(t.Context(), name,
+			controlstore.Documents{Project: doc}, controlstore.PutOptions{}); err != nil {
+			t.Fatalf("storing %s: %v", name, err)
+		}
+	}
+
+	store := newFakeConnections().with(tokenConnection("acme-github", "acme-git-token"))
+	c := serve(t, Options{Connections: store, Specs: specs})
+
+	res, err := c.connections.DeleteConnection(t.Context(),
+		connect.NewRequest(&kelsonv1alpha1.DeleteConnectionRequest{Name: "acme-github"}))
+	if err != nil {
+		t.Fatalf("DeleteConnection: %v", err)
+	}
+	want := []string{"billing", "checkout", "platform"}
+	if got := res.Msg.GetAffectedProjects(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("affected_projects = %v, want %v — the plural spelling declares repositories too", got, want)
+	}
+}
+
+// A component bound to a GitSource reaches that repository, so the project is
+// named. The counting rule is narrower than for a project's own sources — an
+// instance's tier is offered to everybody, so it counts where a component is
+// *bound* — and a project-local name shadows the global one it hides.
+func TestDeleteConnectionNamesProjectsBoundToAGitSource(t *testing.T) {
+	specs := newFakeSpecStore()
+	docs := map[string][]byte{
+		// Binds to the instance's `tools`, which lives on the connection's host.
+		"worker": boundProjectDocument("worker", "tools"),
+		// Declares its own `tools` on another forge, which shadows the global
+		// one: this project never reaches the connection.
+		"shadow": pluralProjectDocument("shadow",
+			model.Source{Name: "tools", Git: "https://gitlab.com/acme/our-own-tools"}),
+	}
+	for name, doc := range docs {
+		if _, err := specs.Put(t.Context(), name,
+			controlstore.Documents{Project: doc}, controlstore.PutOptions{}); err != nil {
+			t.Fatalf("storing %s: %v", name, err)
+		}
+	}
+
+	store := newFakeConnections().with(tokenConnection("acme-github", "acme-git-token"))
+	c := serve(t, Options{
+		Connections: store,
+		Specs:       specs,
+		GitSources: fakeGitSources{sources: []model.Source{
+			{Name: "tools", Git: "https://github.com/acme/build-tools", Ref: "v2"},
+		}},
+	})
+
+	res, err := c.connections.DeleteConnection(t.Context(),
+		connect.NewRequest(&kelsonv1alpha1.DeleteConnectionRequest{Name: "acme-github"}))
+	if err != nil {
+		t.Fatalf("DeleteConnection: %v", err)
+	}
+	if got := res.Msg.GetAffectedProjects(); !reflect.DeepEqual(got, []string{"worker"}) {
+		t.Fatalf("affected_projects = %v, want [worker] — shadow declares its own tools elsewhere", got)
+	}
+}
+
+// A GitSource listing that failed is not an instance with no GitSources.
+// Answering "nothing is affected" out of a read that did not happen would be
+// the warning lying in the one direction that matters.
+func TestDeleteConnectionRefusesWhenTheGlobalTierCannotBeRead(t *testing.T) {
+	specs := newFakeSpecStore()
+	if _, err := specs.Put(t.Context(), "worker", controlstore.Documents{
+		Project: boundProjectDocument("worker", "tools"),
+	}, controlstore.PutOptions{}); err != nil {
+		t.Fatalf("storing the project: %v", err)
+	}
+	store := newFakeConnections().with(tokenConnection("acme-github", "acme-git-token"))
+	c := serve(t, Options{
+		Connections: store,
+		Specs:       specs,
+		GitSources:  fakeGitSources{err: errors.New("the API server said no")},
+	})
+
+	_, err := c.connections.DeleteConnection(t.Context(),
+		connect.NewRequest(&kelsonv1alpha1.DeleteConnectionRequest{Name: "acme-github"}))
+	if connect.CodeOf(err) != connect.CodeUnavailable {
+		t.Fatalf("err = %v (code %s), want unavailable", err, connect.CodeOf(err))
+	}
+	if _, err := store.Get(t.Context(), "acme-github"); err != nil {
+		t.Errorf("the connection was deleted despite the refusal: %v", err)
+	}
+}
+
 // The delete is not blocked by the projects it names: a connection is deleted
 // because it is wrong, and refusing until every project is edited would make a
 // leaked credential harder to revoke than to keep.

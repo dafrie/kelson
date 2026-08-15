@@ -38,6 +38,16 @@ rules:
     resources: ["projects", "environments"]
     verbs: ["get", "list", "watch"]
 
+  # The instance's declared sources (ADR-0035 decision 2). GitSourceReconciler
+  # validates one and records the verdict, which is the whole of what it does —
+  # so read plus the status write below, and nothing else. Cluster-scoped like
+  # the rule above rather than narrowed to the release namespace: the manager's
+  # cache watches kelson's kinds cluster-wide (cmd/kelson-controller's
+  # cacheOptions), and an informer that cannot list is one that never syncs.
+  - apiGroups: ["kelson.dev"]
+    resources: ["gitsources"]
+    verbs: ["get", "list", "watch"]
+
   # The deletion blocker, on the main resource, because that is where a CRD
   # keeps it.
   #
@@ -63,7 +73,7 @@ rules:
   # What it observed. `update` beside `patch` because a future reconciler may
   # need to replace a status wholesale; today every write is a merge patch.
   - apiGroups: ["kelson.dev"]
-    resources: ["projects/status", "environments/status"]
+    resources: ["projects/status", "environments/status", "gitsources/status"]
     verbs: ["get", "patch", "update"]
 
   # The kubebuilder/controller-runtime spelling of the same deletion blocker
