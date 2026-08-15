@@ -192,7 +192,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	profile, source, err := startupProfile(cfg)
+	found, err := startupProfile(cfg)
 	if err != nil {
 		return err
 	}
@@ -204,7 +204,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 	mgr, err := ctrl.NewManager(restCfg, ctrl.Options{
 		Scheme:                  s,
-		Cache:                   cacheOptions(cfg, profile),
+		Cache:                   cacheOptions(cfg, found.profile),
 		Metrics:                 metricsserver.Options{BindAddress: cfg.metricsAddr},
 		HealthProbeBindAddress:  cfg.probeAddr,
 		LeaderElection:          cfg.leaderElect,
@@ -220,7 +220,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	if err := (&controller.EnvironmentReconciler{
 		Client:   mgr.GetClient(),
-		Profiles: controller.StaticProfileSource{ClusterProfile: profile},
+		Profiles: found.source,
 		Delivery: &controller.FluxDeliverer{
 			Client:             mgr.GetClient(),
 			Registry:           cfg.registry,
@@ -230,7 +230,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 			PullSecret:         cfg.pullSecret,
 			Interval:           cfg.reconcileInterval,
 		},
-	}).SetupWithManager(mgr, profile.Flux != nil); err != nil {
+	}).SetupWithManager(mgr, found.profile.Flux != nil); err != nil {
 		return fmt.Errorf("registering the environment reconciler: %w", err)
 	}
 
@@ -245,7 +245,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	// stop a controller that is otherwise ready to run.
 	_, _ = fmt.Fprintf(stdout, "kelson-controller %s reconciling %s/%s (%s, %s, %s, %s)\n",
 		version.String(), v1alpha1.Group, v1alpha1.Version,
-		leaderBanner(cfg), source, registryBanner(cfg), fluxBanner(cfg, profile))
+		leaderBanner(cfg), found.banner, registryBanner(cfg), fluxBanner(cfg, found))
 
 	if err := mgr.Start(ctx); err != nil {
 		return fmt.Errorf("running the manager: %w", err)
@@ -377,6 +377,24 @@ func restConfig(kubeconfig string) (*rest.Config, error) {
 	return cfg, nil
 }
 
+// finding is one start-up probe: the profile the manager is built from, the
+// source the reconciler reads, and whether the probe actually answered.
+type finding struct {
+	// profile is what was detected. It is the zero profile when probed is
+	// false, and that zero value must never be read as "this cluster has
+	// nothing" — see startupProfile.
+	profile clusterprofile.ClusterProfile
+
+	// source is what the reconciler asks per reconcile.
+	source controller.ProfileSource
+
+	// probed is false when detection failed.
+	probed bool
+
+	// banner is the sentence stdout gets.
+	banner string
+}
+
 // startupProfile answers "what does this cluster provide?", once, before the
 // manager exists — because the answer decides how the manager is built.
 //
@@ -385,19 +403,49 @@ func restConfig(kubeconfig string) (*rest.Config, error) {
 // discipline applies here: a controller that refused to start because it could
 // not read one API group would be a controller that cannot report the gap. What
 // it costs is the Flux watches, and the banner says so.
-func startupProfile(cfg config) (clusterprofile.ClusterProfile, string, error) {
+//
+// What it must NOT cost is the difference between "there is no Flux here" and
+// "kelson could not find out". Both are an empty ClusterProfile and they mean
+// opposite things, and serving the empty one to the reconciler turned a
+// transient probe failure into every environment in the cluster reporting
+// FluxNotInstalled — permanently, since the static source never looks again. So
+// a failed probe hands over a [controller.ProbedProfileSource] instead: it
+// carries the error, the reconciler reports it as ClusterProfileUnavailable and
+// requeues, and the probe is retried until it answers. The watches still depend
+// on the *start-up* answer and still need a restart (issue #133 is what changes
+// that), which is what keeps this the small fix and not the live one.
+func startupProfile(cfg config) (finding, error) {
 	if cfg.clusterProfile != "" {
 		profile, err := loadProfile(cfg.clusterProfile)
 		if err != nil {
-			return clusterprofile.ClusterProfile{}, "", err
+			return finding{}, err
 		}
-		return profile, "cluster profile: " + cfg.clusterProfile, nil
+		return finding{
+			profile: profile,
+			source:  controller.StaticProfileSource{ClusterProfile: profile},
+			probed:  true,
+			banner:  "cluster profile: " + cfg.clusterProfile,
+		}, nil
+	}
+	probe := func(context.Context) (clusterprofile.ClusterProfile, error) {
+		return detect.FromCluster(cfg.kubeconfig)
 	}
 	profile, err := detect.FromCluster(cfg.kubeconfig)
 	if err != nil {
-		return clusterprofile.ClusterProfile{}, "cluster profile: detection failed (" + err.Error() + ")", nil
+		return finding{
+			source: &controller.ProbedProfileSource{Probe: probe},
+			banner: "cluster profile: detection failed (" + err.Error() + "), retrying per reconcile",
+		}, nil
 	}
-	return profile, "cluster profile: detected", nil
+	// A probe that answered is served from memory for the life of the process,
+	// exactly as before: the re-probing source exists for the failure case, and
+	// nothing here should make a successful start-up pay for it.
+	return finding{
+		profile: profile,
+		source:  controller.StaticProfileSource{ClusterProfile: profile},
+		probed:  true,
+		banner:  "cluster profile: detected",
+	}, nil
 }
 
 // loadProfile reads a ClusterProfile from a file. A missing file is an error
@@ -453,8 +501,16 @@ func registryBanner(cfg config) string {
 // difference between an environment that converges on a watch and one that
 // converges on a timer — and the fix (install Flux, restart) is not one anybody
 // would guess from a status alone.
-func fluxBanner(cfg config, profile clusterprofile.ClusterProfile) string {
-	if profile.Flux == nil {
+func fluxBanner(cfg config, found finding) string {
+	// A failed probe says nothing about Flux, and the banner must not pretend
+	// otherwise: "not detected" would send an operator to install what they may
+	// already have. The reconciler reports the same distinction as
+	// ClusterProfileUnavailable.
+	if !found.probed {
+		return "flux: unknown, the cluster probe failed; watches are off and environments will report " +
+			"ClusterProfileUnavailable until a probe succeeds (restart once the cluster answers)"
+	}
+	if found.profile.Flux == nil {
 		return "flux: not detected; watches are off and environments will report FluxNotInstalled " +
 			"(restart the controller after installing Flux)"
 	}

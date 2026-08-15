@@ -33,6 +33,18 @@ const DefaultFluxNamespace = "kelson-system"
 // make the registry a hot path.
 const DefaultInterval = 5 * time.Minute
 
+// DefaultPublishTimeout bounds one publish: packaging is in-process and
+// instant, so this is the registry's budget for a handful of small uploads.
+//
+// It exists because a reconcile has no deadline of its own and the worker pool
+// is small. A registry that completes its TCP handshake and then answers
+// nothing — a black hole in front of a proxy, a hung load balancer — would
+// otherwise wedge one of those workers indefinitely, and a controller that has
+// silently stopped reconciling every other environment is a much worse failure
+// than a publish that gave up and requeued. Two minutes is far more than a
+// manifest set needs and far less than "forever".
+const DefaultPublishTimeout = 2 * time.Minute
+
 // FluxDeliverer is ADR-0028 steps 4 to 6: publish the artifact, apply the two
 // Flux objects that consume it, and read the result back.
 //
@@ -90,6 +102,9 @@ type FluxDeliverer struct {
 	// DefaultInterval.
 	Interval time.Duration
 
+	// PublishTimeout bounds step 4. Zero means DefaultPublishTimeout.
+	PublishTimeout time.Duration
+
 	// Pusher is the seam tests replace. Nil is the real registry client.
 	Pusher PusherFor
 }
@@ -109,6 +124,13 @@ func (d *FluxDeliverer) interval() string {
 		i = DefaultInterval
 	}
 	return i.String()
+}
+
+func (d *FluxDeliverer) publishTimeout() time.Duration {
+	if d.PublishTimeout > 0 {
+		return d.PublishTimeout
+	}
+	return DefaultPublishTimeout
 }
 
 func (d *FluxDeliverer) insecure(repository string) bool {
@@ -144,6 +166,7 @@ func (d *FluxDeliverer) Deliver(ctx context.Context, rev Revision) (Outcome, err
 		// verified against status.history — so there is nothing to render and
 		// nothing to push, only a pointer to move.
 		out.Revision = rev.PinnedTo
+		out.Digest = rev.PinnedDigest
 		out.RolledBack = true
 
 	case d.settled(ctx, rev, tag):
@@ -154,7 +177,14 @@ func (d *FluxDeliverer) Deliver(ctx context.Context, rev Revision) (Outcome, err
 		out.Digest = rev.ObservedDigest
 
 	default:
-		a, _, err := d.publish(ctx, rev, repository, tag)
+		// The push is the one step of a reconcile that talks to something
+		// outside the cluster, and a registry that accepts a connection and then
+		// answers nothing would hold this worker — one of a small pool — for as
+		// long as it cared to. The context deadline is the outer bound; the HTTP
+		// client's own timeout (internal/artifact) bounds each request inside it.
+		pushCtx, cancel := context.WithTimeout(ctx, d.publishTimeout())
+		a, _, err := d.publish(pushCtx, rev, repository, tag)
+		cancel()
 		if err != nil {
 			return Outcome{}, err
 		}
@@ -168,7 +198,7 @@ func (d *FluxDeliverer) Deliver(ctx context.Context, rev Revision) (Outcome, err
 	// otherwise. That single substitution is the whole of what a rollback does
 	// to the cluster (ADR-0028 decision 5: "a pointer moves to bytes that
 	// already exist and cannot have changed").
-	if err := d.ensure(ctx, rev, repository, out.Revision); err != nil {
+	if err := d.ensure(ctx, rev, repository, out.Revision, out.Digest); err != nil {
 		return Outcome{}, err
 	}
 
@@ -252,6 +282,35 @@ func images(rev Revision) []string {
 	return out
 }
 
+// phaseFor decides the phase one reconcile writes, and the decision it makes
+// before reaching the guard is the load-bearing half.
+//
+// [statemachine.Validate] is revision-blind: it answers "can a deployment go
+// from Healthy to Committed?", and the answer is always no, because a revision
+// cannot become uncommitted. But a *new* revision starts its own lifecycle, and
+// running its first observation through the guard against the last revision's
+// terminal phase freezes the status forever: an environment that reached Healthy
+// would report Healthy for every subsequent spec edit, including one Flux
+// rejected, and [EnvironmentReconciler.requeueFor] would stop polling because
+// the phase it read is terminal.
+//
+// So a new revision — one this reconcile published, or one whose tag differs
+// from the tag the status held — takes the observed phase directly, and the
+// guard governs only what it was written for: repeated observations of the
+// revision already in the status.
+func phaseFor(current, observed string, outcome Outcome) string {
+	if outcome.Phase == "" {
+		return current
+	}
+	if outcome.Published || (outcome.Revision != "" && outcome.Revision != observed) {
+		if statemachine.Known(delivery.Phase(outcome.Phase)) {
+			return outcome.Phase
+		}
+		return current
+	}
+	return nextPhase(current, outcome.Phase)
+}
+
 // nextPhase is the transition guard. It is [statemachine.Validate] and nothing
 // else: the table that says a revision cannot become uncommitted, that nothing
 // precedes the commit, and that rejection is pre-apply.
@@ -263,6 +322,9 @@ func images(rev Revision) []string {
 // status already holds, and the next observation (which will be about the new
 // revision) moves it. Reporting an error here would turn a routine race into a
 // red status.
+//
+// It is reached only for observations of the revision the status already names:
+// [phaseFor] decides that, and says why the distinction matters.
 func nextPhase(from, to string) string {
 	if to == "" {
 		return from

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -163,6 +164,12 @@ func TestDeliverPublishesAndEnsures(t *testing.T) {
 	}
 	if got := nested(t, repo, "spec", "ref", "tag"); got != out.Revision {
 		t.Errorf("OCIRepository is pinned to %v, want the tag just pushed (%s)", got, out.Revision)
+	}
+	// The digest is pinned beside the tag: source-controller prefers it when
+	// both are set, so what the cluster pulls cannot drift from what was pushed
+	// even if something rewrote the tag.
+	if got := nested(t, repo, "spec", "ref", "digest"); got != out.Digest {
+		t.Errorf("OCIRepository digest = %v, want the digest just published (%s)", got, out.Digest)
 	}
 	if _, found, _ := unstructured.NestedBool(repo.Object, "spec", "insecure"); found {
 		t.Error("insecure must not be set for a registry nobody named as insecure")
@@ -371,7 +378,8 @@ func TestDeliverRollbackSkipsPublishing(t *testing.T) {
 	rev := testRevision(t)
 	rev.Generation = 8
 	rev.PinnedTo = "6-9f0a1b2c"
-	rev.Manifests = nil // the reconciler does not render under a rollback
+	rev.PinnedDigest = "sha256:bbb" // out of the history entry that verified it
+	rev.Manifests = nil             // the reconciler does not render under a rollback
 
 	out, err := d.Deliver(context.Background(), rev)
 	if err != nil {
@@ -383,9 +391,73 @@ func TestDeliverRollbackSkipsPublishing(t *testing.T) {
 	if !out.RolledBack || out.Revision != "6-9f0a1b2c" || out.Published {
 		t.Errorf("outcome = %+v, want a pinned rollback with nothing published", out)
 	}
-	if got := nested(t, liveObject(t, d.Client, ociRepositoryGVK, "checkout-production"), "spec", "ref", "tag"); got != "6-9f0a1b2c" {
+	repo := liveObject(t, d.Client, ociRepositoryGVK, "checkout-production")
+	if got := nested(t, repo, "spec", "ref", "tag"); got != "6-9f0a1b2c" {
 		t.Errorf("the OCIRepository is pinned to %v, want the rollback target", got)
 	}
+	// A rollback is the case the digest matters most in: the whole promise is
+	// "a pointer moves to bytes that already exist and cannot have changed",
+	// and naming the bytes is what makes that checkable rather than asserted.
+	if got := nested(t, repo, "spec", "ref", "digest"); got != "sha256:bbb" {
+		t.Errorf("the rollback pinned digest %v, want the history entry's sha256:bbb", got)
+	}
+
+	// And a history entry old enough to carry no digest is a tag-only pin
+	// rather than a refusal: a kelson tag is written once and never rewritten.
+	rev.PinnedDigest = ""
+	if _, err := d.Deliver(context.Background(), rev); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	repo = liveObject(t, d.Client, ociRepositoryGVK, "checkout-production")
+	if _, found, _ := unstructured.NestedString(repo.Object, "spec", "ref", "digest"); found {
+		t.Error("a digest was invented for a history entry that has none")
+	}
+	if got := nested(t, repo, "spec", "ref", "tag"); got != "6-9f0a1b2c" {
+		t.Errorf("the tag-only pin lost its tag: %v", got)
+	}
+}
+
+// TestPublishIsBounded: a reconcile carries no deadline of its own and the
+// worker pool is small, so a registry that accepts a connection and then answers
+// nothing would hold one worker forever — and a controller that has silently
+// stopped reconciling every other environment is a worse failure than a publish
+// that gave up.
+func TestPublishIsBounded(t *testing.T) {
+	blocked := &blockingPusher{}
+	d := testDeliverer(t, &fakePusher{})
+	d.Pusher = blocked.connect
+	d.PublishTimeout = 20 * time.Millisecond
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := d.Deliver(context.Background(), testRevision(t))
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		de, ok := asDeliveryError(err)
+		if !ok || de.Reason != v1alpha1.ReasonRegistryUnreachable {
+			t.Fatalf("error = %v, want %s", err, v1alpha1.ReasonRegistryUnreachable)
+		}
+		if !errors.Is(blocked.observed, context.DeadlineExceeded) {
+			t.Errorf("the push ended with %v, want the publish deadline", blocked.observed)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("Deliver never returned: the publish is unbounded and this worker is gone")
+	}
+}
+
+// blockingPusher is a registry that answers nothing at all, which is the failure
+// a timeout exists for — a refusal comes back on its own.
+type blockingPusher struct{ observed error }
+
+func (b *blockingPusher) connect(registry.Credential, bool) ArtifactPusher { return b }
+
+func (b *blockingPusher) Push(ctx context.Context, _ artifact.Artifact) (string, error) {
+	<-ctx.Done()
+	b.observed = ctx.Err()
+	return "", &artifact.UnreachableError{Doing: "PUT /v2/", Err: ctx.Err()}
 }
 
 // TestDeliverRefusesAConflictingName: two Environments of the same name binding

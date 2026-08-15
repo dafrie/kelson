@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -227,14 +229,24 @@ func TestBannersSayThePosture(t *testing.T) {
 
 	// And a cluster with no Flux gets the sentence that names the fix,
 	// including the restart, because nothing in the status could imply it.
-	noFlux := fluxBanner(config{fluxNamespace: "kelson-system"}, clusterprofile.ClusterProfile{})
+	noFlux := fluxBanner(config{fluxNamespace: "kelson-system"}, finding{probed: true})
 	if !strings.Contains(noFlux, "watches are off") || !strings.Contains(noFlux, "restart") {
 		t.Errorf("flux banner %q must say the watches are off and that a restart is needed", noFlux)
 	}
-	withFlux := fluxBanner(config{fluxNamespace: "kelson-system"},
-		clusterprofile.ClusterProfile{Flux: &clusterprofile.Component{}})
+	withFlux := fluxBanner(config{fluxNamespace: "kelson-system"}, finding{
+		probed:  true,
+		profile: clusterprofile.ClusterProfile{Flux: &clusterprofile.Component{}},
+	})
 	if !strings.Contains(withFlux, "kelson-system") {
 		t.Errorf("flux banner %q must name the namespace being watched", withFlux)
+	}
+
+	// A probe that failed says nothing about Flux, and the banner must not
+	// claim it did: "not detected" would send an operator to install what they
+	// may already have.
+	unknown := fluxBanner(config{fluxNamespace: "kelson-system"}, finding{})
+	if strings.Contains(unknown, "not detected") || !strings.Contains(unknown, "probe failed") {
+		t.Errorf("flux banner %q reports a failed probe as a finding about Flux", unknown)
 	}
 }
 
@@ -248,15 +260,61 @@ func TestStartupProfileSurvivesAFailedProbe(t *testing.T) {
 	if err := os.WriteFile(path, []byte("this is not yaml: [\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	profile, source, err := startupProfile(config{kubeconfig: path})
+	found, err := startupProfile(config{kubeconfig: path})
 	if err != nil {
 		t.Fatalf("a failed probe must not stop the process: %v", err)
 	}
-	if profile.Flux != nil {
-		t.Errorf("a failed probe must not claim a finding: %+v", profile)
+	if found.profile.Flux != nil || found.probed {
+		t.Errorf("a failed probe must not claim a finding: %+v", found)
 	}
-	if !strings.Contains(source, "detection failed") {
-		t.Errorf("the banner does not say detection failed: %q", source)
+	if !strings.Contains(found.banner, "detection failed") {
+		t.Errorf("the banner does not say detection failed: %q", found.banner)
+	}
+}
+
+// TestAFailedProbeIsAnErrorSourceAndNotAnEmptyProfile is the whole of the fix.
+//
+// Handing the reconciler the zero profile a failed probe produced makes every
+// environment in the cluster report FluxNotInstalled — a fix, `kelson install`,
+// for a cluster that may already have Flux — and [controller.StaticProfileSource]
+// would serve that wrong answer for the life of the process. So the source a
+// failed probe hands over carries the *error*, which the reconciler reports
+// under its own reason and requeues, and it probes again on the next reconcile.
+func TestAFailedProbeIsAnErrorSourceAndNotAnEmptyProfile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "not-a-kubeconfig")
+	if err := os.WriteFile(path, []byte("this is not yaml: [\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	found, err := startupProfile(config{kubeconfig: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := found.source.Profile(t.Context()); err == nil {
+		t.Fatal("the source served an empty profile as a finding; every environment would " +
+			"report FluxNotInstalled off a probe that never answered")
+	}
+
+	// And a probe that answers later is served from then on, without a restart
+	// of the reconcile loop.
+	probes := 0
+	source := &controller.ProbedProfileSource{
+		Probe: func(context.Context) (clusterprofile.ClusterProfile, error) {
+			probes++
+			if probes < 2 {
+				return clusterprofile.ClusterProfile{}, errors.New("the cluster is unreachable")
+			}
+			return clusterprofile.ClusterProfile{Flux: &clusterprofile.Component{}}, nil
+		},
+	}
+	if _, err := source.Profile(t.Context()); err == nil {
+		t.Fatal("the first probe failed and the source did not say so")
+	}
+	profile, err := source.Profile(t.Context())
+	if err != nil || profile.Flux == nil {
+		t.Fatalf("the source did not re-probe after a failure: %+v, %v", profile, err)
+	}
+	if _, err := source.Profile(t.Context()); err != nil || probes != 2 {
+		t.Errorf("a successful probe was not latched: %d probes", probes)
 	}
 }
 

@@ -6,12 +6,16 @@ import (
 	"testing"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	"github.com/dafrie/kelson/api/kelson/v1alpha1"
 	"github.com/dafrie/kelson/internal/delivery"
+	"github.com/dafrie/kelson/internal/model"
 )
 
 // The reconciler's half of the spine: rollback, history, the finalizer and the
@@ -296,6 +300,44 @@ func revisionName(i int) string {
 	return string(rune('a'+i%26)) + "-0000000" + string(rune('0'+i%10))
 }
 
+// TestAnOverlappingStatusWriteConflictsRatherThanLosingHistory: a merge patch of
+// `status.history` replaces the whole array, so two writers that both read the
+// same history and each fold in an outcome produce two arrays and the later
+// write wins outright — silently dropping a revision out of the record ADR-0028
+// decision 4 says the status mirrors. The optimistic lock turns that into a
+// conflict, and a conflict is a requeue that re-reads and folds again.
+func TestAnOverlappingStatusWriteConflictsRatherThanLosingHistory(t *testing.T) {
+	env := deliveredEnvironment()
+	env.Generation = 8
+	c := newClient(t, validProject(), env)
+
+	// The other writer lands while this reconcile is inside the deliverer:
+	// after the object was read, before its status is written.
+	spy := &spyDeliverer{outcome: Outcome{Revision: "8-99887766", Phase: v1alpha1.PhaseCommitted, Published: true}}
+	spy.during = func() {
+		other := readEnvironment(t, c, "production")
+		other.Status.History = append([]v1alpha1.HistoryEntry{{
+			Revision: "8-cafebabe", Outcome: v1alpha1.PhaseHealthy,
+		}}, other.Status.History...)
+		if err := c.Status().Update(context.Background(), other); err != nil {
+			t.Fatalf("the concurrent writer failed: %v", err)
+		}
+	}
+	r := &EnvironmentReconciler{Client: c, Profiles: StaticProfileSource{}, Delivery: spy}
+
+	_, err := r.Reconcile(context.Background(), request("production"))
+	if err == nil {
+		t.Fatal("the overlapping write was overwritten instead of conflicting: a merge patch of " +
+			"status.history replaces the array, so the other writer's entry is gone")
+	}
+	if !apierrors.IsConflict(err) {
+		t.Fatalf("error = %v, want a conflict so controller-runtime requeues and folds again", err)
+	}
+	if got := readEnvironment(t, c, "production").Status.History; len(got) == 0 || got[0].Revision != "8-cafebabe" {
+		t.Errorf("the other writer's entry did not survive: %+v", got)
+	}
+}
+
 // --- the error taxonomy at the reconciler ------------------------------------
 
 // TestDeliveryRefusalsRequeueAsTheTableSays is the whole point of the closed
@@ -399,9 +441,14 @@ func TestPhaseDecidesTheRequeue(t *testing.T) {
 // TestPhaseTransitionsAreGuarded: an observation about a previous revision's
 // lifecycle arriving after a new one started is normal, not a failure, so the
 // impossible step is dropped and the status keeps the phase it had.
+//
+// The guard is about *one revision*, which is why the status here already names
+// the revision the observation is about. Applying it across revisions is the bug
+// TestANewRevisionRestartsThePhase covers.
 func TestPhaseTransitionsAreGuarded(t *testing.T) {
 	env := validEnvironment()
 	env.Status.Phase = v1alpha1.PhaseHealthy
+	env.Status.Revision = "1-abcd1234"
 	c := newClient(t, validProject(), env)
 	r := &EnvironmentReconciler{
 		Client: c, Profiles: StaticProfileSource{},
@@ -422,6 +469,224 @@ func TestPhaseTransitionsAreGuarded(t *testing.T) {
 	}
 	if got := nextPhase("", v1alpha1.PhaseCommitted); got != v1alpha1.PhaseCommitted {
 		t.Errorf("the first observation was dropped, got %q", got)
+	}
+}
+
+// TestANewRevisionRestartsThePhase is the bug the guard above caused when it was
+// applied to every observation rather than to observations of one revision.
+//
+// statemachine's table has Healthy → {Degraded} and knows nothing about
+// revisions, so once an environment reached Healthy every later phase was an
+// illegal transition and was dropped: a spec edit published revision 2 and the
+// status still said Healthy, from the instant of the publish, whatever Flux
+// then did with it. Everything downstream believed it — requeueFor saw a
+// terminal phase and stopped polling, and the server, the CLI and the UI all
+// reported the new revision as live before anything had looked at it.
+func TestANewRevisionRestartsThePhase(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		outcome Outcome
+		want    string
+		requeue time.Duration
+	}{
+		{
+			name:    "a freshly published revision is not live yet",
+			outcome: Outcome{Revision: "8-99887766", Phase: v1alpha1.PhaseCommitted, Published: true},
+			want:    v1alpha1.PhaseCommitted,
+			requeue: nonTerminalRequeue,
+		},
+		{
+			// The case that mattered most: Flux refused the new revision and the
+			// environment kept reporting the old one as healthy.
+			name:    "a revision Flux refused says so",
+			outcome: Outcome{Revision: "8-99887766", Phase: v1alpha1.PhaseRejected, Published: true},
+			want:    v1alpha1.PhaseRejected,
+			requeue: 0,
+		},
+		{
+			// A rollback repoints the pair, so the pinned revision's lifecycle
+			// starts again too — even though nothing was published.
+			name:    "a rollback target starts its own lifecycle",
+			outcome: Outcome{Revision: "6-9f0a1b2c", Phase: v1alpha1.PhaseReconciling, RolledBack: true},
+			want:    v1alpha1.PhaseReconciling,
+			requeue: nonTerminalRequeue,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := deliveredEnvironment()
+			env.Generation = 8
+			c := newClient(t, validProject(), env)
+			r := &EnvironmentReconciler{
+				Client: c, Profiles: StaticProfileSource{},
+				Delivery: &spyDeliverer{outcome: tc.outcome},
+			}
+			result, err := r.Reconcile(context.Background(), request("production"))
+			if err != nil {
+				t.Fatalf("Reconcile: %v", err)
+			}
+			got := readEnvironment(t, c, "production")
+			if got.Status.Phase != tc.want {
+				t.Errorf("phase = %q, want %q: the status froze on the previous revision's phase",
+					got.Status.Phase, tc.want)
+			}
+			if got.Status.Revision != tc.outcome.Revision {
+				t.Errorf("revision = %q, want %q", got.Status.Revision, tc.outcome.Revision)
+			}
+			if result.RequeueAfter != tc.requeue {
+				t.Errorf("requeue = %s, want %s: a frozen terminal phase also kills the poll",
+					result.RequeueAfter, tc.requeue)
+			}
+		})
+	}
+
+	// And the unit underneath, stated directly: same revision, the guard;
+	// different revision, the observation.
+	if got := phaseFor(v1alpha1.PhaseHealthy, "7-1a2b3c4d",
+		Outcome{Revision: "7-1a2b3c4d", Phase: v1alpha1.PhaseCommitted}); got != v1alpha1.PhaseHealthy {
+		t.Errorf("phaseFor let one revision move backwards: %q", got)
+	}
+	if got := phaseFor(v1alpha1.PhaseHealthy, "7-1a2b3c4d",
+		Outcome{Revision: "8-99887766", Phase: v1alpha1.PhaseCommitted}); got != v1alpha1.PhaseCommitted {
+		t.Errorf("phaseFor froze a new revision at %q", got)
+	}
+	// A phase the table does not know is not written into the status at all.
+	if got := phaseFor(v1alpha1.PhaseHealthy, "7-1a2b3c4d",
+		Outcome{Revision: "8-99887766", Phase: "Ascendant"}); got != v1alpha1.PhaseHealthy {
+		t.Errorf("phaseFor wrote an unknown phase: %q", got)
+	}
+}
+
+// --- both conditions, on every refusal ----------------------------------------
+
+// TestARefusalClearsAStaleProgressing: a refusal that writes only Ready leaves
+// whatever Progressing the last reconcile wrote standing.
+//
+// That is not cosmetic. "Settled" is read elsewhere as *Progressing exists and
+// is not True* (internal/api's deploy stream), so a stale Progressing=True hangs
+// a caller waiting on this generation for its whole budget and then reports a
+// timeout instead of the refusal it was already holding — and an Environment
+// that has never delivered has no Progressing condition at all, which hangs the
+// same way.
+func TestARefusalClearsAStaleProgressing(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		env    func() *v1alpha1.Environment
+		reason string
+	}{
+		{
+			name: "a render kelson cannot do",
+			env: func() *v1alpha1.Environment {
+				return environment("production", model.EnvironmentSpec{
+					Project:  "checkout",
+					Overlays: []model.Overlay{{Patch: "overlays/patch.yaml"}},
+				})
+			},
+			reason: v1alpha1.ReasonRenderFailed,
+		},
+		{
+			name: "a spec that does not validate",
+			env: func() *v1alpha1.Environment {
+				return environment("production", model.EnvironmentSpec{
+					Project:    "checkout",
+					Components: []model.ComponentOverride{{Name: "does-not-exist", Image: "ghcr.io/acme/x:1"}},
+				})
+			},
+			reason: v1alpha1.ReasonSpecInvalid,
+		},
+		{
+			name: "a Project that is not there",
+			env: func() *v1alpha1.Environment {
+				return environment("production", model.EnvironmentSpec{Project: "no-such-project"})
+			},
+			reason: v1alpha1.ReasonProjectNotFound,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := tc.env()
+			// The state a previous reconcile of a healthy deploy left behind.
+			setProgressing(&env.Status.Conditions, env.Generation, metav1.ConditionTrue,
+				v1alpha1.ReasonReconciling, "waiting for Flux to reconcile revision 1-abcd1234")
+			c := newClient(t, validProject(), env)
+			r := &EnvironmentReconciler{Client: c, Profiles: StaticProfileSource{}}
+
+			if _, err := r.Reconcile(context.Background(), request("production")); err != nil {
+				t.Fatalf("Reconcile: %v", err)
+			}
+			got := readEnvironment(t, c, "production")
+			if condition := ready(t, got.Status.Conditions); condition.Reason != tc.reason {
+				t.Fatalf("Ready reason = %q, want %q", condition.Reason, tc.reason)
+			}
+			prog := progressing(t, got.Status.Conditions)
+			if prog.Status != metav1.ConditionFalse {
+				t.Errorf("Progressing = %s/%s after a refusal, want False: nothing is in flight, and a "+
+					"caller waiting on this generation would hang for its whole budget",
+					prog.Status, prog.Reason)
+			}
+		})
+	}
+}
+
+// TestAProfileFailureIsNotReportedAsAMissingFlux: a probe that failed and a
+// cluster with no Flux are the same empty profile and mean opposite things, and
+// only one of them is fixed by `kelson install`.
+func TestAProfileFailureIsNotReportedAsAMissingFlux(t *testing.T) {
+	c := newClient(t, validProject(), validEnvironment())
+	r := &EnvironmentReconciler{Client: c, Profiles: failingProfile{}}
+
+	if _, err := r.Reconcile(context.Background(), request("production")); err == nil {
+		t.Fatal("a profile that could not be read must be retried")
+	}
+	got := readEnvironment(t, c, "production")
+	condition := ready(t, got.Status.Conditions)
+	if condition.Reason != v1alpha1.ReasonClusterProfileUnavailable {
+		t.Errorf("Ready reason = %q, want %q", condition.Reason, v1alpha1.ReasonClusterProfileUnavailable)
+	}
+	if !strings.Contains(condition.Message, "unreachable") {
+		t.Errorf("the condition does not relay why the probe failed: %q", condition.Message)
+	}
+	if prog := progressing(t, got.Status.Conditions); prog.Status != metav1.ConditionFalse {
+		t.Errorf("Progressing = %s, want False: nothing is in flight while the cluster cannot be read", prog.Status)
+	}
+}
+
+// TestRollbackRefusalLeavesACoherentStatus is the controller half of a refusal
+// the *server* has to be able to read.
+//
+// followRollback gates on status.rollbackRevision naming the target before it
+// looks at Ready, and a refusal returns before that field is written — so the
+// pair a caller can actually see has to be enough on its own: Ready=False with
+// RollbackTargetUnknown, and Progressing=False so "settled" is true and the
+// stream stops waiting rather than timing out on a verdict already recorded.
+func TestRollbackRefusalLeavesACoherentStatus(t *testing.T) {
+	env := deliveredEnvironment()
+	env.Annotations = map[string]string{v1alpha1.AnnotationRollbackTo: "3-deadbeef"}
+	// A rollback is requested while the last deploy is still in flight, which is
+	// exactly when a stale Progressing=True would be left behind.
+	setProgressing(&env.Status.Conditions, env.Generation, metav1.ConditionTrue,
+		v1alpha1.ReasonReconciling, "waiting for Flux to reconcile revision 7-1a2b3c4d")
+
+	c := newClient(t, validProject(), env)
+	r := &EnvironmentReconciler{Client: c, Profiles: StaticProfileSource{}, Delivery: &spyDeliverer{}}
+
+	if _, err := r.Reconcile(context.Background(), request("production")); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	got := readEnvironment(t, c, "production")
+	condition := ready(t, got.Status.Conditions)
+	if condition.Status != metav1.ConditionFalse || condition.Reason != v1alpha1.ReasonRollbackTargetUnknown {
+		t.Fatalf("Ready = %s/%s, want False/%s", condition.Status, condition.Reason,
+			v1alpha1.ReasonRollbackTargetUnknown)
+	}
+	prog := progressing(t, got.Status.Conditions)
+	if prog.Status != metav1.ConditionFalse {
+		t.Fatalf("Progressing = %s/%s, want False: the refusal is the verdict, and a caller that waits "+
+			"for one will wait out its whole budget", prog.Status, prog.Reason)
+	}
+	// And the refusal changed nothing else: the environment is still serving
+	// what it was serving.
+	if got.Status.Revision != "7-1a2b3c4d" || got.Status.RollbackRevision != "" {
+		t.Errorf("a refused rollback moved the environment: revision %q, rollbackRevision %q",
+			got.Status.Revision, got.Status.RollbackRevision)
 	}
 }
 
@@ -455,6 +720,59 @@ func TestFinalizerIsNotAddedWhenDeliveryRefused(t *testing.T) {
 	}
 	if got := readEnvironment(t, c, "production").Finalizers; len(got) != 0 {
 		t.Errorf("finalizers = %v; an Environment that never published must delete without one", got)
+	}
+}
+
+// TestDeletionBeforeTheFinalizerStillTearsDown closes the window the finalizer
+// cannot cover.
+//
+// The finalizer is added only after the first successful apply (ADR-0028's
+// amendment, and TestFinalizerIsAddedAfterTheFirstSuccessfulEnsure says why). A
+// delete that lands between the two takes the custom resource immediately —
+// there is nothing to block it — so finalize never runs, and a `prune: true`
+// Kustomization plus everything it applied keep running with nothing in the
+// cluster saying whose they were. The reconcile that lost the race tears the
+// pair down itself.
+func TestDeletionBeforeTheFinalizerStillTearsDown(t *testing.T) {
+	deleted := false
+	c := fake.NewClientBuilder().
+		WithScheme(testScheme(t)).
+		WithObjects(validProject(), validEnvironment()).
+		WithStatusSubresource(&v1alpha1.Project{}, &v1alpha1.Environment{}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			// The delete arrives while the finalizer patch is in flight, which
+			// is the whole window: the object has no finalizer yet, so it goes
+			// at once and the patch comes back NotFound.
+			Patch: func(ctx context.Context, cl client.WithWatch, obj client.Object,
+				patch client.Patch, opts ...client.PatchOption) error {
+				if env, ok := obj.(*v1alpha1.Environment); ok && !deleted {
+					deleted = true
+					if err := cl.Delete(ctx, env.DeepCopy()); err != nil {
+						return err
+					}
+				}
+				return cl.Patch(ctx, obj, patch, opts...)
+			},
+		}).
+		Build()
+
+	spy := &spyDeliverer{outcome: Outcome{Revision: "1-abcd1234", Phase: v1alpha1.PhaseCommitted, Published: true}}
+	r := &EnvironmentReconciler{Client: c, Profiles: StaticProfileSource{}, Delivery: spy}
+
+	if _, err := r.Reconcile(context.Background(), request("production")); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if spy.calls != 1 {
+		t.Fatalf("the pair was applied %d times, want 1 — the test does not exercise the window otherwise",
+			spy.calls)
+	}
+	if len(spy.tornDown) != 1 || spy.tornDown[0] != "checkout/production" {
+		t.Fatalf("teardown was called with %v; the Flux pair outlives the Environment that declared it "+
+			"and nothing will ever sweep it", spy.tornDown)
+	}
+	var env v1alpha1.Environment
+	if err := c.Get(context.Background(), request("production").NamespacedName, &env); err == nil {
+		t.Errorf("the environment is still there (%v); the test's premise is wrong", env.Finalizers)
 	}
 }
 

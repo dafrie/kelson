@@ -10,8 +10,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/dafrie/kelson/internal/build/registry"
 	"github.com/dafrie/kelson/internal/artifact"
+	"github.com/dafrie/kelson/internal/build/registry"
 )
 
 // The push half is tested against a fake registry rather than a mocked client,

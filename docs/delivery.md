@@ -33,9 +33,15 @@ kelson allocates no revision numbers of its own. The tag is written once and
 never rewritten; republishing an unchanged spec produces a digest the registry
 already holds and uploads nothing. The publisher is the one PR previews already
 use ([ADR-0017](adr/0017-pr-previews.md) decision 10) — one media type, one
-determinism test, two callers.
+determinism test, two callers. The push is bounded twice: one minute per HTTP
+request and two minutes for the whole publish. A reconcile carries no deadline
+of its own and the worker pool is small, so a registry that accepts a connection
+and then answers nothing would otherwise hold one worker for as long as it liked
+— and a controller that has quietly stopped reconciling every other environment
+is a worse failure than a publish that gave up and requeued.
 
-**The two objects.** An `OCIRepository` pinned to the tag just pushed, and a
+**The two objects.** An `OCIRepository` pinned to the artifact just pushed — by
+`spec.ref.tag` *and* `spec.ref.digest`, whenever kelson knows the digest — and a
 `Kustomization` with `path: ./`, `prune: true`, `wait: true`,
 `targetNamespace: <the resolved namespace>` and `spec.decryption` when the
 environment's secret backend is `sops`. Both are named `<project>-<environment>`
@@ -46,6 +52,16 @@ server-side apply under field manager `kelson-controller` and carry the
 provenance labels, so
 `kubectl get kustomizations -n kelson-system -l kelson.dev/project=x` is the
 inventory.
+
+Both halves of the reference are written because they answer different
+questions. The tag is the name a human reads out of
+`kubectl get ocirepository`; the digest is the bytes. source-controller prefers
+the digest when both are set, so pinning both means what the cluster pulls
+cannot differ from what this controller pushed — a kelson tag is written once
+and never rewritten, but a registry is a shared system with mirrors, retention
+policies and operators in it, and "cannot differ" is worth more than "should not
+differ". The digest is unknown in exactly one case: a rollback to a
+`status.history` entry that carries none, which is a tag-only pin.
 
 `wait: true` is the load-bearing one. kustomize-controller assesses the health
 of everything it applied and only then reports `Ready`, so **`Ready` means
@@ -92,6 +108,14 @@ the `Kustomization` pointing at a source that no longer exists, so it would stop
 reconciling with an error, prune nothing, and the workloads would outlive the
 `Environment` that declared them.
 
+The finalizer is added *after* the first apply, which leaves one API round trip
+in which the pair exists and nothing protects it. A delete that lands there
+takes the custom resource immediately — there is no finalizer to block it — so
+the reconcile that applied the pair is the only thing left that knows about it,
+and it tears the pair down itself rather than returning
+([ADR-0028](adr/0028-delivery-spine.md), the amendment). It is the one teardown
+no later reconcile can retry.
+
 ### When delivery refuses
 
 Steps 4 to 6 refuse with a closed set of reasons, and each one decides exactly
@@ -109,6 +133,17 @@ whether anything is going to happen next without them.
 | `PushDenied` | the registry answered and said no | retries in 5m; a credential is an operator's to fix, and retrying into a rate limit helps nobody |
 | `FluxApplyForbidden` | the API server refused the write | retries in 5m; RBAC is an operator's to grant |
 | `FieldManagerConflict` | a server-side apply conflicted despite `ForceOwnership` | retries in 5m; something structural is contended |
+
+Step 2 has one refusal of its own, and it is deliberately not in that table.
+`ClusterProfileUnavailable` means the controller could not read what the cluster
+provides — an RBAC gap, an API server that did not answer — and it exists
+because that failure and a cluster that genuinely has no Flux produce the same
+empty `ClusterProfile` and mean opposite things. Reporting it as
+`FluxNotInstalled` would tell an operator to install what they may already have.
+The controller retries with backoff and probes again each time; the start-up
+probe that failed no longer freezes an empty profile for the life of the
+process, though the Flux *watches* still depend on the start-up answer and still
+need a restart ([#133](https://github.com/dafrie/kelson/issues/133)).
 
 Two conditions carry the answer. `Ready` is whether the environment is serving
 what it should. `Progressing` is whether kelson is still working on it — and the

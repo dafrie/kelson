@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -117,11 +118,9 @@ func (r *EnvironmentReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		// watch below is what notices. Returning nil rather than an error is
 		// the point — an ordering mistake must not spin.
 		logger.Info("project not found", "project", key.Name)
-		setReady(&env.Status.Conditions, env.Generation, metav1.ConditionFalse,
-			v1alpha1.ReasonProjectNotFound,
+		return r.halt(ctx, &env, base, v1alpha1.ReasonProjectNotFound,
 			fmt.Sprintf("spec.project names %q, and no Project of that name exists in namespace %s. "+
 				"Apply the Project, or point spec.project at one that exists.", key.Name, env.Namespace))
-		return ctrl.Result{}, patchStatus(ctx, r.Client, &env, base)
 	}
 
 	// Step 1: validate. The pair is validated together, by the same function
@@ -131,9 +130,7 @@ func (r *EnvironmentReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	if errs := model.ValidateSet(mp, me); len(errs) > 0 {
 		logger.Info("environment spec is invalid", "errors", len(errs))
 		env.Status.ValidationErrors = validationErrors(errs)
-		setReady(&env.Status.Conditions, env.Generation, metav1.ConditionFalse,
-			v1alpha1.ReasonSpecInvalid, summarize(errs))
-		return ctrl.Result{}, patchStatus(ctx, r.Client, &env, base)
+		return r.halt(ctx, &env, base, v1alpha1.ReasonSpecInvalid, summarize(errs))
 	}
 
 	// Step 3a: resolve. Resolution can still produce taxonomy errors — an image
@@ -149,9 +146,7 @@ func (r *EnvironmentReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	if len(errs) > 0 {
 		logger.Info("environment spec does not resolve", "errors", len(errs))
 		env.Status.ValidationErrors = validationErrors(errs)
-		setReady(&env.Status.Conditions, env.Generation, metav1.ConditionFalse,
-			v1alpha1.ReasonSpecInvalid, summarize(errs))
-		return ctrl.Result{}, patchStatus(ctx, r.Client, &env, base)
+		return r.halt(ctx, &env, base, v1alpha1.ReasonSpecInvalid, summarize(errs))
 	}
 
 	// Overlays are paths relative to the authoring documents, and a document
@@ -161,19 +156,30 @@ func (r *EnvironmentReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	// renderer; saying so here means the author is told "kelson cannot do this
 	// yet" instead of being handed the renderer's internals.
 	if len(resolved.Overlays) > 0 {
-		setReady(&env.Status.Conditions, env.Generation, metav1.ConditionFalse,
-			v1alpha1.ReasonRenderFailed,
+		return r.halt(ctx, &env, base, v1alpha1.ReasonRenderFailed,
 			"spec.overlays are not supported for an Environment reconciled from the cluster: "+
 				"overlay paths resolve against the spec files, and a custom resource has none. "+
 				"Render this spec with the CLI, or remove the overlay.")
-		return ctrl.Result{}, patchStatus(ctx, r.Client, &env, base)
 	}
 
 	// Step 2: detect. A profile that cannot be read is a transient cluster
 	// problem and therefore one of the few things in this function that IS an
 	// error return: waiting and trying again is the right behaviour.
+	//
+	// It is also written into the status first, under its own reason. A probe
+	// that failed is not a finding about the cluster, and the one thing it must
+	// never be reported as is FluxNotInstalled — that reason names a fix
+	// (`kelson install`) which is wrong here and would send an operator whose
+	// Flux is fine to reinstall it.
 	profile, err := r.Profiles.Profile(ctx)
 	if err != nil {
+		logger.Info("the cluster profile could not be read", "error", err)
+		if _, patchErr := r.halt(ctx, &env, base, v1alpha1.ReasonClusterProfileUnavailable,
+			fmt.Sprintf("kelson could not read what this cluster provides, so it cannot tell whether Flux "+
+				"is installed or render against a profile it has not got: %v. The controller retries with "+
+				"backoff and probes again each time.", err)); patchErr != nil {
+			return ctrl.Result{}, patchErr
+		}
 		return ctrl.Result{}, fmt.Errorf("reading the cluster profile: %w", err)
 	}
 
@@ -185,10 +191,16 @@ func (r *EnvironmentReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	// Rollback (ADR-0028 decision 5), decided before the render because it
 	// decides whether there is one.
 	rb := rollbackFor(env.Annotations, env.Generation, env.Status)
+	// The target's digest travels with the pin: it is what lets the
+	// OCIRepository name the immutable bytes rather than only the tag that
+	// points at them (fluxobjects.go).
+	var pinnedDigest string
 	if rb.Active {
-		if err := verifyRollbackTarget(rb.Requested, env.Status.History); err != nil {
+		digest, err := verifyRollbackTarget(rb.Requested, env.Status.History)
+		if err != nil {
 			return r.refuse(ctx, &env, base, err)
 		}
+		pinnedDigest = digest
 	}
 
 	var manifests []renderer.Manifest
@@ -201,9 +213,7 @@ func (r *EnvironmentReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			// unimplemented field, a capability the profile does not offer — so it
 			// gets its own reason and, like an invalid spec, no requeue.
 			logger.Info("render failed", "error", err)
-			setReady(&env.Status.Conditions, env.Generation, metav1.ConditionFalse,
-				v1alpha1.ReasonRenderFailed, err.Error())
-			return ctrl.Result{}, patchStatus(ctx, r.Client, &env, base)
+			return r.halt(ctx, &env, base, v1alpha1.ReasonRenderFailed, err.Error())
 		}
 	}
 
@@ -221,6 +231,7 @@ func (r *EnvironmentReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		Observed:             env.Status.Revision,
 		ObservedDigest:       headDigest(env.Status.History, env.Status.Revision),
 		PinnedTo:             rb.Pin(),
+		PinnedDigest:         pinnedDigest,
 	})
 	if err != nil {
 		return r.refuse(ctx, &env, base, err)
@@ -230,14 +241,26 @@ func (r *EnvironmentReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	// Adding it earlier would put a deletion blocker on an object that has
 	// nothing to clean up, and an Environment whose spec never validated would
 	// then need the finalizer stripped by hand before `kubectl delete` returned.
+	//
+	// The window between the apply and the finalizer is real, and losing the
+	// race means the Flux pair outlives the object that declared it — see
+	// [EnvironmentReconciler.abandon].
 	if err := r.addFinalizer(ctx, &env); err != nil {
+		if errors.Is(err, errEnvironmentGone) {
+			return r.abandon(ctx, &env)
+		}
 		return ctrl.Result{}, err
 	}
+	// The finalizer patch moved the object on, and the status patch below locks
+	// against the version it was computed from (patchStatus). This reconcile is
+	// the writer that moved it, so what it observed is the new version.
+	base.ResourceVersion = env.ResourceVersion
 
+	previous := env.Status.Revision
 	if outcome.Revision != "" {
 		env.Status.Revision = outcome.Revision
 	}
-	env.Status.Phase = nextPhase(env.Status.Phase, outcome.Phase)
+	env.Status.Phase = phaseFor(env.Status.Phase, previous, outcome)
 	env.Status.History = recordHistory(env.Status.History, outcome, specHash, metav1.Now())
 	// Both the active and the inert case keep their bookkeeping: an inert
 	// rollback that lost its status.rollbackGeneration would be re-read as a
@@ -304,6 +327,26 @@ func (r *EnvironmentReconciler) setConditions(env *v1alpha1.Environment, rb roll
 	setProgressing(&env.Status.Conditions, env.Generation, metav1.ConditionTrue,
 		v1alpha1.ReasonReconciling, joinMessages(defaultString(outcome.Cause,
 			"waiting for Flux to reconcile revision "+outcome.Revision), message))
+}
+
+// halt is the refusal that happens *before* delivery: an unresolvable Project,
+// a spec that does not validate or resolve, an overlay the cluster path cannot
+// serve, a render kelson cannot do.
+//
+// It writes both conditions, and that is the whole reason it exists. Ready
+// alone is not enough: "settled" is read elsewhere as `Progressing exists and
+// is not True` (internal/api's deploy stream), so a refusal that left a stale
+// `Progressing=True` behind would hang a caller waiting on this generation for
+// its whole budget and then report the timeout instead of the refusal — and on
+// a fresh Environment, which has no Progressing condition at all, it would hang
+// the same way for the opposite reason. Nothing is in flight after any of
+// these, so the pair is written together (the same rule [refuse] follows for
+// the delivery half of the taxonomy).
+func (r *EnvironmentReconciler) halt(ctx context.Context, env *v1alpha1.Environment, base client.Object, reason, message string) (ctrl.Result, error) {
+	setReady(&env.Status.Conditions, env.Generation, metav1.ConditionFalse, reason, message)
+	setProgressing(&env.Status.Conditions, env.Generation, metav1.ConditionFalse,
+		v1alpha1.ReasonSettled, message)
+	return ctrl.Result{}, patchStatus(ctx, r.Client, env, base)
 }
 
 // refuse writes a delivery failure into the status and decides what happens
@@ -379,6 +422,11 @@ func (r *EnvironmentReconciler) finalize(ctx context.Context, env *v1alpha1.Envi
 	return ctrl.Result{}, nil
 }
 
+// errEnvironmentGone reports that the Environment was deleted between the apply
+// and the finalizer, so there is nothing left to protect and something left to
+// clean up. See [EnvironmentReconciler.abandon].
+var errEnvironmentGone = errors.New("the environment was deleted before the finalizer was added")
+
 // addFinalizer puts the deletion blocker on, once, after the first successful
 // Ensure. The patch is against the object and not the status subresource,
 // because a finalizer is metadata.
@@ -388,6 +436,10 @@ func (r *EnvironmentReconciler) finalize(ctx context.Context, env *v1alpha1.Envi
 // has spent the whole function assembling and has not written yet — a bug that
 // shows up as an environment whose observedGeneration never moves. So only the
 // two fields the patch actually changed are carried back.
+//
+// A NotFound, or an object that came back mid-deletion, is [errEnvironmentGone]
+// rather than a swallowed error: it is the one window in which the pair this
+// reconcile just applied has no owner and no sweeper.
 func (r *EnvironmentReconciler) addFinalizer(ctx context.Context, env *v1alpha1.Environment) error {
 	if controllerutil.ContainsFinalizer(env, Finalizer) {
 		return nil
@@ -396,10 +448,63 @@ func (r *EnvironmentReconciler) addFinalizer(ctx context.Context, env *v1alpha1.
 	patch := client.MergeFrom(env.DeepCopy())
 	controllerutil.AddFinalizer(patched, Finalizer)
 	if err := r.Client.Patch(ctx, patched, patch); err != nil {
-		return client.IgnoreNotFound(err)
+		if apierrors.IsNotFound(err) {
+			return errEnvironmentGone
+		}
+		// The API server forbids adding a finalizer to an object that is
+		// already terminating, so the same race can arrive as a refused write
+		// rather than as a 404. One re-read tells the two apart.
+		if terminating, checkErr := r.isTerminating(ctx, env); checkErr == nil && terminating {
+			return errEnvironmentGone
+		}
+		return err
+	}
+	if !patched.DeletionTimestamp.IsZero() {
+		return errEnvironmentGone
 	}
 	env.Finalizers, env.ResourceVersion = patched.Finalizers, patched.ResourceVersion
 	return nil
+}
+
+// isTerminating re-reads the object to tell "gone or going" from "the write was
+// refused for some other reason". A read failure is reported as such: guessing
+// would either leak the pair or tear down a live environment, and both are
+// worse than one more retry.
+func (r *EnvironmentReconciler) isTerminating(ctx context.Context, env *v1alpha1.Environment) (bool, error) {
+	var live v1alpha1.Environment
+	key := types.NamespacedName{Namespace: env.Namespace, Name: env.Name}
+	if err := r.Client.Get(ctx, key, &live); err != nil {
+		if apierrors.IsNotFound(err) {
+			return true, nil
+		}
+		return false, err
+	}
+	return !live.DeletionTimestamp.IsZero(), nil
+}
+
+// abandon tears down the pair this reconcile just applied for an Environment
+// that no longer exists.
+//
+// The finalizer is what normally guarantees the teardown, and it is deliberately
+// added only after the first successful apply (ADR-0028's amendment). That
+// leaves one window: a delete that lands between the apply and the finalizer
+// removes the custom resource immediately — there is nothing to block it — and
+// [EnvironmentReconciler.finalize] will never run, because the deletion produces
+// one reconcile of an object the client can no longer read. The `prune: true`
+// Kustomization and everything it applied would keep running with nothing in the
+// cluster saying whose they were.
+//
+// So the reconcile that lost the race does the teardown itself, in the same
+// order finalize uses. A failure is returned rather than swallowed: it is the
+// one thing here a log has to show, since no later reconcile of a deleted object
+// will retry it.
+func (r *EnvironmentReconciler) abandon(ctx context.Context, env *v1alpha1.Environment) (ctrl.Result, error) {
+	log.FromContext(ctx).Info("the environment was deleted before the finalizer was added; "+
+		"tearing the pair down from this reconcile", "environment", env.Name, "namespace", env.Namespace)
+	if err := r.deliverer().Teardown(ctx, env.Spec.Project, env.Name); err != nil {
+		return ctrl.Result{}, fmt.Errorf("tearing down the Flux pair of a deleted environment: %w", err)
+	}
+	return ctrl.Result{}, nil
 }
 
 // requeueFor is the belt-and-braces poll. A settled phase needs none: the watch

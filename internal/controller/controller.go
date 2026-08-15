@@ -57,7 +57,9 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"strconv"
+	"sync"
 
 	"github.com/dafrie/kelson/api/kelson/v1alpha1"
 	"github.com/dafrie/kelson/internal/clusterprofile"
@@ -99,6 +101,60 @@ type StaticProfileSource struct {
 // Profile returns the configured profile.
 func (s StaticProfileSource) Profile(context.Context) (clusterprofile.ClusterProfile, error) {
 	return s.ClusterProfile, nil
+}
+
+// ProbedProfileSource is [StaticProfileSource] for the case the static one
+// cannot represent: a start-up probe that *failed*.
+//
+// Detection failing and detection finding nothing produce the same empty
+// profile and mean opposite things. Serving the empty one would make every
+// environment in the cluster report FluxNotInstalled — a fix, `kelson install`,
+// for a cluster that may already have Flux and merely refused the probe — and
+// nothing would ever revisit it, because [StaticProfileSource] serves one answer
+// forever. That is a controller wedged in a wrong answer by a transient failure.
+//
+// So a failed probe is an *error state*: [ProbedProfileSource.Profile] returns
+// the error, which the reconciler reports under ReasonClusterProfileUnavailable
+// and requeues with backoff, and the next call probes again. The first probe to
+// succeed is latched and served from then on, which keeps the property
+// StaticProfileSource exists for — one detection per process, not one per
+// reconcile — and keeps this a fix for the failure case rather than the live
+// refresh in issue #133 (which is what would let the *watches* appear without a
+// restart).
+type ProbedProfileSource struct {
+	// Probe reads the cluster. Required; nil probes nothing and says so.
+	Probe func(context.Context) (clusterprofile.ClusterProfile, error)
+
+	mu      sync.Mutex
+	profile clusterprofile.ClusterProfile
+	latched bool
+}
+
+// Profile serves the latched profile, or probes again.
+func (s *ProbedProfileSource) Profile(ctx context.Context) (clusterprofile.ClusterProfile, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.latched {
+		return s.profile, nil
+	}
+	if s.Probe == nil {
+		return clusterprofile.ClusterProfile{}, errors.New("no cluster probe is configured")
+	}
+	profile, err := s.Probe(ctx)
+	if err != nil {
+		return clusterprofile.ClusterProfile{}, err
+	}
+	s.profile, s.latched = profile, true
+	return profile, nil
+}
+
+// Latched reports whether a probe has succeeded. It is what a caller that
+// started in the error state — cmd/kelson-controller's banner — uses to say
+// which posture the process is in without probing a second time.
+func (s *ProbedProfileSource) Latched() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.latched
 }
 
 // Revision is one candidate: everything steps 4 to 6 need about an Environment,
@@ -158,6 +214,12 @@ type Revision struct {
 	// means steps 3 and 4 did not run and must not (ADR-0028 decision 5); the
 	// caller has already verified the target against status.history.
 	PinnedTo string
+
+	// PinnedDigest is that target's digest, out of the same history entry the
+	// verification found it in. It is what lets a rollback pin the pair to the
+	// bytes rather than only to the tag pointing at them; empty when the entry
+	// predates digests being recorded, which is a tag-only pin.
+	PinnedDigest string
 }
 
 // Outcome is what a Deliverer reports back into the Environment's status.

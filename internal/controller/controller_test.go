@@ -325,6 +325,12 @@ type spyDeliverer struct {
 	outcome Outcome
 	err     error
 
+	// during runs inside Deliver, which is the only point in a reconcile that
+	// is after the object was read and before its status is written — the
+	// window a concurrent writer has to land in for the status patch to be
+	// racing anything.
+	during func()
+
 	tornDown []string
 	teardown error
 }
@@ -332,6 +338,9 @@ type spyDeliverer struct {
 func (s *spyDeliverer) Deliver(_ context.Context, rev Revision) (Outcome, error) {
 	s.calls++
 	s.got = rev
+	if s.during != nil {
+		s.during()
+	}
 	return s.outcome, s.err
 }
 

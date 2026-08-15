@@ -86,10 +86,13 @@ func rollbackFor(annotations map[string]string, generation int64, status v1alpha
 // bounded at [v1alpha1.MaxHistoryEntries], the registry holds everything ever
 // published, and a target beyond the window is a registry query rather than
 // something kelson can confirm from its own status (ADR-0028 decision 4).
-func verifyRollbackTarget(target string, history []v1alpha1.HistoryEntry) error {
+// It returns the entry's digest, which is the other reason the lookup is here:
+// the pair is pinned to the target's bytes and not only to its tag when the
+// history knows them (fluxobjects.go).
+func verifyRollbackTarget(target string, history []v1alpha1.HistoryEntry) (string, error) {
 	for _, e := range history {
 		if e.Revision == target {
-			return nil
+			return e.Digest, nil
 		}
 	}
 	known := make([]string, 0, len(history))
@@ -100,7 +103,7 @@ func verifyRollbackTarget(target string, history []v1alpha1.HistoryEntry) error 
 	if len(known) > 0 {
 		detail = fmt.Sprintf("status.history holds %s", strings.Join(known, ", "))
 	}
-	return newDeliveryError(v1alpha1.ReasonRollbackTargetUnknown, fmt.Sprintf(
+	return "", newDeliveryError(v1alpha1.ReasonRollbackTargetUnknown, fmt.Sprintf(
 		"%s names revision %q, and %s. The mirror is bounded at %d entries — the registry holds every "+
 			"revision ever published, so a target older than the window is a registry query "+
 			"(ADR-0028 decision 4). Remove the annotation to resume tracking the spec.",

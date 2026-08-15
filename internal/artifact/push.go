@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/dafrie/kelson/internal/build/registry"
 )
@@ -33,7 +34,8 @@ import (
 // (internal/delivery/kube) and one place that knows it must never be printed
 // (internal/redact).
 type Pusher struct {
-	// Client is the HTTP client. Nil means http.DefaultClient.
+	// Client is the HTTP client. Nil means one with [DefaultRequestTimeout],
+	// never http.DefaultClient — see [Pusher.client].
 	Client *http.Client
 	// Credential authenticates the push. The zero value is an anonymous push,
 	// which is what a local registry with no auth takes.
@@ -413,11 +415,30 @@ const tokenLimit = 1 << 20
 // errorLimit bounds how much of a registry's error body is quoted back.
 const errorLimit = 4096
 
+// DefaultRequestTimeout bounds one request of a push — a blob HEAD, a blob PUT,
+// the manifest PUT, a token exchange — for a Pusher that was given no client of
+// its own.
+//
+// The default it replaces was http.DefaultClient, which has no timeout at all:
+// a registry that completes its handshake and then answers nothing holds the
+// caller forever, and both callers are single-threaded about it. In the
+// controller that is one reconcile worker out of a small pool, so one black-hole
+// registry stops the cluster's deployments; in the CLI it is a `kelson preview
+// publish` that never returns and never says why. A minute is generous for a
+// manifest set measured in kilobytes and short enough that the failure is
+// reported while somebody is still watching.
+const DefaultRequestTimeout = time.Minute
+
+// defaultClient is shared so a Pusher per push does not build a connection pool
+// per push. It carries no credential — that is [Pusher.Credential] — so sharing
+// it leaks nothing between callers.
+var defaultClient = &http.Client{Timeout: DefaultRequestTimeout}
+
 func (p *Pusher) client() *http.Client {
 	if p.Client != nil {
 		return p.Client
 	}
-	return http.DefaultClient
+	return defaultClient
 }
 
 // parseChallenge splits a WWW-Authenticate header into its scheme and its

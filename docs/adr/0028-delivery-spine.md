@@ -128,6 +128,21 @@ reconcile that successfully applies the pair — not before. On deletion the con
 either step is success, because a teardown re-runs on every reconcile until the finalizer clears and
 "already gone" is the state it is trying to reach.
 
+**"Not before" leaves a window, and the reconcile that loses it does the teardown itself.** Adding the
+finalizer after the apply is deliberate — a deletion blocker on an object that has nothing to clean up
+means an `Environment` whose spec never validated needs its finalizer stripped by hand before
+`kubectl delete` returns — but it means there is an interval, one API round trip wide, in which the
+pair exists and nothing protects it. A `kubectl delete environment` that lands in that interval finds
+no finalizer, so the custom resource goes immediately; the finalizer patch then comes back `NotFound`,
+`finalize` never runs because there is no object left to reconcile, and a `prune: true` `Kustomization`
+and everything it applied keep running with nothing in the cluster saying whose they were. Making the
+window smaller does not close it, and adding the finalizer *before* the apply reopens the problem it
+was ordered this way to avoid. So the loser of the race cleans up: a finalizer patch that returns
+`NotFound` — or an object that comes back mid-deletion, which is how the same race arrives when the API
+server refuses a finalizer on a terminating object — runs the same teardown `finalize` would have run,
+in the same order, from the reconcile that applied the pair. It is the one teardown no later reconcile
+can retry, so a failure there is returned and logged rather than swallowed.
+
 **Why a finalizer and not an owner reference.** The two Flux objects live in `kelson-system` and the
 `Environment` lives in the application's namespace. Kubernetes garbage collection does not cross
 namespaces — a cross-namespace owner reference is not merely unsupported, it marks the dependent as an

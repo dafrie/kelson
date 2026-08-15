@@ -89,7 +89,7 @@ const (
 // managed fields. What is *not* forced is the name: [ReasonNameConflict] is
 // checked before anything is written, because taking a field is recoverable and
 // taking somebody else's deployment is not.
-func (d *FluxDeliverer) ensure(ctx context.Context, rev Revision, repository, tag string) error {
+func (d *FluxDeliverer) ensure(ctx context.Context, rev Revision, repository, tag, digest string) error {
 	name := ObjectName(rev.Project, rev.Environment)
 	labels := d.labels(rev)
 
@@ -100,7 +100,7 @@ func (d *FluxDeliverer) ensure(ctx context.Context, rev Revision, repository, ta
 		return err
 	}
 
-	if err := d.apply(ctx, d.ociRepository(name, labels, repository, tag)); err != nil {
+	if err := d.apply(ctx, d.ociRepository(name, labels, repository, tag, digest)); err != nil {
 		return err
 	}
 	return d.apply(ctx, d.kustomization(name, labels, rev))
@@ -118,12 +118,28 @@ func (d *FluxDeliverer) labels(rev Revision) map[string]string {
 	}
 }
 
-func (d *FluxDeliverer) ociRepository(name string, labels map[string]string, repository, tag string) *unstructured.Unstructured {
+func (d *FluxDeliverer) ociRepository(name string, labels map[string]string, repository, tag, digest string) *unstructured.Unstructured {
 	u := d.newObject(ociRepositoryGVK, name, labels)
+	// Both halves of the reference, when kelson knows both. A tag is a name
+	// somebody can rewrite — nothing in kelson does, but a registry is a shared
+	// system and an operator, a mirror or a retention policy can — while the
+	// digest is the bytes themselves. source-controller prefers the digest when
+	// the two are set together, so pinning both means what the cluster pulls
+	// cannot drift from what this controller pushed, and the tag stays in the
+	// object for the human reading `kubectl get ocirepository`.
+	//
+	// The digest is unknown in exactly one case worth stating: a rollback to a
+	// history entry recorded before the digest was (or by a version that did not
+	// record one). That is a tag-only pin, which is what the whole spine did
+	// before this, and it stays correct because a kelson tag is written once.
+	ref := map[string]any{"tag": tag}
+	if digest != "" {
+		ref["digest"] = digest
+	}
 	spec := map[string]any{
 		"interval": d.interval(),
 		"url":      "oci://" + repository,
-		"ref":      map[string]any{"tag": tag},
+		"ref":      ref,
 	}
 	// Plain HTTP is an operator's named exception and never a guess: a registry
 	// that fails its TLS handshake must not be silently downgraded, because

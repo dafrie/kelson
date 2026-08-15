@@ -413,10 +413,29 @@ func (h *harness) awaitEnvironment(desc string, timeout time.Duration,
 }
 
 // settledHealthy is the "this generation is done, and it went well" predicate:
-// the status describes the current generation, Flux finished with it, and Ready
-// says so.
+// the status describes the current generation, the revision it names is *this*
+// generation's, Flux finished with it, and Ready says so.
+//
+// The revision check is not redundant with the phase check, and leaving it out
+// is how this predicate was passed by a status that had not moved. `phase` is a
+// single field with no revision attached, so a phase left over from an earlier
+// revision reads exactly like a fresh one — and the controller did leave one
+// behind: the transition guard is revision-blind, `Healthy` has no legal
+// successor but `Degraded`, so every phase observed after the first healthy
+// deploy was dropped and the status said `Healthy` from the instant of the next
+// publish onwards (internal/controller's phaseFor, and
+// TestANewRevisionRestartsThePhase). Step 5 was then satisfied by a status that
+// described the *previous* revision, which is the one thing an end-to-end test
+// of a deploy must not accept.
+//
+// Tying the revision to `.metadata.generation` is what makes that impossible
+// without the caller having to know the tag in advance: the tag's first half is
+// the generation it was published for (ADR-0028 decision 2), so a revision that
+// names this generation cannot be a leftover, and observedGeneration says the
+// whole status — the phase included — was written by a reconcile of it.
 func (h *harness) settledHealthy(e *v1alpha1.Environment) (bool, string) {
 	ready := conditionOf(e, v1alpha1.ConditionReady)
+	generation := strconv.FormatInt(e.Generation, 10)
 	switch {
 	case e.Status.ObservedGeneration != e.Generation:
 		return false, "status describes generation " + strconv.FormatInt(e.Status.ObservedGeneration, 10)
@@ -424,6 +443,8 @@ func (h *harness) settledHealthy(e *v1alpha1.Environment) (bool, string) {
 		return false, "validation errors: " + validationLine(e)
 	case e.Status.Revision == "":
 		return false, "nothing published yet"
+	case !strings.HasPrefix(e.Status.Revision, generation+"-"):
+		return false, "still serving " + e.Status.Revision + ", which is not a revision of generation " + generation
 	case e.Status.Phase != v1alpha1.PhaseHealthy:
 		return false, "phase is " + defaultTo(e.Status.Phase, "(empty)")
 	case ready.Status != "True" || ready.Reason != v1alpha1.ReasonReady:

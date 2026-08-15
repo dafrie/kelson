@@ -63,6 +63,18 @@ const (
 	// resolve) rather than an authoring mistake.
 	ReasonRenderFailed = "RenderFailed"
 
+	// ReasonClusterProfileUnavailable — the controller could not read what this
+	// cluster provides, so step 2 has no answer to give steps 3 to 5.
+	//
+	// It is deliberately *not* FluxNotInstalled. A probe that failed and a
+	// cluster that genuinely has no Flux look identical in an empty
+	// ClusterProfile and mean opposite things: one is fixed by `kelson install`,
+	// the other by looking at RBAC or at the API server, and telling an operator
+	// to install Flux they already have is how a controller sends somebody down
+	// the wrong path for an afternoon. The controller retries with backoff and
+	// re-probes each time.
+	ReasonClusterProfileUnavailable = "ClusterProfileUnavailable"
+
 	// ReasonRolledBack — the environment is serving a revision it was pinned to
 	// by AnnotationRollbackTo. Ready is True: the pinned artifact is live. What
 	// is *not* true is that the environment tracks its spec, and that is what
