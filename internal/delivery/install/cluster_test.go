@@ -30,6 +30,7 @@ var testKinds = []struct {
 	{schema.GroupVersionKind{Version: "v1", Kind: "ServiceAccount"}, meta.RESTScopeNamespace},
 	{schema.GroupVersionKind{Version: "v1", Kind: "Service"}, meta.RESTScopeNamespace},
 	{schema.GroupVersionKind{Version: "v1", Kind: "ConfigMap"}, meta.RESTScopeNamespace},
+	{schema.GroupVersionKind{Version: "v1", Kind: "PersistentVolumeClaim"}, meta.RESTScopeNamespace},
 	{schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"}, meta.RESTScopeNamespace},
 	{schema.GroupVersionKind{Group: "rbac.authorization.k8s.io", Version: "v1", Kind: "ClusterRole"}, meta.RESTScopeRoot},
 	{schema.GroupVersionKind{Group: "rbac.authorization.k8s.io", Version: "v1", Kind: "ClusterRoleBinding"}, meta.RESTScopeRoot},
@@ -298,6 +299,23 @@ func pinnedFixture(name, namespace, profileField string, body []byte) (Component
 		Provides:     "the fixture's capability",
 	}
 	return c, &fakeFetcher{bodies: map[string][]byte{url: body}}
+}
+
+// authoredFixture builds an Authored Component row — the "registry" shape —
+// with a fixed image and digest, so a test can exercise composeAuthored
+// without any of the real pin's bytes.
+func authoredFixture(name, namespace, image, digest string) Component {
+	return Component{
+		Name:        name,
+		Title:       name,
+		Status:      StatusSupported,
+		Version:     "9.9.9",
+		Authored:    true,
+		Image:       image,
+		ImageDigest: digest,
+		Namespace:   namespace,
+		Provides:    "the fixture's capability",
+	}
 }
 
 // withComponents swaps the pins table for the duration of one test. The table

@@ -268,11 +268,13 @@ kelson render -f project.yaml --env production        # the same bytes, offline
 ```
 
 > **Transition (R1/R2, [#224](https://github.com/dafrie/kelson/issues/224) /
-> [#225](https://github.com/dafrie/kelson/issues/225)).** The controller is being scaffolded now. Until
-> R1 lands, the code still carries `Environment.spec.delivery{mode: direct|flux}`, the direct adapter
-> that server-side applies from `kelson-server`, the go-git writer, and the ConfigMap spec and history
-> stores. They are on the deletion list of ADR-0028 decision 9 and ADR-0027 decision 7, not part of the
-> design this page describes.
+> [#225](https://github.com/dafrie/kelson/issues/225)).** The spine is built: `kelson-controller` runs
+> all six steps, so applying a `Project` and an `Environment` publishes an artifact, creates the Flux
+> pair and drives `Environment.status` to `Healthy`. What is still R2 is the *façade* — `kelson deploy`,
+> `kelson rollback`, `kelson promote` and their RPCs are written against the deleted stores and still
+> refuse with `delivery/not-implemented`, so the spine is driven with `kubectl` until they are reshaped
+> over the custom resources. The chart's controller RBAC for the two Flux kinds is R3
+> ([#226](https://github.com/dafrie/kelson/issues/226)).
 
 ## Living with flux-operator
 
@@ -470,7 +472,7 @@ Two invariants: backups are configured **once per environment**, never per datab
 
 | Component | Language | Role |
 |---|---|---|
-| `kelson-controller` | Go, controller-runtime | **The spine.** Reconciles `Project` and `Environment`: validate, detect, render, publish, ensure the Flux pair, observe ([ADR-0028](adr/0028-delivery-spine.md)). Being scaffolded now ([#224](https://github.com/dafrie/kelson/issues/224)) |
+| `kelson-controller` | Go, controller-runtime | **The spine.** Reconciles `Project` and `Environment`: validate, detect, render, publish, ensure the Flux pair, observe ([ADR-0028](adr/0028-delivery-spine.md)). All six steps run ([#224](https://github.com/dafrie/kelson/issues/224)); the CLI/API verbs over it are R2 |
 | `kelson-server` | Go | **A stateless façade over the CRs.** Same ConnectRPC wire surface; reads and writes custom resources with server-side apply, reads `Environment.status` instead of computing it ([ADR-0027](adr/0027-crd-native-control-plane.md) decision 6). Also serves the web UI, builds, secrets, agent identities and the audit trail |
 | `kelson` (CLI) | Go | Local render/diff/deploy, cluster-direct verbs; single static binary |
 | `kelson-mcp` | Go | MCP server; task-shaped surface with capability parity to the API ([ADR-0008](adr/0008-mcp-surface.md)) |

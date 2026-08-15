@@ -510,3 +510,26 @@ func equalStrings(got, want []string) bool {
 	}
 	return true
 }
+
+// TestSpecPutWritesTheAuthoredImage: the store edits nothing on the way in. It
+// used to accept a PutOptions.Image and rewrite `Project.spec.image` with it
+// for a Deploy carrying `--image`, which made a one-environment override a
+// project-wide fact and left GetSpec returning a project document nobody
+// authored. The override is a per-environment component pin now
+// (internal/api's pinDeployImage), and what reaches this store is documents.
+func TestSpecPutWritesTheAuthoredImage(t *testing.T) {
+	ctx := context.Background()
+	c := newCRClient(t)
+	store := newSpecStore(t, c)
+
+	if _, err := store.Put(ctx, testProject, testDocuments(), PutOptions{}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	var project v1alpha1.Project
+	if err := c.Get(ctx, client.ObjectKey{Namespace: testNamespace, Name: testProject}, &project); err != nil {
+		t.Fatal(err)
+	}
+	if project.Spec.Image != "ghcr.io/acme/shop:v1" {
+		t.Errorf("spec.image = %q, want the authored value", project.Spec.Image)
+	}
+}

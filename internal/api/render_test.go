@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -96,6 +97,84 @@ func specDocuments(project string, envs map[string]string) *kelsonv1alpha1.SpecD
 
 func profileRef() *kelsonv1alpha1.ProfileRef {
 	return &kelsonv1alpha1.ProfileRef{Profile: &kelsonv1alpha1.ProfileRef_Yaml{Yaml: []byte(gatewayProfile)}}
+}
+
+// TestRenderDefaultsToTheServersOwnProfile: a request that names no profile is
+// answered against the cluster this server is attached to, because that is the
+// cluster kelson-controller will render the same spec against. Rendering it
+// against "nothing detected" instead refused a routed spec with
+// render/gateway-api-missing on a cluster that has Gateway API, and made the
+// resource count in `kelson deploy`'s confirmation prompt disagree with what
+// the controller publishes.
+func TestRenderDefaultsToTheServersOwnProfile(t *testing.T) {
+	captured, err := clusterprofile.Unmarshal([]byte(gatewayProfile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := serve(t, Options{Profile: fakeProfile(captured)})
+
+	res, err := c.render.Render(context.Background(), connect.NewRequest(&kelsonv1alpha1.RenderRequest{
+		Spec:        inlineSpec(projectDoc, map[string]string{"development": developmentDoc}),
+		Environment: "development",
+		// No Profile: the ordinary request, and what the CLI sends unless
+		// --profile was given.
+	}))
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if errs := res.Msg.GetErrors(); len(errs) > 0 {
+		t.Fatalf("Render reported errors against the server's own profile: %v", errs)
+	}
+	var kinds []string
+	for _, m := range res.Msg.GetManifests() {
+		kinds = append(kinds, m.GetKind())
+	}
+	if !slices.Contains(kinds, "HTTPRoute") {
+		t.Errorf("kinds = %v, want an HTTPRoute: the detected profile has Gateway API", kinds)
+	}
+}
+
+// TestRenderExplicitProfileStillWins: the default is a default. A request that
+// names a profile is answered against that one, including the explicit
+// `from_cluster: false` that asks for nothing detected.
+func TestRenderExplicitProfileStillWins(t *testing.T) {
+	captured, err := clusterprofile.Unmarshal([]byte(gatewayProfile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := serve(t, Options{Profile: fakeProfile(captured)})
+
+	res, err := c.render.Render(context.Background(), connect.NewRequest(&kelsonv1alpha1.RenderRequest{
+		Spec:        inlineSpec(projectDoc, map[string]string{"development": developmentDoc}),
+		Environment: "development",
+		Profile:     &kelsonv1alpha1.ProfileRef{Profile: &kelsonv1alpha1.ProfileRef_FromCluster{FromCluster: false}},
+	}))
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if len(res.Msg.GetErrors()) != 1 || res.Msg.GetErrors()[0].GetCode() != "render/gateway-api-missing" {
+		t.Fatalf("errors = %v, want one render/gateway-api-missing: the request asked for the zero profile",
+			res.Msg.GetErrors())
+	}
+}
+
+// TestRenderWithoutACaptureSeamKeepsTheZeroProfile: a server started with no
+// profile capture (a test, a build with no cluster) still answers rather than
+// refusing a request that named no profile — those callers had nothing better
+// before the default existed either.
+func TestRenderWithoutACaptureSeamKeepsTheZeroProfile(t *testing.T) {
+	c := serve(t, Options{})
+
+	res, err := c.render.Render(context.Background(), connect.NewRequest(&kelsonv1alpha1.RenderRequest{
+		Spec:        inlineSpec(projectDoc, map[string]string{"development": developmentDoc}),
+		Environment: "development",
+	}))
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if len(res.Msg.GetErrors()) != 1 || res.Msg.GetErrors()[0].GetCode() != "render/gateway-api-missing" {
+		t.Fatalf("errors = %v, want one render/gateway-api-missing", res.Msg.GetErrors())
+	}
 }
 
 // TestRenderInlineSpec is the #139 render smoke test: a known-good spec over

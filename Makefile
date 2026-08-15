@@ -159,9 +159,16 @@ kind-down:
 # runs. It provisions the same kind cluster first and leaves it up afterwards.
 # `go test ./...` never runs it: the build tag keeps it out, and KELSON_E2E=1 is
 # required on top of that. See test/e2e/README.md.
-test-e2e: e2e-up
+#
+# spine.sh (which calls e2e-up itself) installs Flux, the in-cluster registry
+# and kelson-controller on that cluster, because TestDeliverySpine — the R1 exit
+# gate — asserts against all three and fails loudly rather than skipping when
+# they are absent. It is idempotent, so re-running this target re-uses what is
+# already there and only refreshes the controller image.
+test-e2e:
+	hack/e2e/spine.sh
 	KELSON_E2E=1 KUBECONFIG=$(CURDIR)/hack/bin/e2e.kubeconfig \
-		$(GO) test -tags e2e -v -timeout 15m ./test/e2e/...
+		$(GO) test -tags e2e -v -timeout 25m ./test/e2e/...
 
 # The controller's envtest suite (internal/controller, behind the `envtest`
 # build tag): the generated CRDs against a real API server, which is the only

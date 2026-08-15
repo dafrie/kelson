@@ -20,18 +20,26 @@ import (
 // # It degrades rather than refusing, which is what a diagnosis must do
 //
 // [ADR-0028](docs/adr/0028-delivery-spine.md) deleted the delivery adapters and
-// the rendered-history store, which cost this command two of its four inputs:
-// the delivery phase, and the recorded manifests that let a cause name the
-// revision that introduced the change it blames. Both were already optional —
-// internal/explain has carried a `notes` channel for exactly this since
-// ADR-0023, because a tool people reach for when something is already broken
-// must not itself break when a second source is unavailable — so the missing
-// inputs arrive as notes and the verdict-derived causes, which are the ones
-// that fire in a real incident, are unaffected.
+// the rendered-history store, which used to cost this command two of its four
+// inputs: the delivery phase, and the recorded manifests that let a cause name
+// the revision that introduced the change it blames. Both were already
+// optional — internal/explain has carried a `notes` channel for exactly this
+// since ADR-0023, because a tool people reach for when something is already
+// broken must not itself break when a second source is unavailable — so the
+// missing inputs arrive as notes and the verdict-derived causes, which are the
+// ones that fire in a real incident, are unaffected.
 //
-// The change correlation returns with the spine (issue #224): the artifact
-// history is the registry's tag list, and the manifests of any revision are one
-// `flux pull artifact` away.
+// Issue #224 closed the first gap for ExplainService (the API and MCP
+// surfaces, internal/api/explain.go): `Environment.status.revision` and the
+// bounded `status.history` mirror exist now and answer "what is deployed, and
+// when did it last change". This command still does not read either — not
+// because #224 is unresolved, but because it composes internal/explain locally
+// against the cluster and no client here reaches a stored `Environment` (see
+// "Why it takes -f and not a project name" below) — so its notes say that,
+// rather than blaming an issue that has since landed elsewhere. A rendered
+// manifest diff (the revision that introduced a specific env-var change) is
+// still unbuilt anywhere: the registry holds the bytes and nothing fetches them
+// yet, one `flux pull artifact` away.
 //
 // # Why it takes -f and not a project name
 //
@@ -110,11 +118,19 @@ func runExplain(cmd *cobra.Command, opts *explainOptions) error {
 	// output implying kelson looked and found nothing. Which sources were
 	// consulted is part of the answer (ADR-0023): a diagnosis that quietly
 	// omits an input is a diagnosis a reader cannot weigh.
+	//
+	// Both are Environment.status now (ADR-0028), not a source issue #224 left
+	// broken: ExplainService reads them (internal/api/explain.go). This command
+	// composes locally against the cluster and has no client for a stored
+	// Environment, so it still cannot read them — a `kelson explain` that needs
+	// the revision correlation calls the server-backed surface (the MCP
+	// diagnose_component tool, or ExplainService directly) instead.
 	in.Notes = append(in.Notes,
-		"the delivery phase was not read: the adapters that reported it were deleted with the old "+
-			"delivery machinery (ADR-0028) and it returns with issue #224",
-		"no revision history was available, so no change was correlated: history becomes the artifact "+
-			"registry's tag list under the new spine (issue #224)")
+		"the delivery phase was not read: this command has no client for Environment.status — it composes "+
+			"against the cluster directly, not against the server (see ExplainService for the delivery phase "+
+			"and revision correlation)",
+		"no revision history was available, so no change was correlated, for the same reason: status.history "+
+			"is Environment.status, which this command does not read")
 	if plane.health == nil {
 		in.Notes = append(in.Notes,
 			"no observation probe was available, so no workload health was read and no verdict-derived cause could be found")

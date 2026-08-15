@@ -167,7 +167,7 @@ describe("the three failure modes", () => {
 
   const unhealthy = buildRail({
     phase: "Degraded",
-    adapter: "direct",
+    adapter: "flux",
     cause: {
       component: "kubernetes",
       reason: "ProgressDeadlineExceeded",
@@ -227,9 +227,9 @@ describe("the three failure modes", () => {
     const rail = buildRail({
       phase: "Applied",
       stuck: true,
-      adapter: "direct",
+      adapter: "flux",
       cause: {
-        component: "direct",
+        component: "flux",
         reason: "HealthUnknown",
         message: "revision abc1234 was applied but never reported healthy within 5m",
       },
@@ -332,19 +332,32 @@ describe("who is responsible", () => {
     expect(reconcilerActor({ phase: "", adapter: "flux" }).name).toBe(
       "Flux (kustomize-controller)",
     );
-    expect(reconcilerActor({ phase: "", mode: "direct" }).name).toBe(
-      "kelson (direct apply)",
+    expect(reconcilerActor({ phase: "", mode: "flux" }).name).toBe(
+      "Flux (kustomize-controller)",
     );
     expect(
       reconcilerActor({
         phase: "",
-        cause: { component: "argocd", reason: "", message: "" },
+        cause: { component: "flux", reason: "", message: "" },
       }).name,
-    ).toBe("Argo CD");
+    ).toBe("Flux (kustomize-controller)");
     // The Committed event's adapter is what actually took the revision, so it
     // wins over the mode that was merely requested.
-    expect(reconcilerActor({ phase: "", adapter: "flux", mode: "direct" }).name).toBe(
+    expect(reconcilerActor({ phase: "", adapter: "flux", mode: "" }).name).toBe(
       "Flux (kustomize-controller)",
+    );
+  });
+
+  it("prints a name outside the table verbatim, never hiding it", () => {
+    // Flux is the only reconciler this table knows (ADR-0028), but the wire's
+    // own word must still reach the reader if a future or older server ever
+    // names something else — a translation table is not licence to discard
+    // what it does not recognise.
+    expect(reconcilerActor({ phase: "", adapter: "widget-operator" }).name).toBe(
+      "widget-operator",
+    );
+    expect(reconcilerActor({ phase: "", adapter: "widget-operator" }).known).toBe(
+      true,
     );
   });
 

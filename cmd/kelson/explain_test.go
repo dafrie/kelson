@@ -10,14 +10,18 @@ import (
 // `kelson explain` is the CLI half of ADR-0023. The causal machinery is
 // internal/explain's and tested there; what these tests assert is that this
 // command resolves the sources it still has, prints the answer whole, and says
-// out loud which sources it no longer has.
+// out loud which sources it does not.
 //
-// It had four. ADR-0028 deleted two of them — the delivery phase and the
-// recorded manifests of past revisions — so the change correlation ("this
-// revision removed DATABASE_URL") is gone until issue #224 and the
-// verdict-derived causes are what remain. That is a degradation the command was
-// designed for: ADR-0023 gave the report a `notes` channel precisely so a
-// missing source costs a correlation and never the explanation.
+// It has four sources in principle and reads two: the workload verdicts and
+// their logs, both read straight from the cluster. The delivery phase and the
+// revision correlation are `Environment.status` (ADR-0028), and this command
+// has no client for a stored `Environment` — it composes internal/explain
+// locally against the cluster, by design (see explain.go's package comment) —
+// so those two arrive as notes rather than as an empty CAUSES section that
+// would read as "nothing is wrong". Issue #224 closed that gap for
+// ExplainService (internal/api/explain_test.go covers the revision
+// correlation this command still cannot make); the notes here say why this
+// command is still the one to lose it, not that it is still missing anywhere.
 
 // TestExplainNamesTheCauseFromTheVerdict is issue #77's acceptance case at what
 // the CLI can still see: the crash-looping container's own output names
@@ -51,9 +55,10 @@ func TestExplainNamesTheCauseFromTheVerdict(t *testing.T) {
 	}
 }
 
-// The two deleted sources must be named in the report. A diagnosis that quietly
-// stopped consulting an input would read exactly like one that consulted it and
-// found nothing, and the reader has no way to tell them apart.
+// The two sources this command does not read must be named in the report. A
+// diagnosis that quietly stopped consulting an input would read exactly like
+// one that consulted it and found nothing, and the reader has no way to tell
+// them apart.
 func TestExplainNamesTheSourcesItNoLongerHas(t *testing.T) {
 	spec := deploySpec(t)
 	probe := fakeProbe{verdicts: map[string]observation.Verdict{"web": {
@@ -69,11 +74,14 @@ func TestExplainNamesTheSourcesItNoLongerHas(t *testing.T) {
 	}
 	for _, want := range []string{
 		"explain/image-pull", "ghcr.io/acme/hello:1.0.0", "401 Unauthorized",
-		"NOTES", "delivery phase", "no change was correlated", "#224",
+		"NOTES", "delivery phase", "no change was correlated", "Environment.status",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("stdout missing %q:\n%s", want, stdout)
 		}
+	}
+	if strings.Contains(stdout, "#224") {
+		t.Fatalf("stdout still cites issue #224 as if the revision-correlation gate were unresolved:\n%s", stdout)
 	}
 }
 

@@ -294,8 +294,22 @@ function Revision({
   );
 }
 
+/**
+ * `rollback/preview-unavailable` is the one finding the server sends on every
+ * rollback today (internal/api's Rollback): revisions are immutable OCI
+ * artifacts and this server does not fetch two of them to diff, so there is
+ * nothing to compare — not nothing to worry about. It is a statement about
+ * what kelson looked at, never a claim that this specific rollback is safe, so
+ * it is pulled out of the risk list and shown as a note instead: counting it
+ * among "what this rollback cannot revert" would misname it as a change this
+ * rollback will fail to undo, which is not what it says.
+ */
+const PREVIEW_UNAVAILABLE_CAUSE = "rollback/preview-unavailable";
+
 function Findings({ preview }: { preview: PreviewState }) {
-  const findings = preview.preview.findings;
+  const all = preview.preview.findings;
+  const gap = all.find((f) => f.cause === PREVIEW_UNAVAILABLE_CAUSE);
+  const findings = all.filter((f) => f.cause !== PREVIEW_UNAVAILABLE_CAUSE);
   const unrecoverable = findings.filter((f) => f.unrecoverable);
   return (
     <section className="k-section">
@@ -304,11 +318,15 @@ function Findings({ preview }: { preview: PreviewState }) {
         {findings.length})
       </div>
       <div className="k-section__body k-rollback__preview">
+        {gap !== undefined ? (
+          <div className="k-panel k-panel--dim k-mono">{gap.message}</div>
+        ) : null}
+
         {findings.length === 0 ? (
           <div className="k-panel k-panel--dim k-mono">
-            no findings. The preview event is always sent, even when the mode's
-            recorded history cannot be read — an absent warning is not the same
-            as nothing to warn about.
+            no findings. The preview event is always sent, even when nothing
+            else could be checked — an absent warning is not the same as
+            nothing to warn about.
           </div>
         ) : (
           <ul className="k-diff__findings">
@@ -374,8 +392,23 @@ function Outcome({ applied, error }: { applied: Applied; error: unknown }) {
           <div className="k-stream__row">
             <span className="k-mono k-stream__label">committed</span>
             <span className="k-mono">
-              restored <Copyable value={applied.committed.restoredRevision} /> as{" "}
-              <Copyable value={applied.committed.asRevision} />
+              restored <Copyable value={applied.committed.restoredRevision} />
+              {applied.committed.asRevision !== "" ? (
+                <>
+                  {" "}
+                  as <Copyable value={applied.committed.asRevision} />
+                </>
+              ) : (
+                // A rollback publishes nothing and prepends no history entry
+                // (ADR-0028 decision 5), so there is no second revision it was
+                // "recorded as" — as_revision arrives empty, always, and a
+                // blank chip here would look like a value that was dropped
+                // rather than one that never existed.
+                <span className="k-mono k-rollback__note">
+                  {" "}
+                  — no new revision recorded; a rollback publishes nothing
+                </span>
+              )}
             </span>
           </div>
         ) : null}

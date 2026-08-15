@@ -8,6 +8,36 @@ import (
 // decision 1). Everything else a reader might want to know is a reason on it.
 const ConditionReady = "Ready"
 
+// ConditionProgressing says whether kelson is still working on this
+// Environment, which is a different question from whether it is Ready.
+//
+// It exists for one situation that Ready cannot express: a rolled-back
+// environment is Ready — the revision it is pinned to is live and healthy — and
+// is *deliberately not tracking the spec* (ADR-0028 decision 5). Progressing
+// carries that fact, with reason RollbackPinned and a message naming both ways
+// out, so "why is my spec edit not deploying" is answered by
+// `kubectl describe` rather than by reading the controller's source.
+//
+// Only an Environment carries it. A Project has no delivery of its own, so it
+// has nothing to be progressing towards.
+const ConditionProgressing = "Progressing"
+
+// AnnotationRollbackTo pins an Environment to a revision it has already
+// published (ADR-0028 decision 5):
+//
+//	kubectl annotate environment production kelson.dev/rollback-to=6-9f0a1b2c
+//
+// While it is in force the controller repoints the OCIRepository at that
+// immutable tag and suspends re-rendering: steps 3 and 4 do not run, so the
+// current spec cannot be republished over the thing you just rolled back to.
+// Two things resume tracking and only two — removing the annotation, or editing
+// the spec, because a spec edit is an unambiguous statement of new intent and
+// an operator who has just fixed the bug should not have to remember an
+// annotation as well.
+//
+// `kelson rollback` is porcelain over this.
+const AnnotationRollbackTo = "kelson.dev/rollback-to"
+
 // The reasons ConditionReady takes. They are a closed set on purpose: a reason
 // is what a `kubectl get -o jsonpath` or an agent branches on, so an ad-hoc
 // string invented at a call site is a value nobody can write a check against.
@@ -32,6 +62,96 @@ const (
 	// which is a kelson-side gap (an unimplemented field, an overlay it cannot
 	// resolve) rather than an authoring mistake.
 	ReasonRenderFailed = "RenderFailed"
+
+	// ReasonClusterProfileUnavailable — the controller could not read what this
+	// cluster provides, so step 2 has no answer to give steps 3 to 5.
+	//
+	// It is deliberately *not* FluxNotInstalled. A probe that failed and a
+	// cluster that genuinely has no Flux look identical in an empty
+	// ClusterProfile and mean opposite things: one is fixed by `kelson install`,
+	// the other by looking at RBAC or at the API server, and telling an operator
+	// to install Flux they already have is how a controller sends somebody down
+	// the wrong path for an afternoon. The controller retries with backoff and
+	// re-probes each time.
+	ReasonClusterProfileUnavailable = "ClusterProfileUnavailable"
+
+	// ReasonRolledBack — the environment is serving a revision it was pinned to
+	// by AnnotationRollbackTo. Ready is True: the pinned artifact is live. What
+	// is *not* true is that the environment tracks its spec, and that is what
+	// ConditionProgressing says (ADR-0028 decision 5).
+	ReasonRolledBack = "RolledBack"
+)
+
+// The reasons the delivery steps refuse with (ADR-0028 decision 1, steps 4 to
+// 6). They are a closed set for the same reason the validation reasons are, and
+// internal/controller/errors.go maps each one to exactly one requeue behaviour —
+// so what a reader sees in a condition also tells them whether anything is
+// going to happen next without them.
+const (
+	// ReasonFluxNotInstalled — the ClusterProfile reports no Flux, so there is
+	// nothing in the cluster that would reconcile what kelson published.
+	//
+	// This is the *expected* state of a fresh cluster (ADR-0030), not a
+	// malfunction: the controller waits on a timer, returns no error, and never
+	// crash-loops. `kelson install` is the fix.
+	ReasonFluxNotInstalled = "FluxNotInstalled"
+
+	// ReasonRegistryNotConfigured — the controller was never told where to
+	// publish (--registry / KELSON_REGISTRY). A registry is a hard requirement
+	// of the spine and this is the sharpest new edge in the rebuild (ADR-0028,
+	// "Consequences"), so it is named rather than folded into a push failure.
+	ReasonRegistryNotConfigured = "RegistryNotConfigured"
+
+	// ReasonArtifactRefInvalid — the registry prefix, the pair's names or the
+	// generation do not make a repository and a tag. Nothing will fix itself.
+	ReasonArtifactRefInvalid = "ArtifactRefInvalid"
+
+	// ReasonRegistryUnreachable — the registry did not answer. Transient by
+	// assumption, so it is the one delivery failure that returns an error and
+	// takes controller-runtime's exponential backoff.
+	ReasonRegistryUnreachable = "RegistryUnreachable"
+
+	// ReasonPushDenied — the registry answered, and said no. A credential
+	// problem is an operator's to fix, on human time, so this waits on a timer
+	// rather than retrying into a rate limit.
+	ReasonPushDenied = "PushDenied"
+
+	// ReasonFluxApplyForbidden — the API server refused the OCIRepository or
+	// the Kustomization write. That is RBAC, which is an operator's to grant.
+	ReasonFluxApplyForbidden = "FluxApplyForbidden"
+
+	// ReasonFieldManagerConflict — a server-side apply hit a field another
+	// manager owns. kelson applies with ForceOwnership, so reaching this means
+	// something structural is contended and a human has to look.
+	ReasonFieldManagerConflict = "FieldManagerConflict"
+
+	// ReasonNameConflict — a live OCIRepository or Kustomization of the name
+	// this pair would use already belongs to a different environment namespace.
+	// Applying over it would silently redirect somebody else's deployment, so
+	// kelson refuses and changes nothing.
+	ReasonNameConflict = "NameConflict"
+
+	// ReasonRollbackTargetUnknown — AnnotationRollbackTo names a revision that
+	// is not in status.history. kelson will not point an OCIRepository at a tag
+	// it cannot confirm it published; the mirror is bounded at
+	// MaxHistoryEntries, so a target older than the window is this too.
+	ReasonRollbackTargetUnknown = "RollbackTargetUnknown"
+)
+
+// The reasons ConditionProgressing takes.
+const (
+	// ReasonRollbackPinned — re-rendering is suspended because
+	// AnnotationRollbackTo is in force. The message names both ways out.
+	ReasonRollbackPinned = "RollbackPinned"
+
+	// ReasonReconciling — a revision is published and Flux has not finished
+	// with it.
+	ReasonReconciling = "Reconciling"
+
+	// ReasonSettled — there is nothing left to do for the current generation,
+	// whether that ended well (Healthy) or badly (Rejected, Degraded). Ready is
+	// what says which.
+	ReasonSettled = "Settled"
 )
 
 // The Environment phase vocabulary, mirroring internal/delivery/statemachine's
@@ -107,23 +227,72 @@ type ValidationError struct {
 // HistoryEntry is one revision this environment has published: the bounded
 // mirror of ADR-0028 decision 4.
 //
-// It is three fields and not six. ADR-0028 specifies the digest, the resolved
-// images and the outcome as well, and every one of them is produced by the
-// publish step — which is stubbed behind internal/controller's Deliverer until
-// issue #224 lands. A field the controller could only ever write empty would be
-// a promise the status does not keep, so they arrive with the thing that fills
-// them.
+// It is a mirror and not the record. The record is the registry's tag list,
+// which holds every artifact ever published for this environment, immutably;
+// this is a window onto it for humans and for the API, bounded at
+// [MaxHistoryEntries] because a status that grew without limit would put the
+// whole deployment history into every watch event every controller in the
+// cluster receives. A query past the window is a registry query.
 type HistoryEntry struct {
 	// Revision is the artifact tag: <generation>-<spec-hash-short>.
 	Revision string `json:"revision"`
+
+	// Digest is the artifact's OCI digest, sha256:… — what was actually put
+	// there, as opposed to where it was put. A tag is written once and never
+	// rewritten, so the two agree forever; the digest is what proves it.
+	Digest string `json:"digest,omitempty"`
 
 	// SpecHash is the hash of the resolved spec this revision was rendered
 	// from. Two entries with the same hash are the same input, which is what
 	// makes a rollback target recognisable without fetching it.
 	SpecHash string `json:"specHash,omitempty"`
 
+	// Images are the container images this revision resolved to, in component
+	// order.
+	//
+	// Deprecated: it is a positional list with the imageless components left
+	// out, so nothing downstream can say which component an image belongs to
+	// without re-deriving it — which is what internal/api's promote path had to
+	// do, and why [HistoryEntry.ComponentImages] exists. It stays populated for
+	// one release, as a flat mirror of ComponentImages, so a status reader
+	// written against the older shape keeps working; new readers must use
+	// ComponentImages.
+	Images []string `json:"images,omitempty"`
+
+	// ComponentImages are the same images, each named with the component that
+	// resolved it. It is what makes "which build is in production" a `kubectl
+	// get` rather than an artifact pull, and it is what a promotion reads from
+	// the source environment (ADR-0016 decision 2) — by name now, rather than
+	// by guessing from the image repository.
+	//
+	// A component that resolved no image is absent, as it is from Images: an
+	// entry here is a record of something that ran.
+	ComponentImages []ComponentImage `json:"componentImages,omitempty"`
+
+	// Outcome is the delivery phase this revision reached — one of the Phase*
+	// constants. It is refreshed while the revision is the current one and then
+	// frozen, so an old entry says how that deployment ended rather than what
+	// it looked like one second after it was published.
+	Outcome string `json:"outcome,omitempty"`
+
 	// Timestamp is when the entry was recorded.
 	Timestamp metav1.Time `json:"timestamp,omitempty"`
+}
+
+// ComponentImage is one component of a revision and the image it resolved to.
+//
+// The pair is recorded rather than derived because the component name is known
+// exactly at the moment the revision is rendered — it is in the resolved spec
+// the controller is holding — and is only ever a guess afterwards: a positional
+// list shifts when a component is added or removed, and matching by image
+// repository is ambiguous the moment two components share one.
+type ComponentImage struct {
+	// Component is the component's name as the resolved spec spelled it.
+	Component string `json:"component"`
+
+	// Image is the fully qualified image reference this revision resolved that
+	// component to, tag or digest as authored.
+	Image string `json:"image"`
 }
 
 // ProjectStatus is what the controller observed about a Project.
@@ -159,9 +328,23 @@ type EnvironmentStatus struct {
 	// It is empty until something has been delivered.
 	Phase string `json:"phase,omitempty"`
 
-	// Revision is the settled revision: the artifact tag currently serving.
-	// Empty until the publish step exists (issue #224).
+	// Revision is the settled revision: the artifact tag the OCIRepository is
+	// pinned to. Empty until something has been published.
 	Revision string `json:"revision,omitempty"`
+
+	// RollbackRevision is the value of AnnotationRollbackTo the controller has
+	// acted on. It is what makes a rollback idempotent — a reconcile that sees
+	// the same annotation it already honoured does not re-verify or re-apply —
+	// and it is what distinguishes a *new* rollback from a standing one.
+	RollbackRevision string `json:"rollbackRevision,omitempty"`
+
+	// RollbackGeneration is the .metadata.generation the rollback was applied
+	// at. It is the whole mechanism behind "editing the spec resumes tracking"
+	// (ADR-0028 decision 5): a generation past this one means the author has
+	// stated new intent since the rollback, so the annotation goes inert and
+	// normal publishing resumes without anybody having to remember to remove
+	// it.
+	RollbackGeneration int64 `json:"rollbackGeneration,omitempty"`
 
 	// ValidationErrors is what validate.go said about this Environment and its
 	// Project, with the slash codes intact.

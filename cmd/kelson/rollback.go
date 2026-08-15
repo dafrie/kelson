@@ -1,78 +1,218 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
+
+	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
 
-	"github.com/dafrie/kelson/internal/delivery"
+	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
+	"github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1/kelsonv1alpha1connect"
+	"github.com/dafrie/kelson/internal/diff"
 )
 
-// newRollbackCmd builds `kelson rollback`, which is gated (issue #224).
+// newRollbackCmd builds `kelson rollback` (ADR-0028 decision 5, R2 #225):
+// repoint an environment at a revision it has already published.
 //
-// # What was here, and why it is not
+// # A rollback is a pointer move, previewed before it is ever committed
 //
-// Rollback used to read the rendered-history journal, print the
-// irreversibility preview and replay the recorded bytes through the
-// environment's adapter. All three halves are gone: the journal was
-// internal/serverstate and internal/delivery/direct, the preview was
-// internal/delivery/rollback, and the replay was an adapter's Apply.
+// Every revision kelson publishes is an immutable OCI artifact, so rolling
+// back is repointing the environment's OCIRepository at a tag that already
+// exists — expressed as a `kelson.dev/rollback-to` annotation the controller
+// honours — never a replay of recorded bytes. DeployService.Rollback always
+// sends a Preview event first, whatever dry_run is; this command asks with
+// dry_run=RENDER first so the preview arrives with nothing yet written,
+// prints it, and only then — after a human confirms, or --yes — makes the
+// real call with the same target revision pinned, so a second resolution of
+// "the previous revision" cannot pick a different one than what was shown.
 //
-// [ADR-0028](docs/adr/0028-delivery-spine.md) decision 5 replaces the whole
-// operation with a pointer move. Every revision kelson publishes is an
-// immutable OCI artifact that cannot have changed since, so rolling back is
-// repointing an `OCIRepository` at a tag that already exists — expressed as a
-// `kelson.dev/rollback-to` annotation on the `Environment`, which also suspends
-// re-rendering so the controller cannot immediately republish the thing you
-// just rolled away from. `kelson rollback` becomes porcelain over that
-// annotation.
+// # The preview says less than it used to, and says so
 //
-// # The irreversibility preview is the part worth saying out loud
-//
-// The old preview named what a rollback could not restore — immutable fields
-// the API server will refuse to change back, PVCs whose data is gone either
-// way, state a data operator owns — and it was computed from two sets of
-// recorded manifests. Nothing in the new spine has re-implemented it yet, which
-// is a real loss and exactly why this command refuses rather than offering a
-// rollback with the warning silently dropped. A rollback is what people reach
-// for when they are already in trouble; the one thing that must not happen is
-// discovering afterwards that it could not restore what they thought.
+// The irreversibility preview this rebuild has today is one finding: kelson
+// cannot fetch two OCI artifacts to compute a byte-level comparison, so it
+// says exactly that rather than reporting an empty list that would read as
+// "nothing to worry about" (internal/api/deploy.go, rollbackPreviewGap).
 func newRollbackCmd() *cobra.Command {
 	opts := &rollbackOptions{}
 	cmd := &cobra.Command{
-		Use:   "rollback -f spec.yaml --env <name> [--to <revision>]",
-		Short: "Return an environment to a recorded revision (rebuilding on the controller — see issue #224)",
-		Long: "Rollback is being rebuilt on the delivery spine (ADR-0028 decision 5, issue #224) and refuses\n" +
-			"in the meantime.\n\n" +
-			"What it becomes: every revision kelson publishes is an immutable OCI artifact, so a rollback\n" +
-			"repoints the environment's OCIRepository at a tag that already exists and suspends re-render\n" +
-			"until the pin clears. It replays nothing, because there is nothing to replay.\n\n" +
-			"What refusing protects: the irreversibility preview — the immutable fields, the volumes and\n" +
-			"the operator-owned state a rollback cannot restore — was computed from the recorded manifests\n" +
-			"this rebuild deleted. Rolling back without it would be the failure this command exists to\n" +
-			"prevent.",
-		Example: "  kelson diff -f project.yaml -f production.yaml --env production   # what is different now",
-		Args:    cobra.NoArgs,
-		RunE: func(*cobra.Command, []string) error {
-			return delivery.NotImplemented("rollback",
-				"kelson cannot roll back: the recorded rendered history and the irreversibility preview "+
-					"were deleted with the old delivery machinery, and the annotation-driven rollback that "+
-					"replaces them is not built",
-				"#224")
+		Use:   "rollback (-f spec.yaml | --project <name>) --env <name> [--to <revision>]",
+		Short: "Repoint an environment at a revision it has already published",
+		Long: "Rollback repoints the environment's published artifact at a revision it has already run\n" +
+			"(ADR-0028 decision 5): nothing is re-rendered and nothing is replayed, because every\n" +
+			"revision kelson publishes is immutable. With no --to, the target is the revision before\n" +
+			"the one currently serving.\n\n" +
+			"The preview always comes first, whether or not --yes is set: it names the target revision\n" +
+			"and what kelson cannot tell you about it — the byte-level comparison this rebuild does not\n" +
+			"compute yet (issue #225).",
+		Example: "  kelson rollback -f project.yaml -f production.yaml --env production\n" +
+			"  kelson rollback --project shop --env production --to 7-a1b2c3d4 --yes",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runRollback(cmd, opts)
 		},
 	}
 	f := cmd.Flags()
 	f.StringArrayVarP(&opts.files, "file", "f", nil, "spec YAML file holding Project and/or Environment documents (repeatable)")
-	f.StringVar(&opts.env, "env", "", "name of the Environment to roll back (optional when the input holds exactly one)")
-	f.StringVar(&opts.to, "to", "", "revision to restore (default: the entry before the current one)")
-	f.StringVar(&opts.profile, "profile", "", "ClusterProfile YAML file, or from-cluster to capture a live profile (requires cluster access)")
-	f.StringVar(&opts.kubeconfig, "kubeconfig", "", "path to a kubeconfig (default: $KUBECONFIG, in-cluster credentials, then ~/.kube/config)")
-	f.StringVar(&opts.image, "image", "", imageFlagUsage)
+	f.StringVar(&opts.project, "project", "", "name of a project already stored on kelson-server (alternative to -f)")
+	f.StringVar(&opts.env, "env", "", "name of the Environment to roll back (optional with -f when the input holds exactly one; required with --project)")
+	f.StringVar(&opts.to, "to", "", "revision to restore (default: the revision before the one currently serving)")
 	f.BoolVar(&opts.yes, "yes", false, "apply the rollback without asking for confirmation; the preview is printed either way")
-	cobra.CheckErr(cmd.MarkFlagRequired("file"))
+	addServerFlags(cmd, &opts.server)
 	return cmd
 }
 
 type rollbackOptions struct {
-	specInput
-	to  string
-	yes bool
+	files   []string
+	project string
+	env     string
+	to      string
+	yes     bool
+	server  serverOptions
+}
+
+func runRollback(cmd *cobra.Command, opts *rollbackOptions) error {
+	ref, env, err := resolveSpecRef(opts.files, opts.project, opts.env)
+	if err != nil {
+		return err
+	}
+	client, addr := opts.server.deployClient()
+	out := &printer{w: cmd.OutOrStdout()}
+
+	preview, err := rollbackPreview(cmd.Context(), client, ref, env, opts.to, addr)
+	if err != nil {
+		return err
+	}
+	printRollbackPreview(out, preview)
+	if err := out.err; err != nil {
+		return err
+	}
+
+	if !opts.yes && interactive(cmd) {
+		ok, err := confirm(cmd, fmt.Sprintf("Restore revision %s?", preview.GetToRevision()))
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("rollback cancelled")
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(cmd.Context(), defaultDeployTimeout+dialTimeout)
+	defer cancel()
+	req := connect.NewRequest(&kelsonv1alpha1.RollbackRequest{
+		Spec:        ref,
+		Environment: env,
+		// The revision pinned from the preview, not opts.to verbatim: an empty
+		// --to means "the previous revision", and re-resolving that on a second
+		// call could pick a different one if something else deployed between
+		// the two requests.
+		ToRevision:     preview.GetToRevision(),
+		DryRun:         kelsonv1alpha1.DryRun_DRY_RUN_NONE,
+		IdempotencyKey: newIdempotencyKey(),
+	})
+	stream, err := client.Rollback(ctx, req)
+	if err != nil {
+		return serverError("rollback", addr, err)
+	}
+	defer func() { _ = stream.Close() }()
+
+	var failure *kelsonv1alpha1.Error
+	for stream.Receive() {
+		switch event := stream.Msg().GetEvent().(type) {
+		case *kelsonv1alpha1.RollbackResponse_Committed_:
+			out.printf("%s restored revision %s\n", padPhase("Committed"), event.Committed.GetRestoredRevision())
+		case *kelsonv1alpha1.RollbackResponse_Settled_:
+			failure = event.Settled.GetError()
+			if failure == nil {
+				out.printf("%s restored\n", padPhase("Settled"))
+			}
+		}
+	}
+	if err := stream.Err(); err != nil {
+		return serverError("rollback", addr, err)
+	}
+	if err := out.err; err != nil {
+		return err
+	}
+	if failure != nil {
+		return settledErr(failure)
+	}
+	return nil
+}
+
+// rollbackPreview runs the always-preview rung (dry_run=RENDER): the server
+// sends exactly one Preview event and the stream ends there, having written
+// nothing.
+func rollbackPreview(ctx context.Context, client kelsonv1alpha1connect.DeployServiceClient, ref *kelsonv1alpha1.SpecRef, env, to, addr string) (*kelsonv1alpha1.RollbackResponse_Preview, error) {
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+	req := connect.NewRequest(&kelsonv1alpha1.RollbackRequest{
+		Spec:        ref,
+		Environment: env,
+		ToRevision:  to,
+		DryRun:      kelsonv1alpha1.DryRun_DRY_RUN_RENDER,
+	})
+	stream, err := client.Rollback(ctx, req)
+	if err != nil {
+		return nil, serverError("rollback preview", addr, err)
+	}
+	defer func() { _ = stream.Close() }()
+
+	var preview *kelsonv1alpha1.RollbackResponse_Preview
+	for stream.Receive() {
+		if p, ok := stream.Msg().GetEvent().(*kelsonv1alpha1.RollbackResponse_Preview_); ok {
+			preview = p.Preview
+		}
+	}
+	if err := stream.Err(); err != nil {
+		return nil, serverError("rollback preview", addr, err)
+	}
+	if preview == nil {
+		return nil, fmt.Errorf("rollback preview: kelson-server at %s sent no preview", addr)
+	}
+	return preview, nil
+}
+
+// printRollbackPreview prints the target and what a rollback cannot revert —
+// the report the pre-rebuild CLI printed before every rollback, adapted to
+// the server's findings vocabulary (RollbackResponse.Finding) instead of a
+// locally computed one.
+func printRollbackPreview(out *printer, preview *kelsonv1alpha1.RollbackResponse_Preview) {
+	out.printf("Target revision: %s\n", orDash(preview.GetToRevision()))
+	if encoded := preview.GetDiffJson(); len(encoded) > 0 {
+		var d diff.Diff
+		if err := json.Unmarshal(encoded, &d); err == nil {
+			out.printf("What changes: %d added, %d modified, %d removed (max risk %s)\n",
+				d.Summary.Added, d.Summary.Modified, d.Summary.Removed, d.Summary.MaxRisk)
+		}
+	}
+	out.printf("\nWhat a rollback cannot revert:\n")
+	findings := preview.GetFindings()
+	if len(findings) == 0 {
+		out.printf("  (nothing identified)\n")
+		return
+	}
+	for _, f := range findings {
+		marker := "[warning]      "
+		if f.GetUnrecoverable() {
+			marker = "[unrecoverable]"
+		}
+		out.printf("  %s %s\n", marker, describeFinding(f))
+	}
+}
+
+func describeFinding(f *kelsonv1alpha1.RollbackResponse_Finding) string {
+	head := f.GetCause()
+	if f.GetResource() != "" {
+		head = f.GetResource() + " — " + head
+	}
+	if f.GetPath() != "" {
+		head += " at " + f.GetPath()
+	}
+	if f.GetMessage() == "" {
+		return head
+	}
+	return head + ": " + f.GetMessage()
 }

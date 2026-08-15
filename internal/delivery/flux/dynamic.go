@@ -23,8 +23,22 @@ const DefaultNamespace = "flux-system"
 // these groups are stable, and the renderer's own preview Kustomization
 // already writes kustomize/source v1 (internal/renderer/previews.go), so a
 // version this adapter could read but not write would be the inconsistency.
+//
+// KustomizationGVR and OCIRepositoryGVR are exported because the controller
+// (internal/controller) *writes* those two objects, and the version it writes
+// must be the version this package reads back (ADR-0028 decision 3). Two
+// spellings of "source.toolkit.fluxcd.io/v1" would be one bump away from a
+// controller that applies to a version its own observer does not watch.
 var (
-	kustomizationGVR = schema.GroupVersionResource{Group: "kustomize.toolkit.fluxcd.io", Version: "v1", Resource: "kustomizations"}
+	// KustomizationGVR is kustomize-controller's Kustomization: the object
+	// kelson owns per environment, and the one whose Ready condition means the
+	// deployment is healthy.
+	KustomizationGVR = schema.GroupVersionResource{Group: "kustomize.toolkit.fluxcd.io", Version: "v1", Resource: "kustomizations"}
+	// OCIRepositoryGVR is source-controller's OCIRepository: the other half of
+	// the pair, pinned to the artifact tag kelson just published.
+	OCIRepositoryGVR = schema.GroupVersionResource{Group: "source.toolkit.fluxcd.io", Version: "v1", Resource: "ocirepositories"}
+
+	kustomizationGVR = KustomizationGVR
 	gitRepositoryGVR = schema.GroupVersionResource{Group: "source.toolkit.fluxcd.io", Version: "v1", Resource: "gitrepositories"}
 	helmReleaseGVR   = schema.GroupVersionResource{Group: "helm.toolkit.fluxcd.io", Version: "v2", Resource: "helmreleases"}
 	deploymentGVR    = schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}
@@ -35,6 +49,13 @@ var (
 	// hand and kelson never imports a flux-operator Go module
 	// (docs/architecture.md "Living with flux-operator", issue #137).
 	fluxReportGVR = schema.GroupVersionResource{Group: "fluxcd.controlplane.io", Version: "v1", Resource: "fluxreports"}
+)
+
+// The kinds behind the two GVRs kelson writes. A GVR names a resource and an
+// apply names a kind, so both spellings are needed and both live here.
+const (
+	KindKustomization = "Kustomization"
+	KindOCIRepository = "OCIRepository"
 )
 
 // DynamicStatusReader reads Flux objects with the Kubernetes dynamic client,
@@ -96,26 +117,7 @@ func (r DynamicStatusReader) Kustomizations(ctx context.Context) ([]Kustomizatio
 	ks := make([]Kustomization, 0, len(list.Items))
 	for i := range list.Items {
 		obj := list.Items[i].Object
-		k := Kustomization{
-			Name:      list.Items[i].GetName(),
-			Namespace: list.Items[i].GetNamespace(),
-			Ready:     ConditionUnknown,
-		}
-		k.Path, _, _ = unstructured.NestedString(obj, "spec", "path")
-		k.Suspended, _, _ = unstructured.NestedBool(obj, "spec", "suspend")
-		k.SourceKind, _, _ = unstructured.NestedString(obj, "spec", "sourceRef", "kind")
-		k.SourceName, _, _ = unstructured.NestedString(obj, "spec", "sourceRef", "name")
-		k.LastAppliedRevision, _, _ = unstructured.NestedString(obj, "status", "lastAppliedRevision")
-		k.LastAttemptedRevision, _, _ = unstructured.NestedString(obj, "status", "lastAttemptedRevision")
-
-		for _, c := range conditionsOf(obj) {
-			switch c.kind {
-			case "Ready":
-				k.Ready, k.Reason, k.Message = ConditionState(c.status), c.reason, c.message
-			case "Reconciling":
-				k.Reconciling = c.status == string(ConditionTrue)
-			}
-		}
+		k := KustomizationFrom(obj, list.Items[i].GetName(), list.Items[i].GetNamespace())
 
 		// A sourceRef without a namespace names an object in the
 		// Kustomization's own namespace, which is Flux's rule and not something
@@ -130,6 +132,43 @@ func (r DynamicStatusReader) Kustomizations(ctx context.Context) ([]Kustomizatio
 		ks = append(ks, k)
 	}
 	return ks, nil
+}
+
+// KustomizationFrom reads the slice of a live Kustomization kelson cares about
+// out of its unstructured content.
+//
+// It is exported and separate from the list loop above because there are now
+// two readers of the same object and they arrive at it differently: this
+// package lists Kustomizations across a cluster with the dynamic client, and
+// internal/controller reads back the single one it owns through
+// controller-runtime's cache (ADR-0028 decision 1, step 6). Extracting the
+// field paths is what stops the second reader from growing its own opinion
+// about where `lastAppliedRevision` lives.
+//
+// The name and namespace are arguments rather than read from the content
+// because both callers already hold them, and an object fetched through a typed
+// path may carry them only in its metadata wrapper.
+//
+// Source resolution is not here: it needs a second list, which is a property of
+// how a caller reads rather than of what a Kustomization says.
+func KustomizationFrom(obj map[string]any, name, namespace string) Kustomization {
+	k := Kustomization{Name: name, Namespace: namespace, Ready: ConditionUnknown}
+	k.Path, _, _ = unstructured.NestedString(obj, "spec", "path")
+	k.Suspended, _, _ = unstructured.NestedBool(obj, "spec", "suspend")
+	k.SourceKind, _, _ = unstructured.NestedString(obj, "spec", "sourceRef", "kind")
+	k.SourceName, _, _ = unstructured.NestedString(obj, "spec", "sourceRef", "name")
+	k.LastAppliedRevision, _, _ = unstructured.NestedString(obj, "status", "lastAppliedRevision")
+	k.LastAttemptedRevision, _, _ = unstructured.NestedString(obj, "status", "lastAttemptedRevision")
+
+	for _, c := range conditionsOf(obj) {
+		switch c.kind {
+		case "Ready":
+			k.Ready, k.Reason, k.Message = ConditionState(c.status), c.reason, c.message
+		case "Reconciling":
+			k.Reconciling = c.status == string(ConditionTrue)
+		}
+	}
+	return k
 }
 
 type gitSource struct{ url, branch string }

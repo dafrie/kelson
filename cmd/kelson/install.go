@@ -243,8 +243,13 @@ func printInstallPlan(out *printer, plan *install.Plan) {
 	for _, item := range plan.Items {
 		c := item.Component
 		out.printf("\n%s %s → namespace %s\n", c.Title, c.Version, c.Namespace)
-		out.printf("  from   %s\n", c.ManifestURL)
-		out.printf("  sha256 %s (verified)\n", item.Digest)
+		if c.Authored {
+			out.printf("  image  %s@sha256:%s\n", c.Image, item.Digest)
+			out.printf("  source kelson-authored — %s publishes no install manifest to pin (docs/install.md)\n", c.Title)
+		} else {
+			out.printf("  from   %s\n", c.ManifestURL)
+			out.printf("  sha256 %s (verified)\n", item.Digest)
+		}
 		out.printf("  gives  %s\n", c.Provides)
 		out.printf("  %d resources:\n", len(item.Objects))
 		for _, o := range item.Objects {
@@ -316,6 +321,13 @@ func printInstallBoundary(out *printer, plan *install.Plan) {
 			out.printf("  controller gateway.envoyproxy.io/gatewayclass-controller, and a Gateway with your\n")
 			out.printf("  listeners — which class carries traffic is your decision. Routes render once detection\n")
 			out.printf("  reports the class.\n")
+		case "registry":
+			out.printf("  the registry is reachable in-cluster at %s, over plain HTTP —\n", install.RegistryEndpoint)
+			out.printf("  nothing else is pointed at it yet. Set it as the destination and mark it insecure\n")
+			out.printf("  wherever something pushes or pulls through it: kelson-server's server.registry and\n")
+			out.printf("  server.insecureRegistries chart values, or `kelson build`'s --registry/$KELSON_REGISTRY\n")
+			out.printf("  and --insecure-registries/$KELSON_INSECURE_REGISTRIES. Garbage collection is a\n")
+			out.printf("  manual/cron command, not automatic — docs/install.md#garbage-collection.\n")
 		}
 	}
 	out.printf("\nRun `kelson profile` to see the cluster as kelson now reads it.\n")

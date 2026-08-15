@@ -26,15 +26,20 @@ always was. `kelson-server` becomes what it should have been: an API over cluste
 a file.
 
 > **Transition (R1/R2, [#224](https://github.com/dafrie/kelson/issues/224) /
-> [#225](https://github.com/dafrie/kelson/issues/225)).** The spec store is CR-backed as of the first
-> deletion slice: `SpecService` reads and writes `Project` and `Environment` custom resources with
-> server-side apply under the field manager `kelson-server`, in the server's own namespace
-> (`internal/controlstore`). The ConfigMap spec store and the ConfigMap history store are gone
-> ([ADR-0027](adr/0027-crd-native-control-plane.md) decision 7), and so are the delivery adapters
-> ([ADR-0028](adr/0028-delivery-spine.md) decision 9): `Deploy`'s applying rung, `Rollback`, `History`,
-> `Promote` and `Diff`'s `from_revision` answer `CodeUnimplemented` with a `delivery/not-implemented`
-> detail naming #224. `Deploy`'s two dry-run rungs, `Status`'s workload verdicts and everything the
-> renderer does are unaffected. The **agent identity and audit records are not** —
+> [#225](https://github.com/dafrie/kelson/issues/225)).** The spec store is CR-backed: `SpecService`
+> reads and writes `Project` and `Environment` custom resources with server-side apply under the field
+> manager `kelson-server`, in the server's own namespace (`internal/controlstore`). The ConfigMap spec
+> store and the ConfigMap history store are gone ([ADR-0027](adr/0027-crd-native-control-plane.md)
+> decision 7), and so are the delivery adapters ([ADR-0028](adr/0028-delivery-spine.md) decision 9).
+> `Deploy`, `Status`, `Rollback`, `History` and `Promote` are reshaped over the CRs — a spec write plus
+> an `Environment.status` watch, a `kelson.dev/rollback-to` merge patch, a bounded history mirror, an
+> image-pin splice — and the CLI (`kelson deploy`/`status` (workload half only, see below)
+> `/rollback`/`promote`/`history`) is a ConnectRPC client of this façade again rather than refusing.
+> What has not moved: `Diff`'s `from_revision` still answers `CodeUnimplemented` with a
+> `delivery/not-implemented` detail naming #224 — a rendered-level diff against a past revision needs
+> the rendered-history store ADR-0027 deleted, and nothing has replaced it yet. `Deploy`'s two dry-run
+> rungs, `Status`'s workload verdicts and everything the renderer does were unaffected throughout. The
+> **agent identity and audit records are not** —
 > they are control-plane records rather than delivery state, and they relocate unchanged to
 > `internal/controlstore` so the package name stops implying they are the server's memory of a
 > deployment. Whether they should also become custom resources is
@@ -112,15 +117,96 @@ web UI: not built into this binary (`make ui`))
 build writes an `index.html` into that directory, and a tracked one would be overwritten on every
 build and committed by accident.
 
+## What the delivery verbs write
+
+`Deploy`, `Rollback` and `Promote` are the three RPCs that change the cluster, and each of them does
+one small, nameable thing to a custom resource. Three of those details are worth stating, because
+each was a bug once and the fix is visible in what `kubectl get` shows afterwards.
+
+### A request that names no profile is answered against *this* cluster
+
+The renders this server runs are pre-flight renders of what `kelson-controller` is about to render,
+and the controller renders against the profile it detected. So a request whose `profile` field is
+empty — which is what the CLI sends unless you pass `--profile` — is answered against the profile
+kelson-server captures from its own cluster, not against the empty one.
+
+That matters twice. A spec whose services declare `domains:` (or take the default hostname from
+`routing.domainSuffix`) renders `HTTPRoute`s only when the profile reports Gateway API; answered
+against "nothing detected", `kelson deploy` and `kelson status` would refuse it with
+`render/gateway-api-missing` on a cluster that has Gateway API installed. And the resource count in
+`kelson deploy`'s confirmation prompt is the count the controller will publish, rather than a
+different number computed against a different cluster.
+
+An explicit `profile` still wins, in all three spellings: a `yaml` document renders against exactly
+those bytes, `from_cluster: true` captures, and `from_cluster: false` is the way to ask for a render
+against nothing detected. A server started with no cluster connection falls back to the empty
+profile rather than refusing.
+
+### The deploy image is written where it takes effect
+
+An image override has to be *written* to be honoured — the render happens in the controller, from
+the custom resource — or the deploy would report one image and the cluster would run another.
+
+It is written as `Environment.spec.components[].image` on the one environment the deploy names, the
+same per-environment pin a promotion writes ([rule P3](model.md#precedence-rules), ADR-0016). It
+applies to exactly the components that would otherwise have taken `Project.spec.image`, which is what
+`--image` stands in for: a component with its own `image:`, and a component this environment already
+pins, both still win. Data and helm components are never pinned.
+
+It used to be written to `Project.spec.image`, which is shared by every environment — so
+`kelson deploy --env development --image …:pr-417` durably changed what production's *next* deploy
+would resolve to, and `GetSpec` came back with a project document nobody had authored. The price of
+the fix is stated rather than hidden: the pin outlives the deploy that wrote it, exactly as the
+project-wide write did, and unlike that write it also outranks a component-level `image:` added to
+the Project later. `kelson promote`, or an edit to the environment document, is the way back out.
+
+Because it edits a document, a deploy carrying `--image` is a **spec write** for agent policy, even
+when the rest of the request names a stored spec. See
+[the operations `forbid:` knows](#the-operations-forbid-knows).
+
+### Rolling back to a target that has gone inert re-arms it
+
+A rollback writes `kelson.dev/rollback-to`, and ADR-0028 decision 5 gives the annotation two ways
+out: remove it, or edit the spec. The second one leaves the annotation on the object doing nothing —
+the controller calls it *inert* and keeps naming it in `status.rollbackRevision`, deliberately, so
+that the edit which resumed publishing does not flap straight back onto the pinned tag.
+
+That makes the obvious sequence a trap: roll back, edit the spec, discover the edit is worse, roll
+back to the same revision again. The second request writes an annotation value the object already
+carries — and an identical merge patch is not a change, and annotations do not bump
+`.metadata.generation`, so nothing reconciles and nothing happens.
+
+kelson-server detects that case and re-arms the pin: it removes the annotation, waits (briefly, and
+bounded) for the controller to drop the bookkeeping, then writes the pin again — which the controller
+reads as a new rollback at the current generation, because it is one. Two consequences to know:
+
+- `kubectl get environment -o yaml` will show **two** annotation patches for one `kelson rollback`,
+  and the audit trail records one rollback.
+- While the annotation is off, the environment tracks its spec again, so a reconcile landing inside
+  that window may republish the spec you are rolling back *from* before the pin returns. It is the
+  same window `kubectl annotate --remove` followed by `kubectl annotate` opens by hand, and the pin
+  that follows restores the target.
+
+A rollback to a *different* target, and a re-request of the pin that is currently in force, are both
+unchanged: one patch, or a deliberate no-op. Unpinning a healthy environment to re-pin it identically
+would be a change to what runs, and that request asked for no change at all.
+
 ## Who may reach it
 
 This is the **interim** answer, taken with the project owner on 2026-08-13, and it is deliberately
 smaller than the design issue [#84](https://github.com/dafrie/kelson/issues/84) owns. Three sentences
 first, then the detail:
 
-- **CLI users are already authenticated, by Kubernetes.** `kelson` talks to the cluster directly with
-  your kube context, so the cluster's RBAC is the access control and there is nothing to configure.
-  The server is not in that path at all.
+- **Most of the CLI is already authenticated, by Kubernetes.** `kelson render`, `diff`, `build`,
+  `profile`, `status`, `explain`, `secret`, `agent`, `audit`, `install` and `uninstall` talk to the
+  cluster directly with your kube context, so the cluster's RBAC is the access control and there is
+  nothing to configure. The server is not in their path at all.
+- **`deploy`, `rollback`, `promote` and `history` are the exception: they are `kelson-server` clients**
+  (R2, [#225](https://github.com/dafrie/kelson/issues/225)), the same as the web UI and `kelson-mcp`.
+  Point them at a reachable server with `--server` (or `$KELSON_SERVER`; default
+  `http://127.0.0.1:8420`) — a `kubectl port-forward` is the documented way to reach one installed in a
+  cluster — and, on a server started with `--password`, authenticate the same way `kelson-mcp` does:
+  `--password`/`$KELSON_PASSWORD` or `--token`/`$KELSON_AGENT_TOKEN`.
 - **Web and other API clients get one shared password.** Set `--password` (or `KELSON_PASSWORD`) and
   every `kelson.v1alpha1.*` route requires it.
 - **A username is a display name, not an identity.** The login form asks for one and the UI shows it,
@@ -381,6 +467,14 @@ state includes the line saying it is `propose-only`. Without that, an agent coul
 and then deploy. Since a `PutSpec` replaces the project's whole document set (and omitting an
 environment deletes it), every stored environment of the project has a say — so an agent cannot store
 a spec for a project that has *any* propose-only environment.
+
+`spec-write` also covers two shapes of `Deploy`, for the same reason: a deploy that carries its own
+documents, and a deploy of a stored spec that carries `--image`. The second is not an exception being
+strict for its own sake — the image override is written to the environment's component pins
+([above](#the-deploy-image-is-written-where-it-takes-effect)), so it durably changes the
+desired state, and leaving it ungated would have made `forbid: [spec-write]` advisory for the one
+field an agent most wants to change. A deploy of a stored spec *without* an image writes no document
+and is exempt, which is what the agent surface ordinarily sends.
 
 ### What `propose-only` does today
 

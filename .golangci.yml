@@ -56,6 +56,7 @@ linters:
             - "!**/internal/sops/**"
             - "!**/internal/api/**"
             - "!**/internal/mcp/**"
+            - "!**/cmd/kelson/**"
             - "!**/cmd/kelson-server/**"
             - "!**/cmd/kelson-mcp/**"
             - "!**/api/kelson/**"
@@ -73,6 +74,26 @@ linters:
             # file-mode sniff cannot tell them apart (cmd/kelson/deploy.go,
             # interactive).
             - golang.org/x/term
+        # cmd/kelson (R2, issue #225): deploy, rollback, promote and history are
+        # a ConnectRPC client of kelson-server now — the direct/git adapters
+        # they used to drive are deleted (ADR-0028) — so the CLI binary gets its
+        # own rule, one step wider than `main`, rather than handing the wire
+        # client to every other main-governed package (internal/model,
+        # internal/renderer, ...) that has no business dialling a server. It is
+        # the same fence internal/mcp/cmd/kelson-mcp draws from the other side
+        # (see the api rule below); cmd/kelson does not get the MCP SDK because
+        # it is not an MCP surface.
+        cli:
+          files:
+            - "**/cmd/kelson/**"
+          allow:
+            - $gostd
+            - github.com/dafrie/kelson
+            - github.com/invopop/jsonschema
+            - github.com/spf13/cobra
+            - gopkg.in/yaml.v3
+            - golang.org/x/term
+            - connectrpc.com/connect
         # The cluster-facing planes. internal/observation watches live
         # resources by definition and internal/clusterprofile/detect probes one
         # (docs/architecture.md), so both need the same client libraries as

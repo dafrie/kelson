@@ -63,16 +63,36 @@ type Component struct {
 	Version string
 	// ManifestURL is the upstream-published install manifest for that release.
 	// It must contain Version: a URL and a version that disagree is a pin that
-	// documents one thing and installs another.
+	// documents one thing and installs another. Empty when Authored is true —
+	// there is no manifest to fetch.
 	ManifestURL string
 	// SHA256 is the hex digest of the bytes at ManifestURL. An install that
-	// fetches anything else refuses and applies nothing.
+	// fetches anything else refuses and applies nothing. Empty when Authored is
+	// true, for the same reason as ManifestURL.
 	SHA256 string
+	// Authored marks a row whose manifest kelson composes itself rather than
+	// fetching one — the exception ADR-0021 §2 states and ADR-0030's amendment
+	// records a second instance of. ManifestURL and SHA256 are unset; Image and
+	// ImageDigest carry the pin instead, and Installer.load builds the objects
+	// in Go (see registry.go) rather than downloading and decoding YAML.
+	Authored bool
+	// Image is the pinned container image reference, without a tag or digest,
+	// for an Authored row. Meaningless when Authored is false.
+	Image string
+	// ImageDigest is the hex sha256 digest of Image at Version, so the object
+	// kelson authors always pulls image@sha256:<ImageDigest> — never a mutable
+	// tag — whatever registry.k8s.io or GHCR later moves. Meaningless when
+	// Authored is false.
+	ImageDigest string
 	// Namespace is the namespace the manifest creates and the component runs
 	// in, reported in the preview so a user knows where it is about to land.
 	Namespace string
 	// ProfileField is the ClusterProfile field root whose detection Gap makes
-	// this component's presence Unknown (clusterprofile.GapFor).
+	// this component's presence Unknown (clusterprofile.GapFor). Empty when no
+	// ClusterProfile signal exists for this component at all — today only
+	// "registry": kelson has no way to observe whether a cluster already has
+	// one, so Presence never rises above No and the offer is
+	// unconditional-but-explicit rather than presence-gated (docs/install.md).
 	ProfileField string
 	// Provides is what installing this unlocks, in terms of what kelson renders.
 	// A component list that says only "cert-manager" makes the reader guess why
@@ -180,6 +200,47 @@ var Components = []Component{
 		Provides: "all HTTP routing: the Gateway API CRDs and a controller that implements them, which every " +
 			"HTTPRoute kelson renders needs (issue #140). It creates no GatewayClass — which class carries " +
 			"traffic is your decision, made after the install",
+	},
+	// registry is bring-your-own by default (docs/install.md): the spine
+	// (ADR-0028) pushes rendered-manifest OCI artifacts, and `kelson build`
+	// pushes app images, and most teams already have somewhere to put them.
+	// This row exists for the cluster that does not — self-contained,
+	// lightweight, k3s-and-edge-shaped, the same audience ADR-0030 wrote
+	// flux-aio for.
+	//
+	// CNCF Distribution (registry:2 / `distribution/distribution`, the project
+	// ADR-0021 decision 2's rule is written for) publishes no install.yaml —
+	// there is no Kubernetes manifest to pin a URL and a digest against, only a
+	// container image. So this row is Authored (ADR-0030's 2026-08-14
+	// amendment, the second instance of the exception decision 2's own §2
+	// already names): the Deployment, Service and PersistentVolumeClaim are
+	// kelson's own, written in registry.go, and what is pinned is the image —
+	// ghcr.io/distribution/distribution, the project's own registry rather
+	// than a Docker Official Images mirror of it, by digest, never a mutable
+	// tag.
+	//
+	// ProfileField is deliberately empty. No ClusterProfile finding says
+	// whether a cluster already has a registry — kelson cannot see credentials
+	// a user configured out of band, a registry running outside the cluster,
+	// or one behind a proxy — so Presence can only ever answer No, never Yes
+	// or Unknown, and installing this is always an explicit choice
+	// (refuse()'s registry/--all-missing case is where that is enforced: named
+	// installs it, a sweep never does).
+	{
+		Name:         "registry",
+		Title:        "an in-cluster OCI registry (CNCF Distribution)",
+		Status:       StatusSupported,
+		Version:      "3.1.1",
+		Authored:     true,
+		Image:        "ghcr.io/distribution/distribution",
+		ImageDigest:  "bca24727f4002e51f959c18c42e816e4d1078198081a9837e16b8b7d7e43ebf8",
+		Namespace:    RegistryNamespace,
+		ProfileField: "",
+		Provides: "somewhere to push: the delivery spine's rendered-manifest OCI artifacts (ADR-0028) and " +
+			"`kelson build`'s app images. The cluster-internal endpoint is " + RegistryEndpoint + ", plain " +
+			"HTTP, so anything that pushes or pulls through it must be told it is insecure " +
+			"(--insecure-registries / $KELSON_INSECURE_REGISTRIES) — bring-your-own remains the default and " +
+			"the recommendation for a team; this is the self-contained-cluster offer",
 	},
 	{
 		Name:         "external-secrets",

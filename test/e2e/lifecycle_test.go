@@ -31,20 +31,24 @@ const (
 	statusTimeout = 90 * time.Second
 )
 
-// TestRenderApplyObserveLifecycle is what the delivery spine can prove end to
-// end today, against a real API server.
+// TestRenderApplyObserveLifecycle is what this harness can prove end to end
+// against a bare kind cluster with no kelson-server and no controller.
 //
 // The suite used to run the whole loop through kelson: deploy, observe healthy,
 // mutate, preview offline and against the live cluster, deploy the change, roll
-// back, and verify the cluster itself reverted. ADR-0028 deleted the applier
-// and the rollback, so what is left is the half that never needed them — render
-// and both diff levels — plus the property that makes the deletion survivable:
-// a kelson render is a flat set of standard manifests, so `kubectl apply` puts
+// back, and verify the cluster itself reverted. ADR-0028 deleted the local
+// applier and rollback, and R2 (#225) replaced them with a ConnectRPC client of
+// kelson-server — real again, but only reachable with a server and a
+// controller running, which is what hack/e2e/spine.sh stands up and this
+// harness does not. So what runs here is the half that never needed either: a
+// kelson render is a flat set of standard manifests, so `kubectl apply` puts
 // exactly it in the cluster and `kelson status` reads the workloads back.
 //
-// The deploy and rollback halves come back with issue #224, against the
-// controller and the artifact; [TestDeletedVerbsRefuseHonestly] is what stands
-// in for them until then.
+// [TestDeletedVerbsRefuseWithNoReachableServer] is the property this harness
+// can still prove about deploy and rollback without standing up a server: that
+// they fail cleanly, naming --server, rather than hanging or applying nothing
+// silently. The real round trip against a live server and controller is
+// hack/e2e/spine.sh.
 func TestRenderApplyObserveLifecycle(t *testing.T) {
 	h := newHarness(t, "kelson-e2e")
 	const env = "e2e"
@@ -95,28 +99,38 @@ func TestRenderApplyObserveLifecycle(t *testing.T) {
 	h.waitForStatus(spec, env, statusTimeout, "Deployment/kelson-e2e/web healthy")
 }
 
-// TestDeletedVerbsRefuseHonestly is what stands in for the deploy and rollback
-// halves of the lifecycle until issue #224 lands.
+// TestDeletedVerbsRefuseWithNoReachableServer is what stands in, in this
+// server-less harness, for the deploy and rollback round trip
+// hack/e2e/spine.sh proves against a live kelson-server and controller.
 //
-// A gated verb is only acceptable if it refuses in a shape a caller can act on,
-// and the one place that is worth proving against a real binary rather than a
-// unit test is here: the exit code, the taxonomy code and the tracking issue,
-// as a user's shell sees them.
-func TestDeletedVerbsRefuseHonestly(t *testing.T) {
+// deploy and rollback are ConnectRPC clients of kelson-server now (R2, #225),
+// and this harness runs none. The property worth proving against a real
+// binary rather than a unit test is that a façade-backed verb with no
+// reachable server fails the way the design requires: quickly, with a message
+// naming the --server flag, never a hang and never a silent no-op — pointed
+// here at an address nothing listens on, to make "no reachable server" exact
+// rather than relying on ambient port availability.
+func TestDeletedVerbsRefuseWithNoReachableServer(t *testing.T) {
 	h := newHarness(t, "kelson-e2e-gated")
 	const env = "e2e"
+	const unreachableServer = "http://127.0.0.1:1"
 	spec := h.copyFixture("spec.yaml")
 
 	for _, args := range [][]string{
-		{"deploy", "-f", spec, "--env", env, "--yes"},
-		{"rollback", "-f", spec, "--env", env, "--yes"},
+		{"deploy", "-f", spec, "--env", env, "--yes", "--server", unreachableServer},
+		{"rollback", "-f", spec, "--env", env, "--yes", "--server", unreachableServer},
 	} {
+		start := time.Now()
 		res := h.kelson(args...)
+		elapsed := time.Since(start)
 		if res.code == 0 {
-			t.Fatalf("`kelson %s` exited 0; the machinery behind it is deleted\n%s", strings.Join(args, " "), res.combined())
+			t.Fatalf("`kelson %s` exited 0 against an unreachable --server\n%s", strings.Join(args, " "), res.combined())
+		}
+		if elapsed > 15*time.Second {
+			t.Errorf("`kelson %s` took %s to fail against an unreachable --server; it must fail fast, not hang", strings.Join(args, " "), elapsed)
 		}
 		out := res.combined()
-		for _, want := range []string{"delivery/not-implemented", "#224"} {
+		for _, want := range []string{"--server", "KELSON_SERVER"} {
 			if !strings.Contains(out, want) {
 				t.Errorf("`kelson %s` did not name %q:\n%s", strings.Join(args, " "), want, out)
 			}

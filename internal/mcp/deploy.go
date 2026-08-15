@@ -10,20 +10,20 @@ import (
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
 )
 
-const deployDescription = `Preview what deploying a stored project's environment would do. Applying is NOT AVAILABLE yet.
+const deployDescription = `Deploy a stored project's environment, or preview what deploying it would do.
 
-MUTATES THE CLUSTER when dry_run="none" — and that rung CHANGES NOTHING TODAY, because kelson's delivery spine is being rebuilt on a controller (ADR-0028) and it is refused with the code delivery/not-implemented, naming issue #224. Do not retry it: the refusal is about kelson, not about your request, and it will not succeed until that issue lands.
+MUTATES THE CLUSTER when dry_run="none": kelson writes the environment's spec to the control plane and kelson-controller takes it from there — publishing a new artifact, pointing Flux at it, and applying it. This tool streams that until it settles or the timeout expires.
 
 dry_run:
-  "render" (default) — validate and render only; returns what would be applied and the kinds and sizes of the manifests. Works, and is unaffected by the rebuild.
-  "server"           — ask the Kubernetes API server itself (server-side dry-run, including admission and policy). Works; needs a reachable cluster.
-  "none"             — refused with delivery/not-implemented (issue #224).
+  "render" (default) — validate and render only; returns what would be applied and the kinds and sizes of the manifests. Writes nothing.
+  "server"           — ask the Kubernetes API server itself (server-side dry-run, including admission and policy). Writes nothing; needs a reachable cluster.
+  "none"             — writes the spec and deploys it for real.
 
-What this still answers well: whether a spec renders, what it renders, and whether the cluster would accept it — including admission and policy verdicts. That is the whole of the pre-flight check, and it is the part worth doing before a human deploys.
+A real deploy answers with a settled outcome — SETTLED healthy, SETTLED degraded, or the stream ending with no settled event because the timeout expired first. A deploy that settles unhealthy is a real outcome, not a failed call: read it and act on it, do not retry blindly.
 
 Preconditions: the project must be stored (put_spec) and declare the environment. Supply image when the spec builds from source and you want a specific tag.
 
-Cost: both preview rungs are one server call. "render" is offline; "server" needs the cluster.
+Cost: one server call, held open by dry_run="none" until the deployment settles or the request's own budget runs out.
 
 Pass reason to say why you are deploying. It is recorded in kelson's audit trail beside the action, which is what makes the attempt reviewable afterwards by someone who was not here.`
 
