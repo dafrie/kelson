@@ -315,6 +315,30 @@ func walkUnknown(n *yaml.Node, t reflect.Type, path, resource string, pos positi
 	}
 }
 
+// retiredFields is the remediation for a field kelson used to accept and has
+// removed, keyed by the exact path an author would write it at.
+//
+// Decoding is strict — an unrecognised key is `schema/unknown-field` with the
+// line it was written on — so a spec that still carries a retired block already
+// fails loudly. What it does not do without this table is say *why*: the
+// default remediation offers the list of valid fields, which reads as "you
+// misspelled something" when the truth is "this was real, it is gone, and
+// deleting the block is the whole migration". A retired field is the one case
+// where an author who wrote the correct thing gets an error, and it costs one
+// sentence to tell them so.
+//
+// A row goes in when a field is deleted and comes out when nobody could
+// plausibly still have it in a document — there is no compatibility promise
+// behind it (kelson is pre-alpha), only an error message that does not waste
+// the reader's afternoon.
+var retiredFields = map[string]string{
+	"$.spec.delivery": "delete the whole `delivery:` block — kelson renders, publishes an OCI artifact and lets " +
+		"Flux reconcile it, so there is no mode to select and no git target to name (ADR-0028). Nothing " +
+		"replaces it and nothing about the deployment changes when it goes",
+	"$.spec.defaults.deliveryMode": "delete `deliveryMode` — there is one delivery path and it is Flux, so a " +
+		"project-level default has nothing left to choose between (ADR-0028)",
+}
+
 func walkStructNode(n *yaml.Node, t reflect.Type, path, resource string, pos positions, errs *Errors) {
 	if n.Kind != yaml.MappingNode {
 		return
@@ -326,12 +350,16 @@ func walkStructNode(n *yaml.Node, t reflect.Type, path, resource string, pos pos
 		sf, ok := fields[key.Value]
 		if !ok {
 			p := pos.at(child)
+			remediation := fmt.Sprintf("check the field name against the %s schema; valid fields: %s", t.Name(), strings.Join(fieldNames(fields), ", "))
+			if r, retired := retiredFields[child]; retired {
+				remediation = r
+			}
 			*errs = append(*errs, Error{
 				Code:        ErrUnknownField,
 				Resource:    resource,
 				Field:       child,
 				Message:     fmt.Sprintf("unknown field %q on %s", key.Value, t.Name()),
-				Remediation: fmt.Sprintf("check the field name against the %s schema; valid fields: %s", t.Name(), strings.Join(fieldNames(fields), ", ")),
+				Remediation: remediation,
 				DocsURL:     docsURL(ErrUnknownField),
 				Line:        p.Line,
 				Column:      p.Column,

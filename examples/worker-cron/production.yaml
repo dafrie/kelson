@@ -7,9 +7,6 @@ spec:
   project: mailroom
   namespace: mailroom
 
-  delivery:
-    mode: direct
-
   # `policy: {agents: allow, require: [dry-run]}` returns with M7 (#141).
 
   components:

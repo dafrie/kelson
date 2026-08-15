@@ -9,30 +9,26 @@ import (
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
 	"github.com/dafrie/kelson/internal/delivery/flux"
 	"github.com/dafrie/kelson/internal/model"
-	"github.com/dafrie/kelson/internal/renderer"
 )
 
 // PreviewService served: which of an environment's pull requests are running
 // (ADR-0017 stage 3, reopening its decision 7).
 //
-// # Three answers, and the response says which one it gave
+// # Two answers, and the response says which one it gave
 //
 // An environment that declares no `previews:` block gets its identity and
 // nothing else — no settings, no lifecycle, no error. That is not a failure and
 // the caller's empty state is what explains how previews come to exist.
 //
-// An environment that declares previews in a delivery mode that cannot run them
-// gets its settings and the renderer's own `render/previews-require-flux`. The
-// gate is asked for by name (renderer.PreviewsRequireFlux) rather than by
-// rendering the whole environment: a render can fail for a dozen unrelated
-// reasons — an unresolved image, a missing overlay — and answering "why are
-// there no previews" with the first of those would be a worse answer than the
-// gate's own sentence.
+// An environment that declares previews gets the cluster's reply. The cluster
+// is read through the delivery plane, which is where a Kubernetes client is
+// allowed to live (.golangci.yml) and which this request already has to build
+// to know the environment's target anyway.
 //
-// An environment that declares previews in flux mode gets the cluster's reply.
-// The cluster is read through the delivery plane, which is where a Kubernetes
-// client is allowed to live (.golangci.yml) and which this request already has
-// to build to know the environment's target anyway.
+// There used to be a third answer — settings plus `render/previews-require-flux`
+// for an environment whose delivery mode could not run them — and it is gone
+// with the mode vocabulary (ADR-0028 decision 8). Nothing about a spec can now
+// make previews unavailable.
 //
 // # Nothing here writes, and there is no field that could
 //
@@ -40,6 +36,10 @@ import (
 // decisions 8 and 6). A write RPC would have to duplicate the publisher without
 // the checkout and the image reference CI already has, or delete an object the
 // operator recreates on its next poll.
+
+// deliveryMode is what the vestigial `mode` field of ListPreviewsResponse
+// reports: there is one delivery path and it is Flux (ADR-0028 decision 1).
+const deliveryMode = "flux"
 
 // ListPreviews reports the previews an environment has.
 func (s *Server) ListPreviews(ctx context.Context, req *connect.Request[kelsonv1alpha1.ListPreviewsRequest]) (*connect.Response[kelsonv1alpha1.ListPreviewsResponse], error) {
@@ -53,7 +53,15 @@ func (s *Server) ListPreviews(ctx context.Context, req *connect.Request[kelsonv1
 		Project:     project.Metadata.Name,
 		Environment: environment.Metadata.Name,
 		Namespace:   resolved.Environment.Namespace,
-		Mode:        string(resolved.Environment.Mode),
+		// `mode` outlived the concept it reported. The spec has no delivery
+		// mode since ADR-0028 decision 9, but the wire field is v1alpha1 and
+		// renaming or removing one is a break in every generated client, in two
+		// languages — the same trade ADR-0032 decision D made for
+		// LogSelector.application, and the same answer: the field goes at the
+		// next breaking change. Until then it carries the one true answer
+		// rather than an empty string, because "there is no mode" and "the mode
+		// is unknown" are different sentences and only the first is true.
+		Mode: deliveryMode,
 	}
 	previews := resolved.Environment.Previews
 	if previews == nil {
@@ -61,13 +69,10 @@ func (s *Server) ListPreviews(ctx context.Context, req *connect.Request[kelsonv1
 	}
 	out.Settings = wirePreviewSettings(previews)
 
-	// The gate, stated rather than hidden. An environment whose mode forbids
-	// previews has nothing in the cluster to read and asking would only turn a
-	// spec answer into a cluster error.
-	if errs := renderer.PreviewsRequireFlux(resolved); len(errs) > 0 {
-		out.Errors = wireErrors(errs)
-		return connect.NewResponse(out), nil
-	}
+	// The delivery-mode gate that stood here — renderer.PreviewsRequireFlux,
+	// asked by name so this answer and `kelson render`'s were the same sentence
+	// — is deleted (ADR-0028 decision 8). There is no mode that forbids
+	// previews, so an environment that declares them is read from the cluster.
 
 	t := Target{
 		Project:     out.Project,

@@ -54,7 +54,7 @@ This reference is **generated** from the committed JSON Schema [`schema/project.
 | `name` | string pattern `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$` | yes |  |  |
 | `port` | integer min 1, max 65535 | no |  |  |
 | `preset` | string enum `"shared"`, `"small"`, `"ha-small"`, `"ha-medium"`, `"branch"` | no | `"shared"` | data components only |
-| `release` | object | no |  | command run to completion before this revision's workloads roll — direct delivery mode only |
+| `release` | object | no |  | command run to completion before this revision's workloads roll; refused until issue #227 |
 | `replicas` | object | no |  |  |
 | `resources` | object | no |  |  |
 | `schedule` | string | no |  | five-field cron expression |
@@ -123,7 +123,6 @@ This reference is **generated** from the committed JSON Schema [`schema/project.
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `deliveryMode` | string | no |  |  |
 | `policy` | object | no |  |  |
 | `secrets` | object | no |  |  |
 

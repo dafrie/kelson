@@ -12,13 +12,14 @@ import (
 
 // PR previews (ADR-0017). The rendered shapes are pinned by the golden fixtures
 // under testdata/render/previews-*; these tests pin what a golden file cannot
-// hold — the delivery-mode gate, the boundary that keeps component manifests
-// out of the template, the name cap, and the fact that the template string is
-// the same bytes every time.
+// hold — the boundary that keeps component manifests out of the template, the
+// name cap, and the fact that the template string is the same bytes every time.
+//
+// The delivery-mode gate they used to pin is deleted (ADR-0028 decision 8):
+// previews were Flux-only and Flux is the only path.
 
 func previewsFixture(previews *model.ResolvedPreviews) *model.Resolved {
 	r := resolvedFixture()
-	r.Environment.Mode = model.DeliveryFlux
 	r.Environment.Previews = previews
 	return r
 }
@@ -37,49 +38,14 @@ func githubPreviews() *model.ResolvedPreviews {
 	}
 }
 
-// TestPreviewsRequireFluxMode is the gate ADR-0017 takes from ADR-0016
-// decision 4, citing it deliberately as that decision demands. Outside Flux
-// mode there is nothing to reconcile a ResourceSet — usually not even a served
-// CRD — so kelson refuses rather than emitting one.
-func TestPreviewsRequireFluxMode(t *testing.T) {
-	for _, mode := range []model.DeliveryMode{model.DeliveryDirect, ""} {
-		r := previewsFixture(githubPreviews())
-		r.Environment.Mode = mode
-		_, err := Render(r, gatewayProfile(), nil)
-		if err == nil {
-			t.Fatalf("mode %q rendered a ResourceSet nothing would reconcile", mode)
-		}
-		errs, ok := err.(Errors)
-		if !ok || len(errs) != 1 {
-			t.Fatalf("mode %q: expected one structured error, got %#v", mode, err)
-		}
-		e := errs[0]
-		if e.Code != ErrPreviewsRequireFlux {
-			t.Errorf("mode %q: code = %q, want %q", mode, e.Code, ErrPreviewsRequireFlux)
-		}
-		if !strings.Contains(e.Message, "production") {
-			t.Errorf("mode %q: the message must name the environment: %s", mode, e.Message)
-		}
-		if mode != "" && !strings.Contains(e.Message, string(mode)) {
-			t.Errorf("mode %q: the message must name the mode: %s", mode, e.Message)
-		}
-		for _, want := range []string{"delivery.mode: flux", "ADR-0017"} {
-			if !strings.Contains(e.Remediation, want) {
-				t.Errorf("mode %q: remediation must contain %q: %s", mode, want, e.Remediation)
-			}
-		}
-	}
-}
-
-// TestPreviewsGateIgnoresProfile is the other half of the gate's contract: it
-// is decided from spec data alone. A cluster with no flux-operator detected
-// still renders — whether the operator is installed is a capability finding
-// (issue #157), not a rendering decision, or the same document would render
-// differently against two clusters.
-func TestPreviewsGateIgnoresProfile(t *testing.T) {
+// TestPreviewsIgnoreProfile: the pair is rendered from spec data alone. A
+// cluster with no flux-operator detected still renders — whether the operator is
+// installed is a capability finding (issue #157), not a rendering decision, or
+// the same document would render differently against two clusters.
+func TestPreviewsIgnoreProfile(t *testing.T) {
 	ms, err := Render(previewsFixture(githubPreviews()), gatewayProfile(), nil)
 	if err != nil {
-		t.Fatalf("a flux-mode environment with previews must render against any profile: %v", err)
+		t.Fatalf("an environment with previews must render against any profile: %v", err)
 	}
 	for _, kind := range []string{"ResourceSetInputProvider", "ResourceSet"} {
 		if !hasKind(ms, kind) {

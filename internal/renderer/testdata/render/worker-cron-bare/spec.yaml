@@ -32,8 +32,6 @@ metadata:
 spec:
   project: mailroom
   namespace: mailroom
-  delivery:
-    mode: direct
   components:
     - name: worker
       resources:

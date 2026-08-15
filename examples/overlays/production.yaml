@@ -11,13 +11,6 @@ spec:
     domainSuffix: acme.com
     gatewayClass: envoy
 
-  delivery:
-    mode: flux
-    git:
-      repo: git@github.com:acme/streaming-deploy.git
-      branch: main
-      path: streaming/production
-
   # Agent guardrails for this environment (ADR-0025). Humans are unaffected.
   policy:
     agents: propose-only

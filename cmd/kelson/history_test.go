@@ -66,6 +66,46 @@ func TestHistoryListsRevisionsNewestFirst(t *testing.T) {
 	}
 }
 
+// TestHistorySeparatesWhatOnlyTheRegistryRemembers is issue #241 at the CLI. A
+// revision past the cluster's mirror fills one column and no others, so putting
+// it in the table would print dashes that read as "this deployment had no
+// outcome" instead of "nothing recorded one".
+func TestHistorySeparatesWhatOnlyTheRegistryRemembers(t *testing.T) {
+	spec := deploySpec(t)
+	fake := &fakeDeployService{
+		history: func(context.Context, *kelsonv1alpha1.HistoryRequest) (*kelsonv1alpha1.HistoryResponse, error) {
+			return &kelsonv1alpha1.HistoryResponse{Entries: []*kelsonv1alpha1.HistoryEntry{
+				{
+					Revision: "3-cccc0000", CommittedAt: "2026-08-15T09:00:00Z",
+					Outcome: "Healthy", Digest: "sha256:" + strings.Repeat("a", 64),
+				},
+				{Revision: "1-aaaa0000", BeyondWindow: true, Message: "older than the 20 entries…"},
+			}}, nil
+		},
+	}
+	addr := serveFakeDeployService(t, fake)
+
+	stdout, code, msg := runRootStdin(t, "", "history", "-f", spec, "--env", "development", "--server", addr)
+	if code != exitOK {
+		t.Fatalf("exit = %d (%s), want 0\n%s", code, msg, stdout)
+	}
+	table, older, split := strings.Cut(stdout, "Older than the cluster's mirror")
+	if !split {
+		t.Fatalf("the aged-out revision was not called out:\n%s", stdout)
+	}
+	if strings.Contains(table, "1-aaaa0000") {
+		t.Errorf("a registry-only revision was printed in the table:\n%s", stdout)
+	}
+	if !strings.Contains(older, "1-aaaa0000") {
+		t.Errorf("the registry-only revision is missing from its own list:\n%s", stdout)
+	}
+	// And the reader is told it is still restorable, which is the whole point
+	// of listing it.
+	if !strings.Contains(older, "rollback --to") {
+		t.Errorf("the note does not say the revision can still be restored:\n%s", stdout)
+	}
+}
+
 func TestHistoryEmptyIsReportedExplicitly(t *testing.T) {
 	spec := deploySpec(t)
 	fake := &fakeDeployService{

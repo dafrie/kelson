@@ -21,11 +21,6 @@ metadata:
   name: staging
 spec:
   project: hello
-  delivery:
-    mode: flux
-    git:
-      repo: git@github.com:acme/deploy.git
-      path: hello/staging
   previews:
     provider: github
     repo: https://github.com/acme/hello
@@ -37,20 +32,6 @@ spec:
 `
 
 // The same environment in direct mode: a spec the renderer refuses.
-const previewDirectEnvDoc = `apiVersion: kelson.dev/v1alpha1
-kind: Environment
-metadata:
-  name: staging
-spec:
-  project: hello
-  previews:
-    provider: github
-    repo: https://github.com/acme/hello
-    secretRef: github-auth
-    artifacts:
-      repository: oci://ghcr.io/acme/hello-previews
-`
-
 // fakePreviewReader answers with a fixed set, recording the scope it was asked
 // about. The reader itself is tested against a fake cluster in
 // internal/delivery/flux; what matters here is the scope the handler derives
@@ -208,36 +189,11 @@ func TestListPreviewsOnAnEnvironmentWithoutPreviews(t *testing.T) {
 	}
 }
 
-// The Flux-only gate, surfaced rather than hidden: the same code, message and
-// remediation `kelson render` prints (ADR-0017 decision 5).
-func TestListPreviewsSurfacesTheFluxOnlyGate(t *testing.T) {
-	reader := &fakePreviewReader{}
-	c := serve(t, Options{Delivery: previewConnectorFor(reader)})
-
-	got := listPreviews(t, c, previewDirectEnvDoc)
-
-	if len(got.GetErrors()) != 1 {
-		t.Fatalf("errors = %v, want the gate", got.GetErrors())
-	}
-	e := got.GetErrors()[0]
-	if e.GetCode() != "render/previews-require-flux" {
-		t.Fatalf("code = %q", e.GetCode())
-	}
-	if e.GetRemediation() == "" {
-		t.Errorf("the gate must carry its fix")
-	}
-	// The settings still come back: a reader whose mode is wrong still needs to
-	// see what they configured.
-	if got.GetSettings() == nil {
-		t.Errorf("settings are nil")
-	}
-	if got.GetMode() != "direct" {
-		t.Errorf("mode = %q", got.GetMode())
-	}
-	if reader.scope != (flux.PreviewScope{}) {
-		t.Errorf("the cluster was read behind a closed gate: %+v", reader.scope)
-	}
-}
+// The Flux-only gate this used to surface — settings plus
+// `render/previews-require-flux` for an environment whose delivery mode could
+// not run previews — is deleted with the mode vocabulary (ADR-0028 decision 8).
+// There is no spec an author can write that makes previews unavailable, so
+// there is no third answer left for this service to give.
 
 func TestListPreviewsWithoutADeliveryPlaneIsUnimplemented(t *testing.T) {
 	c := serve(t, Options{})

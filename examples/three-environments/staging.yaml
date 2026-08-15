@@ -3,10 +3,10 @@ kind: Environment
 metadata:
   name: staging
 
-# Flux mode. The policy that would allow agents here but oblige them to
-# dry-run first returns with M7; secret backends with M8; the per-environment
-# service preset with M9. kelson rejects unimplemented fields rather than
-# ignoring them (#141).
+# A named namespace and its own gateway class. The policy that would allow
+# agents here but oblige them to dry-run first returns with M7; secret backends
+# with M8; the per-environment service preset with M9. kelson rejects
+# unimplemented fields rather than ignoring them (#141).
 spec:
   project: billing
   namespace: billing-staging
@@ -14,10 +14,3 @@ spec:
   routing:
     domainSuffix: staging.billing.acme.run
     gatewayClass: envoy
-
-  delivery:
-    mode: flux
-    git:
-      repo: git@github.com:acme/billing-deploy.git
-      branch: main
-      path: billing/staging

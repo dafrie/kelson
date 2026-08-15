@@ -34,6 +34,13 @@ import (
 // cannot fetch two OCI artifacts to compute a byte-level comparison, so it
 // says exactly that rather than reporting an empty list that would read as
 // "nothing to worry about" (internal/api/deploy.go, rollbackPreviewGap).
+//
+// A target older than the cluster's bounded history adds a second finding
+// (issue #241). Such a revision is confirmed against the registry's tag list
+// rather than against `status.history`, so the restore is exactly as exact —
+// the artifact is immutable — and everything kelson would otherwise say *about*
+// the target is gone. Both findings print under "What a rollback cannot revert",
+// which is where a reader is already looking for what they are agreeing to.
 func newRollbackCmd() *cobra.Command {
 	opts := &rollbackOptions{}
 	cmd := &cobra.Command{
@@ -43,6 +50,11 @@ func newRollbackCmd() *cobra.Command {
 			"(ADR-0028 decision 5): nothing is re-rendered and nothing is replayed, because every\n" +
 			"revision kelson publishes is immutable. With no --to, the target is the revision before\n" +
 			"the one currently serving.\n\n" +
+			"--to may name a revision older than the bounded history the cluster keeps: the registry\n" +
+			"holds every artifact ever published and kelson confirms the target against it, so an\n" +
+			"aged-out revision is the same pointer move as a recent one. What it cannot tell you about\n" +
+			"such a target — when it was published, what it ran, how that deployment ended — the\n" +
+			"preview says out loud (`kelson history` lists them).\n\n" +
 			"The preview always comes first, whether or not --yes is set: it names the target revision\n" +
 			"and what kelson cannot tell you about it — the byte-level comparison this rebuild does not\n" +
 			"compute yet (issue #225).",
@@ -57,7 +69,7 @@ func newRollbackCmd() *cobra.Command {
 	f.StringArrayVarP(&opts.files, "file", "f", nil, "spec YAML file holding Project and/or Environment documents (repeatable)")
 	f.StringVar(&opts.project, "project", "", "name of a project already stored on kelson-server (alternative to -f)")
 	f.StringVar(&opts.env, "env", "", "name of the Environment to roll back (optional with -f when the input holds exactly one; required with --project)")
-	f.StringVar(&opts.to, "to", "", "revision to restore (default: the revision before the one currently serving)")
+	f.StringVar(&opts.to, "to", "", "revision to restore, including one older than the cluster's bounded history (default: the revision before the one currently serving)")
 	f.BoolVar(&opts.yes, "yes", false, "apply the rollback without asking for confirmation; the preview is printed either way")
 	addServerFlags(cmd, &opts.server)
 	return cmd

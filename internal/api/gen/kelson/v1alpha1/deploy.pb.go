@@ -866,7 +866,23 @@ type HistoryEntry struct {
 	// delivery.Phase spelling `Transition.phase` and `StatusResponse.phase`
 	// carry. It is frozen once a newer revision takes over, so it says how that
 	// deployment ended rather than what it looked like a second in.
-	Outcome       string `protobuf:"bytes,8,opt,name=outcome,proto3" json:"outcome,omitempty"`
+	Outcome string `protobuf:"bytes,8,opt,name=outcome,proto3" json:"outcome,omitempty"`
+	// BeyondWindow marks an entry that came from the registry's tag list rather
+	// than from the bounded mirror in `Environment.status` (ADR-0028 decision 4,
+	// issue #241). The mirror keeps the most recent revisions; the registry keeps
+	// every artifact ever published, immutably, and it is the record.
+	//
+	// On such an entry only `revision` is filled, and every other field is
+	// *unknown* rather than empty: when it was published, which images it ran and
+	// how that deployment ended were observations of a cluster, and a registry
+	// never saw any of them. A client must say so rather than render a blank as a
+	// fact — that is the whole reason this is a field and not something to be
+	// inferred from missing values, which an entry recorded before those fields
+	// existed also has.
+	//
+	// It is still a rollback target: the tag is immutable, so restoring it is the
+	// same pointer move as restoring one inside the window.
+	BeyondWindow  bool `protobuf:"varint,9,opt,name=beyond_window,json=beyondWindow,proto3" json:"beyond_window,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -955,6 +971,13 @@ func (x *HistoryEntry) GetOutcome() string {
 		return x.Outcome
 	}
 	return ""
+}
+
+func (x *HistoryEntry) GetBeyondWindow() bool {
+	if x != nil {
+		return x.BeyondWindow
+	}
+	return false
 }
 
 // ComponentImage is one component and the image it resolved to.
@@ -1987,7 +2010,7 @@ const file_kelson_v1alpha1_deploy_proto_rawDesc = "" +
 	"\venvironment\x18\x02 \x01(\tR\venvironment\x12\x12\n" +
 	"\x04mode\x18\x03 \x01(\tR\x04mode\"J\n" +
 	"\x0fHistoryResponse\x127\n" +
-	"\aentries\x18\x01 \x03(\v2\x1d.kelson.v1alpha1.HistoryEntryR\aentries\"\x87\x02\n" +
+	"\aentries\x18\x01 \x03(\v2\x1d.kelson.v1alpha1.HistoryEntryR\aentries\"\xac\x02\n" +
 	"\fHistoryEntry\x12\x1a\n" +
 	"\brevision\x18\x01 \x01(\tR\brevision\x12\x1b\n" +
 	"\tspec_hash\x18\x02 \x01(\tR\bspecHash\x12!\n" +
@@ -1996,7 +2019,8 @@ const file_kelson_v1alpha1_deploy_proto_rawDesc = "" +
 	"\x06author\x18\x05 \x01(\tR\x06author\x12\x16\n" +
 	"\x06digest\x18\x06 \x01(\tR\x06digest\x127\n" +
 	"\x06images\x18\a \x03(\v2\x1f.kelson.v1alpha1.ComponentImageR\x06images\x12\x18\n" +
-	"\aoutcome\x18\b \x01(\tR\aoutcome\"D\n" +
+	"\aoutcome\x18\b \x01(\tR\aoutcome\x12#\n" +
+	"\rbeyond_window\x18\t \x01(\bR\fbeyondWindow\"D\n" +
 	"\x0eComponentImage\x12\x1c\n" +
 	"\tcomponent\x18\x01 \x01(\tR\tcomponent\x12\x14\n" +
 	"\x05image\x18\x02 \x01(\tR\x05image\"\xdc\x02\n" +

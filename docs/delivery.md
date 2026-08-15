@@ -61,12 +61,15 @@ cannot differ from what this controller pushed — a kelson tag is written once
 and never rewritten, but a registry is a shared system with mirrors, retention
 policies and operators in it, and "cannot differ" is worth more than "should not
 differ". The digest is unknown in exactly one case: a rollback to a
-`status.history` entry that carries none, which is a tag-only pin.
+`status.history` entry that carries none, which is a tag-only pin. A rollback to
+a revision the mirror has forgotten resolves its digest from the registry, so it
+pins both halves like any other.
 
 `wait: true` is the load-bearing one. kustomize-controller assesses the health
 of everything it applied and only then reports `Ready`, so **`Ready` means
-healthy and not merely applied** — which is why the controller can report on
-workloads while holding no RBAC over them at all.
+healthy and not merely applied** — the phase in `Environment.status` is correct
+without the controller reading a single Pod. What it is not is *diagnosable*,
+which is what the readback below adds.
 
 Beside the standard provenance the pair carries one label of its own,
 `kelson.dev/environment-namespace`: the namespace the *custom resource* lives
@@ -128,9 +131,10 @@ whether anything is going to happen next without them.
 | `RegistryNotConfigured` | the controller was started without `--registry` | status only; nothing changes on its own |
 | `ArtifactRefInvalid` | the prefix, the names or the generation do not make a repository and a tag | status only |
 | `NameConflict` | a live object of that name belongs to a different environment namespace | status only, and **nothing is written** |
-| `RollbackTargetUnknown` | `kelson.dev/rollback-to` names a revision not in `status.history` | status only |
+| `RollbackTargetUnknown` | `kelson.dev/rollback-to` names a revision that is in neither `status.history` nor the registry's tag list | status only |
 | `RegistryUnreachable` | the registry never answered | error return → controller-runtime's exponential backoff |
-| `PushDenied` | the registry answered and said no | retries in 5m; a credential is an operator's to fix, and retrying into a rate limit helps nobody |
+| `PushDenied` | the registry answered a push and said no | retries in 5m; a credential is an operator's to fix, and retrying into a rate limit helps nobody |
+| `RegistryReadDenied` | the registry answered a *read* and said no — listing tags and resolving a rollback target need pull scope, not only push | retries in 5m; reported as itself so "kelson may not look" is never recorded as "that revision does not exist" |
 | `FluxApplyForbidden` | the API server refused the write | retries in 5m; RBAC is an operator's to grant |
 | `FieldManagerConflict` | a server-side apply conflicted despite `ForceOwnership` | retries in 5m; something structural is contended |
 
@@ -167,8 +171,8 @@ tracking your spec).
 
 | Verb | Mechanism |
 |---|---|
-| history | the registry's tag list. `Environment.status.history[]` mirrors the most recent 20 (revision, digest, spec hash, timestamp, the image each component resolved to, outcome) for humans and the API; the record is the registry, and a query past the window is a registry query. An entry is written only on a **new** publish, deduped by revision, and the newest entry's `outcome` is refreshed while it is the current revision and frozen once a newer one takes its place — so an old entry says how that deployment *ended*, not what it looked like one second in |
-| rollback | the annotation `kelson.dev/rollback-to: <revision>` on the `Environment`. The controller repoints the `OCIRepository` at that immutable tag and **suspends re-render** — steps 3 and 4 do not run — so the current spec cannot be republished over what you just rolled back to. Two things resume tracking and only two: removing the annotation, or editing the spec. The state is visible: `Progressing=False`, `reason: RollbackPinned`, naming both ways out |
+| history | the registry's tag list. `Environment.status.history[]` mirrors the most recent 20 (revision, digest, spec hash, timestamp, the image each component resolved to, outcome) for humans and the API; the record is the registry, and `kelson history` pages past the window into it — those revisions arrive marked `beyond_window`, carrying the one fact the registry has (this revision exists) and nothing else, because when it was published, what it ran and how it ended were observations of a cluster. An entry is written only on a **new** publish, deduped by revision, and the newest entry's `outcome` is refreshed while it is the current revision and frozen once a newer one takes its place — so an old entry says how that deployment *ended*, not what it looked like one second in |
+| rollback | the annotation `kelson.dev/rollback-to: <revision>` on the `Environment`, naming any revision the mirror **or the registry** can confirm — an aged-out one is the same pointer move, and the status says kelson cannot describe it. The controller repoints the `OCIRepository` at that immutable tag and **suspends re-render** — steps 3 and 4 do not run — so the current spec cannot be republished over what you just rolled back to. Two things resume tracking and only two: removing the annotation, or editing the spec. The state is visible: `Progressing=False`, `reason: RollbackPinned`, naming both ways out |
 | promotion | an authoring change, not a delivery operation: patch the target Environment's per-component image pin, stamped `kelson.dev/promoted-from: <env>@<revision>`, then reconcile normally ([the model](model.md#promotion)) |
 
 Rollback stops being a replay. Nothing re-renders, nothing re-applies from a
@@ -244,7 +248,75 @@ Every failure transition carries a `Cause` naming the responsible component
 and the reason. The engine, the transition table, provenance correlation and
 the timeout policy are specified in [the state machine](statemachine.md)
 (`internal/delivery/statemachine`); step 6 feeds it by implementing a single
-watch-based `Source` over the Flux objects and the workloads.
+watch-based `Source` over the Flux objects and the workloads. The third answer
+is the one [the workload readback](#the-workload-readback-which-pod-which-container)
+makes specific.
+
+### The workload readback: which Pod, which container
+
+`Ready=False` on a `Kustomization` is true and not actionable. Step 6 therefore
+does a second read ([#240](https://github.com/dafrie/kelson/issues/240)): it
+lists the `Deployment`s carrying this environment's provenance labels, lists the
+Pods in each one's selector set, and runs them through the *same* classifier
+`kelson status` uses (`internal/observation`, [#53](https://github.com/dafrie/kelson/issues/53)).
+The result is `Environment.status.workloads`:
+
+```yaml
+status:
+  phase: Degraded
+  revision: 7-1a2b3c4d
+  workloads:
+    checked: 3
+    healthy: 2
+    degraded: 1
+    unhealthy:
+      - resource: Deployment/checkout-production/worker
+        code: crash-loop-back-off
+        reason: CrashLoopBackOff
+        remediation: the container keeps crashing: read its logs, fix the command or startup error, then redeploy
+        containers:
+          - pod: worker-6d4f9c-2xq7b
+            name: app
+            code: crash-loop-back-off
+            reason: CrashLoopBackOff
+```
+
+Five properties, each of which is a decision:
+
+- **The counts are complete; the list is a bounded sample.** `degraded` says how
+  many are failing, `unhealthy` holds at most 10 of them and each entry at most
+  5 containers, ordered by resource name and by pod-then-container. A status is
+  copied into every watch event every controller in the cluster receives, and a
+  bad rollout with fifty replicas would otherwise put fifty crash dumps there.
+  The order is what keeps a truncated list stable rather than churning under
+  `kubectl get -w`.
+- **The codes are the observation plane's, not a second vocabulary.**
+  `crash-loop-back-off`, `image-pull-back-off`, `failing-probe`,
+  `insufficient-resources`, `scheduling-failed`, `missing`, `secret-sync-failed`
+  — the same strings `kelson status` reports, restated as constants in
+  `api/kelson/v1alpha1` and drift-tested against `internal/observation`.
+- **No container output, ever.** The pod name, the container name and the
+  kubelet's reason identify the failure; the container's *logs* are where a
+  connection string leaks, and an `Environment`'s status is readable by anyone
+  who can read the `Environment`. `kelson logs` reads them instead, under the
+  server's own grant.
+- **"Could not check" is not "checked and fine".** A readback the API server
+  refused sets `workloads.unavailable` with the reason and leaves every count at
+  zero — the [`ClusterProfile`](detection.md)'s discipline — and never
+  fails the reconcile that already delivered the revision.
+- **It may only downgrade, and only after Flux has settled.** A definitive
+  failure turns a settled `Healthy` or `Applied` into `Degraded`, because
+  `wait: true` reports on the moment the set converged and says nothing about
+  the Pod that started crash-looping ten minutes later. It never upgrades, and
+  it never touches `Committed` or `Reconciling`: while Flux is still working the
+  Pods on the cluster are the *previous* revision's, and reporting them would
+  make every rolling update flash `Degraded`.
+
+The grant this needs is read-only `get`/`list` on `pods` and `deployments`, in
+the controller's `ClusterRole`. No `watch` (the readback lists through a direct
+client on a loop that already requeues), no `pods/log`, and no other workload
+kind: the classifier reads a `Deployment` and its Pods, so `CronJob`s, `Job`s
+and the operator-owned data services stay covered by `wait: true` alone.
 
 ### Release commands, and the barrier that is not built yet
 
@@ -286,6 +358,15 @@ environment, immutably, and that *is* the history — nothing stores rendered ma
 and the 1 MiB ConfigMap budget of [ADR-0013](adr/0013-server-state-and-api-v0.md) §1 stops being
 arithmetic the code has to do. `Environment.status.history[]` is a bounded mirror of the most recent 20
 entries for the CLI, the UI and the API to read in one call.
+
+The mirror is not the ceiling. `kelson history` lists the registry's tag list past the window and
+`kelson rollback --to` restores anything in it ([#241](https://github.com/dafrie/kelson/issues/241)):
+both processes read the record through the same `--registry` and `--registry-config`, and the
+credential needs pull scope as well as push. What the registry cannot give back is everything the
+mirror held beside the tag — when a revision was published, which images it ran, how that deployment
+ended — because those were observations of a cluster. An aged-out revision therefore arrives marked
+as one kelson can restore exactly and cannot describe, in the CLI, in the UI and in the rollback
+preview, rather than as a row of blanks.
 
 The cost, stated where it matters: **a lifecycle policy on your registry is now a data-retention
 policy on kelson's history**, and nothing in kelson says so at the point where you set it.

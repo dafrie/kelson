@@ -30,11 +30,6 @@ metadata:
 spec:
   project: shop
   namespace: shop-review
-  delivery:
-    mode: flux
-    git:
-      repo: git@gitlab.com:acme/deploy.git
-      path: shop/review
   previews:
     provider: gitlab
     repo: https://gitlab.com/acme/shop

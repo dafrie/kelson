@@ -42,11 +42,6 @@ metadata:
 spec:
   project: billing
   namespace: billing-review
-  delivery:
-    mode: flux
-    git:
-      repo: git@github.com:acme/deploy.git
-      path: billing/review
   previews:
     provider: github
     repo: https://github.com/acme/billing

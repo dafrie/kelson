@@ -83,6 +83,7 @@ var deliveryPolicy = map[string]struct {
 	v1alpha1.ReasonPushDenied:           {retry: operatorRetry},
 	v1alpha1.ReasonFluxApplyForbidden:   {retry: operatorRetry},
 	v1alpha1.ReasonFieldManagerConflict: {retry: operatorRetry},
+	v1alpha1.ReasonRegistryReadDenied:   {retry: operatorRetry},
 
 	// Nothing will change on its own, and everything that could change is a
 	// watch event: say so in the status and stop.

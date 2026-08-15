@@ -684,9 +684,6 @@ kind: Environment
 metadata: {name: ` + name + `}
 spec:
   project: checkout
-  delivery:
-    mode: flux
-    git: {repo: "git@github.com:acme/deploy.git", path: checkout/` + name + `}
   previews:
     provider: github
     repo: ` + repo + `

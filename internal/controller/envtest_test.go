@@ -28,6 +28,19 @@
 // status write against a resource with no status subresource. Every one of
 // those is a property of the generated CRDs rather than of the Go code, and
 // this is the only place they are actually exercised.
+//
+// # Why Flux's own CRDs are installed beside kelson's
+//
+// The delivery spine's fifth step server-side applies an OCIRepository and a
+// Kustomization (ADR-0028 decision 3, fluxobjects.go), and against a fake
+// client that apply proves only that kelson built a map with the keys the test
+// then reads back out of it. Flux's schemas are where the interesting refusals
+// live — `spec.url` must match `^oci://`, `spec.interval` must be a Go
+// duration, `sourceRef.kind` is an enum of four, `targetNamespace` has a length
+// bound, and every field kelson does not declare is pruned. Installing the real
+// CRDs (testdata/flux-crds, pinned and drift-tested by fluxcrds_test.go) is
+// what makes envtest_delivery_test.go's assertions statements about the objects
+// Flux will actually receive.
 
 package controller
 
@@ -40,6 +53,7 @@ import (
 	"testing"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -62,7 +76,16 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	}
 	testEnv = &envtest.Environment{
-		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "deploy", "crds")},
+		CRDDirectoryPaths: []string{
+			filepath.Join("..", "..", "deploy", "crds"),
+			// Flux's own, pinned and committed (fluxcrds_test.go). Second in the
+			// list rather than merged into the first directory because
+			// deploy/crds/ is an install surface — the chart copies it and
+			// `kubectl apply -f deploy/crds/` is a documented step — and kelson
+			// must never install another project's API behind a user's back
+			// (ADR-0003).
+			fluxCRDDir,
+		},
 		ErrorIfCRDPathMissing: true,
 	}
 	if _, err := testEnv.Start(); err != nil {
@@ -79,6 +102,12 @@ func envtestClient(t *testing.T) client.Client {
 	if err := corev1.AddToScheme(s); err != nil {
 		t.Fatalf("registering core/v1: %v", err)
 	}
+	// apps/v1 for the workload readback's fixtures (issue #240). The readback
+	// itself reads unstructured and needs no scheme entry; the tests that seed
+	// a Deployment want the typed struct rather than a hand-built map.
+	if err := appsv1.AddToScheme(s); err != nil {
+		t.Fatalf("registering apps/v1: %v", err)
+	}
 	c, err := client.New(testEnv.Config, client.Options{Scheme: s})
 	if err != nil {
 		t.Fatalf("building a client: %v", err)
@@ -90,11 +119,23 @@ func envtestClient(t *testing.T) client.Client {
 // test applies cannot be seen by another.
 func namespace(t *testing.T, c client.Client) string {
 	t.Helper()
-	name := strings.ToLower(strings.ReplaceAll(t.Name(), "_", "-"))
+	return createNamespace(t, c, nsName(t.Name(), ""))
+}
+
+// nsName turns a test's name into a legal namespace, leaving room for a suffix
+// so one test can hold two (see the delivery suite: the custom resources and
+// kelson's Flux objects deliberately do not share a namespace).
+func nsName(name, suffix string) string {
+	name = strings.ToLower(strings.ReplaceAll(name, "_", "-"))
 	name = strings.ReplaceAll(name, "/", "-")
-	if len(name) > 60 {
-		name = name[:60]
+	if limit := 60 - len(suffix); len(name) > limit {
+		name = name[:limit]
 	}
+	return strings.Trim(name, "-") + suffix
+}
+
+func createNamespace(t *testing.T, c client.Client, name string) string {
+	t.Helper()
 	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name}}
 	if err := c.Create(context.Background(), ns); err != nil && !apierrors.IsAlreadyExists(err) {
 		t.Fatalf("creating namespace %s: %v", name, err)

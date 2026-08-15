@@ -325,7 +325,6 @@ kind: Environment
 metadata: {name: production}
 spec:
   project: checkout
-  delivery: {mode: flux, git: {repo: https://example.test/deploy.git}}
   secrets: {backend: sops, ageRecipients: [`+testAgeRecipient+`]}
 `)
 	r, errs := Resolve(p, e)

@@ -518,13 +518,19 @@ type Options struct {
 	// CodeUnimplemented, and Status reports the workload verdicts with the
 	// delivery half named as missing (ADR-0027 decision 6).
 	Environments EnvironmentStore
-	Profile      ProfileCapture
-	Delivery     DeliveryConnector
-	Preview      PreviewConnector
-	Logs         LogEngine
-	Build        BuildConnector
-	Secrets      SecretStore
-	Agents       AgentStore
+	// Revisions reads the registry's tag list, which is the record
+	// `Environment.status.history[]` mirrors twenty entries of (ADR-0028
+	// decision 4). A nil one is a server bounded by that mirror: History stops
+	// at the window and a rollback past it is refused with the window named
+	// (issue #241, [RevisionLister]).
+	Revisions RevisionLister
+	Profile   ProfileCapture
+	Delivery  DeliveryConnector
+	Preview   PreviewConnector
+	Logs      LogEngine
+	Build     BuildConnector
+	Secrets   SecretStore
+	Agents    AgentStore
 
 	// The ReportBuild trigger (ADR-0034 decision 3). Publish is the only one
 	// whose absence refuses anything: a server with no publisher answers
@@ -594,6 +600,7 @@ type Options struct {
 type Server struct {
 	specs        SpecStore
 	environments EnvironmentStore
+	revisions    RevisionLister
 	profile      ProfileCapture
 	delivery     DeliveryConnector
 	preview      PreviewConnector
@@ -667,6 +674,7 @@ func New(opts Options) *Server {
 	s := &Server{
 		specs:         opts.Specs,
 		environments:  opts.Environments,
+		revisions:     opts.Revisions,
 		profile:       opts.Profile,
 		delivery:      opts.Delivery,
 		preview:       opts.Preview,

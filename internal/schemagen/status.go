@@ -192,6 +192,116 @@ func gitSourceStatusSchema() omap {
 	return m
 }
 
+// workloadsSchema mirrors api/kelson/v1alpha1.WorkloadsStatus: the observation
+// plane's readback under the Flux-level phase (issue #240, ADR-0028 decision 1
+// step 6).
+//
+// Both bounds are the schema's and not only the controller's, for the reason
+// history's is: a status that could grow with the size of a bad rollout would
+// put fifty crash-looping containers into every watch event in the cluster.
+func workloadsSchema() omap {
+	var container omap
+	container.set("type", "object")
+	container.set("required", []string{"code", "name"})
+	container.set("properties", omap{
+		{"code", omap{
+			{"description", "this container's own verdict, which may be less severe than the " +
+				"workload's: crash-loop-back-off, image-pull-back-off, failing-probe, " +
+				"insufficient-resources, scheduling-failed, missing or secret-sync-failed"},
+			{"type", "string"},
+		}},
+		{"name", omap{
+			{"description", "the container's name as the pod spec spelled it"},
+			{"type", "string"},
+		}},
+		{"pod", omap{
+			{"description", "the pod the container is in"},
+			{"type", "string"},
+		}},
+		{"reason", omap{
+			{"description", "the kubelet's own reason for this container"},
+			{"type", "string"},
+		}},
+	})
+
+	var containers omap
+	containers.set("description", "the failing containers inside this workload, ordered by pod then "+
+		"container name. Container logs are deliberately absent: a crash dump is where a secret leaks, "+
+		"and a status is readable by anyone who can read the Environment.")
+	containers.set("type", "array")
+	containers.set("maxItems", int64(5))
+	containers.set("items", container)
+
+	var workload omap
+	workload.set("type", "object")
+	workload.set("required", []string{"code", "resource"})
+	workload.set("properties", omap{
+		{"code", omap{
+			{"description", "the machine-actionable verdict — branch on this, never on reason"},
+			{"type", "string"},
+		}},
+		{"containers", containers},
+		{"reason", omap{
+			{"description", "the human-readable detail behind the code: the kubelet's waiting " +
+				"reason, the unschedulable message, the probe condition"},
+			{"type", "string"},
+		}},
+		{"remediation", omap{
+			{"description", "the fix, stated as an action"},
+			{"type", "string"},
+		}},
+		{"resource", omap{
+			{"description", "the workload this verdict is about, e.g. Deployment/checkout-production/web"},
+			{"type", "string"},
+		}},
+	})
+
+	var unhealthy omap
+	unhealthy.set("description", "the failing workloads, ordered by resource name. Only definitive "+
+		"failures appear: a workload that is merely progressing is counted and not listed. The count "+
+		"in `degraded` is complete; this list is the bounded sample that names the pod.")
+	unhealthy.set("type", "array")
+	unhealthy.set("maxItems", int64(10))
+	unhealthy.set("items", workload)
+
+	var m omap
+	m.set("description", "what the workloads this revision applied are actually doing — the "+
+		"finer-grained answer under `phase`. `phase` is Flux's verdict on the Kustomization; this is "+
+		"which Deployment, which pod and which container (issue #240).")
+	m.set("type", "object")
+	m.set("properties", omap{
+		{"checked", omap{
+			{"description", "how many workloads were read and classified. Zero with no `unavailable` " +
+				"means the environment renders nothing this readback classifies, which is not a failure."},
+			{"type", "integer"},
+			{"format", "int32"},
+		}},
+		{"degraded", omap{
+			{"description", "how many are failing — the complete count, of which `unhealthy` is a sample"},
+			{"type", "integer"},
+			{"format", "int32"},
+		}},
+		{"healthy", omap{
+			{"description", "how many are live and well"},
+			{"type", "integer"},
+			{"format", "int32"},
+		}},
+		{"progressing", omap{
+			{"description", "how many have not finished yet. A wait state, never a diagnosis."},
+			{"type", "integer"},
+			{"format", "int32"},
+		}},
+		{"unavailable", omap{
+			{"description", "why the readback could not be done, when it could not. It is a field " +
+				"rather than a zero count because \"we looked and all is well\" and \"we could not " +
+				"look\" produce identical counts and mean opposite things."},
+			{"type", "string"},
+		}},
+		{"unhealthy", unhealthy},
+	})
+	return m
+}
+
 func environmentStatusSchema() omap {
 	var historyItem omap
 	historyItem.set("type", "object")
@@ -288,6 +398,7 @@ func environmentStatusSchema() omap {
 			{"type", "string"},
 		}},
 		{"validationErrors", validationErrorsSchema()},
+		{"workloads", workloadsSchema()},
 	})
 	return m
 }

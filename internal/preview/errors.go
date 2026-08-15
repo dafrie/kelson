@@ -17,11 +17,6 @@ const (
 	// code, but publishing to nowhere silently would be worse than a refusal
 	// nobody hits.
 	ReasonNoArtifactRepository = "preview/no-artifact-repository"
-	// ReasonRequiresFlux: the environment's delivery mode is not flux, which is
-	// the same gate the renderer applies to the previews block itself
-	// (render/previews-require-flux). Publishing an artifact for a lifecycle
-	// that will never be reconciled is a push into an empty room.
-	ReasonRequiresFlux = "preview/requires-flux"
 	// ReasonInvalidChangeRequest: --pr is not a change request number the
 	// naming scheme can carry.
 	ReasonInvalidChangeRequest = "preview/invalid-change-request"
@@ -40,6 +35,11 @@ const (
 // refuses with the artifact plane's own artifact/repository-invalid — a code
 // that can name `--registry` as well as `previews.artifacts.repository`,
 // because the publisher now has two callers.
+//
+// There is no preview/requires-flux any more either. It refused an environment
+// whose delivery mode was not flux, and delivery mode is gone: one spine, and it
+// is Flux (ADR-0028 decision 9). A publish that would once have been "a push
+// into an empty room" is now unreachable — the room is the only room there is.
 
 // Error is a publisher refusal: a named reason, what happened, and what to do.
 // The three-field shape is the house style for a plane that refuses before it

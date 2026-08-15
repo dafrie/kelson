@@ -92,7 +92,15 @@ func (p *Probe) Evaluate(ctx context.Context, namespace, name string) (Verdict, 
 
 // listPods lists the pods matching the selector in the namespace, in name
 // order, so the classifier's output never depends on map iteration.
+//
+// An empty selector lists nothing, and that guard is the whole point of the
+// early return: passing "" to the API server does not select no pods, it
+// selects *every* pod in the namespace, so a selectorless Deployment would
+// otherwise be classified against its neighbours' failures.
 func (p *Probe) listPods(ctx context.Context, namespace, selector string) ([]*unstructured.Unstructured, error) {
+	if selector == "" {
+		return nil, nil
+	}
 	list, err := p.client.Resource(podGVR).Namespace(namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
 	if err != nil {
 		return nil, fmt.Errorf("observation: listing pods for %s/%s: %w", namespace, selector, err)
@@ -128,13 +136,9 @@ func res(group, kind, namespace, name string) string {
 	return kind + "/" + name
 }
 
-// podSelector extracts the Deployment's pod selector. A workload with no
-// selector cannot be matched safely; the caller should have rendered one, so
-// this returns the empty selector (which lists nothing) rather than guessing.
+// podSelector renders [PodSelector] as the label-selector string the dynamic
+// client takes. A workload with no selector cannot be matched safely, and the
+// empty string it produces is what [Probe.listPods] refuses to send.
 func podSelector(dep *unstructured.Unstructured) string {
-	ml, found, _ := unstructured.NestedStringMap(dep.Object, "spec", "selector", "matchLabels")
-	if !found {
-		return ""
-	}
-	return labels.Set(ml).String()
+	return labels.Set(PodSelector(dep)).String()
 }

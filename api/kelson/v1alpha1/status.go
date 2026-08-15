@@ -156,11 +156,20 @@ const (
 	// kelson refuses and changes nothing.
 	ReasonNameConflict = "NameConflict"
 
-	// ReasonRollbackTargetUnknown — AnnotationRollbackTo names a revision that
-	// is not in status.history. kelson will not point an OCIRepository at a tag
-	// it cannot confirm it published; the mirror is bounded at
-	// MaxHistoryEntries, so a target older than the window is this too.
+	// ReasonRollbackTargetUnknown — AnnotationRollbackTo names a revision
+	// neither status.history nor the registry holds. kelson will not point an
+	// OCIRepository at a tag it cannot confirm it published, and both places it
+	// can confirm one have been asked: the bounded mirror, and the registry's
+	// own tag list, which is the record the mirror mirrors (ADR-0028
+	// decision 4, issue #241).
 	ReasonRollbackTargetUnknown = "RollbackTargetUnknown"
+
+	// ReasonRegistryReadDenied — the registry answered a read and said no. It
+	// is separate from ReasonPushDenied because the fix is: a credential
+	// scoped to pull as well as push. Reporting it as "that revision does not
+	// exist" would turn "kelson may not look" into a fact about the registry's
+	// contents, which is the one mistake a durable record must not make.
+	ReasonRegistryReadDenied = "RegistryReadDenied"
 )
 
 // The reasons ConditionProgressing takes.
@@ -195,6 +204,74 @@ const (
 	PhaseHealthy     = "Healthy"
 	PhaseRejected    = "Rejected"
 	PhaseDegraded    = "Degraded"
+)
+
+// The workload health vocabulary, mirroring internal/observation's Code
+// (ADR-0028 decision 1, step 6; issue #240).
+//
+// They are declared as untyped string constants here for exactly the reason the
+// Phase* constants above are: internal/observation cannot be part of a public
+// package's contract, and a status field is a contract. Nothing here computes
+// one — internal/observation does, and internal/controller copies the value
+// across — and api/kelson/v1alpha1/workload_test.go asserts the two lists are
+// identical so the copy cannot drift into a second dialect. A code that meant
+// `crash-loop-back-off` in `kelson status` and something else in `kubectl get
+// environment` would be worse than no code at all.
+const (
+	// WorkloadHealthy — every pod in the workload's selector set is ready and
+	// the workload's own conditions agree.
+	WorkloadHealthy = "healthy"
+
+	// WorkloadProgressing — no failure yet, and not finished either. It is a
+	// wait state and never a diagnosis.
+	WorkloadProgressing = "progressing"
+
+	// WorkloadCrashLoopBackOff — the kubelet named a container's waiting reason
+	// CrashLoopBackOff, or the container has terminated repeatedly.
+	WorkloadCrashLoopBackOff = "crash-loop-back-off"
+
+	// WorkloadImagePullBackOff — the image cannot be pulled.
+	WorkloadImagePullBackOff = "image-pull-back-off"
+
+	// WorkloadFailingProbe — a container is running and not ready, which is a
+	// readiness probe that is not passing.
+	WorkloadFailingProbe = "failing-probe"
+
+	// WorkloadInsufficientResources — unschedulable because the cluster lacks
+	// the requested CPU or memory.
+	WorkloadInsufficientResources = "insufficient-resources"
+
+	// WorkloadSchedulingFailed — unschedulable for a non-resource reason: a node
+	// selector, an affinity rule, a taint.
+	WorkloadSchedulingFailed = "scheduling-failed"
+
+	// WorkloadMissing — the workload object is not in the cluster.
+	WorkloadMissing = "missing"
+
+	// WorkloadSecretSyncFailed — an ExternalSecret backing this workload has
+	// Ready=False, so the Secret its pods reference is not being written.
+	WorkloadSecretSyncFailed = "secret-sync-failed"
+)
+
+// MaxUnhealthyWorkloads bounds Status.Workloads.Unhealthy, and
+// MaxUnhealthyContainers bounds one entry's Containers.
+//
+// They exist for the reason [MaxHistoryEntries] does, one step sharper: this
+// list is written from live cluster state that a bad rollout can make
+// arbitrarily large — fifty replicas that all CrashLoopBackOff are fifty
+// failing containers — and every byte of it goes into every watch event every
+// controller in the cluster receives. The counts beside the list are the
+// complete answer to "how bad is it"; the list is the sample that makes it
+// diagnosable, and a sample does not have to be exhaustive to name the pod.
+//
+// Anything past the bound is dropped rather than summarized, in a defined
+// order: workloads by resource name, containers by pod then container name. A
+// truncated list is therefore the same list every reconcile rather than a
+// rotating window, which is what keeps `kubectl get -w` from showing a status
+// that churns while nothing changed.
+const (
+	MaxUnhealthyWorkloads  = 10
+	MaxUnhealthyContainers = 5
 )
 
 // MaxHistoryEntries bounds Status.History. It mirrors the delivery plane's
@@ -320,6 +397,114 @@ type ComponentImage struct {
 	Image string `json:"image"`
 }
 
+// WorkloadsStatus is the observation plane's readback: what the workloads this
+// environment's revision applied are actually doing (ADR-0028 decision 1, step
+// 6; issue #240).
+//
+// # Why it exists beside the phase
+//
+// `status.phase` is Flux's answer, and it is a good one: the Kustomization
+// kelson writes carries `wait: true`, so Ready=True already means the applied
+// set converged. What it cannot say is *which* thing did not converge, and
+// "Kustomization not ready" is where a stuck rollout stops being debuggable
+// from `kubectl get environment` and starts requiring three more commands and
+// knowledge of where kelson put things. This field is those three commands,
+// already run.
+//
+// # Counts, then a bounded sample
+//
+// The counts are complete and the list is not: `degraded` is how many workloads
+// are failing, `unhealthy` holds at most [MaxUnhealthyWorkloads] of them, and
+// the difference is real and deliberate (see the constants). Nothing here is
+// authored — a user who writes it is overwritten by the next reconcile.
+//
+// # Nothing from inside a container
+//
+// Container *logs* are not here and will not be. The pod name, the container
+// name, the kubelet's own reason: those identify the failure and are safe to
+// put in an object anybody who can read the Environment can read. A crash dump
+// is the single most likely place for a connection string to appear, and an
+// Environment's status is not an access-controlled surface for it. `kelson
+// logs` reads them, under a grant that was asked for separately.
+type WorkloadsStatus struct {
+	// Checked is how many workloads were read and classified. Zero with no
+	// `unavailable` is the honest answer for an environment that renders no
+	// Deployment at all — a CronJob-only spec, say — and not a failure.
+	Checked int32 `json:"checked,omitempty"`
+
+	// Healthy, Progressing and Degraded partition Checked. Progressing is a
+	// wait state and never a diagnosis: a rollout that has not finished is not
+	// a rollout that failed.
+	Healthy     int32 `json:"healthy,omitempty"`
+	Progressing int32 `json:"progressing,omitempty"`
+	Degraded    int32 `json:"degraded,omitempty"`
+
+	// Unhealthy names the failing workloads, at most [MaxUnhealthyWorkloads] of
+	// them, ordered by resource name. Only definitive failures appear: a
+	// progressing workload is counted above and left out here, because a list
+	// that mixed "broken" with "not finished" is the conflation the whole
+	// observation plane exists to prevent (issue #53).
+	Unhealthy []UnhealthyWorkload `json:"unhealthy,omitempty"`
+
+	// Unavailable is why the readback could not be done, when it could not: the
+	// API server refused the list, the namespace is gone, the request timed out.
+	//
+	// It is a separate field rather than a zero count because "we looked and
+	// everything is fine" and "we could not look" are opposite facts that
+	// produce identical counts, and reporting the second as the first is how a
+	// controller tells somebody their broken environment is healthy. It is the
+	// same discipline the ClusterProfile applies to detection, and it never
+	// fails the reconcile: the revision was delivered whether or not the
+	// readback worked, and a status that is missing one section is better than
+	// a deploy that is refused for it.
+	Unavailable string `json:"unavailable,omitempty"`
+}
+
+// UnhealthyWorkload is one failing workload: what it is, what is wrong with it
+// in the closed vocabulary above, and what to do about it.
+type UnhealthyWorkload struct {
+	// Resource names the workload, e.g. "Deployment/checkout-production/web".
+	// The spelling is internal/observation's, unchanged, so it is the same
+	// string `kelson status` prints for the same object.
+	Resource string `json:"resource"`
+
+	// Code is the machine-actionable verdict — one of the Workload* constants.
+	// Branch on this, never on Reason.
+	Code string `json:"code"`
+
+	// Reason is the human-readable detail behind the code: the kubelet's own
+	// waiting reason, the unschedulable message, the probe condition.
+	Reason string `json:"reason,omitempty"`
+
+	// Remediation is the fix stated as an action, one line per code. It is
+	// carried rather than derived so that a reader of the YAML gets it without
+	// a lookup table, exactly as `status.validationErrors` does.
+	Remediation string `json:"remediation,omitempty"`
+
+	// Containers names the failing containers inside it, at most
+	// [MaxUnhealthyContainers], ordered by pod then container name. This is the
+	// "which pod, which container" half — the reason this readback is worth
+	// holding RBAC over what Flux already checked.
+	Containers []UnhealthyContainer `json:"containers,omitempty"`
+}
+
+// UnhealthyContainer is one failing container, named and diagnosed. It carries
+// no output from inside the container — see [WorkloadsStatus].
+type UnhealthyContainer struct {
+	// Pod is the pod the container is in.
+	Pod string `json:"pod,omitempty"`
+
+	// Name is the container's name as the pod spec spelled it.
+	Name string `json:"name"`
+
+	// Code is this container's own verdict, which may be less severe than the
+	// workload's: the workload reports the worst of them.
+	Code string `json:"code"`
+
+	// Reason is the kubelet's reason for this container.
+	Reason string `json:"reason,omitempty"`
+}
+
 // ProjectStatus is what the controller observed about a Project.
 //
 // A Project has no delivery of its own — it is the shared half of a spec, and
@@ -400,6 +585,18 @@ type EnvironmentStatus struct {
 	// History is the bounded mirror of the published revisions, newest first,
 	// at most MaxHistoryEntries entries.
 	History []HistoryEntry `json:"history,omitempty"`
+
+	// Workloads is what the workloads the current revision applied are doing —
+	// the finer-grained answer under Phase (issue #240).
+	//
+	// It is a pointer because absent and empty are different: nil means this
+	// reconcile did not read the workloads back at all (nothing was delivered,
+	// or the controller was started without the readback), and a present value
+	// with `checked: 0` means it looked and there was nothing of the kind it
+	// classifies. It is rewritten wholesale every reconcile that observes,
+	// never merged, because a half-refreshed readback is a status that mixes
+	// two moments in time.
+	Workloads *WorkloadsStatus `json:"workloads,omitempty"`
 }
 
 // GitConnectionStatus is what the control plane observed about a GitConnection:

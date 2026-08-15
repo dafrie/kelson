@@ -38,4 +38,14 @@
 // through internal/build/registry's credential vocabulary, so there is one
 // shape for "a registry credential" in this codebase and one place
 // (internal/redact) that knows it must never be printed.
+//
+// # Reading the registry back
+//
+// [Pusher.Tags] and [Pusher.Resolve] are the other direction: what a repository
+// holds, and what one tag names. They are here rather than in a client of their
+// own because they are the same conversation with the same registry under the
+// same credential, and they exist because ADR-0028 decision 4 makes the
+// registry — not the bounded `status.history` mirror — the record of what an
+// environment has published (issue #241). tags.go says what those two calls can
+// and cannot recover about a revision the mirror has forgotten.
 package artifact

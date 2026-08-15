@@ -511,6 +511,99 @@ func TestControllerClusterRoleGrantsTheFinalizerPatch(t *testing.T) {
 	}
 }
 
+// TestControllerClusterRoleWorkloadReadback pins the grant the observation
+// readback needs and, more usefully, the shape of what it must not have
+// (issue #240, ADR-0028 decision 1 step 6).
+//
+// The grant is the smaller assertion: without it every reconcile writes
+// `status.workloads.unavailable: … is forbidden` — honest, and useless, and
+// discovered only in a cluster. The absences are the ones worth a test, because
+// each of them is a plausible "while I'm here" edit that nothing else would
+// catch: this controller reads workloads to *classify* them and for no other
+// reason, and every verb past that is reach nobody asked for.
+func TestControllerClusterRoleWorkloadReadback(t *testing.T) {
+	rules := controllerClusterRole(t)
+
+	// internal/controller/workloads.go: one label-selected list of Deployments,
+	// then one selector list of Pods per Deployment.
+	for _, want := range []struct {
+		group, resource string
+	}{
+		{"apps", "deployments"},
+		{"", "pods"},
+	} {
+		for _, verb := range []string{"get", "list"} {
+			if !granted(rules, want.group, want.resource, verb) {
+				t.Errorf("the controller ClusterRole does not grant %q on %s (apiGroup %q). "+
+					"ClusterWorkloads.Observe needs it, and without it every environment reports "+
+					"status.workloads.unavailable instead of which pod is failing:\n%s",
+					verb, want.resource, want.group, mustYAML(t, rules))
+			}
+		}
+	}
+
+	// No watch: the readback rides a direct client on a loop that already
+	// requeues. `watch` would be a stream of every pod event in the cluster,
+	// for a call site that does not exist.
+	for _, r := range []struct{ group, resource string }{{"apps", "deployments"}, {"", "pods"}} {
+		if granted(rules, r.group, r.resource, "watch") {
+			t.Errorf("the controller ClusterRole grants watch on %s. Nothing informs on it — "+
+				"internal/controller/workloads.go lists through a direct client:\n%s",
+				r.resource, mustYAML(t, rules))
+		}
+	}
+
+	// No logs. The readback names the pod and the container; a container's
+	// output is where a secret leaks and an Environment's status is not an
+	// access-controlled place to put one.
+	if granted(rules, "", "pods/log", "get") {
+		t.Errorf("the controller ClusterRole grants get on pods/log. The workload readback writes "+
+			"into a status any reader of the Environment can read, and logs must not go there — "+
+			"`kelson logs` reads them under the server's own grant:\n%s", mustYAML(t, rules))
+	}
+
+	// And no write, anywhere in the cluster, on anything that is not one of
+	// kelson's own kinds. Observation observes.
+	for _, r := range rules {
+		if contains(r.APIGroups, "kelson.dev") || contains(r.APIGroups, "coordination.k8s.io") {
+			continue
+		}
+		for _, verb := range r.Verbs {
+			switch verb {
+			case "get", "list", "watch", "create", "patch":
+				// `create`/`patch` survive here for exactly one resource, and
+				// the next check names it.
+			default:
+				t.Errorf("the controller ClusterRole grants %q on %v (apiGroup %v) — a write verb "+
+					"outside kelson's own kinds:\n%s", verb, r.Resources, r.APIGroups, mustYAML(t, rules))
+			}
+		}
+		if contains(r.Verbs, "create") || contains(r.Verbs, "patch") {
+			if !contains(r.Resources, "events") {
+				t.Errorf("the controller ClusterRole grants a write on %v (apiGroup %v). Events are "+
+					"the one non-kelson resource it may write:\n%s", r.Resources, r.APIGroups, mustYAML(t, rules))
+			}
+		}
+	}
+}
+
+// controllerClusterRole renders the chart with the controller on and returns
+// its ClusterRole's rules.
+func controllerClusterRole(t *testing.T) []policyRule {
+	t.Helper()
+	docs := decodeDocs(t, helmTemplate(t, append(authValues, "--set", "controller.enabled=true")...))
+	var rules []policyRule
+	for _, doc := range docs {
+		if doc["kind"] == "ClusterRole" && nameOf(doc) == "kelson-controller" {
+			remarshal(t, doc["rules"], &rules)
+		}
+	}
+	if rules == nil {
+		t.Fatal("controller.enabled=true rendered no kelson-controller ClusterRole")
+	}
+	return rules
+}
+
 // --- helpers ----------------------------------------------------------------
 
 // nameOf reads metadata.name off a decoded document.

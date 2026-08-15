@@ -12,15 +12,10 @@
 # live wherever their team's namespace is, and a controller that watched only
 # the release namespace would silently ignore every other one.
 #
-# Deliberately, still, no access to workloads (Pods, Deployments) or Secrets.
-# R1's exit gate delegates health to Flux's own kustomize-controller instead:
-# the Kustomization this controller writes carries `wait: true`
-# (internal/controller/fluxobjects.go), so `Ready` already means *healthy* by
-# the time this controller reads it back, and it never has to hold RBAC over
-# what it did not apply. Wiring internal/observation's finer-grained
-# classification (which Pod, which container, which probe) into the reconcile
-# loop — and the read-only workload RBAC that would need — is deferred and
-# tracked in issue #240, not forgotten.
+# Deliberately, still, no access to Secrets, and no *write* anywhere outside
+# kelson's own kinds. The read-only workload grant below is the one thing that
+# arrived after this comment was first written (issue #240), and it arrived
+# with the code that uses it.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -85,6 +80,42 @@ rules:
   - apiGroups: ["kelson.dev"]
     resources: ["environments/finalizers"]
     verbs: ["update"]
+
+  # The workload readback (ADR-0028 decision 1 step 6, issue #240). Read-only,
+  # and the two resources internal/observation's classifier actually reads:
+  # Deployments, selected by kelson's own provenance labels, and the Pods in
+  # each one's selector set. That is what turns "the Kustomization is not
+  # ready" into "Deployment/checkout-production/web is crash-loop-back-off,
+  # container app in pod web-6d4f-abc" without anybody running three more
+  # commands (internal/controller/workloads.go).
+  #
+  # Cluster-scoped because a workload namespace is per-environment and named by
+  # the spec — `<project>-<environment>` by default, anything the author chose
+  # otherwise — so there is no fixed set of namespaces a Role could cover.
+  #
+  # What is NOT here is the point of the rule:
+  #
+  #   - **No `watch`.** The readback is a direct client, not an informer: one
+  #     list per reconcile, on a loop that already has a requeue. Granting
+  #     `watch` would let this controller stream every pod event in the cluster
+  #     for a capability nothing calls, and a verb nothing calls is a verb that
+  #     should not be granted.
+  #   - **No `pods/log`.** Container logs are where a connection string leaks,
+  #     and an Environment's status is readable by anyone who can read the
+  #     Environment. The readback names the pod and the container and stops
+  #     there; `kelson logs` reads the output, under the server's own grant
+  #     (templates/clusterrole-deploy.yaml), which an operator opts into.
+  #   - **No StatefulSets, Jobs or CronJobs.** internal/observation classifies a
+  #     Deployment against the pods in its selector set and nothing else, so a
+  #     grant over the other kinds would be a grant with no reader. They stay
+  #     covered by the Kustomization's `wait: true`, which is coarser and true.
+  #   - **No write verb of any kind.** Observation observes.
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
 
   # Events. controller-runtime's manager gives leader election an event
   # recorder whether or not a reconciler ever calls Eventf, and it emits into

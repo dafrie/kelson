@@ -30,7 +30,7 @@ SETUP_ENVTEST          ?= $(GOBIN_DIR)/setup-envtest
 ENVTEST_K8S_VERSION    ?= 1.36.2
 GOBIN_DIR              ?= $(shell $(GO) env GOPATH)/bin
 
-.PHONY: all build binaries server ui ui-clean proto generate deepcopy test test-e2e envtest lint fmt clean install release release-snapshot e2e-up e2e e2e-down kind-up kind-down
+.PHONY: all build binaries server ui ui-clean proto generate deepcopy test test-e2e envtest flux-crds lint fmt clean install release release-snapshot e2e-up e2e e2e-down kind-up kind-down
 
 all: lint test build
 
@@ -183,3 +183,15 @@ envtest:
 		GOBIN=$(GOBIN_DIR) $(GO) install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
 	KUBEBUILDER_ASSETS="$$($(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(CURDIR)/hack/bin -p path)" \
 		KELSON_ENVTEST=1 $(GO) test -tags envtest -v -timeout 10m ./internal/controller/...
+
+# Refreshes internal/controller/testdata/flux-crds/ — the Kustomization and
+# OCIRepository schemas the envtest suite installs, cut out of one pinned Flux
+# install manifest (issue #243).
+#
+# It is the only target here that needs the network, which is why it is a target
+# and not a step of `envtest`: the fixtures are committed, so running the suite
+# needs nothing but the control-plane binaries. Bump the pin in the script, run
+# this, paste what it prints into internal/controller/fluxcrds_test.go — the
+# drift tests there fail in plain `go test ./...` until all three agree.
+flux-crds:
+	hack/flux-crds.sh

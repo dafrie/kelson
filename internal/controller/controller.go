@@ -280,6 +280,16 @@ type Outcome struct {
 	// than only the image because it is exact here — the resolved spec is in
 	// hand — and can only ever be guessed at downstream.
 	Images []v1alpha1.ComponentImage
+
+	// Workloads is the observation-plane readback: which workloads this
+	// revision's Kustomization applied, and what they are doing (issue #240).
+	//
+	// Nil means this reconcile did not look — no [WorkloadObserver] is wired,
+	// or the Kustomization itself was not readable, so there was nothing whose
+	// workloads could be read back. It is written into the status wholesale,
+	// nil included, because a readback kept from a previous reconcile is a
+	// status that mixes two moments in time.
+	Workloads *v1alpha1.WorkloadsStatus
 }
 
 // Deliverer performs ADR-0028's steps 4, 5 and 6: push the rendered set as an

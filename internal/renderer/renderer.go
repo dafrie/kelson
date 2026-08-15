@@ -64,34 +64,18 @@ func Render(resolved *model.Resolved, profile clusterprofile.ClusterProfile, res
 	if errs := unresolvedImages(resolved); len(errs) > 0 {
 		return nil, errs
 	}
-	// The delivery-mode gate of ADR-0016: a helm component renders in Flux mode
-	// only. It is decided here, from spec data, before anything is emitted —
-	// see internal/renderer/helm.go for why the gate is the renderer's and not
-	// the delivery plane's.
-	if errs := helmRequiresFlux(resolved); len(errs) > 0 {
-		return nil, errs
-	}
-	// The same gate for previews (ADR-0017), which cites the Helm precedent
-	// deliberately: a ResourceSet outside Flux mode has nothing to reconcile it.
-	if errs := PreviewsRequireFlux(resolved); len(errs) > 0 {
-		return nil, errs
-	}
-	// And the mirror image of both for release commands (ADR-0019): only direct
-	// mode can stop between two resources long enough to wait for a migration,
-	// so only direct mode may render one. See internal/renderer/release.go.
-	if errs := releaseRequiresDirect(resolved); len(errs) > 0 {
-		return nil, errs
-	}
-	// And for the secret backend (ADR-0018): a backend that is not one of the
-	// three has no mechanism at all behind it. See internal/renderer/secrets.go.
+	// The four delivery-mode gates that used to stand here — helm, previews,
+	// sops and release — are gone (ADR-0028 decision 8). Three of them refused
+	// a mode that is not flux, and flux is the only mode; the fourth refused
+	// every mode that is not direct, and `components[].release` is refused in
+	// internal/model instead. ADR-0016's "an author can write a valid document
+	// that becomes invalid by changing delivery.mode" is no longer a property
+	// this model has: a document that validates renders.
+	//
+	// The gate on the secret *backend* (ADR-0018) stays, because it is not a
+	// mode question: a backend that is not one of the three has no mechanism at
+	// all behind it. See internal/renderer/secrets.go.
 	if errs := secretBackendSupported(resolved); len(errs) > 0 {
-		return nil, errs
-	}
-	// And the delivery-mode gate for `sops` (ADR-0022), which is the same gate
-	// again for the same reason: its decryption step is kustomize-controller's,
-	// so an environment that is not in Flux mode has nothing that could turn
-	// the encrypted file in the repository into a Secret in the cluster.
-	if errs := sopsRequiresFlux(resolved); len(errs) > 0 {
 		return nil, errs
 	}
 	// The Namespace leads the set: delivery.ManifestSet documents apply order as
@@ -143,23 +127,12 @@ func Render(resolved *model.Resolved, profile clusterprofile.ClusterProfile, res
 		out = append(out, ms...)
 	}
 
-	// Release hooks come between the two: after everything a migration talks to,
-	// before everything that must not roll until it has finished (issue #104).
-	// The set expresses that as order and nothing more — the waiting is the
-	// direct adapter's, which is the whole reason the field is direct-only
-	// (ADR-0019; the plane that honoured it is deleted — ADR-0028 decision 8).
-	for i := range resolved.Components {
-		c := &resolved.Components[i]
-		if c.Release == nil {
-			continue
-		}
-		ms, err := releaseManifests(resolved, c, services)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, ms...)
-	}
-
+	// A release hook used to render a Job here, between the two, and the direct
+	// adapter waited for it. That adapter is gone and order alone does not wait
+	// (issue #89), so `components[].release` renders nothing at all and
+	// internal/model refuses it by name instead — ADR-0028 decision 8, tracked
+	// on #227. Nothing is emitted for it and nothing is silently dropped: a
+	// document carrying the field never reaches the renderer.
 	for i := range resolved.Components {
 		ms, err := componentManifests(resolved, &resolved.Components[i], profile, services)
 		if err != nil {

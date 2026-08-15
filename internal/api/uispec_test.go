@@ -139,12 +139,6 @@ metadata:
 spec:
   project: hello
   namespace: hello-staging
-  delivery:
-    mode: flux
-    git:
-      repo: git@github.com:acme/deploy.git
-      branch: main
-      path: hello/staging
   previews:
     provider: github
     repo: https://github.com/acme/hello

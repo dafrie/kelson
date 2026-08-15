@@ -46,7 +46,10 @@ type Pusher struct {
 	Insecure bool
 
 	// tokens caches the bearer token per scope for the life of one push, so
-	// four requests do not each pay for a token exchange.
+	// four requests do not each pay for a token exchange. The key is the scope
+	// and not the host, because the same client both publishes and reads
+	// (tags.go) and a token minted for "pull" would authorise neither the push
+	// that reused it nor an honest error about why.
 	mu     sync.Mutex
 	tokens map[string]string
 }
@@ -96,11 +99,26 @@ func RegistryHost(repository string) (string, error) {
 	return t.host, nil
 }
 
-// target is a parsed push destination: which registry, which repository path.
+// target is a parsed destination: which registry, which repository path, and
+// what this conversation needs to be allowed to do there.
 type target struct {
 	host string
 	path string
+	// actions is the token scope requested when a registry challenges without
+	// naming one of its own: "pull,push" for a publish, "pull" for the reads in
+	// tags.go. Asking for push where only a read is happening is not free — a
+	// credential with pull-only rights gets a token that authorises nothing,
+	// and the 403 that follows says nothing about which half was missing.
+	actions string
 }
+
+// The token scopes a target is authorised for. [parseRepository] defaults to
+// the publish scope because publishing is what this client is mostly for; the
+// read calls narrow it.
+const (
+	pushActions = "pull,push"
+	pullActions = "pull"
+)
 
 // ociPrefix is how a repository is spelled where a scheme is written at all —
 // `previews.artifacts.repository` in a spec, `url:` on an OCIRepository. It is
@@ -140,7 +158,7 @@ func parseRepository(repository string) (target, error) {
 	if parsed.Namespace != "" {
 		path = parsed.Namespace + "/" + parsed.Repository
 	}
-	return target{host: parsed.Registry, path: path}, nil
+	return target{host: parsed.Registry, path: path, actions: pushActions}, nil
 }
 
 // scheme is https everywhere except a loopback registry, matching the
@@ -164,6 +182,10 @@ func isLoopback(host string) bool {
 	}
 	return false
 }
+
+// scopeKey identifies a cached bearer token: the repository it was minted for
+// and the actions it authorises.
+func (t target) scopeKey() string { return t.host + "/" + t.path + ":" + t.actions }
 
 func (p *Pusher) endpoint(t target, suffix string) string {
 	return p.scheme(t.host) + "://" + t.host + "/v2/" + t.path + suffix
@@ -293,7 +315,7 @@ func (p *Pusher) attempt(ctx context.Context, t target, method, endpoint string,
 // what a registry with no token service expects.
 func (p *Pusher) authenticate(req *http.Request, t target, authorized bool) {
 	p.mu.Lock()
-	token := p.tokens[t.host]
+	token := p.tokens[t.scopeKey()]
 	p.mu.Unlock()
 	if authorized && token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -326,7 +348,7 @@ func (p *Pusher) authorize(ctx context.Context, t target, challenge string) erro
 		if p.tokens == nil {
 			p.tokens = map[string]string{}
 		}
-		p.tokens[t.host] = token
+		p.tokens[t.scopeKey()] = token
 		p.mu.Unlock()
 		return nil
 	case "basic", "":
@@ -366,7 +388,7 @@ func (p *Pusher) fetchToken(ctx context.Context, t target, realm string, params 
 	// scope authorises nothing and the resulting 403 says nothing useful.
 	scope := params["scope"]
 	if scope == "" {
-		scope = "repository:" + t.path + ":pull,push"
+		scope = "repository:" + t.path + ":" + t.actions
 	}
 	q.Set("scope", scope)
 	u.RawQuery = q.Encode()
