@@ -24,7 +24,6 @@ This reference is **generated** from the committed JSON Schema [`schema/environm
 | `autoDeploy` | boolean | no | `false` | follow the components' sources — a push to a bound repository re-renders and republishes this environment (ADR-0036) |
 | `cluster` | string | no |  |  |
 | `components` | array of object | no |  |  |
-| `delivery` | object | no |  |  |
 | `namespace` | string | no |  |  |
 | `overlays` | array of object | no |  |  |
 | `policy` | object | no |  |  |
@@ -73,21 +72,6 @@ This reference is **generated** from the committed JSON Schema [`schema/environm
 |-------|------|----------|---------|-------------|
 | `cpu` | string | no |  | Kubernetes quantity |
 | `memory` | string | no |  | Kubernetes quantity |
-
-#### `spec.delivery`
-
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `git` | object | no |  |  |
-| `mode` | string enum `"direct"`, `"flux"` | yes |  |  |
-
-##### `spec.delivery.git`
-
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `branch` | string | no | `"main"` |  |
-| `path` | string | no |  | directory within the repo for rendered manifests |
-| `repo` | string | yes |  | git URL of the deployment repository |
 
 #### `spec.overlays[]`
 

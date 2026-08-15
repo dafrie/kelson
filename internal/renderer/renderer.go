@@ -64,28 +64,18 @@ func Render(resolved *model.Resolved, profile clusterprofile.ClusterProfile, res
 	if errs := unresolvedImages(resolved); len(errs) > 0 {
 		return nil, errs
 	}
-	// The delivery-mode gate of ADR-0016: a helm component renders in Flux mode
-	// only. It is decided here, from spec data, before anything is emitted —
-	// see internal/renderer/helm.go for why the gate is the renderer's and not
-	// the delivery plane's.
-	if errs := helmRequiresFlux(resolved); len(errs) > 0 {
-		return nil, errs
-	}
-	// The same gate for previews (ADR-0017), which cites the Helm precedent
-	// deliberately: a ResourceSet outside Flux mode has nothing to reconcile it.
-	if errs := PreviewsRequireFlux(resolved); len(errs) > 0 {
-		return nil, errs
-	}
-	// And for the secret backend (ADR-0018): a backend that is not one of the
-	// three has no mechanism at all behind it. See internal/renderer/secrets.go.
+	// The four delivery-mode gates that used to stand here — helm, previews,
+	// sops and release — are gone (ADR-0028 decision 8). Three of them refused
+	// a mode that is not flux, and flux is the only mode; the fourth refused
+	// every mode that is not direct, and `components[].release` is refused in
+	// internal/model instead. ADR-0016's "an author can write a valid document
+	// that becomes invalid by changing delivery.mode" is no longer a property
+	// this model has: a document that validates renders.
+	//
+	// The gate on the secret *backend* (ADR-0018) stays, because it is not a
+	// mode question: a backend that is not one of the three has no mechanism at
+	// all behind it. See internal/renderer/secrets.go.
 	if errs := secretBackendSupported(resolved); len(errs) > 0 {
-		return nil, errs
-	}
-	// And the delivery-mode gate for `sops` (ADR-0022), which is the same gate
-	// again for the same reason: its decryption step is kustomize-controller's,
-	// so an environment that is not in Flux mode has nothing that could turn
-	// the encrypted file in the repository into a Secret in the cluster.
-	if errs := sopsRequiresFlux(resolved); len(errs) > 0 {
 		return nil, errs
 	}
 	// The Namespace leads the set: delivery.ManifestSet documents apply order as

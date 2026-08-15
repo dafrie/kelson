@@ -123,7 +123,6 @@ This reference is **generated** from the committed JSON Schema [`schema/project.
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `deliveryMode` | string | no |  |  |
 | `policy` | object | no |  |  |
 | `secrets` | object | no |  |  |
 

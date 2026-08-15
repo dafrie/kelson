@@ -73,8 +73,13 @@ func TestExamplesAreValid(t *testing.T) {
 	}
 }
 
-// TestThreeEnvironmentsDeliveryModes is the #25 acceptance: one Project
-// renders correctly into three environments with three delivery modes.
+// TestThreeEnvironmentsResolve is the #25 acceptance: one Project resolves
+// into three environments that differ where an Environment is meant to differ.
+//
+// It used to assert three *delivery modes*, which was the shape of the
+// acceptance under ADR-0001's hybrid delivery. There is one delivery path now
+// (ADR-0028) and the example says so; what is left to check is that the same
+// Project meets three documents and takes each one's namespace and routing.
 //
 // It used to assert service presets and agent policy from the same example.
 // Both are gated until M9 and M7 (issue #141), so the example no longer
@@ -82,7 +87,7 @@ func TestExamplesAreValid(t *testing.T) {
 // covered (P4 for policy, P5 for presets) are exercised against the resolver
 // directly in resolve_test.go, which is where they belong now that a spec
 // carrying them does not validate.
-func TestThreeEnvironmentsDeliveryModes(t *testing.T) {
+func TestThreeEnvironmentsResolve(t *testing.T) {
 	root := filepath.Join("..", "..", "examples", "three-environments")
 	var project *Project
 	envs := map[string]*Environment{}
@@ -111,12 +116,14 @@ func TestThreeEnvironmentsDeliveryModes(t *testing.T) {
 			}
 		}
 	}
-	wantModes := map[string]DeliveryMode{
-		"development": DeliveryDirect,
-		"staging":     DeliveryFlux,
-		"production":  DeliveryFlux,
+	wantNamespaces := map[string]string{
+		// development names no namespace, so it takes the model's
+		// <project>-<environment> default; the other two name their own.
+		"development": "billing-development",
+		"staging":     "billing-staging",
+		"production":  "billing-prod",
 	}
-	for name, mode := range wantModes {
+	for name, ns := range wantNamespaces {
 		env, ok := envs[name]
 		if !ok {
 			t.Fatalf("environment %q missing from example", name)
@@ -125,11 +132,11 @@ func TestThreeEnvironmentsDeliveryModes(t *testing.T) {
 		if len(errs) > 0 {
 			t.Fatalf("%s: %v", name, errs)
 		}
-		if r.Environment.Mode != mode {
-			t.Errorf("%s mode = %q, want %q", name, r.Environment.Mode, mode)
+		if r.Environment.Namespace != ns {
+			t.Errorf("%s namespace = %q, want %q", name, r.Environment.Namespace, ns)
 		}
-		if mode == DeliveryDirect && r.Environment.Delivery.Git != nil {
-			t.Errorf("%s: direct mode must not carry a git target", name)
+		if r.Environment.Routing.DomainSuffix == "" {
+			t.Errorf("%s: the environment's own domain suffix did not survive resolution", name)
 		}
 	}
 }

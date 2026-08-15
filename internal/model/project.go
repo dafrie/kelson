@@ -322,7 +322,7 @@ type Component struct {
 	//
 	// They are plain configuration and nothing else. Unlike a `Secret` kelson
 	// renders, a HelmRelease is not redacted anywhere — its values appear in
-	// every diff, in the rendered output and in the delivery repository — so a
+	// every diff, in the rendered output and in the published artifact — so a
 	// credential written here is a credential published there. Secret material
 	// belongs in ValuesFrom, against a Secret somebody else manages (ADR-0009,
 	// docs/model.md). Nothing enforces that in v0 beyond saying so: kelson does
@@ -479,7 +479,6 @@ type Overlay struct {
 // ProjectDefaults are Project-level fallbacks for Environment concerns;
 // an explicit Environment value always wins (rule P4).
 type ProjectDefaults struct {
-	DeliveryMode DeliveryMode   `yaml:"deliveryMode,omitempty" json:"deliveryMode,omitempty"`
-	Policy       *Policy        `yaml:"policy,omitempty" json:"policy,omitempty"`
-	Secrets      *SecretBackend `yaml:"secrets,omitempty" json:"secrets,omitempty"`
+	Policy  *Policy        `yaml:"policy,omitempty" json:"policy,omitempty"`
+	Secrets *SecretBackend `yaml:"secrets,omitempty" json:"secrets,omitempty"`
 }

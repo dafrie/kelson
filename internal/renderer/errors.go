@@ -46,32 +46,25 @@ const (
 	// ErrServiceName: <project>-<environment>-<service> is too long for the
 	// object names the component's operator derives from it.
 	ErrServiceName = "render/service-name-too-long"
-	// ErrHelmRequiresFlux: the resolved spec has a `kind: helm` component and
-	// the environment's delivery mode is not flux. A helm component renders a
-	// HelmRelease for helm-controller to reconcile, and direct mode has no
-	// helm-controller to delegate to — applying one there produces an object
-	// nothing acts on. ADR-0016 decision 4 accepts this as the first
-	// delivery-mode-gated spec surface, deliberately and for chart delegation
-	// only.
-	ErrHelmRequiresFlux = "render/helm-requires-flux"
 	// ErrChartName: <project>-<environment>-<component> is too long for the
 	// Helm release name derived from it.
 	ErrChartName = "render/chart-name-too-long"
-	// ErrPreviewsRequireFlux: the environment declares previews and its
-	// delivery mode is not flux. Previews render a flux-operator ResourceSet
-	// and ResourceSetInputProvider, and outside Flux mode there is nothing to
-	// reconcile them — usually not even a served CRD. ADR-0017 takes the same
-	// delivery-mode gate ADR-0016 decision 4 took for charts, citing it
-	// deliberately as that decision requires.
-	ErrPreviewsRequireFlux = "render/previews-require-flux"
 
-	// The two release codes — `render/release-requires-direct` and
-	// `render/release-name-too-long` — are gone with the release Job itself
-	// (ADR-0028 decision 8). The first refused a delivery mode that no longer
-	// exists; the second could only be reached by rendering a Job the renderer
-	// no longer renders. `components[].release` is refused one plane earlier
-	// now, as schema/not-implemented from internal/model's gate table, so a
-	// resolved spec that reaches this package never carries one (#227).
+	// Four delivery-mode codes stood here and all four are deleted with the
+	// mode vocabulary itself (ADR-0028 decisions 8 and 9):
+	//
+	//   - render/helm-requires-flux     (ADR-0016 decision 4)
+	//   - render/previews-require-flux  (ADR-0017 decision 5)
+	//   - render/sops-requires-flux     (ADR-0022 decision 2)
+	//   - render/release-requires-direct and render/release-name-too-long
+	//
+	// The first three refused a mode that is not flux, and flux is the only
+	// mode there is; the fourth refused every mode that is not direct, and
+	// `components[].release` is refused one plane earlier now, as
+	// schema/not-implemented from internal/model's gate table (#227) — which
+	// also makes the Job's name-length refusal unreachable, since no Job is
+	// rendered. Nothing in this package is conditioned on delivery any more:
+	// what an environment renders is what its documents say.
 
 	// ErrPreviewName: <project>-<environment> leaves no room for the
 	// per-preview namespace derived from it (<project>-<environment>-pr<id>,
@@ -103,14 +96,6 @@ const (
 	// every Kustomization kelson writes (ADR-0022). See
 	// internal/renderer/secrets.go.
 	ErrSecretBackendUnsupported = "render/secret-backend-unsupported"
-	// ErrSOPSRequiresFlux: the environment selects backend sops and its
-	// delivery mode is not flux. The sops backend's decryption step belongs to
-	// kustomize-controller; direct mode has no decryptor, so the encrypted
-	// Secret in the repository would never become a Secret in the cluster and
-	// every reference to it would fail at pod start. It is the same
-	// delivery-mode gate ADR-0016 decision 4 took for charts and ADR-0017 took
-	// for previews, decided from spec data alone (ADR-0022).
-	ErrSOPSRequiresFlux = "render/sops-requires-flux"
 	// ErrExternalSecretsNotInstalled: the environment selects backend
 	// externalSecrets and the ClusterProfile reports no external-secrets
 	// operator. The backend delegates entirely to that controller, so an

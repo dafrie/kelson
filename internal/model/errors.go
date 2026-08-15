@@ -39,17 +39,20 @@ const (
 	// the second half — so a name validate.go cannot find may still be a global
 	// source, and only the plane holding the global list can say. The error
 	// lists what was in scope when it looked.
-	ErrUnknownSource    Code = "ref/unknown-source"
-	ErrSecretLiteral    Code = "secret/literal"
-	ErrNoImageSource    Code = "semantic/no-image-source"
-	ErrGitTargetMissing Code = "semantic/git-target-missing"
+	ErrUnknownSource Code = "ref/unknown-source"
+	ErrSecretLiteral Code = "secret/literal"
+	ErrNoImageSource Code = "semantic/no-image-source"
+	// `semantic/git-target-missing` was here. It required a git target for a
+	// delivery mode that no longer exists, and it is deleted with the
+	// `delivery:` block itself (ADR-0028 decision 9): kelson publishes an OCI
+	// artifact and no document names a repository to commit into.
+	//
 	// ErrNoDefaultSource marks a component that names no source in a Project
 	// that declares several and names no default (ADR-0035 decision 3). It is
 	// its own code rather than schema/missing-required because `source:` is
-	// optional everywhere else and becomes required only in this shape, which is
-	// the same reason semantic/git-target-missing is not spelled
-	// schema/missing-required either. The remediation names the candidates:
-	// picking the first entry of a list is not a decision an author made.
+	// optional everywhere else and becomes required only in this shape. The
+	// remediation names the candidates: picking the first entry of a list is
+	// not a decision an author made.
 	ErrNoDefaultSource Code = "semantic/no-default-source"
 	// ErrAuthProviderMismatch marks an auth shape the connection's provider
 	// cannot use — today, `githubApp` on anything but `provider: github`

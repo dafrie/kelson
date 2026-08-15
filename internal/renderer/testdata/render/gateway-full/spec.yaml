@@ -44,13 +44,6 @@ spec:
     gatewayClass: envoy
     tls: true
 
-  delivery:
-    mode: flux
-    git:
-      repo: git@github.com:acme/deploy.git
-      branch: main
-      path: checkout/production
-
   components:
     - name: web
       replicas: { min: 3, max: 20 }

@@ -137,15 +137,11 @@ func runPreviewCmd(t *testing.T, push pusherConnector, resolver registry.Resolve
 
 type previewSpecOptions struct {
 	noPreviews bool
-	mode       string
 	repository string
 }
 
 func writePreviewSpec(t *testing.T, opts previewSpecOptions) string {
 	t.Helper()
-	if opts.mode == "" {
-		opts.mode = "flux"
-	}
 	if opts.repository == "" {
 		opts.repository = "oci://" + testPreviewArchive
 	}
@@ -155,10 +151,6 @@ func writePreviewSpec(t *testing.T, opts previewSpecOptions) string {
 	b.WriteString("  components:\n    - name: web\n      port: 8080\n")
 	b.WriteString("---\napiVersion: kelson.dev/v1alpha1\nkind: Environment\nmetadata:\n  name: staging\nspec:\n")
 	b.WriteString("  project: shop\n  namespace: shop-staging\n")
-	b.WriteString("  delivery:\n    mode: " + opts.mode + "\n")
-	if opts.mode != "direct" {
-		b.WriteString("    git:\n      repo: git@github.com:acme/deploy.git\n      path: shop/staging\n")
-	}
 	if !opts.noPreviews {
 		b.WriteString("  previews:\n    provider: github\n    repo: https://github.com/acme/shop\n")
 		b.WriteString("    secretRef: github-auth\n    artifacts:\n      repository: " + opts.repository + "\n")
@@ -274,11 +266,6 @@ func TestPublishRefusals(t *testing.T) {
 			name: "environment without previews",
 			spec: previewSpecOptions{noPreviews: true},
 			want: "spec.previews",
-		},
-		{
-			name: "environment not in flux mode",
-			spec: previewSpecOptions{mode: "direct"},
-			want: preview.ReasonRequiresFlux,
 		},
 		{
 			name: "malformed change request",

@@ -3,8 +3,9 @@ kind: Project
 metadata:
   name: billing
 
-# One project, three environments split across kelson's two delivery modes —
-# the practical shape of the hybrid decision (ADR-0001, issue #25).
+# One project, three environments, one delivery path: render, publish an OCI
+# artifact, let Flux reconcile it (ADR-0028, issue #25). What differs between
+# the three is what an Environment is for — namespace, routing, overrides.
 spec:
   source:
     git: https://github.com/acme/billing

@@ -10,7 +10,7 @@ import (
 )
 
 // precedenceProject exercises every precedence rule at once: P1 (env merge),
-// P2 (replicas/resources), P3 (image), P4 (delivery/policy/secrets chain),
+// P2 (replicas/resources), P3 (image), P4 (policy/secrets chain),
 // P5 (service presets), P6 (overlays).
 //
 // It deliberately keeps fields issue #141 gated at one time or another — a
@@ -44,7 +44,6 @@ spec:
     - name: worker
       image: ghcr.io/acme/shop-worker:2   # component beats project (P3)
   defaults:
-    deliveryMode: flux
     policy:
       agents: allow
       require: [dry-run]
@@ -179,25 +178,18 @@ spec:
 	}
 }
 
-func TestResolveDeliveryPolicySecretsP4(t *testing.T) {
-	// Staging carries only its git target: the mode comes from the Project
-	// default, policy from the same default, secrets from the built-in.
+func TestResolvePolicySecretsP4(t *testing.T) {
+	// Staging says nothing of its own: policy comes from the Project default,
+	// secrets from the built-in. (The chain used to start with a delivery mode;
+	// there is one delivery path now — ADR-0028.)
 	p, staging := loadPairUnvalidated(t, precedenceProject, `
 apiVersion: kelson.dev/v1alpha1
 kind: Environment
 metadata: {name: staging}
 spec:
   project: shop
-  delivery:
-    git: {repo: git@github.com:acme/deploy.git, path: shop/staging}
 `)
 	r := resolved(t, p, staging)
-	if r.Environment.Mode != DeliveryFlux {
-		t.Errorf("mode = %q, want flux from project default", r.Environment.Mode)
-	}
-	if r.Environment.Delivery.Git == nil || r.Environment.Delivery.Git.Path != "shop/staging" {
-		t.Errorf("git target must survive: %+v", r.Environment.Delivery.Git)
-	}
 	if r.Environment.Policy.Agents != AgentsAllow || len(r.Environment.Policy.Require) != 1 {
 		t.Errorf("policy = %+v, want allow + dry-run from project default", r.Environment.Policy)
 	}
@@ -206,30 +198,34 @@ spec:
 	}
 }
 
-func TestResolvedFluxWithoutGitFails(t *testing.T) {
-	// The effective mode (here, the Project default) requires a git target
-	// even though the Environment itself never set delivery.mode.
-	// A gate-free project, so the only error this can produce is the one under
-	// test (issue #141 would otherwise add noise from precedenceProject).
-	p, staging := loadPair(t, `
-apiVersion: kelson.dev/v1alpha1
-kind: Project
-metadata: {name: shop}
-spec:
-  image: ghcr.io/acme/shop:2
-  components:
-    - {name: web, port: 8080}
-  defaults:
-    deliveryMode: flux
-`, `
-apiVersion: kelson.dev/v1alpha1
+// TestRetiredDeliveryBlockIsRefusedWithItsStory: an Environment written against
+// the old vocabulary decodes to a strict schema/unknown-field, and the
+// remediation says the block is gone rather than offering a spelling list
+// (ADR-0028 decision 9, internal/model/decode.go).
+func TestRetiredDeliveryBlockIsRefusedWithItsStory(t *testing.T) {
+	_, errs := DecodeDocuments([]byte(`apiVersion: kelson.dev/v1alpha1
 kind: Environment
 metadata: {name: staging}
 spec:
   project: shop
-`)
-	if _, errs := Resolve(p, staging); !slices.Contains(errs.Codes(), ErrGitTargetMissing) {
-		t.Errorf("effective flux mode without git must fail with semantic/git-target-missing, got %v", errs)
+  delivery:
+    mode: flux
+    git: {repo: git@github.com:acme/deploy.git}
+`))
+	var got *Error
+	for i := range errs {
+		if errs[i].Code == ErrUnknownField && errs[i].Field == "$.spec.delivery" {
+			got = &errs[i]
+		}
+	}
+	if got == nil {
+		t.Fatalf("a delivery block must be refused as %s, got:\n%v", ErrUnknownField, errs)
+	}
+	if !strings.Contains(got.Remediation, "ADR-0028") || !strings.Contains(got.Remediation, "delete") {
+		t.Errorf("the remediation must say the block is gone and safe to delete, got %q", got.Remediation)
+	}
+	if got.Line != 6 {
+		t.Errorf("line = %d, want 6 (the delivery: key)", got.Line)
 	}
 }
 
@@ -240,21 +236,12 @@ kind: Environment
 metadata: {name: production}
 spec:
   project: shop
-  delivery:
-    mode: direct
-    git: {repo: git@github.com:acme/deploy.git, path: shop/prod}
   policy:
     agents: propose-only        # taken whole; the project default does not merge in (P4)
   secrets:
     backend: sops
 `)
 	r := resolved(t, p, prod)
-	if r.Environment.Mode != DeliveryDirect {
-		t.Errorf("mode = %q, want direct (environment beats project default)", r.Environment.Mode)
-	}
-	if r.Environment.Delivery.Git == nil || r.Environment.Delivery.Git.Path != "shop/prod" {
-		t.Errorf("git target = %+v", r.Environment.Delivery.Git)
-	}
 	if r.Environment.Policy.Agents != AgentsProposeOnly {
 		t.Errorf("agents = %q, want propose-only", r.Environment.Policy.Agents)
 	}
@@ -325,9 +312,6 @@ spec:
 	r, errs := Resolve(p, e)
 	if len(errs) != 0 {
 		t.Fatalf("resolve: %v", errs)
-	}
-	if r.Environment.Mode != DeliveryDirect {
-		t.Errorf("built-in delivery default = %q, want direct", r.Environment.Mode)
 	}
 	// An environment that says nothing about agents narrows nothing: the
 	// credential an operator issued is the grant, and every guardrail in

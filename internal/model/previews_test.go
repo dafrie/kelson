@@ -7,10 +7,9 @@ import (
 
 // Validation and resolution of Environment.spec.previews (ADR-0017).
 //
-// The delivery-mode gate is deliberately not tested here: previews render in
-// Flux mode only, and that refusal lives in the pure renderer for the same
-// reason the Helm one does — the mode is spec data, so an Environment document
-// stays valid on its own terms against every mode it will ever meet.
+// There is no delivery-mode gate to test any more: previews were Flux-only and
+// Flux is the only path (ADR-0028 decision 8), so an environment that declares
+// them gets them.
 
 const previewsProject = `apiVersion: kelson.dev/v1alpha1
 kind: Project
@@ -21,16 +20,13 @@ spec:
     - {name: web, port: 8080}
 `
 
-// previewsEnv wraps a previews block in the smallest valid flux Environment.
+// previewsEnv wraps a previews block in the smallest valid Environment.
 func previewsEnv(block string) string {
 	return `apiVersion: kelson.dev/v1alpha1
 kind: Environment
 metadata: {name: staging}
 spec:
   project: checkout
-  delivery:
-    mode: flux
-    git: {repo: "git@github.com:acme/deploy.git"}
   previews:
 ` + block
 }
@@ -176,8 +172,8 @@ func TestPreviewsProviderEnum(t *testing.T) {
 }
 
 // TestPreviewsRepoIsAnHTTPURL. The source repository is reached over the
-// forge's HTTP API, so an SSH remote — the shape delivery.git.repo takes — is
-// the wrong string in the right-looking field.
+// forge's HTTP API, so an SSH remote — the shape a clone URL takes — is the
+// wrong string in the right-looking field.
 func TestPreviewsRepoIsAnHTTPURL(t *testing.T) {
 	for _, repo := range []string{"git@github.com:acme/checkout.git", "acme/checkout", "oci://ghcr.io/acme/checkout"} {
 		errs := decodePreviews(t, `    provider: github
@@ -190,8 +186,8 @@ func TestPreviewsRepoIsAnHTTPURL(t *testing.T) {
 			t.Errorf("repo %q must be %s, got:\n%v", repo, ErrInvalidFormat, errs)
 			continue
 		}
-		if !strings.Contains(e.Remediation, "delivery.git.repo") {
-			t.Errorf("the remediation must say which repository this is not: %s", e.Remediation)
+		if !strings.Contains(e.Remediation, "forge's HTTP API") {
+			t.Errorf("the remediation must say why an SSH remote is wrong here: %s", e.Remediation)
 		}
 	}
 }

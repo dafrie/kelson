@@ -38,6 +38,7 @@ spec:
     - name: nightly-report
       schedule: "0 3 * * *"
 
-  defaults:                   # fallbacks only; Environment values always win (P4)
-    deliveryMode: flux
-    # A `policy:` default belongs here too; it returns with M7 (#141).
+  # `defaults:` holds Project-level fallbacks an Environment value always beats
+  # (P4). It carried `deliveryMode:` until ADR-0028 left one delivery path with
+  # nothing to choose between; what remains is a `policy:` default, which
+  # returns with M7 (#141), and a `secrets:` backend.

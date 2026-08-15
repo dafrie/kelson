@@ -254,17 +254,11 @@ func resolvePreview(opts Options) (resolved, parent *model.Resolved, err error) 
 	if len(errs) > 0 {
 		return nil, nil, errs
 	}
-	// The gate is read from the resolved mode rather than the document, because
-	// delivery.mode is a P4 chain: the Project's default counts.
-	if parent.Environment.Mode != model.DeliveryFlux {
-		return nil, nil, Error{
-			Reason: ReasonRequiresFlux,
-			Message: "environment " + quoted(opts.Environment.Metadata.Name) + " declares previews but its delivery mode is " +
-				quoted(string(parent.Environment.Mode)) + ", so nothing would reconcile the artifact this would publish",
-			Remediation: "set delivery.mode: flux on this environment. Previews are the flux-operator ResourceSet lifecycle and " +
-				"ADR-0017 gates them on it deliberately",
-		}
-	}
+	// A delivery-mode check stood here and refused every mode that was not
+	// flux. There is one spine and it is Flux (ADR-0028), so the question a
+	// publish asks now is only whether the environment declares previews at
+	// all — which is [Options.Environment]'s own document and is validated
+	// above.
 
 	environment := *opts.Environment
 	environment.Spec.Namespace = naming.Preview(opts.Project.Metadata.Name, opts.Environment.Metadata.Name, opts.PR)

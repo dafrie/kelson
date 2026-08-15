@@ -104,15 +104,9 @@ func TestSecretBackendGate(t *testing.T) {
 	}
 }
 
-// sopsFixture is the reference-carrying fixture switched to the sops backend
-// in the delivery mode that backend requires.
+// sopsFixture is the reference-carrying fixture switched to the sops backend.
 func sopsFixture() *model.Resolved {
 	r := secretRefFixture()
-	r.Environment.Mode = model.DeliveryFlux
-	r.Environment.Delivery = model.Delivery{
-		Mode: model.DeliveryFlux,
-		Git:  &model.GitTarget{Repo: "https://example.test/deploy.git", Branch: "main", Path: "clusters/prod"},
-	}
 	r.Environment.Secrets = model.SecretBackend{
 		Backend:       model.SecretsSOPS,
 		AgeRecipients: []string{"age13w78znajf5kee8msacel80jz6qeuc9tyxhuqkwnqcsaymlrj7clsy4fgdw"},
@@ -152,24 +146,12 @@ func TestSOPSRendersTheClusterShape(t *testing.T) {
 	}
 }
 
-// TestSOPSRequiresFlux: direct mode has no decryptor, so an encrypted file
-// there would stay encrypted and every reference to it would fail at pod
-// start. Same gate as charts and previews, decided from spec data alone.
-func TestSOPSRequiresFlux(t *testing.T) {
-	r := sopsFixture()
-	r.Environment.Mode = model.DeliveryDirect
-	_, err := Render(r, gatewayProfile(), nil)
-	if err == nil {
-		t.Fatalf("backend sops must not render in direct mode")
-	}
-	errs, ok := err.(Errors)
-	if !ok || len(errs) != 1 || errs[0].Code != ErrSOPSRequiresFlux {
-		t.Fatalf("expected one %s, got %T: %v", ErrSOPSRequiresFlux, err, err)
-	}
-	if !strings.Contains(errs[0].Remediation, "delivery.mode: flux") {
-		t.Errorf("remediation must name the fix, got %q", errs[0].Remediation)
-	}
-}
+// The sops backend's delivery-mode gate was pinned here — direct mode had no
+// decryptor, so an encrypted file would have stayed encrypted and every
+// reference to it would have failed at pod start. It is deleted with the mode
+// vocabulary (ADR-0028 decision 8): the decryption block now travels on the
+// Kustomization kelson itself writes, which is what makes that failure
+// unreachable rather than merely refused.
 
 // TestSOPSPreviewKustomizationDecrypts: a preview's artifact carries the same
 // encrypted Secrets, so the Kustomization flux-operator instantiates per pull

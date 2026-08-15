@@ -209,17 +209,17 @@ func TestRepublishingWithDifferentImagesIsANewArtifact(t *testing.T) {
 }
 
 // A refusal keeps the vocabulary of the step that refused. A caller branching on
-// preview/requires-flux must read the same value here that it reads from
+// preview/no-previews must read the same value here that it reads from
 // `kelson preview publish`, and nothing may be pushed on the way to it.
 func TestPublishRefusalsAreThePlanesOwn(t *testing.T) {
 	f := &fakePusher{}
 	opts := testOptions()
-	opts.Environment.Spec.Delivery = &model.Delivery{Mode: model.DeliveryDirect}
+	opts.Environment.Spec.Previews = nil
 
 	_, err := testPublisher(f).Publish(t.Context(), opts)
 	var refusal preview.Error
-	if !errors.As(err, &refusal) || refusal.Reason != preview.ReasonRequiresFlux {
-		t.Fatalf("Publish err = %v, want %s", err, preview.ReasonRequiresFlux)
+	if !errors.As(err, &refusal) || refusal.Reason != preview.ReasonNoPreviews {
+		t.Fatalf("Publish err = %v, want %s", err, preview.ReasonNoPreviews)
 	}
 	if len(f.pushed) != 0 {
 		t.Error("a refused render still pushed something")

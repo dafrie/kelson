@@ -100,33 +100,12 @@ func previewProviderType(p model.PreviewProvider) string {
 	}
 }
 
-// PreviewsRequireFlux is the delivery-mode gate, called from Render alongside
-// helmRequiresFlux and before anything is emitted, so an environment that
-// cannot render produces an error rather than a partial manifest set.
+// The delivery-mode gate ADR-0017 decision 5 took from ADR-0016 —
+// `render/previews-require-flux`, exported so the API's ListPreviews could state
+// the same refusal without rendering — is deleted (ADR-0028 decision 8). It
+// refused every mode that was not flux, and flux is the only mode there has ever
+// been since. An environment that declares previews renders them.
 //
-// It is the one gate in this file that is exported, because a caller that only
-// wants to *ask* about previews has to be able to reach the same refusal
-// without rendering: the API's ListPreviews states this gate rather than
-// hiding it, and an environment whose mode forbids previews must give a reader
-// the identical code, message and remediation `kelson render` gives them
-// (ADR-0017 decision 5). Re-deriving that sentence at the call site would be a
-// second gate that could drift from this one.
-func PreviewsRequireFlux(resolved *model.Resolved) Errors {
-	if resolved.Environment.Previews == nil || resolved.Environment.Mode == model.DeliveryFlux {
-		return nil
-	}
-	return Errors{{
-		Code: ErrPreviewsRequireFlux,
-		Message: "environment " + quoted(resolved.Environment.Name) + " declares previews, which render a " +
-			"flux-operator ResourceSet and ResourceSetInputProvider, but its delivery mode is " +
-			quoted(string(resolved.Environment.Mode)),
-		Remediation: "set delivery.mode: flux on this environment, or remove the previews block. " +
-			"Previews are available in Flux mode only and ADR-0017 decides that deliberately: the " +
-			"per-pull-request lifecycle is flux-operator's, and a ResourceSet applied where it does not run " +
-			"is a kind the API server does not even serve",
-	}}
-}
-
 // previewsManifests renders the ResourceSetInputProvider and the ResourceSet,
 // in that order: the ResourceSet names the provider, and a rendered set
 // expresses sequencing only through order (issue #89).

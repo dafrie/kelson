@@ -45,9 +45,8 @@ func richProject() *ProjectSpec {
 			{Name: "agent", Kind: ComponentAgent, Tools: []string{"read"}},
 		},
 		Defaults: &ProjectDefaults{
-			DeliveryMode: DeliveryFlux,
-			Policy:       &Policy{Agents: AgentsAllow, Protect: []string{"db"}},
-			Secrets:      &SecretBackend{Backend: SecretsCluster},
+			Policy:  &Policy{Agents: AgentsAllow, Protect: []string{"db"}},
+			Secrets: &SecretBackend{Backend: SecretsCluster},
 		},
 		Overlays: []Overlay{{Patch: "overlays/patch.yaml"}},
 	}
@@ -59,7 +58,6 @@ func richEnvironment() *EnvironmentSpec {
 		Namespace:  "checkout-prod",
 		AutoDeploy: ptr(true),
 		Routing:    &Routing{DomainSuffix: "example.test"},
-		Delivery:   &Delivery{Mode: DeliveryFlux, Git: &GitTarget{Repo: "https://example.test/deploy.git", Branch: "main"}},
 		Policy:     &Policy{Agents: AgentsProposeOnly, Forbid: []AgentOperation{AgentOpDeploy}},
 		Secrets:    &SecretBackend{Backend: SecretsSOPS, AgeRecipients: []string{"age1abc"}},
 		Components: []ComponentOverride{
@@ -137,7 +135,6 @@ func TestEnvironmentSpecDeepCopyIsIndependent(t *testing.T) {
 	out := in.DeepCopy()
 
 	out.Routing.DomainSuffix = "mutated"
-	out.Delivery.Git.Branch = "mutated"
 	out.Policy.Forbid[0] = AgentOpRollback
 	out.Secrets.AgeRecipients[0] = "mutated"
 	*out.AutoDeploy = false

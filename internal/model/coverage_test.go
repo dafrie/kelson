@@ -96,7 +96,6 @@ var renderedFields = map[string]map[string]string{
 		"$.spec.components[].env.*.secret":              "renderer: secretKeyRef name — the Secret the author names, never read by kelson (ADR-0018)",
 		"$.spec.components[].env.*.key":                 "renderer: secretKeyRef key within that Secret (ADR-0018)",
 
-		"$.spec.defaults.deliveryMode":            "resolve P4 → internal/delivery: adapter selection",
 		"$.spec.defaults.policy.agents":           "resolve P4 → internal/api: propose-only refuses every agent mutation server-side (ADR-0025)",
 		"$.spec.defaults.policy.require":          "resolve P4 → internal/api: require: [dry-run] obliges the server-side dry-run before an agent deploy applies (ADR-0025)",
 		"$.spec.defaults.policy.maxReplicas":      "resolve P4 → internal/api: the replica ceiling an agent deploy is checked against (ADR-0025)",
@@ -149,16 +148,11 @@ var renderedFields = map[string]map[string]string{
 		"$.spec.policy.protect":     "internal/api: components an agent may not remove or scale to zero (ADR-0025)",
 		"$.spec.policy.forbid":      "internal/api: operations refused to agents in this environment (ADR-0025)",
 
-		// ADR-0028 deletes this block outright; until that lands, what still
-		// reads it is stated exactly. `mode` decides four renderer gates, so it
-		// has an observable effect on what renders. The git target has lost its
-		// only consumer — the writer that committed to it — and what remains is
-		// validate.go requiring it for flux mode, which is an observable effect
-		// on whether a document is accepted rather than on what it renders.
-		"$.spec.delivery.mode":       "renderer: the helm / previews / sops / release mode gates (ADR-0016, ADR-0017, ADR-0019, ADR-0022)",
-		"$.spec.delivery.git.repo":   "model/validate: semantic/git-target-missing requires it for flux mode (the writer that used it is deleted — ADR-0028, issue #224)",
-		"$.spec.delivery.git.branch": "model/validate: part of the git target semantic/git-target-missing requires (the writer that used it is deleted — ADR-0028, issue #224)",
-		"$.spec.delivery.git.path":   "model/validate: part of the git target semantic/git-target-missing requires (the writer that used it is deleted — ADR-0028, issue #224)",
+		// `$.spec.delivery` was here, with a note that ADR-0028 would delete it.
+		// It is deleted: no mode to gate a renderer branch on, no git target for
+		// a writer that no longer exists (ADR-0028 decision 9). Nothing about an
+		// Environment says how it is delivered, so there is no row to keep
+		// honest.
 
 		"$.spec.components[].name":                      "resolve P1/P2/P5: selects the Project component to override",
 		"$.spec.components[].image":                     "resolve P3 → renderer: the per-environment image pin, the promotion primitive (ADR-0016)",

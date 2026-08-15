@@ -680,11 +680,10 @@ func (v *validator) secretRefreshInterval(field, value string) {
 // previews validates the per-pull-request child-environment declaration
 // (ADR-0017).
 //
-// What is *not* checked here is the delivery mode. Previews render only in
-// Flux mode, and that gate lives in the pure renderer for the reason the Helm
-// gate does: the mode is spec data, so an Environment document stays valid on
-// its own terms and the refusal is a render error naming the mode. See
-// internal/renderer/previews.go.
+// It used to leave the delivery mode to a render gate, because previews were
+// Flux-only and the mode was an Environment's. There is one delivery path now
+// (ADR-0028), so an environment that declares previews gets them and this is
+// the only place they are judged.
 func (v *validator) previews(field string, p *Previews) {
 	if p == nil {
 		return
@@ -705,11 +704,11 @@ func (v *validator) previews(field string, p *Previews) {
 		v.err(ErrMissingRequired, field+".repo",
 			"previews.repo is required when previews is set",
 			"set repo to the HTTP(S) URL of the repository whose pull requests become previews, "+
-				"e.g. https://github.com/acme/checkout. It is the source repository, not delivery.git.repo")
+				"e.g. https://github.com/acme/checkout — the repository the application is written in")
 	} else {
 		v.remoteURL(field+".repo", p.Repo, []string{"https", "http"},
 			"use the HTTP(S) URL of the source repository, e.g. https://github.com/acme/checkout. "+
-				"It is reached over the forge's HTTP API, so an SSH remote — the shape delivery.git.repo "+
+				"It is reached over the forge's HTTP API, so an SSH remote — the shape a clone URL "+
 				"takes — is the wrong string in the right-looking field")
 	}
 
@@ -825,33 +824,6 @@ func (v *validator) duration(field, s string) {
 		v.err(ErrInvalidFormat, field,
 			fmt.Sprintf("%q is not a duration", s),
 			"use a Go duration of whole units, e.g. 30s, 10m, 1h")
-	}
-}
-
-func (v *validator) delivery(field string, d *Delivery) {
-	if d == nil {
-		return
-	}
-	switch d.Mode {
-	case DeliveryDirect:
-		if d.Git != nil {
-			v.err(ErrMutuallyExclusive, field+".git",
-				"delivery.git is meaningless with mode direct",
-				"remove git, or change mode to flux")
-		}
-	case DeliveryFlux:
-		if d.Git == nil || d.Git.Repo == "" {
-			v.err(ErrGitTargetMissing, field+".git",
-				fmt.Sprintf("delivery mode %q requires a git target", d.Mode),
-				"set delivery.git.repo (and optionally branch, path) to the deployment repository")
-		}
-	case "":
-		// Mode inherited from a Project default (P4); the git requirement is
-		// checked on the effective mode in ValidateEnvironment.
-	default:
-		v.err(ErrInvalidEnum, field+".mode",
-			fmt.Sprintf("unknown delivery mode %q", d.Mode),
-			"valid modes: direct, flux")
 	}
 }
 
@@ -1066,11 +1038,10 @@ func (v *validator) dataAuth(field string, c Component, kind ComponentKind) {
 // the chart coordinates it must name, and the absence of everything belonging
 // to the other two halves of the list.
 //
-// What is *not* checked here is the delivery mode. A helm component renders
-// only in Flux mode, and that refusal lives in the renderer rather than in
-// validation, because the mode is an Environment's and a Project document is
-// valid on its own terms against every environment it will ever meet. See
-// internal/renderer/helm.go.
+// The delivery-mode gate that used to sit beside this in the renderer is gone
+// (ADR-0028 decision 8): a chart delegates to helm-controller, and Flux is the
+// only path there has been since. Whether helm-controller is *installed* is a
+// ClusterProfile question and was never validation's.
 func (v *validator) chartComponent(field string, c Component, kind ComponentKind) {
 	if c.Chart == "" {
 		v.err(ErrMissingRequired, field+".chart",
@@ -1606,13 +1577,6 @@ func validateProject(p *Project, v *validator) {
 	v.components("$.spec.components", s.Components, services, projectImage, sources)
 
 	if d := s.Defaults; d != nil {
-		switch d.DeliveryMode {
-		case "", DeliveryDirect, DeliveryFlux:
-		default:
-			v.err(ErrInvalidEnum, "$.spec.defaults.deliveryMode",
-				fmt.Sprintf("unknown delivery mode %q", d.DeliveryMode),
-				"valid modes: direct, flux")
-		}
 		v.policy("$.spec.defaults.policy", d.Policy)
 		// The Project's own components are in this document, so the
 		// cross-reference `protect:` needs is available here rather than in
@@ -1655,7 +1619,6 @@ func validateEnvironmentShape(e *Environment, v *validator) {
 		}
 	}
 
-	v.delivery("$.spec.delivery", s.Delivery)
 	v.policy("$.spec.policy", s.Policy)
 	v.secrets("$.spec.secrets", s.Secrets)
 	v.previews("$.spec.previews", s.Previews)
@@ -2043,23 +2006,6 @@ func ValidateEnvironment(e *Environment, p *Project) Errors {
 		v.overrideShape(f, ov, kind)
 	}
 	validateServiceRefs(e, services, &v)
-
-	// The git requirement applies to the *effective* delivery mode: an
-	// Environment may inherit flux from a Project default (P4), and then it
-	// must carry the git target itself.
-	mode := DeliveryDirect
-	if p.Spec.Defaults != nil && p.Spec.Defaults.DeliveryMode != "" {
-		mode = p.Spec.Defaults.DeliveryMode
-	}
-	if d := e.Spec.Delivery; d != nil && d.Mode != "" {
-		mode = d.Mode
-	}
-	if mode == DeliveryFlux &&
-		(e.Spec.Delivery == nil || e.Spec.Delivery.Git == nil || e.Spec.Delivery.Git.Repo == "") {
-		v.err(ErrGitTargetMissing, "$.spec.delivery.git",
-			fmt.Sprintf("effective delivery mode is %q (environment or project default) but no git target is set", mode),
-			"set delivery.git.repo (and optionally branch, path) on this environment")
-	}
 	return v.errs
 }
 

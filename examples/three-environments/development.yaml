@@ -3,16 +3,14 @@ kind: Environment
 metadata:
   name: development
 
-# Direct mode: kelson server-side applies. Rendered history keeps diffs
-# and rollback even here (ADR-0001).
+# The lightest environment: a namespace, a hostname suffix, and nothing else
+# that differs. How it is delivered is not written here or anywhere — kelson
+# renders, publishes an OCI artifact and lets Flux reconcile it (ADR-0028).
 spec:
   project: billing
 
   routing:
     domainSuffix: dev.billing.internal
-
-  delivery:
-    mode: direct
 
   # `policy: {agents: allow}` would let agents deploy freely here. It returns
   # with M7; kelson rejects unimplemented fields rather than ignoring them (#141).

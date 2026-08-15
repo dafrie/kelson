@@ -12,13 +12,6 @@ spec:
     gatewayClass: envoy
     tls: true
 
-  delivery:
-    mode: flux                # components ride pull requests into production
-    git:
-      repo: git@github.com:acme/deploy.git
-      branch: main
-      path: checkout/production
-
   # `policy:` (agents open PRs, humans merge) returns with M7 and `secrets:`
   # (SOPS-encrypted in Git) with M8. kelson rejects unimplemented fields rather
   # than ignoring them (#141).

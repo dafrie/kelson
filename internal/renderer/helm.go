@@ -28,23 +28,19 @@ import (
 // helm-controller's own drift detection. docs/model.md states both in the words
 // a reviewer needs.
 //
-// # The Flux-only gate
+// # The Flux-only gate is gone, because everything is Flux
 //
-// A HelmRelease applied where no helm-controller runs is a manifest that does
-// nothing at all — the quiet success issue #141 exists to prevent. So a helm
-// component renders only when the environment's delivery mode is flux, and the
-// refusal is structured.
+// ADR-0016 decision 4 gated this component on `delivery.mode: flux`, and
+// `render/helm-requires-flux` refused it everywhere else. There is no everywhere
+// else: one spine, and it is Flux (ADR-0028 decision 8). The gate was vacuous
+// and is deleted with the mode vocabulary that fed it.
 //
-// The gate lives here, in the pure renderer, because the delivery mode is spec
-// data: it is resolved from the Environment document (P4) and arrives on
-// model.Resolved. It is emphatically not read from the cluster — whether
-// helm-controller is *installed* is a ClusterProfile question, judged by
-// internal/clusterprofile/helm for the capability surfaces, and deliberately not
-// consulted here. Deciding renderability from cluster state would make the same
-// document render differently against two clusters.
-//
-// ADR-0016 records this as the first delivery-mode-gated spec surface and as a
-// decision taken for chart delegation only, not a pattern to reach for.
+// What the gate protected against has not changed shape, only owner: a
+// HelmRelease applied where no helm-controller runs does nothing at all. That is
+// a *cluster* question, judged from the ClusterProfile by
+// internal/clusterprofile/helm for the capability surfaces, and it was never
+// this function's to answer — deciding renderability from cluster state would
+// make the same document render differently against two clusters.
 
 const (
 	// helmReleaseAPIVersion is helm-controller's stable API. It matches the
@@ -90,35 +86,6 @@ const helmChartLayerMediaType = "application/vnd.cncf.helm.chart.content.v1.tar+
 // a reader would connect it to. Refusing at render time costs nothing and points
 // at the field.
 const maxChartResourceName = 53
-
-// helmRequiresFlux is the delivery-mode gate. It reports every helm component
-// in the resolved spec, not just the first: one run should list all the work.
-//
-// It is called from Render alongside unresolvedImages, before anything is
-// emitted, so a spec that cannot render produces errors rather than a partial
-// manifest set.
-func helmRequiresFlux(resolved *model.Resolved) Errors {
-	if len(resolved.Charts) == 0 || resolved.Environment.Mode == model.DeliveryFlux {
-		return nil
-	}
-	var errs Errors
-	for i := range resolved.Charts {
-		c := &resolved.Charts[i]
-		errs = append(errs, Error{
-			Code:      ErrHelmRequiresFlux,
-			Component: c.Name,
-			Message: "component " + quoted(c.Name) + " has kind " + quoted(string(model.ComponentHelm)) +
-				", which renders a HelmRelease for helm-controller to reconcile, but environment " +
-				quoted(resolved.Environment.Name) + " has delivery mode " +
-				quoted(string(resolved.Environment.Mode)),
-			Remediation: "set delivery.mode: flux on this environment, or remove the helm component. " +
-				"A helm component is available in Flux mode only and ADR-0016 decides that deliberately: " +
-				"kelson delegates charts to helm-controller instead of templating them, and a HelmRelease " +
-				"applied where nothing reconciles it is a manifest that does nothing",
-		})
-	}
-	return errs
-}
 
 // chartManifests renders one helm component: its chart source, then the
 // HelmRelease that names it. Source first because the release references it,

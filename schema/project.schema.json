@@ -463,9 +463,6 @@
         },
         "defaults": {
           "properties": {
-            "deliveryMode": {
-              "type": "string"
-            },
             "policy": {
               "properties": {
                 "agents": {

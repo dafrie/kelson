@@ -165,8 +165,6 @@ type ResolvedEnvironment struct {
 	Cluster   string
 	Namespace string
 	Routing   ResolvedRouting
-	Delivery  Delivery      // git always present for flux
-	Mode      DeliveryMode  // after the P4 default chain
 	Policy    Policy        // after the P4 default chain
 	Secrets   SecretBackend // after the P4 default chain
 
@@ -179,10 +177,6 @@ type ResolvedEnvironment struct {
 // ResolvedPreviews is the previews declaration with defaults filled in
 // (ADR-0017). Nothing merges into it — there is no per-project preview default
 // and no override — so resolution is defaulting and nothing else.
-//
-// The environment's delivery mode is deliberately not copied here, for the
-// same reason ResolvedChart does not copy it: it lives once, on
-// ResolvedEnvironment, and the renderer's Flux-only gate reads it there.
 type ResolvedPreviews struct {
 	Provider  PreviewProvider       `json:"provider"`
 	Repo      string                `json:"repo"`
@@ -347,24 +341,13 @@ func resolve(p *Project, e *Environment, globals []Source) (*Resolved, Errors) {
 	}
 
 	// P4: Environment value whole, else Project default, else built-in.
-	r.Environment.Mode = DeliveryDirect
 	r.Environment.Policy = EffectivePolicy(p, e)
 	r.Environment.Secrets = SecretBackend{Backend: SecretsCluster}
 	if d := p.Spec.Defaults; d != nil {
-		if d.DeliveryMode != "" {
-			r.Environment.Mode = d.DeliveryMode
-		}
 		if d.Secrets != nil {
 			r.Environment.Secrets = *d.Secrets
 		}
 	}
-	if d := e.Spec.Delivery; d != nil {
-		r.Environment.Delivery = *d
-		if d.Mode != "" {
-			r.Environment.Mode = d.Mode
-		}
-	}
-	r.Environment.Delivery.Mode = r.Environment.Mode
 	if sb := e.Spec.Secrets; sb != nil {
 		r.Environment.Secrets = *sb
 	}

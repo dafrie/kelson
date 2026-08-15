@@ -229,8 +229,6 @@ spec:
                 defaults:
                   type: object
                   properties:
-                    deliveryMode:
-                      type: string
                     policy:
                       type: object
                       properties:
