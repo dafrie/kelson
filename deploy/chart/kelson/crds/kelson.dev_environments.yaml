@@ -443,5 +443,72 @@ spec:
                       resource:
                         description: the document the error is about, e.g. Environment/production
                         type: string
+                workloads:
+                  description: 'what the workloads this revision applied are actually doing — the finer-grained answer under `phase`. `phase` is Flux''s verdict on the Kustomization; this is which Deployment, which pod and which container (issue #240).'
+                  type: object
+                  properties:
+                    checked:
+                      description: how many workloads were read and classified. Zero with no `unavailable` means the environment renders nothing this readback classifies, which is not a failure.
+                      type: integer
+                      format: int32
+                    degraded:
+                      description: how many are failing — the complete count, of which `unhealthy` is a sample
+                      type: integer
+                      format: int32
+                    healthy:
+                      description: how many are live and well
+                      type: integer
+                      format: int32
+                    progressing:
+                      description: how many have not finished yet. A wait state, never a diagnosis.
+                      type: integer
+                      format: int32
+                    unavailable:
+                      description: why the readback could not be done, when it could not. It is a field rather than a zero count because "we looked and all is well" and "we could not look" produce identical counts and mean opposite things.
+                      type: string
+                    unhealthy:
+                      description: 'the failing workloads, ordered by resource name. Only definitive failures appear: a workload that is merely progressing is counted and not listed. The count in `degraded` is complete; this list is the bounded sample that names the pod.'
+                      type: array
+                      maxItems: 10
+                      items:
+                        type: object
+                        required:
+                          - code
+                          - resource
+                        properties:
+                          code:
+                            description: the machine-actionable verdict — branch on this, never on reason
+                            type: string
+                          containers:
+                            description: 'the failing containers inside this workload, ordered by pod then container name. Container logs are deliberately absent: a crash dump is where a secret leaks, and a status is readable by anyone who can read the Environment.'
+                            type: array
+                            maxItems: 5
+                            items:
+                              type: object
+                              required:
+                                - code
+                                - name
+                              properties:
+                                code:
+                                  description: 'this container''s own verdict, which may be less severe than the workload''s: crash-loop-back-off, image-pull-back-off, failing-probe, insufficient-resources, scheduling-failed, missing or secret-sync-failed'
+                                  type: string
+                                name:
+                                  description: the container's name as the pod spec spelled it
+                                  type: string
+                                pod:
+                                  description: the pod the container is in
+                                  type: string
+                                reason:
+                                  description: the kubelet's own reason for this container
+                                  type: string
+                          reason:
+                            description: 'the human-readable detail behind the code: the kubelet''s waiting reason, the unschedulable message, the probe condition'
+                            type: string
+                          remediation:
+                            description: the fix, stated as an action
+                            type: string
+                          resource:
+                            description: the workload this verdict is about, e.g. Deployment/checkout-production/web
+                            type: string
           required:
             - spec
