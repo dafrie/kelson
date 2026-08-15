@@ -32,6 +32,11 @@ const DOCS_URL = "https://github.com/dafrie/kelson/tree/main/docs";
 const NAV = [
   { to: "/projects", label: "Projects" },
   { to: "/cluster", label: "Cluster" },
+  // The mockup's "Sources", arrived: the forges this instance can pull from
+  // (ADR-0033). It sits beside Cluster and Setup because it describes the
+  // instance rather than a project, and every project's source resolves
+  // through it.
+  { to: "/connections", label: "Connections" },
   { to: "/setup", label: "Setup" },
 ] as const;
 

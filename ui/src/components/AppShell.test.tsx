@@ -13,6 +13,7 @@ function renderShell(at: string) {
         <Route element={<AppShell />}>
           <Route path="projects" element={<span>projects screen</span>} />
           <Route path="cluster" element={<span>cluster screen</span>} />
+          <Route path="connections" element={<span>connections screen</span>} />
         </Route>
       </Routes>
     </MemoryRouter>,
@@ -25,7 +26,7 @@ describe("AppShell", () => {
     const nav = screen.getByRole("navigation", { name: "Primary" });
     expect(
       Array.from(nav.querySelectorAll("a")).map((a) => a.textContent),
-    ).toEqual(["Projects", "Cluster", "Setup"]);
+    ).toEqual(["Projects", "Cluster", "Connections", "Setup"]);
   });
 
   it("marks the current destination active", () => {

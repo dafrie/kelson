@@ -6,6 +6,7 @@ import { LoginPage } from "./pages/LoginPage";
 import { ProjectsPage } from "./pages/ProjectsPage";
 import { ProjectDetailPage } from "./pages/ProjectDetailPage";
 import { ClusterPage } from "./pages/ClusterPage";
+import { ConnectionsPage } from "./pages/ConnectionsPage";
 import { DeployPage } from "./pages/DeployPage";
 import { DiffPage } from "./pages/DiffPage";
 import { EditSpecPage } from "./pages/EditSpecPage";
@@ -71,6 +72,11 @@ export const routes = createRoutesFromElements(
         <Route path="projects/:project/:env/promote" element={<PromotePage />} />
         <Route path="projects/:project/:env/rollback" element={<RollbackPage />} />
         <Route path="cluster" element={<ClusterPage />} />
+        {/* Instance-wide, not project-scoped: a connection is what *any*
+            project's source resolves through (ADR-0033 decision 4), so it has
+            no project or environment in its path and hangs off the root beside
+            the other two instance screens. */}
+        <Route path="connections" element={<ConnectionsPage />} />
         <Route path="setup" element={<OnboardingPage />} />
         <Route
           path="*"
