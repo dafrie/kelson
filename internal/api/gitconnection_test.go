@@ -189,11 +189,14 @@ func (f fakeForge) MintCloneCredential(context.Context, forge.Conn, string) (for
 
 type browsingForge struct {
 	fakeForge
-	repos   []forge.Repo
-	listErr error
+	repos    []forge.Repo
+	branches []string
+	listErr  error
 	// conns records the forge.Conn each call was handed, so a test can assert
 	// the material reached the adapter.
 	conns *[]forge.Conn
+	// repositories records the repository each ListBranches was asked about.
+	repositories *[]string
 }
 
 func (f browsingForge) ListRepositories(_ context.Context, c forge.Conn) ([]forge.Repo, error) {
@@ -206,8 +209,17 @@ func (f browsingForge) ListRepositories(_ context.Context, c forge.Conn) ([]forg
 	return f.repos, nil
 }
 
-func (f browsingForge) ListBranches(context.Context, forge.Conn, string) ([]string, error) {
-	return nil, nil
+func (f browsingForge) ListBranches(_ context.Context, c forge.Conn, repoFullName string) ([]string, error) {
+	if f.conns != nil {
+		*f.conns = append(*f.conns, c)
+	}
+	if f.repositories != nil {
+		*f.repositories = append(*f.repositories, repoFullName)
+	}
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	return f.branches, nil
 }
 
 func forgeLookup(p forge.Provider) ForgeLookup {
@@ -840,5 +852,233 @@ func TestTestConnectionOnAMissingConnection(t *testing.T) {
 		connect.NewRequest(&kelsonv1alpha1.TestConnectionRequest{Name: "ghost"}))
 	if connect.CodeOf(err) != connect.CodeNotFound {
 		t.Fatalf("err = %v (code %s), want not-found", err, connect.CodeOf(err))
+	}
+}
+
+// --- browsing ----------------------------------------------------------------
+//
+// The capability gate of ADR-0033 decision 3, on the wire. What these assert is
+// the shape of the *refusal* as much as the shape of the answer: a connection
+// that cannot browse has to be distinguishable from one that browsed and found
+// nothing, and that distinction is the whole reason these two RPCs exist.
+
+func TestListConnectionRepositoriesReportsWhatTheForgeSaw(t *testing.T) {
+	store := newFakeConnections().
+		with(appConnection("acme-github", "acme-github-app")).
+		withSecret("acme-github", controlstore.AuthMaterial{PrivateKeyPEM: []byte("-----BEGIN PRIVATE KEY-----")})
+	var seen []forge.Conn
+	c := serve(t, Options{Connections: store, Forges: forgeLookup(browsingForge{
+		fakeForge: fakeForge{name: "github"},
+		conns:     &seen,
+		repos: []forge.Repo{
+			{FullName: "acme/checkout", HTMLURL: "https://github.com/acme/checkout", DefaultBranch: "main", Private: true},
+			{FullName: "acme/site", HTMLURL: "https://github.com/acme/site", DefaultBranch: "trunk"},
+		},
+	})})
+
+	res, err := c.connections.ListConnectionRepositories(t.Context(),
+		connect.NewRequest(&kelsonv1alpha1.ListConnectionRepositoriesRequest{Connection: "acme-github"}))
+	if err != nil {
+		t.Fatalf("ListConnectionRepositories: %v", err)
+	}
+	got := res.Msg.GetRepositories()
+	if len(got) != 2 {
+		t.Fatalf("got %d repositories, want the 2 the adapter reported", len(got))
+	}
+	// Every field of the seam's Repo has to survive the projection: a picker
+	// that lost default_branch would preselect nothing, and one that lost
+	// private would show a public badge on a private repository.
+	first := got[0]
+	if first.GetFullName() != "acme/checkout" || first.GetHtmlUrl() != "https://github.com/acme/checkout" ||
+		first.GetDefaultBranch() != "main" || !first.GetPrivate() {
+		t.Errorf("the first repository came back as %+v", first)
+	}
+	if got[1].GetPrivate() {
+		t.Error("a public repository came back private")
+	}
+
+	// The material reached the adapter, joined onto the spec's identifiers —
+	// which is what forgeConn exists to do and what a listing that silently
+	// authenticated as nobody would get wrong.
+	if len(seen) != 1 {
+		t.Fatalf("the adapter was called %d times, want once", len(seen))
+	}
+	if len(seen[0].PrivateKeyPEM) == 0 || seen[0].AppID != 12345 || seen[0].InstallationID != 678910 {
+		t.Errorf("the adapter was handed %+v, want the app's identifiers and its key", seen[0])
+	}
+}
+
+func TestListConnectionBranchesNamesTheRepositoryItWasAsked(t *testing.T) {
+	store := newFakeConnections().
+		with(tokenConnection("acme-github", "acme-git-token")).
+		withSecret("acme-github", controlstore.AuthMaterial{Token: "ghp-not-a-real-token"})
+	var repositories []string
+	c := serve(t, Options{Connections: store, Forges: forgeLookup(browsingForge{
+		fakeForge:    fakeForge{name: "github"},
+		repositories: &repositories,
+		branches:     []string{"main", "release/1.4"},
+	})})
+
+	res, err := c.connections.ListConnectionBranches(t.Context(),
+		connect.NewRequest(&kelsonv1alpha1.ListConnectionBranchesRequest{
+			Connection: "acme-github", Repository: "acme/checkout",
+		}))
+	if err != nil {
+		t.Fatalf("ListConnectionBranches: %v", err)
+	}
+	if !reflect.DeepEqual(res.Msg.GetBranches(), []string{"main", "release/1.4"}) {
+		t.Errorf("branches = %v, want the adapter's answer unchanged", res.Msg.GetBranches())
+	}
+	if !reflect.DeepEqual(repositories, []string{"acme/checkout"}) {
+		t.Errorf("the adapter was asked about %v, want acme/checkout", repositories)
+	}
+	// The response is branch names, and a name is not a credential — but this
+	// is the one browsing response built from a request the caller controls, so
+	// the token is checked out of it explicitly.
+	for _, branch := range res.Msg.GetBranches() {
+		if strings.Contains(branch, "ghp-not-a-real-token") {
+			t.Fatalf("a branch name carried the credential: %q", branch)
+		}
+	}
+}
+
+func TestListConnectionBranchesNeedsARepository(t *testing.T) {
+	store := newFakeConnections().
+		with(tokenConnection("acme-github", "acme-git-token")).
+		withSecret("acme-github", controlstore.AuthMaterial{Token: "t"})
+	c := serve(t, Options{Connections: store, Forges: forgeLookup(browsingForge{
+		fakeForge: fakeForge{name: "github"},
+	})})
+
+	_, err := c.connections.ListConnectionBranches(t.Context(),
+		connect.NewRequest(&kelsonv1alpha1.ListConnectionBranchesRequest{Connection: "acme-github"}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("err = %v (code %s), want invalid-argument", err, connect.CodeOf(err))
+	}
+	if store.reads() != 0 {
+		t.Errorf("a request refused on its own shape read the Secret %d times", store.reads())
+	}
+}
+
+// The capability gate itself: a provider with no RepoBrowser refuses, and the
+// refusal is a *structured* one an agent and a browser can both act on.
+//
+// Three things are asserted about it and each is load-bearing. The connect code
+// is Unimplemented and not InvalidArgument, because no rewrite of the request
+// makes a `generic` connection grow a browser — an agent reading
+// InvalidArgument would retry forever. The detail carries
+// `connection/capability-unsupported`, which is what a client branches on. And
+// the prose says what the connection *can* do and that pasting a URL works,
+// because the connection is not broken and the user still has somewhere to go.
+func TestBrowsingRefusesAConnectionWhoseProviderCannotBrowse(t *testing.T) {
+	store := newFakeConnections().
+		with(tokenConnection("internal-git", "internal-git-token")).
+		withSecret("internal-git", controlstore.AuthMaterial{Token: "ghp-not-a-real-token"})
+	// A fakeForge and not a browsingForge: the capability split is a difference
+	// of type, exactly as it is in internal/forge.
+	c := serve(t, Options{Connections: store, Forges: forgeLookup(fakeForge{name: "generic"})})
+
+	calls := map[string]func() error{
+		"ListConnectionRepositories": func() error {
+			_, err := c.connections.ListConnectionRepositories(t.Context(),
+				connect.NewRequest(&kelsonv1alpha1.ListConnectionRepositoriesRequest{Connection: "internal-git"}))
+			return err
+		},
+		"ListConnectionBranches": func() error {
+			_, err := c.connections.ListConnectionBranches(t.Context(),
+				connect.NewRequest(&kelsonv1alpha1.ListConnectionBranchesRequest{
+					Connection: "internal-git", Repository: "acme/checkout",
+				}))
+			return err
+		},
+	}
+	for name, call := range calls {
+		t.Run(name, func(t *testing.T) {
+			err := call()
+			if code := connect.CodeOf(err); code != connect.CodeUnimplemented {
+				t.Fatalf("%s = %v (code %s), want unimplemented", name, err, code)
+			}
+			assertWireCode(t, err, ErrConnectionCapabilityUnsupported)
+			for _, want := range []string{"clone private repositories", "paste the repository's URL", "internal-git"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not say %q: %v", want, err)
+				}
+			}
+		})
+	}
+
+	// And the property the ordering of Server.browse exists for: a request that
+	// was always going to be refused never opened the Secret.
+	if store.reads() != 0 {
+		t.Errorf("a capability refusal read the Secret %d times, want 0", store.reads())
+	}
+}
+
+func TestBrowsingRefusesAConnectionWhoseProviderHasNoAdapter(t *testing.T) {
+	store := newFakeConnections().with(tokenConnection("acme-gitlab", "acme-gitlab-token"))
+	c := serve(t, Options{Connections: store, Forges: forgeLookup(nil)})
+
+	_, err := c.connections.ListConnectionRepositories(t.Context(),
+		connect.NewRequest(&kelsonv1alpha1.ListConnectionRepositoriesRequest{Connection: "acme-gitlab"}))
+	if code := connect.CodeOf(err); code != connect.CodeUnimplemented {
+		t.Fatalf("err = %v (code %s), want unimplemented", err, code)
+	}
+	assertWireCode(t, err, ErrConnectionProviderUnknown)
+	if store.reads() != 0 {
+		t.Errorf("a connection with no adapter had its Secret read %d times", store.reads())
+	}
+}
+
+func TestBrowsingAnUnknownConnection(t *testing.T) {
+	c := serve(t, Options{Connections: newFakeConnections(), Forges: forgeLookup(browsingForge{
+		fakeForge: fakeForge{name: "github"},
+	})})
+
+	if _, err := c.connections.ListConnectionRepositories(t.Context(),
+		connect.NewRequest(&kelsonv1alpha1.ListConnectionRepositoriesRequest{Connection: "ghost"})); connect.CodeOf(err) != connect.CodeNotFound {
+		t.Errorf("ListConnectionRepositories on a missing connection = %v (code %s), want not-found", err, connect.CodeOf(err))
+	}
+	if _, err := c.connections.ListConnectionBranches(t.Context(),
+		connect.NewRequest(&kelsonv1alpha1.ListConnectionBranchesRequest{
+			Connection: "ghost", Repository: "acme/checkout",
+		})); connect.CodeOf(err) != connect.CodeNotFound {
+		t.Errorf("ListConnectionBranches on a missing connection = %v (code %s), want not-found", err, connect.CodeOf(err))
+	}
+}
+
+// A forge that accepted the credential and then would not answer is this
+// server's dependency failing, not the caller's request being wrong — and the
+// refusal has to name the way around it, because a picker that cannot list
+// leaves the pasted URL working.
+func TestBrowsingAForgeThatWillNotAnswer(t *testing.T) {
+	store := newFakeConnections().
+		with(tokenConnection("acme-github", "acme-git-token")).
+		withSecret("acme-github", controlstore.AuthMaterial{Token: "t"})
+	c := serve(t, Options{Connections: store, Forges: forgeLookup(browsingForge{
+		fakeForge: fakeForge{name: "github"},
+		listErr:   forge.ErrAuthFailed,
+	})})
+
+	_, err := c.connections.ListConnectionRepositories(t.Context(),
+		connect.NewRequest(&kelsonv1alpha1.ListConnectionRepositoriesRequest{Connection: "acme-github"}))
+	if code := connect.CodeOf(err); code != connect.CodeUnavailable {
+		t.Fatalf("err = %v (code %s), want unavailable", err, code)
+	}
+	if !strings.Contains(err.Error(), "paste the repository's URL") {
+		t.Errorf("the failure does not name the path that still works: %v", err)
+	}
+}
+
+func TestBrowsingWithoutAStoreIsUnimplemented(t *testing.T) {
+	c := serve(t, Options{})
+	if _, err := c.connections.ListConnectionRepositories(t.Context(),
+		connect.NewRequest(&kelsonv1alpha1.ListConnectionRepositoriesRequest{Connection: "x"})); connect.CodeOf(err) != connect.CodeUnimplemented {
+		t.Errorf("ListConnectionRepositories with no store = %s, want unimplemented", connect.CodeOf(err))
+	}
+	if _, err := c.connections.ListConnectionBranches(t.Context(),
+		connect.NewRequest(&kelsonv1alpha1.ListConnectionBranchesRequest{
+			Connection: "x", Repository: "acme/checkout",
+		})); connect.CodeOf(err) != connect.CodeUnimplemented {
+		t.Errorf("ListConnectionBranches with no store = %s, want unimplemented", connect.CodeOf(err))
 	}
 }

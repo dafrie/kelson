@@ -330,6 +330,15 @@ var rpcScopes = map[string]methodScope{
 	// them: it spends the credential on an outbound call but changes no state,
 	// and its answer is the same reachable/account/count triple the status
 	// subresource already carries.
+	//
+	// The two listings are filed with them for the same reason, and the reason
+	// is worth stating because they look heavier than they are. Browsing spends
+	// the credential exactly as TestConnection does and writes nothing at all —
+	// not even the status subresource a probe records — so it is the *lighter*
+	// of the two operations, and what it returns is what the forge would show
+	// the credential's owner. Classifying either as a mutation would put a
+	// read-only picker behind an admin credential, which is the failure mode
+	// ADR-0024 §3 warns about from the other direction.
 	kelsonv1alpha1connect.GitConnectionServiceListConnectionsProcedure: {
 		Operation: controlstore.OpRead,
 		Reach:     reachClusterWide,
@@ -339,6 +348,14 @@ var rpcScopes = map[string]methodScope{
 		Reach:     reachClusterWide,
 	},
 	kelsonv1alpha1connect.GitConnectionServiceTestConnectionProcedure: {
+		Operation: controlstore.OpRead,
+		Reach:     reachClusterWide,
+	},
+	kelsonv1alpha1connect.GitConnectionServiceListConnectionRepositoriesProcedure: {
+		Operation: controlstore.OpRead,
+		Reach:     reachClusterWide,
+	},
+	kelsonv1alpha1connect.GitConnectionServiceListConnectionBranchesProcedure: {
 		Operation: controlstore.OpRead,
 		Reach:     reachClusterWide,
 	},

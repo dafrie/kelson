@@ -47,6 +47,32 @@
 // service reports and never a value it accepts, and the HTTP callback pair is
 // the only way an app connection comes into being.
 //
+// # Repository listing is on the wire, and it refuses rather than lies
+//
+// Browsing repositories is `RepoBrowser`, an *optional* capability in ADR-0033
+// decision 3: the GitHub adapter has it and a `generic` token connection does
+// not. An earlier cut of this file left the listing off the wire entirely,
+// because "an RPC every connection answered would have to lie for the ones that
+// cannot — an empty list is indistinguishable from 'this forge has no
+// browser'". That objection is about the *answer*, not about the RPC, and the
+// two calls below settle it by making the capability part of the vocabulary:
+// ListConnectionRepositories and ListConnectionBranches are served by a
+// connection whose provider implements the browser, and refused by one whose
+// provider does not — with the structured code `connection/capability-unsupported`
+// rather than with an empty list. A client can therefore tell "nothing here"
+// from "this forge cannot be asked", which is the whole of what was missing.
+//
+// The refusal is not an error state of the connection. A `generic` token
+// connection that cannot list repositories still mints credentials and clones
+// private ones, which is the only capability a deploy needs (ADR-0033
+// decision 3: "absence degrades the UI, never the deploy"), so the refusal says
+// what the connection *can* do and points at the pasted-URL path, which works
+// for every forge and every auth kind. A client that meets it falls back to
+// that field rather than treating the connection as broken.
+//
+// `repositories` on GitConnection stays what it was: a count the provider
+// reported at the last probe, not a page of this listing.
+//
 // # Deliberately omitted, and why
 //
 // **No UpdateConnection.** Rotating a credential is writing the Secret the
@@ -57,14 +83,6 @@
 // and create says so, where a field-level edit would let a connection quietly
 // become a different one under projects already resolving through it
 // (ADR-0033 decision 4).
-//
-// **No repository listing.** Browsing repositories is `RepoBrowser`, an
-// *optional* capability in ADR-0033 decision 3: the GitHub adapter has it and a
-// `generic` token connection does not. An RPC every connection answered would
-// have to lie for the ones that cannot — an empty list is indistinguishable
-// from "this forge has no browser" — so the repo picker is its own decision,
-// with the capability discovery it needs. `repositories` below is a count the
-// provider reported about an installation, not a list this service can page.
 //
 // **No credential read-back, and no GetConnectionSecret.** ADR-0009's masked
 // read-back applies to forge credentials unchanged; ADR-0033 amends what kelson
@@ -292,6 +310,60 @@ message TestConnectionResponse {
   string message = 4;
 }
 
+// GitRepository is one repository a connection can see, reduced to what a
+// picker needs: a row to show, and the fields that fill in a Project's
+// `spec.source`. It mirrors internal/forge's own Repo, which is deliberately
+// this small — whatever else a forge reports about a repository is that forge's
+// business and stops at the adapter.
+message GitRepository {
+  // "owner/name" as the forge spells it, which is the key ListConnectionBranches
+  // takes back.
+  string full_name = 1;
+  // The browser URL, and the value that goes into `Project.spec.source.git`.
+  // It is the forge's own, not one assembled from host and full_name: a
+  // self-hosted instance serving repositories under a path prefix would have
+  // the assembled one point at nothing.
+  string html_url = 2;
+  // The branch a clone lands on when nothing asks for another — what a picker
+  // preselects, and what leaving `spec.source.ref` empty resolves to.
+  string default_branch = 3;
+  // Whether reading it needs the credential at all. A picker shows it as a
+  // badge; nothing else in kelson branches on it, because a connection that
+  // can see a repository can clone it whichever this says.
+  bool private = 4;
+}
+
+// ListConnectionRepositoriesRequest names the connection to browse. It is
+// `connection` and not `name` because the answer is about repositories rather
+// than about the connection — the same word Project.spec.source.connection uses
+// for the same reference.
+message ListConnectionRepositoriesRequest {
+  string connection = 1;
+}
+
+message ListConnectionRepositoriesResponse {
+  // Every repository the credential can see, in the order the provider
+  // reported them. An installation lists exactly the repositories it was
+  // granted; a token lists everything its owner can reach, which is a wider and
+  // less deliberate set — ADR-0033 decision 2's argument for the app, visible
+  // here as the difference between a short list and a long one.
+  repeated GitRepository repositories = 1;
+}
+
+message ListConnectionBranchesRequest {
+  string connection = 1;
+  // "owner/name", as GitRepository.full_name reported it.
+  string repository = 2;
+}
+
+message ListConnectionBranchesResponse {
+  // Branch names only. A picker needs a name to write into `spec.source.ref`
+  // and the ref resolver needs nothing from here at all, so the commit each
+  // branch points at is deliberately absent: it would be stale by the time it
+  // was read, and reading it is what BuildService does at build time.
+  repeated string branches = 1;
+}
+
 // GitConnectionService is gated by the server's authentication like every other
 // service in this schema: the middleware matches on the `/kelson.v1alpha1.`
 // route prefix, so a service added here is covered by construction rather than
@@ -321,4 +393,35 @@ service GitConnectionService {
   // never returned, and any token minted to make the call is registered with
   // internal/redact before it is used.
   rpc TestConnection(TestConnectionRequest) returns (TestConnectionResponse);
+  // ListConnectionRepositories reports the repositories this connection's
+  // credential can see — the New Project repository picker's read, made
+  // server-side with the Secret the connection references.
+  //
+  // # It is capability-gated, and the gate is part of the answer
+  //
+  // Repository browsing is `RepoBrowser`, optional in ADR-0033 decision 3. A
+  // connection whose provider implements it is served; one whose provider does
+  // not is refused with `connection/capability-unsupported`, naming what the
+  // connection *can* do and saying that pasting the repository URL works for
+  // every connection there is. It is not an empty list, because an empty list
+  // is what a real installation with nothing selected looks like, and it is not
+  // a fault of the connection: a `generic` token connection that cannot be
+  // browsed still clones private repositories, which is the capability a deploy
+  // needs.
+  //
+  // Read-only, and it changes nothing: no status is written, and no credential
+  // reaches the response — GitRepository has no field one would fit in. Any
+  // token minted to make the call is registered with internal/redact before it
+  // is used, exactly as TestConnection's is.
+  rpc ListConnectionRepositories(ListConnectionRepositoriesRequest) returns (ListConnectionRepositoriesResponse);
+  // ListConnectionBranches reports one repository's branches, for the picker's
+  // second step. Same capability gate and same refusal as
+  // ListConnectionRepositories — they are the two halves of one `RepoBrowser`,
+  // and a connection that answered the first will answer this one — and the
+  // same read-only posture.
+  //
+  // The repository is named as "owner/name" rather than as a URL: it is the key
+  // the listing above already reported, and re-deriving it from a URL here
+  // would be a second parser disagreeing with the first.
+  rpc ListConnectionBranches(ListConnectionBranchesRequest) returns (ListConnectionBranchesResponse);
 }

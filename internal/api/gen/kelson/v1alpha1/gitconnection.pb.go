@@ -47,6 +47,32 @@
 // service reports and never a value it accepts, and the HTTP callback pair is
 // the only way an app connection comes into being.
 //
+// # Repository listing is on the wire, and it refuses rather than lies
+//
+// Browsing repositories is `RepoBrowser`, an *optional* capability in ADR-0033
+// decision 3: the GitHub adapter has it and a `generic` token connection does
+// not. An earlier cut of this file left the listing off the wire entirely,
+// because "an RPC every connection answered would have to lie for the ones that
+// cannot — an empty list is indistinguishable from 'this forge has no
+// browser'". That objection is about the *answer*, not about the RPC, and the
+// two calls below settle it by making the capability part of the vocabulary:
+// ListConnectionRepositories and ListConnectionBranches are served by a
+// connection whose provider implements the browser, and refused by one whose
+// provider does not — with the structured code `connection/capability-unsupported`
+// rather than with an empty list. A client can therefore tell "nothing here"
+// from "this forge cannot be asked", which is the whole of what was missing.
+//
+// The refusal is not an error state of the connection. A `generic` token
+// connection that cannot list repositories still mints credentials and clones
+// private ones, which is the only capability a deploy needs (ADR-0033
+// decision 3: "absence degrades the UI, never the deploy"), so the refusal says
+// what the connection *can* do and points at the pasted-URL path, which works
+// for every forge and every auth kind. A client that meets it falls back to
+// that field rather than treating the connection as broken.
+//
+// `repositories` on GitConnection stays what it was: a count the provider
+// reported at the last probe, not a page of this listing.
+//
 // # Deliberately omitted, and why
 //
 // **No UpdateConnection.** Rotating a credential is writing the Secret the
@@ -57,14 +83,6 @@
 // and create says so, where a field-level edit would let a connection quietly
 // become a different one under projects already resolving through it
 // (ADR-0033 decision 4).
-//
-// **No repository listing.** Browsing repositories is `RepoBrowser`, an
-// *optional* capability in ADR-0033 decision 3: the GitHub adapter has it and a
-// `generic` token connection does not. An RPC every connection answered would
-// have to lie for the ones that cannot — an empty list is indistinguishable
-// from "this forge has no browser" — so the repo picker is its own decision,
-// with the capability discovery it needs. `repositories` below is a count the
-// provider reported about an installation, not a list this service can page.
 //
 // **No credential read-back, and no GetConnectionSecret.** ADR-0009's masked
 // read-back applies to forge credentials unchanged; ADR-0033 amends what kelson
@@ -1049,6 +1067,288 @@ func (x *TestConnectionResponse) GetMessage() string {
 	return ""
 }
 
+// GitRepository is one repository a connection can see, reduced to what a
+// picker needs: a row to show, and the fields that fill in a Project's
+// `spec.source`. It mirrors internal/forge's own Repo, which is deliberately
+// this small — whatever else a forge reports about a repository is that forge's
+// business and stops at the adapter.
+type GitRepository struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// "owner/name" as the forge spells it, which is the key ListConnectionBranches
+	// takes back.
+	FullName string `protobuf:"bytes,1,opt,name=full_name,json=fullName,proto3" json:"full_name,omitempty"`
+	// The browser URL, and the value that goes into `Project.spec.source.git`.
+	// It is the forge's own, not one assembled from host and full_name: a
+	// self-hosted instance serving repositories under a path prefix would have
+	// the assembled one point at nothing.
+	HtmlUrl string `protobuf:"bytes,2,opt,name=html_url,json=htmlUrl,proto3" json:"html_url,omitempty"`
+	// The branch a clone lands on when nothing asks for another — what a picker
+	// preselects, and what leaving `spec.source.ref` empty resolves to.
+	DefaultBranch string `protobuf:"bytes,3,opt,name=default_branch,json=defaultBranch,proto3" json:"default_branch,omitempty"`
+	// Whether reading it needs the credential at all. A picker shows it as a
+	// badge; nothing else in kelson branches on it, because a connection that
+	// can see a repository can clone it whichever this says.
+	Private       bool `protobuf:"varint,4,opt,name=private,proto3" json:"private,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GitRepository) Reset() {
+	*x = GitRepository{}
+	mi := &file_kelson_v1alpha1_gitconnection_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GitRepository) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GitRepository) ProtoMessage() {}
+
+func (x *GitRepository) ProtoReflect() protoreflect.Message {
+	mi := &file_kelson_v1alpha1_gitconnection_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GitRepository.ProtoReflect.Descriptor instead.
+func (*GitRepository) Descriptor() ([]byte, []int) {
+	return file_kelson_v1alpha1_gitconnection_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *GitRepository) GetFullName() string {
+	if x != nil {
+		return x.FullName
+	}
+	return ""
+}
+
+func (x *GitRepository) GetHtmlUrl() string {
+	if x != nil {
+		return x.HtmlUrl
+	}
+	return ""
+}
+
+func (x *GitRepository) GetDefaultBranch() string {
+	if x != nil {
+		return x.DefaultBranch
+	}
+	return ""
+}
+
+func (x *GitRepository) GetPrivate() bool {
+	if x != nil {
+		return x.Private
+	}
+	return false
+}
+
+// ListConnectionRepositoriesRequest names the connection to browse. It is
+// `connection` and not `name` because the answer is about repositories rather
+// than about the connection — the same word Project.spec.source.connection uses
+// for the same reference.
+type ListConnectionRepositoriesRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Connection    string                 `protobuf:"bytes,1,opt,name=connection,proto3" json:"connection,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListConnectionRepositoriesRequest) Reset() {
+	*x = ListConnectionRepositoriesRequest{}
+	mi := &file_kelson_v1alpha1_gitconnection_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListConnectionRepositoriesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListConnectionRepositoriesRequest) ProtoMessage() {}
+
+func (x *ListConnectionRepositoriesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_kelson_v1alpha1_gitconnection_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListConnectionRepositoriesRequest.ProtoReflect.Descriptor instead.
+func (*ListConnectionRepositoriesRequest) Descriptor() ([]byte, []int) {
+	return file_kelson_v1alpha1_gitconnection_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *ListConnectionRepositoriesRequest) GetConnection() string {
+	if x != nil {
+		return x.Connection
+	}
+	return ""
+}
+
+type ListConnectionRepositoriesResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Every repository the credential can see, in the order the provider
+	// reported them. An installation lists exactly the repositories it was
+	// granted; a token lists everything its owner can reach, which is a wider and
+	// less deliberate set — ADR-0033 decision 2's argument for the app, visible
+	// here as the difference between a short list and a long one.
+	Repositories  []*GitRepository `protobuf:"bytes,1,rep,name=repositories,proto3" json:"repositories,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListConnectionRepositoriesResponse) Reset() {
+	*x = ListConnectionRepositoriesResponse{}
+	mi := &file_kelson_v1alpha1_gitconnection_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListConnectionRepositoriesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListConnectionRepositoriesResponse) ProtoMessage() {}
+
+func (x *ListConnectionRepositoriesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_kelson_v1alpha1_gitconnection_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListConnectionRepositoriesResponse.ProtoReflect.Descriptor instead.
+func (*ListConnectionRepositoriesResponse) Descriptor() ([]byte, []int) {
+	return file_kelson_v1alpha1_gitconnection_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *ListConnectionRepositoriesResponse) GetRepositories() []*GitRepository {
+	if x != nil {
+		return x.Repositories
+	}
+	return nil
+}
+
+type ListConnectionBranchesRequest struct {
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	Connection string                 `protobuf:"bytes,1,opt,name=connection,proto3" json:"connection,omitempty"`
+	// "owner/name", as GitRepository.full_name reported it.
+	Repository    string `protobuf:"bytes,2,opt,name=repository,proto3" json:"repository,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListConnectionBranchesRequest) Reset() {
+	*x = ListConnectionBranchesRequest{}
+	mi := &file_kelson_v1alpha1_gitconnection_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListConnectionBranchesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListConnectionBranchesRequest) ProtoMessage() {}
+
+func (x *ListConnectionBranchesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_kelson_v1alpha1_gitconnection_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListConnectionBranchesRequest.ProtoReflect.Descriptor instead.
+func (*ListConnectionBranchesRequest) Descriptor() ([]byte, []int) {
+	return file_kelson_v1alpha1_gitconnection_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *ListConnectionBranchesRequest) GetConnection() string {
+	if x != nil {
+		return x.Connection
+	}
+	return ""
+}
+
+func (x *ListConnectionBranchesRequest) GetRepository() string {
+	if x != nil {
+		return x.Repository
+	}
+	return ""
+}
+
+type ListConnectionBranchesResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Branch names only. A picker needs a name to write into `spec.source.ref`
+	// and the ref resolver needs nothing from here at all, so the commit each
+	// branch points at is deliberately absent: it would be stale by the time it
+	// was read, and reading it is what BuildService does at build time.
+	Branches      []string `protobuf:"bytes,1,rep,name=branches,proto3" json:"branches,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListConnectionBranchesResponse) Reset() {
+	*x = ListConnectionBranchesResponse{}
+	mi := &file_kelson_v1alpha1_gitconnection_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListConnectionBranchesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListConnectionBranchesResponse) ProtoMessage() {}
+
+func (x *ListConnectionBranchesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_kelson_v1alpha1_gitconnection_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListConnectionBranchesResponse.ProtoReflect.Descriptor instead.
+func (*ListConnectionBranchesResponse) Descriptor() ([]byte, []int) {
+	return file_kelson_v1alpha1_gitconnection_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *ListConnectionBranchesResponse) GetBranches() []string {
+	if x != nil {
+		return x.Branches
+	}
+	return nil
+}
+
 var File_kelson_v1alpha1_gitconnection_proto protoreflect.FileDescriptor
 
 const file_kelson_v1alpha1_gitconnection_proto_rawDesc = "" +
@@ -1109,7 +1409,27 @@ const file_kelson_v1alpha1_gitconnection_proto_rawDesc = "" +
 	"\treachable\x18\x01 \x01(\bR\treachable\x12\x18\n" +
 	"\aaccount\x18\x02 \x01(\tR\aaccount\x12\"\n" +
 	"\frepositories\x18\x03 \x01(\x05R\frepositories\x12\x18\n" +
-	"\amessage\x18\x04 \x01(\tR\amessage*c\n" +
+	"\amessage\x18\x04 \x01(\tR\amessage\"\x88\x01\n" +
+	"\rGitRepository\x12\x1b\n" +
+	"\tfull_name\x18\x01 \x01(\tR\bfullName\x12\x19\n" +
+	"\bhtml_url\x18\x02 \x01(\tR\ahtmlUrl\x12%\n" +
+	"\x0edefault_branch\x18\x03 \x01(\tR\rdefaultBranch\x12\x18\n" +
+	"\aprivate\x18\x04 \x01(\bR\aprivate\"C\n" +
+	"!ListConnectionRepositoriesRequest\x12\x1e\n" +
+	"\n" +
+	"connection\x18\x01 \x01(\tR\n" +
+	"connection\"h\n" +
+	"\"ListConnectionRepositoriesResponse\x12B\n" +
+	"\frepositories\x18\x01 \x03(\v2\x1e.kelson.v1alpha1.GitRepositoryR\frepositories\"_\n" +
+	"\x1dListConnectionBranchesRequest\x12\x1e\n" +
+	"\n" +
+	"connection\x18\x01 \x01(\tR\n" +
+	"connection\x12\x1e\n" +
+	"\n" +
+	"repository\x18\x02 \x01(\tR\n" +
+	"repository\"<\n" +
+	"\x1eListConnectionBranchesResponse\x12\x1a\n" +
+	"\bbranches\x18\x01 \x03(\tR\bbranches*c\n" +
 	"\vGitAuthKind\x12\x1d\n" +
 	"\x19GIT_AUTH_KIND_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18GIT_AUTH_KIND_GITHUB_APP\x10\x01\x12\x17\n" +
@@ -1118,13 +1438,15 @@ const file_kelson_v1alpha1_gitconnection_proto_rawDesc = "" +
 	"\x1aGIT_OWNER_KIND_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17GIT_OWNER_KIND_INSTANCE\x10\x01\x12\x17\n" +
 	"\x13GIT_OWNER_KIND_USER\x10\x02\x12\x17\n" +
-	"\x13GIT_OWNER_KIND_TEAM\x10\x032\x91\x04\n" +
+	"\x13GIT_OWNER_KIND_TEAM\x10\x032\x94\x06\n" +
 	"\x14GitConnectionService\x12d\n" +
 	"\x0fListConnections\x12'.kelson.v1alpha1.ListConnectionsRequest\x1a(.kelson.v1alpha1.ListConnectionsResponse\x12^\n" +
 	"\rGetConnection\x12%.kelson.v1alpha1.GetConnectionRequest\x1a&.kelson.v1alpha1.GetConnectionResponse\x12g\n" +
 	"\x10CreateConnection\x12(.kelson.v1alpha1.CreateConnectionRequest\x1a).kelson.v1alpha1.CreateConnectionResponse\x12g\n" +
 	"\x10DeleteConnection\x12(.kelson.v1alpha1.DeleteConnectionRequest\x1a).kelson.v1alpha1.DeleteConnectionResponse\x12a\n" +
-	"\x0eTestConnection\x12&.kelson.v1alpha1.TestConnectionRequest\x1a'.kelson.v1alpha1.TestConnectionResponseBJZHgithub.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1;kelsonv1alpha1b\x06proto3"
+	"\x0eTestConnection\x12&.kelson.v1alpha1.TestConnectionRequest\x1a'.kelson.v1alpha1.TestConnectionResponse\x12\x85\x01\n" +
+	"\x1aListConnectionRepositories\x122.kelson.v1alpha1.ListConnectionRepositoriesRequest\x1a3.kelson.v1alpha1.ListConnectionRepositoriesResponse\x12y\n" +
+	"\x16ListConnectionBranches\x12..kelson.v1alpha1.ListConnectionBranchesRequest\x1a/.kelson.v1alpha1.ListConnectionBranchesResponseBJZHgithub.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1;kelsonv1alpha1b\x06proto3"
 
 var (
 	file_kelson_v1alpha1_gitconnection_proto_rawDescOnce sync.Once
@@ -1139,23 +1461,28 @@ func file_kelson_v1alpha1_gitconnection_proto_rawDescGZIP() []byte {
 }
 
 var file_kelson_v1alpha1_gitconnection_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_kelson_v1alpha1_gitconnection_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+var file_kelson_v1alpha1_gitconnection_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
 var file_kelson_v1alpha1_gitconnection_proto_goTypes = []any{
-	(GitAuthKind)(0),                 // 0: kelson.v1alpha1.GitAuthKind
-	(GitOwnerKind)(0),                // 1: kelson.v1alpha1.GitOwnerKind
-	(*GitOwner)(nil),                 // 2: kelson.v1alpha1.GitOwner
-	(*GitConnection)(nil),            // 3: kelson.v1alpha1.GitConnection
-	(*ListConnectionsRequest)(nil),   // 4: kelson.v1alpha1.ListConnectionsRequest
-	(*ListConnectionsResponse)(nil),  // 5: kelson.v1alpha1.ListConnectionsResponse
-	(*GetConnectionRequest)(nil),     // 6: kelson.v1alpha1.GetConnectionRequest
-	(*GetConnectionResponse)(nil),    // 7: kelson.v1alpha1.GetConnectionResponse
-	(*CreateConnectionRequest)(nil),  // 8: kelson.v1alpha1.CreateConnectionRequest
-	(*CreateConnectionResponse)(nil), // 9: kelson.v1alpha1.CreateConnectionResponse
-	(*DeleteConnectionRequest)(nil),  // 10: kelson.v1alpha1.DeleteConnectionRequest
-	(*DeleteConnectionResponse)(nil), // 11: kelson.v1alpha1.DeleteConnectionResponse
-	(*TestConnectionRequest)(nil),    // 12: kelson.v1alpha1.TestConnectionRequest
-	(*TestConnectionResponse)(nil),   // 13: kelson.v1alpha1.TestConnectionResponse
-	(DryRun)(0),                      // 14: kelson.v1alpha1.DryRun
+	(GitAuthKind)(0),                           // 0: kelson.v1alpha1.GitAuthKind
+	(GitOwnerKind)(0),                          // 1: kelson.v1alpha1.GitOwnerKind
+	(*GitOwner)(nil),                           // 2: kelson.v1alpha1.GitOwner
+	(*GitConnection)(nil),                      // 3: kelson.v1alpha1.GitConnection
+	(*ListConnectionsRequest)(nil),             // 4: kelson.v1alpha1.ListConnectionsRequest
+	(*ListConnectionsResponse)(nil),            // 5: kelson.v1alpha1.ListConnectionsResponse
+	(*GetConnectionRequest)(nil),               // 6: kelson.v1alpha1.GetConnectionRequest
+	(*GetConnectionResponse)(nil),              // 7: kelson.v1alpha1.GetConnectionResponse
+	(*CreateConnectionRequest)(nil),            // 8: kelson.v1alpha1.CreateConnectionRequest
+	(*CreateConnectionResponse)(nil),           // 9: kelson.v1alpha1.CreateConnectionResponse
+	(*DeleteConnectionRequest)(nil),            // 10: kelson.v1alpha1.DeleteConnectionRequest
+	(*DeleteConnectionResponse)(nil),           // 11: kelson.v1alpha1.DeleteConnectionResponse
+	(*TestConnectionRequest)(nil),              // 12: kelson.v1alpha1.TestConnectionRequest
+	(*TestConnectionResponse)(nil),             // 13: kelson.v1alpha1.TestConnectionResponse
+	(*GitRepository)(nil),                      // 14: kelson.v1alpha1.GitRepository
+	(*ListConnectionRepositoriesRequest)(nil),  // 15: kelson.v1alpha1.ListConnectionRepositoriesRequest
+	(*ListConnectionRepositoriesResponse)(nil), // 16: kelson.v1alpha1.ListConnectionRepositoriesResponse
+	(*ListConnectionBranchesRequest)(nil),      // 17: kelson.v1alpha1.ListConnectionBranchesRequest
+	(*ListConnectionBranchesResponse)(nil),     // 18: kelson.v1alpha1.ListConnectionBranchesResponse
+	(DryRun)(0),                                // 19: kelson.v1alpha1.DryRun
 }
 var file_kelson_v1alpha1_gitconnection_proto_depIdxs = []int32{
 	1,  // 0: kelson.v1alpha1.GitOwner.kind:type_name -> kelson.v1alpha1.GitOwnerKind
@@ -1164,24 +1491,29 @@ var file_kelson_v1alpha1_gitconnection_proto_depIdxs = []int32{
 	3,  // 3: kelson.v1alpha1.ListConnectionsResponse.connections:type_name -> kelson.v1alpha1.GitConnection
 	3,  // 4: kelson.v1alpha1.GetConnectionResponse.connection:type_name -> kelson.v1alpha1.GitConnection
 	2,  // 5: kelson.v1alpha1.CreateConnectionRequest.owner:type_name -> kelson.v1alpha1.GitOwner
-	14, // 6: kelson.v1alpha1.CreateConnectionRequest.dry_run:type_name -> kelson.v1alpha1.DryRun
+	19, // 6: kelson.v1alpha1.CreateConnectionRequest.dry_run:type_name -> kelson.v1alpha1.DryRun
 	3,  // 7: kelson.v1alpha1.CreateConnectionResponse.connection:type_name -> kelson.v1alpha1.GitConnection
-	14, // 8: kelson.v1alpha1.DeleteConnectionRequest.dry_run:type_name -> kelson.v1alpha1.DryRun
-	4,  // 9: kelson.v1alpha1.GitConnectionService.ListConnections:input_type -> kelson.v1alpha1.ListConnectionsRequest
-	6,  // 10: kelson.v1alpha1.GitConnectionService.GetConnection:input_type -> kelson.v1alpha1.GetConnectionRequest
-	8,  // 11: kelson.v1alpha1.GitConnectionService.CreateConnection:input_type -> kelson.v1alpha1.CreateConnectionRequest
-	10, // 12: kelson.v1alpha1.GitConnectionService.DeleteConnection:input_type -> kelson.v1alpha1.DeleteConnectionRequest
-	12, // 13: kelson.v1alpha1.GitConnectionService.TestConnection:input_type -> kelson.v1alpha1.TestConnectionRequest
-	5,  // 14: kelson.v1alpha1.GitConnectionService.ListConnections:output_type -> kelson.v1alpha1.ListConnectionsResponse
-	7,  // 15: kelson.v1alpha1.GitConnectionService.GetConnection:output_type -> kelson.v1alpha1.GetConnectionResponse
-	9,  // 16: kelson.v1alpha1.GitConnectionService.CreateConnection:output_type -> kelson.v1alpha1.CreateConnectionResponse
-	11, // 17: kelson.v1alpha1.GitConnectionService.DeleteConnection:output_type -> kelson.v1alpha1.DeleteConnectionResponse
-	13, // 18: kelson.v1alpha1.GitConnectionService.TestConnection:output_type -> kelson.v1alpha1.TestConnectionResponse
-	14, // [14:19] is the sub-list for method output_type
-	9,  // [9:14] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	19, // 8: kelson.v1alpha1.DeleteConnectionRequest.dry_run:type_name -> kelson.v1alpha1.DryRun
+	14, // 9: kelson.v1alpha1.ListConnectionRepositoriesResponse.repositories:type_name -> kelson.v1alpha1.GitRepository
+	4,  // 10: kelson.v1alpha1.GitConnectionService.ListConnections:input_type -> kelson.v1alpha1.ListConnectionsRequest
+	6,  // 11: kelson.v1alpha1.GitConnectionService.GetConnection:input_type -> kelson.v1alpha1.GetConnectionRequest
+	8,  // 12: kelson.v1alpha1.GitConnectionService.CreateConnection:input_type -> kelson.v1alpha1.CreateConnectionRequest
+	10, // 13: kelson.v1alpha1.GitConnectionService.DeleteConnection:input_type -> kelson.v1alpha1.DeleteConnectionRequest
+	12, // 14: kelson.v1alpha1.GitConnectionService.TestConnection:input_type -> kelson.v1alpha1.TestConnectionRequest
+	15, // 15: kelson.v1alpha1.GitConnectionService.ListConnectionRepositories:input_type -> kelson.v1alpha1.ListConnectionRepositoriesRequest
+	17, // 16: kelson.v1alpha1.GitConnectionService.ListConnectionBranches:input_type -> kelson.v1alpha1.ListConnectionBranchesRequest
+	5,  // 17: kelson.v1alpha1.GitConnectionService.ListConnections:output_type -> kelson.v1alpha1.ListConnectionsResponse
+	7,  // 18: kelson.v1alpha1.GitConnectionService.GetConnection:output_type -> kelson.v1alpha1.GetConnectionResponse
+	9,  // 19: kelson.v1alpha1.GitConnectionService.CreateConnection:output_type -> kelson.v1alpha1.CreateConnectionResponse
+	11, // 20: kelson.v1alpha1.GitConnectionService.DeleteConnection:output_type -> kelson.v1alpha1.DeleteConnectionResponse
+	13, // 21: kelson.v1alpha1.GitConnectionService.TestConnection:output_type -> kelson.v1alpha1.TestConnectionResponse
+	16, // 22: kelson.v1alpha1.GitConnectionService.ListConnectionRepositories:output_type -> kelson.v1alpha1.ListConnectionRepositoriesResponse
+	18, // 23: kelson.v1alpha1.GitConnectionService.ListConnectionBranches:output_type -> kelson.v1alpha1.ListConnectionBranchesResponse
+	17, // [17:24] is the sub-list for method output_type
+	10, // [10:17] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_kelson_v1alpha1_gitconnection_proto_init() }
@@ -1196,7 +1528,7 @@ func file_kelson_v1alpha1_gitconnection_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_kelson_v1alpha1_gitconnection_proto_rawDesc), len(file_kelson_v1alpha1_gitconnection_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   12,
+			NumMessages:   17,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
