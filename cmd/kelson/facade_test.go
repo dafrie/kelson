@@ -88,6 +88,41 @@ func serveFakeDeployService(t *testing.T, fake *fakeDeployService) string {
 	return srv.URL
 }
 
+// fakeBuildService is the BuildService double `kelson ci report-build` is
+// driven against, on the same terms as fakeDeployService above: a real HTTP
+// server, so the schema and the codec are exercised too.
+//
+// It records the Authorization header of the last call. ADR-0034 decision 6
+// makes CI a principal rather than a holder of the shared password, and
+// "the credential reaches the server" is the only part of that this command
+// owns — the scope check itself is internal/api's (scope.go), tested there.
+type fakeBuildService struct {
+	kelsonv1alpha1connect.UnimplementedBuildServiceHandler
+	report        func(context.Context, *kelsonv1alpha1.ReportBuildRequest) (*kelsonv1alpha1.ReportBuildResponse, error)
+	authorization string
+}
+
+func (f *fakeBuildService) ReportBuild(ctx context.Context, req *connect.Request[kelsonv1alpha1.ReportBuildRequest]) (*connect.Response[kelsonv1alpha1.ReportBuildResponse], error) {
+	f.authorization = req.Header().Get("Authorization")
+	if f.report == nil {
+		return f.UnimplementedBuildServiceHandler.ReportBuild(ctx, req)
+	}
+	res, err := f.report(ctx, req.Msg)
+	if err != nil {
+		return nil, err
+	}
+	return connect.NewResponse(res), nil
+}
+
+func serveFakeBuildService(t *testing.T, fake *fakeBuildService) string {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.Handle(kelsonv1alpha1connect.NewBuildServiceHandler(fake))
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
 // unreachableServerAddr returns an address nothing listens on: a real
 // httptest server, closed immediately. Unlike a made-up host:port this is
 // guaranteed free on the machine running the test, and the connection is
