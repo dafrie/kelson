@@ -121,9 +121,9 @@ func TestRollbackFailureCarriesTheCode(t *testing.T) {
 
 // TestRollbackWithoutRecordedManifests: a preview that carries no findings and
 // no diff still says so explicitly. An empty diff must never read as "nothing
-// changes" (this shape does not arrive from the real server, which always
-// sends the preview-unavailable finding below, but the tool must not assume
-// that and skip the "none" answer if it ever did not).
+// changes" (the real server sends the preview-unavailable finding below when it
+// could not compare the two revisions, but the tool must not assume that and
+// skip the "none" answer if it ever did not).
 func TestRollbackWithoutRecordedManifests(t *testing.T) {
 	h := start(t, &fakeServer{
 		rollback: func(_ *kelsonv1alpha1.RollbackRequest, stream *connect.ServerStream[kelsonv1alpha1.RollbackResponse]) error {
@@ -137,12 +137,13 @@ func TestRollbackWithoutRecordedManifests(t *testing.T) {
 	mustContain(t, out,
 		"FINDINGS (0, 0 unrecoverable)",
 		"none: the server found nothing this rollback cannot revert",
-		"none: revisions are immutable OCI artifacts",
+		"none: the server could not read both revisions' artifacts back",
 	)
 }
 
 // TestRollbackPreviewUnavailableFindingReadsAsInformational: the one finding
-// the real server always sends (rollback/preview-unavailable, ADR-0028) is
+// the server sends when it could not pull both artifacts
+// (rollback/preview-unavailable, ADR-0028) is
 // marked INFO rather than UNRECOVERABLE — it says what kelson could not
 // compare, not something this rollback will fail to revert.
 func TestRollbackPreviewUnavailableFindingReadsAsInformational(t *testing.T) {

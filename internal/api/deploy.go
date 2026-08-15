@@ -13,6 +13,7 @@ import (
 	"connectrpc.com/connect"
 
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
+	"github.com/dafrie/kelson/internal/artifact"
 	"github.com/dafrie/kelson/internal/controlstore"
 	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/delivery/statemachine"
@@ -714,13 +715,21 @@ func (s *Server) Rollback(ctx context.Context, req *connect.Request[kelsonv1alph
 	}
 	revision := target.Revision
 
-	findings := []*kelsonv1alpha1.RollbackResponse_Finding{rollbackPreviewGap(st, revision)}
+	// The preview is the two revisions' recorded bytes, compared (issue #247).
+	// A gap is a finding rather than an omission and never an empty diff: "no
+	// findings" and "kelson did not look" are different facts.
+	encoded, gap := s.rollbackPreview(ctx, st, revision)
+	var findings []*kelsonv1alpha1.RollbackResponse_Finding
+	if gap != "" {
+		findings = append(findings, rollbackPreviewGap(st, revision, gap))
+	}
 	if target.BeyondWindow {
 		findings = append(findings, beyondWindowFinding(st, revision))
 	}
 	if err := stream.Send(&kelsonv1alpha1.RollbackResponse{
 		Event: &kelsonv1alpha1.RollbackResponse_Preview_{Preview: &kelsonv1alpha1.RollbackResponse_Preview{
 			ToRevision: revision.Revision,
+			DiffJson:   encoded,
 			Findings:   findings,
 		}},
 	}); err != nil {
@@ -1140,15 +1149,108 @@ func knownRevisions(st controlstore.EnvironmentState) []string {
 	return out
 }
 
-// rollbackPreviewGap is the one finding a rollback preview always carries: what
-// this server cannot tell the caller, and where they can get it.
+// rollbackPreview computes what a rollback would change: the revision now
+// serving, compared against the revision being restored, both read back from
+// the registry as the bytes they were published as (issue #247, ADR-0028
+// decisions 4 and 5).
+//
+// # Why this is a comparison of artifacts and not of specs
+//
+// A rollback repoints at an immutable artifact. Re-rendering either side's spec
+// would answer what that spec produces under today's renderer and
+// ClusterProfile, which is not what is running and not what will be restored —
+// the same reason internal/diff's BetweenDocuments exists.
+//
+// # A preview that cannot be computed never fails the rollback
+//
+// The rollback itself is exact and needs nothing from this function: it moves a
+// pointer to bytes that already exist. So every failure here returns a
+// sentence for [rollbackPreviewGap] rather than an error, and the rollback
+// proceeds — a registry that would not answer a preview is not a reason to
+// refuse an operator the fix they are reaching for. What it must never do is
+// return an empty diff, which would read as "nothing changes".
+func (s *Server) rollbackPreview(ctx context.Context, st controlstore.EnvironmentState,
+	target controlstore.Revision) ([]byte, string) {
+	if s.revisions == nil {
+		return nil, "this server was started without a registry, so it cannot fetch either revision's artifact"
+	}
+	fetcher, ok := s.revisions.(RevisionFetcher)
+	if !ok {
+		return nil, "this server's registry seam lists revisions but does not fetch them"
+	}
+	if st.Revision == "" {
+		return nil, "this environment is not serving a revision kelson can name, so there is no current state to " +
+			"compare the restored one against"
+	}
+	from, gap := s.fetchRevisionSet(ctx, fetcher, st, st.Revision, digestOfRevision(st, st.Revision))
+	if gap != "" {
+		return nil, gap
+	}
+	to, gap := s.fetchRevisionSet(ctx, fetcher, st, target.Revision, target.Digest)
+	if gap != "" {
+		return nil, gap
+	}
+	// Before is what is running; after is what the rollback restores. The
+	// direction is the one every other diff in kelson uses: what changes if
+	// this is applied.
+	d, err := diff.BetweenDocuments(st.Project, st.Environment, from, to, nil)
+	if err != nil {
+		return nil, "the two revisions' recorded manifests could not be compared: " + err.Error()
+	}
+	encoded, err := diff.EncodeJSON(d)
+	if err != nil {
+		return nil, "the comparison could not be encoded: " + err.Error()
+	}
+	return encoded, ""
+}
+
+// fetchRevisionSet pulls one revision's recorded manifests, or says in one
+// sentence why it could not — including, deliberately, when the bytes did not
+// match their digest: a preview computed on unverified content is exactly the
+// thing a preview exists to prevent.
+func (s *Server) fetchRevisionSet(ctx context.Context, fetcher RevisionFetcher, st controlstore.EnvironmentState,
+	revision, digest string) ([][]byte, string) {
+	pulled, found, err := fetcher.Fetch(ctx, st.Project, st.Environment, revision, digest)
+	switch {
+	case err != nil:
+		var integrity *artifact.IntegrityError
+		if errors.As(err, &integrity) {
+			return nil, fmt.Sprintf("the artifact for %s does not match the digest that names it, so kelson "+
+				"will not compare against it: %s", revision, integrity)
+		}
+		return nil, fmt.Sprintf("the artifact for %s could not be read from the registry: %s", revision, err)
+	case !found:
+		return nil, fmt.Sprintf("the registry no longer holds an artifact for %s", revision)
+	}
+	docs := make([][]byte, 0, len(pulled.Files))
+	for _, f := range pulled.Files {
+		docs = append(docs, f.Data)
+	}
+	return docs, ""
+}
+
+// digestOfRevision is what the bounded mirror recorded one revision's bytes to
+// be, or empty when it has forgotten. Empty is not a failure: the pull verifies
+// the manifest against the digest the registry resolves the tag to either way,
+// and ADR-0028 decision 2 writes a tag once and never rewrites it.
+func digestOfRevision(st controlstore.EnvironmentState, revision string) string {
+	if recorded, ok := st.FindRevision(revision); ok {
+		return recorded.Digest
+	}
+	return ""
+}
+
+// rollbackPreviewGap is the finding a rollback carries when the comparison
+// could not be computed: what kelson could not tell the caller, and why.
 //
 // It is a finding rather than an omission because the caller must not read an
-// empty findings list as "nothing about this rollback is irreversible". It is
-// not marked unrecoverable: nothing about the rollback is known to be
-// unrevertible — what is missing is the knowledge, and saying otherwise would
-// be a second lie in place of the first.
-func rollbackPreviewGap(st controlstore.EnvironmentState, target controlstore.Revision) *kelsonv1alpha1.RollbackResponse_Finding {
+// empty findings list as "nothing about this rollback is irreversible" — and,
+// now that a preview is usually available, must not read a missing diff as
+// "nothing changes". It is not marked unrecoverable: nothing about the rollback
+// is known to be unrevertible, what is missing is the knowledge, and saying
+// otherwise would be a second lie in place of the first.
+func rollbackPreviewGap(st controlstore.EnvironmentState, target controlstore.Revision,
+	why string) *kelsonv1alpha1.RollbackResponse_Finding {
 	from := st.Revision
 	if from == "" {
 		from = "the current revision"
@@ -1156,9 +1258,9 @@ func rollbackPreviewGap(st controlstore.EnvironmentState, target controlstore.Re
 	return &kelsonv1alpha1.RollbackResponse_Finding{
 		Resource: st.Project + "/" + st.Environment,
 		Cause:    "rollback/preview-unavailable",
-		Message: fmt.Sprintf("kelson cannot show what changes between %s and %s: both revisions are immutable OCI "+
-			"artifacts in the registry (ADR-0028 decision 4) and this server does not fetch them. The rollback "+
-			"itself is exact — it repoints at bytes that already exist and cannot have changed.", from, target.Revision),
+		Message: fmt.Sprintf("kelson cannot show what changes between %s and %s: %s. The rollback itself is "+
+			"exact — it repoints at bytes that already exist and cannot have changed (ADR-0028 decision 4).",
+			from, target.Revision, why),
 		Unrecoverable: false,
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
+	"github.com/dafrie/kelson/internal/artifact"
 	"github.com/dafrie/kelson/internal/controlstore"
 	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/delivery/statemachine"
@@ -77,6 +78,36 @@ type RevisionLister interface {
 	// it names. found=false with a nil error is "there is no such revision" —
 	// an answer, and a different one from "kelson could not look".
 	Resolve(ctx context.Context, project, environment, revision string) (digest string, found bool, err error)
+}
+
+// RevisionFetcher is the question a comparison needs and a listing cannot
+// answer: what did revision N actually render (issue #247)?
+//
+// It is spelled exactly as internal/controller's fetcher of the same name, for
+// the reason [RevisionLister] is: controller.RegistryRevisions implements both,
+// and the two planes must not grow two ideas of what a published revision is.
+//
+// It is a second interface rather than a third method on [RevisionLister]
+// because a server may hold one and not the other, and the two failures are
+// different sizes. Listing and resolving are one HEAD and one tag list, and
+// History and Rollback are built on them; fetching downloads and unpacks an
+// artifact, and exactly two things need it — `Diff(from_revision)` and the
+// rollback preview. A [RevisionLister] that is not a fetcher keeps the first
+// pair working and refuses the second, naming what is missing; it never
+// pretends a comparison it could not compute came out empty.
+//
+// This is reached through a type assertion on the configured lister rather than
+// through an Options field of its own, the same way an
+// observation.SecretSyncEvaluator is an optional capability of a health source:
+// there is one registry seam, and a wiring that could configure a fetcher
+// pointing somewhere other than the lister would be a way to be wrong.
+type RevisionFetcher interface {
+	// Fetch reads back the manifests one revision published. found=false with a
+	// nil error is "the registry holds no such revision"; digest is what the
+	// caller recorded for it (`status.history[].digest`) or empty, and a
+	// mismatch against the bytes served is an integrity failure rather than a
+	// diff computed on unverified content.
+	Fetch(ctx context.Context, project, environment, revision, digest string) (artifact.Pulled, bool, error)
 }
 
 // maxHistoryEntries is the bound on `Environment.status.history[]` (ADR-0028

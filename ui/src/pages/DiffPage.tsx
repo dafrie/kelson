@@ -17,12 +17,12 @@ import type { Async } from "../api/data";
  * RenderService.Diff offers both and they answer different questions. SERVER is
  * the live cluster's own dry-run verdict — the same preview `kelson diff`
  * produces at L2 — and it is what a deploy would actually meet. `from_revision`
- * (#162) is the rendered-level comparison: today's render against the manifests
- * a recorded revision actually rendered, read from the delivery history. That
- * is the stored-spec answer to the CLI's `--from`, which this screen could not
- * offer before: the store keeps the current documents, not the previous ones,
- * so the only prior state the server can name is what it recorded when it
- * deployed.
+ * (#162, #247) is the rendered-level comparison: today's render against the
+ * manifests a recorded revision actually rendered, pulled back out of the
+ * registry as the immutable artifact that revision published. That is the
+ * stored-spec answer to the CLI's `--from`, which this screen could not offer
+ * before: the store keeps the current documents, not the previous ones, so the
+ * only prior state the server can name is what it recorded when it deployed.
  *
  * Neither mode falls back to the other. internal/api/render.go is explicit that
  * a silently downgraded preview gives a CI gate a clean answer it did not earn,

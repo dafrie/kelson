@@ -1,6 +1,9 @@
 package artifact
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 // Reason codes for the publisher's own refusals, as opposed to a failure the
 // registry reported. They mirror the three-field shape every kelson plane that
@@ -27,7 +30,26 @@ const (
 	// body that is not a tag list. A proxy, a login page, a 200 from an
 	// unrelated service — never a registry doing its job.
 	ReasonTagListUnreadable = "artifact/tag-list-unreadable"
+	// ReasonArtifactNotFound: the registry answered, and holds no such tag,
+	// digest or blob. It is an answer rather than a failure — "there is no
+	// revision 3-a1b2c3d4" — and callers must be able to tell it from a
+	// registry that would not let kelson look ([NotFound]).
+	ReasonArtifactNotFound = "artifact/not-found"
+	// ReasonArtifactUnreadable: the registry served something kelson cannot
+	// read as one of its own artifacts — a manifest that is not JSON, a config
+	// that is not [ConfigMediaType], a layer that is not a gzipped tar of
+	// regular files. It is never a partial answer: a set missing files would be
+	// diffed as deletions nobody made (pull.go).
+	ReasonArtifactUnreadable = "artifact/unreadable"
 )
+
+// NotFound reports whether an error is the registry saying it holds no such
+// thing, as opposed to refusing to say. The distinction is the one a caller
+// must never lose: one is a typo, the other is a credential.
+func NotFound(err error) bool {
+	var refusal Error
+	return errors.As(err, &refusal) && refusal.Reason == ReasonArtifactNotFound
+}
 
 // Error is a publisher refusal: a named reason, what happened, and what to do.
 type Error struct {
@@ -76,6 +98,38 @@ func (e *DeniedError) Error() string {
 // the request: a missing, wrong or insufficiently scoped credential.
 func (e *DeniedError) Unauthorized() bool {
 	return e.StatusCode == 401 || e.StatusCode == 403
+}
+
+// IntegrityError is the registry answering with bytes that are not the bytes
+// that were asked for: a manifest whose sha256 is not the digest the tag
+// resolved to, or a layer whose sha256 is not the one its descriptor names.
+//
+// It is its own type and never a [DeniedError] or an [UnreachableError],
+// because the reaction is different from either. A denied read is fixed with a
+// credential and an unreachable registry is fixed by waiting; this is fixed by
+// neither, and retrying it is the wrong instinct — an artifact is immutable by
+// construction (ADR-0028 decision 2 writes a tag once and never rewrites it),
+// so a digest that does not match means the bytes were corrupted in transit or
+// the registry is serving something kelson did not publish. Both digests are
+// named, because the one thing the reader needs is which two values disagree.
+//
+// Nothing downstream may fall back to the bytes that arrived. A diff computed
+// on unverified content would report changes against a revision that never
+// existed, which is worse than the refusal it replaced.
+type IntegrityError struct {
+	// Doing names the step, in the terms of the artifact being read.
+	Doing string
+	// Want is the digest that was expected and Got the digest of the bytes
+	// received.
+	Want string
+	Got  string
+	// Source says who made the claim that failed: the registry's own header,
+	// the digest kelson recorded, the descriptor in the manifest.
+	Source string
+}
+
+func (e *IntegrityError) Error() string {
+	return fmt.Sprintf("artifact: %s: %s says %s, the bytes are %s", e.Doing, e.Source, e.Want, e.Got)
 }
 
 // UnreachableError is the other half: the registry never answered. A DNS
