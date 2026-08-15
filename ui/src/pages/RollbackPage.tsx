@@ -223,7 +223,10 @@ export function RollbackPage() {
 
       {previewRun.running ? <LoadingState what="the rollback preview" /> : null}
       {previewRun.error !== undefined ? (
-        <ErrorPanel title="The rollback preview failed" error={previewRun.error} />
+        <ErrorPanel
+          title="The rollback preview failed"
+          error={previewRun.error}
+        />
       ) : null}
 
       {preview !== undefined ? (
@@ -281,6 +284,19 @@ function Revision({
         />
         <span className="k-mono k-revision__rev">{entry.revision}</span>
         {current ? <span className="k-chip k-mono">current</span> : null}
+        {/* A revision the cluster's bounded history has forgotten and the
+            registry still holds (ADR-0028 decision 4, #241). It is a target
+            like any other — the artifact is immutable — and the meta line
+            beside it is empty because there is nothing recorded to put there,
+            which is what the chip and the message below say out loud. */}
+        {entry.beyondWindow ? (
+          <span
+            className="k-chip k-mono"
+            title="older than the history kept in the cluster; confirmed against the registry's tag list"
+          >
+            registry only
+          </span>
+        ) : null}
         <span className="k-mono k-revision__meta">
           {[entry.committedAt, entry.author, entry.specHash]
             .filter((s) => s !== "")
@@ -306,10 +322,24 @@ function Revision({
  */
 const PREVIEW_UNAVAILABLE_CAUSE = "rollback/preview-unavailable";
 
+/**
+ * `rollback/beyond-window` is the second finding of that kind, and it arrives
+ * only for a target older than the history the cluster keeps (#241): kelson
+ * confirmed the revision against the registry's tag list, so the restore is
+ * exact, and nothing recorded when it was published, what it ran or how it
+ * ended. Like the gap above it, that is a statement about what kelson knows —
+ * counting it among "what this rollback cannot revert" would name it as a
+ * change that will survive the restore, which is not what it says.
+ */
+const BEYOND_WINDOW_CAUSE = "rollback/beyond-window";
+
+/** The findings that describe kelson's own knowledge rather than a risk. */
+const NOTE_CAUSES = [PREVIEW_UNAVAILABLE_CAUSE, BEYOND_WINDOW_CAUSE];
+
 function Findings({ preview }: { preview: PreviewState }) {
   const all = preview.preview.findings;
-  const gap = all.find((f) => f.cause === PREVIEW_UNAVAILABLE_CAUSE);
-  const findings = all.filter((f) => f.cause !== PREVIEW_UNAVAILABLE_CAUSE);
+  const notes = all.filter((f) => NOTE_CAUSES.includes(f.cause));
+  const findings = all.filter((f) => !NOTE_CAUSES.includes(f.cause));
   const unrecoverable = findings.filter((f) => f.unrecoverable);
   return (
     <section className="k-section">
@@ -318,15 +348,17 @@ function Findings({ preview }: { preview: PreviewState }) {
         {findings.length})
       </div>
       <div className="k-section__body k-rollback__preview">
-        {gap !== undefined ? (
-          <div className="k-panel k-panel--dim k-mono">{gap.message}</div>
-        ) : null}
+        {notes.map((note) => (
+          <div className="k-panel k-panel--dim k-mono" key={note.cause}>
+            {note.message}
+          </div>
+        ))}
 
         {findings.length === 0 ? (
           <div className="k-panel k-panel--dim k-mono">
             no findings. The preview event is always sent, even when nothing
-            else could be checked — an absent warning is not the same as
-            nothing to warn about.
+            else could be checked — an absent warning is not the same as nothing
+            to warn about.
           </div>
         ) : (
           <ul className="k-diff__findings">

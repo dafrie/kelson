@@ -154,7 +154,9 @@ describe("HistoryPage", () => {
     );
     // ...but only the live row carries a phase pill, because only that one has
     // an answer for right now.
-    await waitFor(() => expect(screen.getAllByText("deployed now")).toHaveLength(1));
+    await waitFor(() =>
+      expect(screen.getAllByText("deployed now")).toHaveLength(1),
+    );
     expect(document.querySelectorAll(".k-pill")).toHaveLength(1);
   });
 
@@ -175,8 +177,9 @@ describe("HistoryPage", () => {
     // Every other revision gets no live claim of any kind, even though it
     // carries a recorded outcome of its own — that is a snapshot from when it
     // was captured, not a live answer.
-    expect(within(await row("4-b2c3d4e5")).queryByText("deployed now"))
-      .toBeNull();
+    expect(
+      within(await row("4-b2c3d4e5")).queryByText("deployed now"),
+    ).toBeNull();
     expect(screen.getAllByText("deployed now")).toHaveLength(1);
     expect(container.querySelectorAll(".k-pill")).toHaveLength(1);
   });
@@ -189,7 +192,9 @@ describe("HistoryPage", () => {
       expect(within(live).getByText("degraded")).toBeTruthy(),
     );
     expect(
-      within(live).getByText("degraded").closest(".k-pill")
+      within(live)
+        .getByText("degraded")
+        .closest(".k-pill")
         ?.getAttribute("data-status"),
     ).toBe("degraded");
   });
@@ -254,8 +259,9 @@ describe("HistoryPage", () => {
     // Restoring the newest revision is not a rollback, and the rollback screen
     // disables that target, so the link is not offered at all.
     const newest = await row("4-b2c3d4e5");
-    expect(within(newest).queryByRole("link", { name: "Roll back to this" }))
-      .toBeNull();
+    expect(
+      within(newest).queryByRole("link", { name: "Roll back to this" }),
+    ).toBeNull();
   });
 
   it("offers promotion once, above the list, and not per revision (#11)", async () => {
@@ -286,9 +292,7 @@ describe("HistoryPage", () => {
     await screen.findByText("Revisions (3)");
     // One muted line, not a banner, and it names the issue rather than
     // implying the attribution exists somewhere on this screen.
-    const note = screen.getByText(
-      /kelson does not record who deployed yet/,
-    );
+    const note = screen.getByText(/kelson does not record who deployed yet/);
     expect(note.textContent).toContain("no commit or pull-request link");
   });
 
@@ -300,8 +304,46 @@ describe("HistoryPage", () => {
     // A rollback prepends no history entry of its own (ADR-0028 decision 5),
     // so the empty state must not imply one would appear here.
     expect(
-      screen.getByText(/a rollback repoints Flux at a revision that is already here/),
+      screen.getByText(
+        /a rollback repoints Flux at a revision that is already here/,
+      ),
     ).toBeTruthy();
+  });
+
+  it("says a registry-only revision is only a revision, and offers it anyway", async () => {
+    // The list runs past the bounded history the cluster keeps into the
+    // registry's tag list (#241). Such an entry carries one fact, so the row
+    // must not print an absent outcome and an absent timestamp beside
+    // "unattributed" and let a reader take the blanks for a deployment that
+    // had none.
+    renderHistory({
+      entries: [
+        ...ENTRIES,
+        {
+          revision: "1-0badc0de",
+          specHash: "",
+          committedAt: "",
+          message: "prose the screen must not render",
+          author: "",
+          outcome: "",
+          digest: "",
+          images: [],
+          beyondWindow: true,
+        },
+      ] as typeof ENTRIES,
+    });
+
+    const aged = await row("1-0badc0de");
+    expect(within(aged).getByText("registry only")).toBeTruthy();
+    expect(aged.textContent).toContain("only the registry remembers");
+    // "unattributed" says the record has an author-shaped hole in it. This
+    // record has nothing in it at all, and saying both would be saying the
+    // wrong one.
+    expect(within(aged).queryByText("unattributed")).toBeNull();
+    // It is still restorable, which is the reason for listing it.
+    expect(
+      within(aged).getByText("Roll back to this").getAttribute("href"),
+    ).toContain("to=1-0badc0de");
   });
 
   it("surfaces a history the server could not read", async () => {
