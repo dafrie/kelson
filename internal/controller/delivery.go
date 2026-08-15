@@ -114,6 +114,13 @@ type FluxDeliverer struct {
 	// which is the behaviour before connections existed and is still correct for
 	// an instance that holds none.
 	PreviewSecrets PreviewSecrets
+
+	// Workloads is step 6's second half: the classification of the workloads
+	// the Kustomization applied (issue #240, workloads.go). Nil reads nothing
+	// back, which is the behaviour before this existed and is what an operator
+	// who has not granted the workload RBAC gets — the Kustomization's own
+	// `wait: true` verdict, unchanged.
+	Workloads WorkloadObserver
 }
 
 var _ Deliverer = (*FluxDeliverer)(nil)
@@ -209,9 +216,9 @@ func (d *FluxDeliverer) Deliver(ctx context.Context, rev Revision) (Outcome, err
 		return Outcome{}, err
 	}
 
-	// Step 6: observe. One read, no waiting — see the type doc.
-	phase, cause := d.observe(ctx, rev, out.Revision, out.Digest)
-	out.Phase, out.Cause = phase, cause
+	// Step 6: observe. One read of the Kustomization plus, when a workload
+	// observer is wired, one list per workload — no waiting. See the type doc.
+	out.Phase, out.Cause, out.Workloads = d.observe(ctx, rev, out.Revision, out.Digest)
 	return out, nil
 }
 
@@ -256,25 +263,97 @@ func (d *FluxDeliverer) settled(ctx context.Context, rev Revision, tag string) b
 // answers this question about any Kustomization in the cluster, and the
 // controller answering it differently about its own would be two opinions about
 // what Degraded means. `wait: true` on the Kustomization (fluxobjects.go) is
-// what makes Ready mean healthy, so the phase this returns covers the workloads
-// without the controller holding any RBAC over them.
+// what makes Ready mean healthy, so this phase covers the workloads on its own
+// — the readback beside it makes the same answer diagnosable, it does not
+// replace it (workloads.go).
 //
 // A Kustomization that is not there yet is Committed and not an error: it was
 // applied a few milliseconds ago through a cache that has not caught up, and
-// reporting a failure for that would make every first deploy look broken.
-func (d *FluxDeliverer) observe(ctx context.Context, rev Revision, revision, digest string) (string, string) {
+// reporting a failure for that would make every first deploy look broken. The
+// workloads are not read on that path either: there is no applied set to read
+// back, and the empty readback that would produce is indistinguishable from an
+// environment whose Deployments have all been deleted.
+func (d *FluxDeliverer) observe(ctx context.Context, rev Revision, revision, digest string) (string, string, *v1alpha1.WorkloadsStatus) {
 	live := &unstructured.Unstructured{}
 	live.SetGroupVersionKind(kustomizationGVK)
 	name := ObjectName(rev.Project, rev.Environment)
 	key := types.NamespacedName{Namespace: d.namespace(), Name: name}
 	if err := d.Client.Get(ctx, key, live); err != nil {
 		if apierrors.IsNotFound(err) || kindNotServed(err) {
-			return v1alpha1.PhaseCommitted, "the Kustomization has not been observed yet"
+			return v1alpha1.PhaseCommitted, "the Kustomization has not been observed yet", nil
 		}
-		return v1alpha1.PhaseCommitted, "could not read the Kustomization back: " + err.Error()
+		return v1alpha1.PhaseCommitted, "could not read the Kustomization back: " + err.Error(), nil
 	}
 	status := flux.PhaseFor(flux.KustomizationFrom(live.Object, name, d.namespace()), revision, digest)
-	return string(status.Phase), status.Cause
+	phase, cause := string(status.Phase), status.Cause
+
+	workloads := d.readWorkloads(ctx, rev)
+	if refined, refinedCause := refine(phase, cause, workloads); refined != "" {
+		phase, cause = refined, refinedCause
+	}
+	return phase, cause, workloads
+}
+
+// readWorkloads runs step 6's second half and cannot fail the reconcile.
+//
+// A readback that could not be done is recorded as one — checked-versus-
+// could-not-check, the distinction the ClusterProfile refuses to blur — and
+// nothing else changes: the phase stays Flux's, the delivery result stays a
+// success, and the operator gets a status that says "I could not look" instead
+// of counts that read as "everything is fine". Discovering a missing RBAC grant
+// is not a reason to refuse a deploy that already happened.
+func (d *FluxDeliverer) readWorkloads(ctx context.Context, rev Revision) *v1alpha1.WorkloadsStatus {
+	if d.Workloads == nil {
+		return nil
+	}
+	workloads, err := d.Workloads.Observe(ctx, rev)
+	if err != nil {
+		return &v1alpha1.WorkloadsStatus{Unavailable: err.Error()}
+	}
+	return workloads
+}
+
+// refine is the one thing the readback is allowed to change about the phase:
+// it can turn a settled-and-well answer into Degraded, and it can do nothing
+// else. An empty phase means it changed nothing.
+//
+// # Why only downwards
+//
+// This is issue #53's rule at the environment level. `wait: true` makes Flux's
+// Ready mean "the applied set converged", which is true at the moment it
+// converged and says nothing about the pod that started crash-looping ten
+// minutes later — the Kustomization keeps reporting Ready, because nothing it
+// applied changed. A status that reports Healthy over a CrashLoopBackOff is the
+// exact conflation the observation plane exists to prevent, so a definitive
+// failure wins. The reverse never applies: workloads that look fine cannot
+// argue a Kustomization out of Rejected, because a set that was never applied
+// has no workloads of this revision to look at.
+//
+// # Why only after Flux has settled
+//
+// A phase of Committed or Reconciling means Flux has not finished, and the
+// pods of the *previous* revision are still what is running. Reporting them as
+// this revision's failure would make every rolling update flash Degraded on the
+// way through, and Degraded is a state that pages people. So the refinement
+// applies to Applied and Healthy only — Flux's own verdict that this revision's
+// set is on the cluster and settled — which is also the only point at which the
+// workloads being read are unambiguously the ones it applied.
+func refine(phase, cause string, workloads *v1alpha1.WorkloadsStatus) (string, string) {
+	if workloads == nil || workloads.Degraded == 0 {
+		return "", ""
+	}
+	if phase != v1alpha1.PhaseHealthy && phase != v1alpha1.PhaseApplied {
+		return "", ""
+	}
+	refined := workloadCause(workloads)
+	if refined == "" {
+		// Degraded with nothing listed cannot happen through
+		// [ClusterWorkloads.Observe] — the count and the list are built in one
+		// pass — but a Deliverer is an interface and a fake can produce it.
+		// Keeping Flux's sentence is better than an empty one.
+		refined = cause
+	}
+	return v1alpha1.PhaseDegraded, refined
 }
 
 // images is what this revision resolved to, in component order: the answer to

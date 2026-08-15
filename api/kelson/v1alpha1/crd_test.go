@@ -79,6 +79,40 @@ func TestCRDHistoryBoundMatchesConstant(t *testing.T) {
 	}
 }
 
+// TestCRDWorkloadBoundsMatchConstants is TestCRDHistoryBoundMatchesConstant for
+// the readback's two bounds (issue #240). The readback is written from live
+// cluster state rather than from kelson's own record, so its bound is the one
+// most likely to be reached by accident: a bad rollout with fifty replicas
+// produces fifty failing containers, and a schema that allowed them would put
+// all fifty into every watch event in the cluster.
+func TestCRDWorkloadBoundsMatchConstants(t *testing.T) {
+	crd := readCRD(t, "kelson.dev_environments.yaml")
+	status := crd.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["status"]
+	workloads, ok := status.Properties["workloads"]
+	if !ok {
+		t.Fatalf("status has no workloads property")
+	}
+	unhealthy, ok := workloads.Properties["unhealthy"]
+	if !ok {
+		t.Fatalf("status.workloads has no unhealthy property")
+	}
+	if unhealthy.MaxItems == nil || *unhealthy.MaxItems != MaxUnhealthyWorkloads {
+		t.Errorf("status.workloads.unhealthy maxItems is %v, want MaxUnhealthyWorkloads (%d)",
+			unhealthy.MaxItems, MaxUnhealthyWorkloads)
+	}
+	if unhealthy.Items == nil {
+		t.Fatalf("status.workloads.unhealthy declares no items")
+	}
+	containers, ok := unhealthy.Items.Properties["containers"]
+	if !ok {
+		t.Fatalf("status.workloads.unhealthy[] has no containers property")
+	}
+	if containers.MaxItems == nil || *containers.MaxItems != MaxUnhealthyContainers {
+		t.Errorf("status.workloads.unhealthy[].containers maxItems is %v, want MaxUnhealthyContainers (%d)",
+			containers.MaxItems, MaxUnhealthyContainers)
+	}
+}
+
 // compare walks a Go type and a schema node together.
 func compare(t *testing.T, rt reflect.Type, node schemaNode, path string) {
 	t.Helper()
