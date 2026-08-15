@@ -94,7 +94,7 @@ that quietly resolve into nothing.
 
 ## Documents
 
-The model is two YAML (or JSON) documents. There is deliberately no third kind.
+The authoring model is two YAML (or JSON) documents. There is deliberately no third *authoring* kind.
 
 ```yaml
 apiVersion: kelson.dev/v1alpha1
@@ -111,15 +111,18 @@ stay project-agnostic in shape (nothing in the Environment schema depends on whi
 Environments are scoped to a Project by reference; they are not owned objects embedded in the Project.
 
 There is exactly one Component spec format and exactly one list. Project-level "shared configuration" is
-not a second spec format: it is a small set of fields on the Project (`source`, `build`, `image`, `env`)
-that act as defaults merged into each workload Component by rule P1 below. A Component written inline in a
+not a second spec format: it is a small set of fields on the Project (`source`/`sources`, `build`,
+`image`, `env`) that act as defaults merged into each workload Component by rule P1 below. A Component written inline in a
 Project and one authored field-by-field against the JSON Schema are the same document.
 
-[ADR-0033](adr/0033-git-connections.md) adds a third kind, `GitConnection`. It does not join the two
-above: it carries forge identifiers and a Secret reference rather than a workload, is never named by a
-Project or Environment, and the renderer never reads one — it is read only by the planes that already
-have cluster access (the server, the controller, the build plane). See
-[its reference](reference/gitconnection.md).
+[ADR-0033](adr/0033-git-connections.md) adds a third kind, `GitConnection`, and
+[ADR-0035](adr/0035-sources.md) a fourth, `GitSource`. Neither joins the two above: they carry forge
+identifiers, a Secret reference and a repository rather than a workload, and the renderer never reads
+one — they are read only by the planes that already have cluster access (the server, the controller, the
+build plane). A connection is never named by a Project or Environment; a source is named by exactly one
+thing, a component's `source:`, and that binding is resolved rather than rendered
+([below](#sources-declared-once-bound-per-component)). See their references:
+[GitConnection](reference/gitconnection.md), [GitSource](reference/gitsource.md).
 
 ## Resolutions of ADR-0006's open questions
 
@@ -216,7 +219,9 @@ Project.spec.image
     < Environment.spec.components[].image   (the per-environment pin, matched by component name)
 ```
 
-A built artifact (Project `source` + `build`) supplies the image when none of the three sets one;
+A built artifact (a declared source + `build`) supplies the image when none of the three sets one — the
+component's own source if it names one, else the project's default
+([below](#sources-declared-once-bound-per-component));
 `build.strategy: none` with no image anywhere is a validation error (`semantic/no-image-source`).
 Component `command:` always wins; Project has no command, and an Environment override does not set one.
 
@@ -267,6 +272,136 @@ hatch of record: any long-tail requirement not in the schema goes here ([docs/ar
 win. If a Component has `port:` but no `domains:`, and the Environment sets `routing.domainSuffix`,
 the default hostname is `<component>.<domainSuffix>` — e.g. `web.staging.acme.run`. Environments should
 carry distinct suffixes so defaults never collide.
+
+## Sources: declared once, bound per component
+
+**Declaring a repository and using one are two different acts** ([ADR-0035](adr/0035-sources.md)). A
+Project *declares* which repositories are available to it, and the instance may declare some globally;
+a component *uses* exactly one, one-to-one. Declaring is configuration; binding is a property of the
+thing that builds, which is the component ([ADR-0010](adr/0010-build-strategy.md)).
+
+```yaml
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: checkout
+spec:
+  sources:
+    - name: app                              # DNS-1123 label, unique in the list
+      git: https://github.com/acme/checkout
+      ref: main
+    - name: tools
+      git: https://github.com/acme/build-tools
+      ref: v2                                # a ref is per source, not per project
+      connection: acme-github                # optional, ADR-0033 §4 semantics per source
+  components:
+    - {name: web, port: 8080, source: app}
+    - {name: worker, source: tools}
+```
+
+**The singular `source:` stays, as shorthand.** It declares the one-entry list
+`[{name: default, git: …, ref: …}]`, which is what almost every project means: one repository, every
+component built from it. Nothing written against it changes meaning, and nothing migrates. What the
+shorthand cannot do is be *renamed* — it is already called `default`, and choosing a name means writing
+the list instead. Declaring both spellings is an error: they are one list written two ways, and a
+document that says it twice has not said which.
+
+A Project with no source at all keeps today's meaning exactly: nothing to build from, image-only
+components ([ADR-0010](adr/0010-build-strategy.md)'s `strategy: none` posture).
+
+### The global tier is a `GitSource`
+
+A repository many projects share — the platform monorepo, a common tools repo — is declared once, on the
+instance, as a [`GitSource`](reference/gitsource.md) in `kelson-system`:
+
+```yaml
+apiVersion: kelson.dev/v1alpha1
+kind: GitSource
+metadata:
+  name: build-tools                          # the name a component binds to
+spec:
+  git: https://github.com/acme/build-tools
+  ref: v2
+  connection: acme-github                    # optional
+  owner: {kind: instance}                    # ADR-0033 §6, reserved for tenancy (#231)
+```
+
+It carries the same three fields a Project's own entry carries, plus the ownership block connections
+already have, and its name comes from `metadata.name` — a second copy inside the spec could disagree
+with the one `kubectl get gitsources` prints. It is deliberately dumber than a `GitConnection`: data,
+not credentials. It has no status beyond validation, because *can this be reached* is a question about
+the credential, and `Reachable` already lives on the connection that serves it
+([ADR-0033](adr/0033-git-connections.md) §1).
+
+### Which source a component builds from
+
+Resolution is two scopes and one fallback:
+
+1. the Project's own `sources:` (or its shorthand `source:`),
+2. then the `GitSource` objects the instance offers.
+
+**A project-local name shadows a global one.** Innermost scope wins — the same instinct as P1–P3 — and
+shadowing rather than clashing is deliberate: a global name is a convenience, not a claim, and a project
+must be able to redefine `tools` without asking the instance. A UI showing a shadowed name should say so.
+
+**A component with no `source:` uses the project's default**, which is the shorthand `source:` if that
+spelling was used, else the sole entry when the list has one — a list of one is not a decision — else
+the entry named `default`. When a project declares several and names no `default`, an unbound component
+that would be built is a validation error naming the candidates, rather than a silent pick: the order of
+a list is not a decision anybody took.
+
+A component that is not built needs no binding and is never asked for one: an `image:` of its own, a
+Project `image:`, `build.strategy: none`, and the kinds that build nothing at all — `postgres`, `valkey`
+and `helm` — are all outside the question. On those kinds a `source:` *name* is refused rather than
+ignored, for the reason every misplaced field is ([#141](https://github.com/dafrie/kelson/issues/141)):
+what a database runs is its operator's business, and what a chart installs is fetched, not built.
+
+> **`source:` on a component means two things, told apart by shape.** A scalar is a source name
+> (`source: app`); a mapping is the chart source of a `kind: helm` component
+> (`source: {repository: …}` / `source: {oci: …}`, [ADR-0016](adr/0016-delivery-flows-v0.md) §4). The two
+> never meet on one component — a chart builds nothing and a buildable component has no chart — so the
+> kind decides which arm is meaningful and the other is refused. It is the same union-by-shape an
+> environment value uses for its three forms.
+
+### What is refused
+
+| What | Code |
+|---|---|
+| Both `source:` and `sources:` on one Project | `schema/mutually-exclusive` |
+| `name:` on the singular `source:` | `schema/mutually-exclusive` |
+| Two entries of `sources:` with the same name | `schema/duplicate-name` |
+| An entry with no `name:`, or no `git:` | `schema/missing-required` |
+| A `source:` name on a kind that builds nothing, or a chart source on one that builds | `schema/mutually-exclusive` |
+| Several sources, no `default`, and a component that builds naming none | `semantic/no-default-source` |
+| A component naming a source neither tier declares | `ref/unknown-source` |
+
+The last one is the only refusal that is **not** a validation error, and that is the line ADR-0035 draws:
+the scope is the Project's list *and* the instance's `GitSource` objects, and a document cannot see the
+second half. A name this document does not declare may be a perfectly good global source, so the refusal
+belongs to resolution — which holds both halves and lists them, labelled, in the message.
+
+### What a binding is, and what it is not
+
+Resolution takes the global sources **as an input**, the way rendering takes a ClusterProfile
+([ADR-0001](adr/0001-hybrid-state-model.md), [ADR-0029](adr/0029-renderer-stays-go.md)): the planes with
+cluster access list the `GitSource` objects and hand them to the resolver, and nothing in `internal/model`
+goes looking for a cluster. `kelson render` against a file with no global list resolves against an empty
+global tier, and says so if a name needed one.
+
+What comes out is one binding per component that builds — repository, ref and connection — on the
+resolved spec, beside the project's default. **Nothing about a source reaches a manifest.** Rendered
+output never contained one and still does not ([ADR-0035](adr/0035-sources.md) §4), which is why the
+bindings sit on the resolved spec as a whole rather than on each component: a per-component binding would
+enter that component's `kelson.dev/spec-hash` and churn every workload in every cluster over a field the
+renderer never reads. It does change the *revision* — where kelson reads the code from is part of what a
+revision is — so a project with a source republishes once, under a new artifact tag, and then stays put.
+
+> **Transition ([#239](https://github.com/dafrie/kelson/issues/239)).** The model declares, validates and
+> binds; the build plane still clones once per project rather than once per binding. Until it does, a
+> Project using the plural spelling has no `spec.source` for the build plane to fall back on, so
+> `kelson build` refuses it (`build/no-source`) rather than building the wrong repository, and a name
+> that resolves nowhere never reaches a build at all. Per-component clones, and `autoDeploy`'s new
+> subject — a push to repository X re-renders what is bound to sources matching X — are that issue.
 
 ## Promotion
 
@@ -1260,8 +1395,10 @@ Stable code taxonomy:
 | `ref/unknown-component` | semantic | Environment override for an undeclared component |
 | `ref/unknown-service` | semantic | `from: {service: cache}` names no data component |
 | `ref/unknown-service-key` | semantic | `from: {service: db, key: tls}` |
+| `ref/unknown-source` | resolution | a component's `source:` names neither a Project source nor a `GitSource` — the one refusal that needs the instance's list and so belongs to resolution ([ADR-0035](adr/0035-sources.md)) |
 | `secret/literal` | semantic | secret value where a reference belongs |
 | `semantic/no-image-source` | semantic | no image and `build.strategy: none` |
+| `semantic/no-default-source` | semantic | several sources, none named `default`, and a component that builds naming none ([ADR-0035](adr/0035-sources.md)) |
 | `semantic/auth-provider-mismatch` | semantic | GitConnection `auth.githubApp` with `provider: generic` — the app-manifest flow and installation tokens are GitHub's ([ADR-0033](adr/0033-git-connections.md)) |
 
 `semantic/git-target-missing` existed to require a git target for a mode that no longer exists, and goes
