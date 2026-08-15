@@ -18,6 +18,7 @@ import (
 	"github.com/dafrie/kelson/internal/build"
 	"github.com/dafrie/kelson/internal/controlstore"
 	"github.com/dafrie/kelson/internal/delivery"
+	"github.com/dafrie/kelson/internal/model"
 	"github.com/dafrie/kelson/internal/preview"
 )
 
@@ -1394,4 +1395,324 @@ func TestReportBuildFromAHumanReachesTheGate(t *testing.T) {
 	if connect.CodeOf(err) != connect.CodeUnimplemented {
 		t.Fatalf("a human's report = %v (code %s), want unimplemented", err, connect.CodeOf(err))
 	}
+}
+
+// --- per-component sources (ADR-0035) ---------------------------------------
+
+// The Project ADR-0035 exists for: two declared sources, and a component bound
+// to the second one. Before this slice it was refused with build/no-source,
+// because the build path read `spec.source` and this document has none.
+const buildPluralProjectDoc = `apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: shop
+spec:
+  sources:
+    - name: app
+      git: https://github.com/acme/shop.git
+      ref: main
+    - name: tools
+      git: https://gitlab.com/acme/build-tools.git
+      ref: v2
+      connection: acme-gitlab
+  build:
+    strategy: dockerfile
+  components:
+    - name: worker
+      source: tools
+`
+
+// fakeGitSources is the instance's global tier, in memory.
+type fakeGitSources struct {
+	sources []model.Source
+	err     error
+}
+
+func (f fakeGitSources) ListSources(context.Context) ([]model.Source, error) {
+	return f.sources, f.err
+}
+
+// A project spelling its sources in the plural builds, and it builds the source
+// its component is bound to — repository, ref and connection — rather than the
+// first one declared.
+func TestBuildFollowsTheComponentsSourceBinding(t *testing.T) {
+	builder := &fakeBuilder{}
+	revisions := &fakeRevisions{}
+	var target BuildTarget
+	c := serve(t, Options{
+		Build:         buildPlaneFor(builder, revisions, &target),
+		BuildDefaults: BuildDefaults{Registry: "ghcr.io/acme"},
+	})
+
+	out, err := collectBuild(t, c, &kelsonv1alpha1.BuildRequest{
+		Spec:        inlineSpec(buildPluralProjectDoc, map[string]string{"production": buildEnvironmentDoc}),
+		Environment: "production",
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if out.finished == nil {
+		t.Fatal("the build produced no Finished event")
+	}
+
+	req := builder.lastRequest(t)
+	if req.SourceGit != "https://gitlab.com/acme/build-tools.git" {
+		t.Errorf("SourceGit = %q, want the bound source's repository", req.SourceGit)
+	}
+	if req.SourceName != "tools" {
+		t.Errorf("SourceName = %q, want tools", req.SourceName)
+	}
+	if req.SourceConnection != "acme-gitlab" {
+		t.Errorf("SourceConnection = %q, want the bound source's connection", req.SourceConnection)
+	}
+	// The credential the clone will mint and the credential the ref resolver
+	// already used have to be the same one, which is why the connection also
+	// travels on the target the plane was built from.
+	if target.SourceConnection != "acme-gitlab" {
+		t.Errorf("target.SourceConnection = %q, want the bound source's connection", target.SourceConnection)
+	}
+	// And the ls-remote asked about that repository at *its* ref, not the
+	// project's first.
+	if asked := revisions.calls(); len(asked) != 1 ||
+		asked[0] != [2]string{"https://gitlab.com/acme/build-tools.git", "v2"} {
+		t.Errorf("resolver calls = %v, want one call for the bound source at v2", asked)
+	}
+}
+
+// The request's `ref` still overrides, and it overrides the *source's* ref.
+func TestBuildRefOverridesTheSourcesRef(t *testing.T) {
+	revisions := &fakeRevisions{}
+	c := serve(t, Options{
+		Build:         buildPlaneFor(&fakeBuilder{}, revisions, nil),
+		BuildDefaults: BuildDefaults{Registry: "ghcr.io/acme"},
+	})
+
+	if _, err := collectBuild(t, c, &kelsonv1alpha1.BuildRequest{
+		Spec:        inlineSpec(buildPluralProjectDoc, map[string]string{"production": buildEnvironmentDoc}),
+		Environment: "production",
+		Ref:         "release/v3",
+	}); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if asked := revisions.calls(); len(asked) != 1 || asked[0][1] != "release/v3" {
+		t.Errorf("resolver calls = %v, want the request's ref", asked)
+	}
+}
+
+// A component bound to a GitSource the instance offers resolves through the
+// global tier the server supplies — the whole reason the build path passes
+// globals to the resolver at all.
+func TestBuildResolvesAGlobalGitSource(t *testing.T) {
+	const doc = `apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: shop
+spec:
+  build:
+    strategy: dockerfile
+  components:
+    - name: web
+      port: 8080
+      source: platform
+`
+	builder := &fakeBuilder{}
+	c := serve(t, Options{
+		Build:         buildPlaneFor(builder, &fakeRevisions{}, nil),
+		BuildDefaults: BuildDefaults{Registry: "ghcr.io/acme"},
+		GitSources: fakeGitSources{sources: []model.Source{{
+			Name: "platform", Git: "https://github.com/acme/platform.git", Ref: "release",
+		}}},
+	})
+
+	if _, err := collectBuild(t, c, &kelsonv1alpha1.BuildRequest{
+		Spec:        inlineSpec(doc, map[string]string{"production": buildEnvironmentDoc}),
+		Environment: "production",
+	}); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if got := builder.lastRequest(t).SourceGit; got != "https://github.com/acme/platform.git" {
+		t.Errorf("SourceGit = %q, want the instance's GitSource", got)
+	}
+}
+
+// Without the global tier the same spec is refused by the *resolver*, with the
+// code and the remediation ADR-0035 decision 3 specifies — it names both halves
+// of the scope it searched, so "I forgot to declare it" and "the instance does
+// not offer it" are told apart without a second lookup.
+func TestBuildSurfacesAnUnknownSource(t *testing.T) {
+	const doc = `apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: shop
+spec:
+  build:
+    strategy: dockerfile
+  components:
+    - name: web
+      port: 8080
+      source: platform
+`
+	builder := &fakeBuilder{}
+	c := serve(t, Options{
+		Build:         buildPlaneFor(builder, &fakeRevisions{}, nil),
+		BuildDefaults: BuildDefaults{Registry: "ghcr.io/acme"},
+	})
+
+	_, err := collectBuild(t, c, &kelsonv1alpha1.BuildRequest{
+		Spec:        inlineSpec(doc, map[string]string{"production": buildEnvironmentDoc}),
+		Environment: "production",
+	})
+	if got := detailCode(t, err); got != string(model.ErrUnknownSource) {
+		t.Fatalf("detail code = %q, want %q", got, model.ErrUnknownSource)
+	}
+	// The remediation is the half that makes the code actionable, and it rides
+	// the structured detail rather than the message — so that is where it is
+	// asserted, naming both halves of the scope the resolver searched.
+	remediation := detailRemediation(t, err)
+	for _, want := range []string{"This project declares", "This instance offers"} {
+		if !strings.Contains(remediation, want) {
+			t.Errorf("the remediation should survive to the wire (%q): %s", want, remediation)
+		}
+	}
+	if builder.calls() != 0 {
+		t.Error("a spec that does not resolve must not reach the build plane")
+	}
+}
+
+// Two components on one source are one build: the clone is shared rather than
+// repeated, which is what makes a project cloning several repositories per
+// revision different from one cloning several copies of the same.
+func TestBuildSharesOneSourceAcrossComponents(t *testing.T) {
+	const doc = `apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: shop
+spec:
+  sources:
+    - name: app
+      git: https://github.com/acme/shop.git
+      ref: main
+  build:
+    strategy: dockerfile
+  components:
+    - name: web
+      port: 8080
+      source: app
+    - name: worker
+      source: app
+`
+	builder := &fakeBuilder{}
+	revisions := &fakeRevisions{}
+	c := serve(t, Options{
+		Build:         buildPlaneFor(builder, revisions, nil),
+		BuildDefaults: BuildDefaults{Registry: "ghcr.io/acme"},
+	})
+
+	if _, err := collectBuild(t, c, &kelsonv1alpha1.BuildRequest{
+		Spec:        inlineSpec(doc, map[string]string{"production": buildEnvironmentDoc}),
+		Environment: "production",
+	}); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if builder.calls() != 1 {
+		t.Errorf("the builder was called %d times, want one build for the shared source", builder.calls())
+	}
+	if len(revisions.calls()) != 1 {
+		t.Errorf("ls-remote ran %d times, want once per distinct source", len(revisions.calls()))
+	}
+	if got := builder.lastRequest(t).Component; got != "" {
+		t.Errorf("Component = %q, want empty: one build serves both components", got)
+	}
+}
+
+// And a project whose components build from *different* repositories is
+// refused by name. One build pushes one image and model rule P3 pins one image
+// per project, so building half of it would be worse than saying so.
+func TestBuildRefusesSeveralSources(t *testing.T) {
+	const doc = `apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: shop
+spec:
+  sources:
+    - name: app
+      git: https://github.com/acme/shop.git
+      ref: main
+    - name: tools
+      git: https://gitlab.com/acme/build-tools.git
+      ref: v2
+  build:
+    strategy: dockerfile
+  components:
+    - name: web
+      port: 8080
+      source: app
+    - name: worker
+      source: tools
+`
+	builder := &fakeBuilder{}
+	c := serve(t, Options{
+		Build:         buildPlaneFor(builder, &fakeRevisions{}, nil),
+		BuildDefaults: BuildDefaults{Registry: "ghcr.io/acme"},
+	})
+
+	_, err := collectBuild(t, c, &kelsonv1alpha1.BuildRequest{
+		Spec:        inlineSpec(doc, map[string]string{"production": buildEnvironmentDoc}),
+		Environment: "production",
+	})
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("code = %v, want InvalidArgument (err %v)", connect.CodeOf(err), err)
+	}
+	if got := detailCode(t, err); got != build.ReasonSeveralSources {
+		t.Errorf("detail code = %q, want %q", got, build.ReasonSeveralSources)
+	}
+	if builder.calls() != 0 {
+		t.Error("a refusal must not reach the build plane")
+	}
+}
+
+// A GitSource listing that fails is reported rather than degraded into an empty
+// global tier: "this instance offers nothing" is a true sentence about a lookup
+// that failed and a false one about the instance.
+func TestBuildReportsAFailedGitSourceListing(t *testing.T) {
+	builder := &fakeBuilder{}
+	c := serve(t, Options{
+		Build:         buildPlaneFor(builder, &fakeRevisions{}, nil),
+		BuildDefaults: BuildDefaults{Registry: "ghcr.io/acme"},
+		GitSources:    fakeGitSources{err: errors.New("the API server said no")},
+	})
+
+	_, err := collectBuild(t, c, &kelsonv1alpha1.BuildRequest{
+		Spec:        buildSpec(),
+		Environment: "production",
+	})
+	if connect.CodeOf(err) != connect.CodeUnavailable {
+		t.Fatalf("code = %v, want Unavailable (err %v)", connect.CodeOf(err), err)
+	}
+	if builder.calls() != 0 {
+		t.Error("nothing may be built when the global tier could not be read")
+	}
+}
+
+// detailRemediation reads the structured remediation off the first error
+// detail. It is separate from detailCode because the two are separate promises:
+// the code is what an agent branches on, the remediation is what a human acts
+// on, and a refusal that carries one without the other is half a refusal.
+func detailRemediation(t *testing.T, err error) string {
+	t.Helper()
+	var cerr *connect.Error
+	if !errors.As(err, &cerr) {
+		t.Fatalf("not a connect error: %v", err)
+	}
+	for _, d := range cerr.Details() {
+		msg, verr := d.Value()
+		if verr != nil {
+			continue
+		}
+		if wire, ok := msg.(*kelsonv1alpha1.Error); ok {
+			return wire.GetRemediation()
+		}
+	}
+	t.Fatalf("no kelson.v1alpha1.Error detail on %v", err)
+	return ""
 }
