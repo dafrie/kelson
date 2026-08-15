@@ -19,6 +19,14 @@ const (
 	// ReasonRepositoryInvalid: the repository is not one this publisher can
 	// push to — a tag or digest on it, or a name the registry grammar rejects.
 	ReasonRepositoryInvalid = "artifact/repository-invalid"
+	// ReasonTagListTooLarge: the repository holds more tags than one listing
+	// walks. It is a refusal rather than a truncation because a tag list is
+	// lexically ordered, so a partial one is an arbitrary subset (tags.go).
+	ReasonTagListTooLarge = "artifact/tag-list-too-large"
+	// ReasonTagListUnreadable: something answered /v2/<name>/tags/list with a
+	// body that is not a tag list. A proxy, a login page, a 200 from an
+	// unrelated service — never a registry doing its job.
+	ReasonTagListUnreadable = "artifact/tag-list-unreadable"
 )
 
 // Error is a publisher refusal: a named reason, what happened, and what to do.
