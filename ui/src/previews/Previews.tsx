@@ -1,3 +1,5 @@
+import { Link } from "react-router-dom";
+
 import { useAsync, useClients } from "../api/data";
 import { Copyable } from "../components/Copyable";
 import { ErrorPanel } from "../components/ErrorPanel";
@@ -46,6 +48,12 @@ import "./previews.css";
  *     parent's hostname (ADR-0017 decision 11). They are read from the
  *     preview's own HTTPRoutes rather than derived, so what is shown is what is
  *     served.
+ *
+ * Each row's "details →" is the one internal navigation on the panel — to
+ * `PreviewDetailPage`, the route a commit status and a PR comment link to
+ * (ADR-0017 stage 3, #248) — and it is deliberately a second link rather than a
+ * relabelling of the chip above it: that chip leaves kelson for the forge, and
+ * conflating the two would make one of them lie about where it goes.
  */
 export function Previews({
   project,
@@ -98,7 +106,13 @@ export function Previews({
       ) : null}
 
       {settings !== undefined ? (
-        <Configured response={data} settings={settings} previews={previews} />
+        <Configured
+          response={data}
+          settings={settings}
+          previews={previews}
+          project={project}
+          environment={environment}
+        />
       ) : null}
     </div>
   );
@@ -152,10 +166,14 @@ function Configured({
   response,
   settings,
   previews,
+  project,
+  environment,
 }: {
   response: ListPreviewsResponse | undefined;
   settings: PreviewSettings;
   previews: readonly Preview[];
+  project: string;
+  environment: string;
 }) {
   const lifecycle = lifecycleLine(response?.lifecycle);
   const gated = (response?.errors.length ?? 0) > 0;
@@ -198,6 +216,8 @@ function Configured({
               key={preview.namespace}
               preview={preview}
               settings={settings}
+              project={project}
+              environment={environment}
             />
           ))}
         </ul>
@@ -209,12 +229,19 @@ function Configured({
 function PreviewRow({
   preview,
   settings,
+  project,
+  environment,
 }: {
   preview: Preview;
   settings: PreviewSettings;
+  project: string;
+  environment: string;
 }) {
   const url = changeRequestUrl(settings, preview.id);
   const label = `pr${preview.id}`;
+  const detailHref = `/projects/${encodeURIComponent(project)}/${encodeURIComponent(
+    environment,
+  )}/previews/${encodeURIComponent(preview.id)}`;
 
   return (
     <li className="k-previews__item">
@@ -231,6 +258,16 @@ function PreviewRow({
             {label}
           </a>
         )}
+        {/* This row's own page (ADR-0017 stage 3, #248) — the identifier a
+            commit status and a PR comment link to, distinct from the forge
+            link above, which leaves kelson entirely. */}
+        <Link
+          className="k-mono k-previews__link"
+          to={detailHref}
+          title={`${label}'s own page`}
+        >
+          details →
+        </Link>
         <StatusPill
           status={previewStatus(preview.phase, preview.suspended)}
           label={preview.suspended ? "suspended" : preview.phase || "unknown"}

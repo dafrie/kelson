@@ -149,3 +149,22 @@
   color: var(--kelson-accent-hover);
   text-decoration: underline;
 }
+
+/*
+ * The detail page (ui/src/pages/PreviewDetailPage.tsx) reuses every row style
+ * above and adds only the vertical rhythm between the sections a single row
+ * never needed: the head, the headline, the key/value facts and the hosts
+ * block all need daylight between them that the row's own tight gap: 8px was
+ * never meant to give a whole page.
+ */
+.k-previews__detail-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.k-previews__hostsblock {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}

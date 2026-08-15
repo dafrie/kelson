@@ -185,6 +185,15 @@ describe("Previews", () => {
       screen.getByRole("link", { name: "pr412" }).getAttribute("href"),
     ).toBe("https://github.com/acme/checkout/pull/412");
 
+    // Each row also links to its own detail page — the route a commit status
+    // and a PR comment link to (ADR-0017 stage 3, #248) — distinct from the
+    // forge link above, which leaves kelson entirely.
+    const detailLinks = screen
+      .getAllByRole("link", { name: "details →" })
+      .map((a) => a.getAttribute("href"));
+    expect(detailLinks).toContain("/projects/checkout/staging/previews/412");
+    expect(detailLinks).toContain("/projects/checkout/staging/previews/9");
+
     // The commit, abbreviated for reading and whole for copying: the tag flux
     // pins is the full commit.
     expect(screen.getByText("0123456789ab")).toBeTruthy();
