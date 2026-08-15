@@ -810,13 +810,13 @@ never runs kelson's renderer, never needs a checkout of the spec and never holds
 artifact-registry credential.
 
 > **What exists today.** The server side is complete: `BuildService.ReportBuild` publishes, and
-> kelson-server publishes with the credential in `--registry-config`. The *client* side is the RPC
-> itself — the `kelson ci report-build` verb ADR-0034 sketches is not written yet
-> ([#248](https://github.com/dafrie/kelson/issues/248)), so a pipeline calls the method directly. A
-> report for a project whose `build.by` is `kelson` (the default for a project with `source:`) is
-> answered `accepted: false` naming the field, because those images come from kelson's own build
-> plane; a report with no `--pr` is refused, because the tracking environments it would feed
-> (`autoDeploy`, decision 4) are not in the model yet.
+> kelson-server publishes with the credential in `--registry-config`. The client side is
+> `kelson ci report-build`, the verb ADR-0034 names — a pipeline runs that rather than calling the
+> method itself ([#248](https://github.com/dafrie/kelson/issues/248)). A report for a project whose
+> `build.by` is `kelson` (the default for a project with `source:`) is answered `accepted: false`
+> naming the field, because those images come from kelson's own build plane; a report with no
+> `--pr` is refused, because the tracking environments it would feed (`autoDeploy`, decision 4) are
+> not in the model yet.
 
 **Or CI publishes, with `kelson preview publish`, run in the application repository's CI on pull
 request events** — that is where the pull request's checkout and the image built from it already are
