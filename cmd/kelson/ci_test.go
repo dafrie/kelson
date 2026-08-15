@@ -145,19 +145,19 @@ func TestReportBuildDeclinedFails(t *testing.T) {
 	}
 }
 
-// TestReportBuildRefOnlyIsReportedAsAGap is the `ref`-only path: the RPC is
-// Unimplemented today, and the command must say so as a gap in kelson rather
-// than as something the pipeline got wrong — while passing the server's own
-// sentence and its taxonomy code through untouched.
-func TestReportBuildRefOnlyIsReportedAsAGap(t *testing.T) {
+// TestReportBuildUnimplementedIsReportedAsAGap: a server missing a trigger seam
+// answers Unimplemented, and the command must say so as a gap in *that server*
+// rather than as something the pipeline got wrong — while passing the server's
+// own sentence and its taxonomy code through untouched.
+func TestReportBuildUnimplementedIsReportedAsAGap(t *testing.T) {
 	fake := &fakeBuildService{
 		report: func(context.Context, *kelsonv1alpha1.ReportBuildRequest) (*kelsonv1alpha1.ReportBuildResponse, error) {
 			cerr := connect.NewError(connect.CodeUnimplemented,
-				errors.New("kelson accepts this report's images but has nowhere to send them"))
+				errors.New("kelson-server: server-side preview publishing is not implemented"))
 			detail, err := connect.NewErrorDetail(&kelsonv1alpha1.Error{
 				Code:        "delivery/not-implemented",
-				Message:     "Environment.spec.autoDeploy is not in the model yet",
-				Remediation: "this capability returns with issue #248",
+				Message:     "this server was started without a preview publisher",
+				Remediation: "publish from CI with `kelson preview publish` instead",
 			})
 			if err != nil {
 				t.Fatalf("building the error detail: %v", err)
@@ -179,9 +179,9 @@ func TestReportBuildRefOnlyIsReportedAsAGap(t *testing.T) {
 		t.Errorf("an unimplemented half reads as a pipeline mistake: %s", msg)
 	}
 	for _, want := range []string{
-		"nowhere to send them",
+		"server-side preview publishing is not implemented",
 		"delivery/not-implemented",
-		"issue #248",
+		"kelson preview publish",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("the server's own answer did not ride through: %q missing from %s", want, msg)

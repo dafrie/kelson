@@ -108,25 +108,12 @@ var notImplementedFields = []notImplemented{
 		What:      "human deployer lists",
 		TrackedBy: "milestone M11 · Teams, RBAC & multi-tenancy",
 	},
-	{
-		Kind: KindEnvironment,
-		Path: "$.spec.autoDeploy",
-		What: "following a source — a push re-rendering and republishing this environment",
-		// ADR-0036 decisions 1 and 2 are the model's half: the flag, its
-		// two-level precedence, and the stale set a push produces. Both are
-		// resolved (Resolved.AutoDeploy, Resolved.StaleComponents) and neither
-		// is *acted on* yet — the webhook push and the `ReportBuild` half with a
-		// ref and no PR are decision 3, and both still refuse and name #248. An
-		// environment that set the flag today would be tracking nothing and
-		// would never be told, which is the silence this table exists for.
-		TrackedBy: "the autoDeploy trigger paths — ADR-0036 decision 3, issue #248",
-	},
-	{
-		Kind:      KindEnvironment,
-		Path:      "$.spec.components[].autoDeploy",
-		What:      "per-component tracking overrides",
-		TrackedBy: "the autoDeploy trigger paths — ADR-0036 decision 3, issue #248",
-	},
+	// The two `autoDeploy` rows are gone (ADR-0036 decision 3, issue #248). They
+	// were here while the flag resolved and nothing read the answer; the trigger
+	// paths read it now — internal/api's ReportBuild with a ref and no PR, and
+	// internal/forgehttp's `push` — so an environment that sets the flag is
+	// followed rather than silently ignored, which is the only thing this table
+	// was protecting against.
 }
 
 // gateFor returns the gate covering a canonical path for a document kind.

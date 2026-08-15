@@ -143,6 +143,8 @@ var renderedFields = map[string]map[string]string{
 		"$.spec.previews.artifacts.repository": "renderer: the per-preview OCIRepository url in the ResourceSet template",
 		"$.spec.previews.artifacts.secretRef":  "renderer: the per-preview OCIRepository secretRef.name in the ResourceSet template",
 
+		"$.spec.autoDeploy": "resolve → Resolved.AutoDeploy → internal/api's ReportBuild and internal/forgehttp's push: the environment follows its components' sources (ADR-0036)",
+
 		"$.spec.policy.agents":      "internal/api: propose-only refuses every agent mutation server-side (ADR-0025)",
 		"$.spec.policy.require":     "internal/api: require: [dry-run] obliges the server-side dry-run before an agent deploy applies (ADR-0025)",
 		"$.spec.policy.maxReplicas": "internal/api: the replica ceiling an agent deploy is checked against (ADR-0025)",
@@ -173,6 +175,7 @@ var renderedFields = map[string]map[string]string{
 		"$.spec.components[].env.*.from.key":            "renderer: secretKeyRef key, mapped onto the operator's own key names",
 		"$.spec.components[].env.*.secret":              "renderer: secretKeyRef name — the Secret the author names, never read by kelson (ADR-0018)",
 		"$.spec.components[].env.*.key":                 "renderer: secretKeyRef key within that Secret (ADR-0018)",
+		"$.spec.components[].autoDeploy":                "resolve → Resolved.AutoDeploy: this component's own tracking answer, which beats the environment's (ADR-0036 decision 1)",
 		"$.spec.components[].preset":                    "resolve P5 → renderer: the per-environment CNPG topology",
 
 		"$.spec.overlays[].patch":    "renderer: strategic-merge patch against rendered resources",
@@ -303,20 +306,6 @@ spec:
 spec:
   project: p
   policy: {agents: allow, require: [dry-run], deployers: [team]}`,
-
-	KindEnvironment + " $.spec.autoDeploy": `
-spec:
-  project: p
-  autoDeploy: true`,
-
-	// autoDeploy: false is the case worth pinning: the gate is on the field
-	// being *written*, not on the value, because a document that says "do not
-	// track" is still a document whose author believes the flag is read.
-	KindEnvironment + " $.spec.components[].autoDeploy": `
-spec:
-  project: p
-  components:
-    - {name: web, autoDeploy: false}`,
 }
 
 // TestGateTableIsEnforced renders each gated field into a document and demands
