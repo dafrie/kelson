@@ -14,6 +14,8 @@ import (
 
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
 	"github.com/dafrie/kelson/internal/build"
+	"github.com/dafrie/kelson/internal/controlstore"
+	"github.com/dafrie/kelson/internal/delivery"
 )
 
 // BuildService is assembly, like the other handlers: resolve the spec, resolve
@@ -622,5 +624,236 @@ func TestBuildConnectorFailureIsUnavailable(t *testing.T) {
 	_, err := collectBuild(t, c, &kelsonv1alpha1.BuildRequest{Spec: buildSpec(), Environment: "production"})
 	if connect.CodeOf(err) != connect.CodeUnavailable {
 		t.Fatalf("code = %v, want Unavailable (err %v)", connect.CodeOf(err), err)
+	}
+}
+
+// --- ReportBuild ---------------------------------------------------------------
+
+// ReportBuild judges the report in full and then refuses it (ADR-0034 decision
+// 3). The two answers are different codes on purpose, and these tests are what
+// keep them apart: a request kelson would have acted on gets Unimplemented, and
+// one it would not gets InvalidArgument naming the field.
+
+const reportSHA = "9f0a1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2"
+
+// reportProjectDoc is a Project with two components, so a report can name one
+// it declares and one it does not.
+const reportProjectDoc = `apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata: {name: checkout}
+spec:
+  image: ghcr.io/acme/checkout:v1
+  components:
+    - name: web
+      kind: service
+      port: 8080
+    - name: worker
+      kind: worker
+  source:
+    git: https://github.com/acme/checkout
+    ref: main
+`
+
+// reportEnvironmentDoc exists because a report is guarded by agent policy
+// (policy.go files ReportBuild under `deploy`), and policy is a property of the
+// environment — so a stored project with no environments is a spec whose policy
+// cannot be read, which is its own refusal.
+const reportEnvironmentDoc = `apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata: {name: production}
+spec:
+  project: checkout
+`
+
+func reportServer(t *testing.T) clients {
+	t.Helper()
+	specs := newFakeSpecStore()
+	if _, err := specs.Put(t.Context(), "checkout", controlstore.Documents{
+		Project:      []byte(reportProjectDoc),
+		Environments: map[string][]byte{"production": []byte(reportEnvironmentDoc)},
+	}, controlstore.PutOptions{}); err != nil {
+		t.Fatalf("storing the project: %v", err)
+	}
+	return serve(t, Options{Specs: specs})
+}
+
+func reportBuild(t *testing.T, c clients, req *kelsonv1alpha1.ReportBuildRequest) error {
+	t.Helper()
+	_, err := c.builds.ReportBuild(t.Context(), connect.NewRequest(req))
+	return err
+}
+
+func pinnedImage() string {
+	return "ghcr.io/acme/checkout-web@sha256:" + strings.Repeat("a", 64)
+}
+
+// A well-formed report reaches the gate, and the gate is honest about what is
+// missing: Unimplemented tells an agent to stop, where a cheerful `accepted:
+// true` with nothing triggered would tell it to carry on.
+func TestReportBuildIsGatedForAWellFormedReport(t *testing.T) {
+	err := reportBuild(t, reportServer(t), &kelsonv1alpha1.ReportBuildRequest{
+		Project: "checkout",
+		Sha:     reportSHA,
+		Ref:     "refs/heads/main",
+		Images:  map[string]string{"web": pinnedImage()},
+	})
+	if connect.CodeOf(err) != connect.CodeUnimplemented {
+		t.Fatalf("a well-formed report = %v (code %s), want unimplemented", err, connect.CodeOf(err))
+	}
+	if !hasCode(detailCodes(err), string(delivery.ErrNotImplemented)) {
+		t.Errorf("the refusal does not carry %s: %v", delivery.ErrNotImplemented, detailCodes(err))
+	}
+	// The slot names where the answer changes, which is what makes a gated
+	// capability findable rather than a dead end.
+	if !strings.Contains(err.Error(), "ADR-0034") {
+		t.Errorf("the refusal does not name the pipeline it is waiting for: %v", err)
+	}
+}
+
+// A pipeline author must learn what is wrong with their report *now*, not on
+// the day the slot is filled.
+func TestReportBuildValidatesBeforeItRefuses(t *testing.T) {
+	cases := []struct {
+		name    string
+		req     *kelsonv1alpha1.ReportBuildRequest
+		code    string
+		wantsIn string
+	}{{
+		name:    "an abbreviated commit",
+		req:     &kelsonv1alpha1.ReportBuildRequest{Project: "checkout", Sha: "9f0a1b2", Images: map[string]string{"web": pinnedImage()}},
+		code:    ErrReportShaInvalid,
+		wantsIn: "40-character",
+	}, {
+		name:    "no commit at all",
+		req:     &kelsonv1alpha1.ReportBuildRequest{Project: "checkout", Images: map[string]string{"web": pinnedImage()}},
+		code:    ErrReportShaInvalid,
+		wantsIn: "join key",
+	}, {
+		name:    "no images",
+		req:     &kelsonv1alpha1.ReportBuildRequest{Project: "checkout", Sha: reportSHA},
+		code:    ErrReportNoImages,
+		wantsIn: "names no images",
+	}, {
+		// The one guarantee the build plane exists to provide, and the one path
+		// where the image comes from outside (#51, ADR-0010).
+		name: "an image pinned by tag",
+		req: &kelsonv1alpha1.ReportBuildRequest{Project: "checkout", Sha: reportSHA,
+			Images: map[string]string{"web": "ghcr.io/acme/checkout-web:latest"}},
+		code:    ErrReportImageNotPinned,
+		wantsIn: "not pinned by digest",
+	}, {
+		name: "an empty image reference",
+		req: &kelsonv1alpha1.ReportBuildRequest{Project: "checkout", Sha: reportSHA,
+			Images: map[string]string{"web": ""}},
+		code:    ErrReportImageNotPinned,
+		wantsIn: "empty image reference",
+	}, {
+		// The proto asks for this by name: a key the Project does not declare
+		// is an error naming it, not a silent drop.
+		name: "a component the Project does not declare",
+		req: &kelsonv1alpha1.ReportBuildRequest{Project: "checkout", Sha: reportSHA,
+			Images: map[string]string{"api": pinnedImage()}},
+		code:    ErrReportUnknownComponent,
+		wantsIn: "declares no component",
+	}}
+
+	c := reportServer(t)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := reportBuild(t, c, tc.req)
+			if connect.CodeOf(err) != connect.CodeInvalidArgument {
+				t.Fatalf("err = %v (code %s), want invalid-argument", err, connect.CodeOf(err))
+			}
+			if !hasCode(detailCodes(err), tc.code) {
+				t.Errorf("the refusal carries %v, want %s", detailCodes(err), tc.code)
+			}
+			if !strings.Contains(err.Error(), tc.wantsIn) {
+				t.Errorf("the refusal does not say %q: %v", tc.wantsIn, err)
+			}
+		})
+	}
+}
+
+// The reverse of the component check is not an error: a component the Project
+// declares and the report omits keeps whatever the spec resolves for it, so a
+// partial report is a partial pin rather than a broken render.
+func TestReportBuildAcceptsAPartialReport(t *testing.T) {
+	err := reportBuild(t, reportServer(t), &kelsonv1alpha1.ReportBuildRequest{
+		Project: "checkout",
+		Sha:     reportSHA,
+		Images:  map[string]string{"web": pinnedImage()},
+	})
+	if connect.CodeOf(err) != connect.CodeUnimplemented {
+		t.Fatalf("a report naming one of two components = %v (code %s), want unimplemented", err, connect.CodeOf(err))
+	}
+}
+
+func TestReportBuildRefusesAnUnknownProject(t *testing.T) {
+	err := reportBuild(t, reportServer(t), &kelsonv1alpha1.ReportBuildRequest{
+		Project: "nowhere",
+		Sha:     reportSHA,
+		Images:  map[string]string{"web": pinnedImage()},
+	})
+	if connect.CodeOf(err) != connect.CodeNotFound {
+		t.Fatalf("a report for a project that does not exist = %v (code %s), want not-found", err, connect.CodeOf(err))
+	}
+}
+
+// A report with two bad images always names the same one first: a refusal that
+// varied with Go's map order is one nobody can fix twice the same way.
+func TestReportBuildRefusalIsDeterministic(t *testing.T) {
+	c := reportServer(t)
+	req := &kelsonv1alpha1.ReportBuildRequest{Project: "checkout", Sha: reportSHA, Images: map[string]string{
+		"web":    "ghcr.io/acme/checkout-web:latest",
+		"worker": "ghcr.io/acme/checkout-worker:latest",
+	}}
+	first := reportBuild(t, c, req).Error()
+	for range 20 {
+		if got := reportBuild(t, c, req).Error(); got != first {
+			t.Fatalf("the refusal changed between identical requests:\n %s\n %s", first, got)
+		}
+	}
+	if !strings.Contains(first, `"web"`) {
+		t.Errorf("the refusal reads %q, want the alphabetically first component named", first)
+	}
+}
+
+// A report is a deploy that CI starts, so a propose-only environment refuses
+// it — policy.go files ReportBuild under `deploy` and explains at length why
+// `build` would be precisely wrong. This is the test that makes that comment
+// true: the report names no environment, so every stored environment of the
+// project gets a say, and production's propose-only is the one that answers.
+func TestReportBuildIsRefusedByProposeOnly(t *testing.T) {
+	g := policyServer(t, Options{})
+	agent := g.as(g.mint(t, "ci", controlstore.Scope{
+		Operations: []controlstore.Operation{controlstore.OpMutate},
+	}))
+
+	err := reportBuild(t, agent, &kelsonv1alpha1.ReportBuildRequest{
+		Project: "shop",
+		Sha:     reportSHA,
+		Images:  map[string]string{"web": pinnedImage()},
+	})
+	if connect.CodeOf(err) != connect.CodePermissionDenied {
+		t.Fatalf("a report into a propose-only project = %v (code %s), want permission-denied",
+			err, connect.CodeOf(err))
+	}
+	if !hasCode(detailCodes(err), ErrPolicyProposeOnly) {
+		t.Errorf("the refusal carries %v, want %s", detailCodes(err), ErrPolicyProposeOnly)
+	}
+}
+
+// And a human is never refused by agent policy, which is the other half of
+// ADR-0025's criterion: the report reaches the gate and is refused for the
+// honest reason instead.
+func TestReportBuildFromAHumanReachesTheGate(t *testing.T) {
+	g := policyServer(t, Options{})
+	err := reportBuild(t, g.as(testPassword), &kelsonv1alpha1.ReportBuildRequest{
+		Project: "shop",
+		Sha:     reportSHA,
+		Images:  map[string]string{"web": pinnedImage()},
+	})
+	if connect.CodeOf(err) != connect.CodeUnimplemented {
+		t.Fatalf("a human's report = %v (code %s), want unimplemented", err, connect.CodeOf(err))
 	}
 }

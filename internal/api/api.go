@@ -72,6 +72,8 @@ import (
 	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/delivery/flux"
 	"github.com/dafrie/kelson/internal/diff"
+	"github.com/dafrie/kelson/internal/forge"
+	"github.com/dafrie/kelson/internal/model"
 	"github.com/dafrie/kelson/internal/observation"
 	"github.com/dafrie/kelson/internal/secret"
 )
@@ -98,6 +100,49 @@ type SpecStore interface {
 
 // The Environment-status seam is [EnvironmentStore] in environment.go, beside
 // the projection that turns a status into the wire's phases and transitions.
+
+// GitConnectionStore is the forge-connection seam (ADR-0033 decision 1, issue
+// #248). *controlstore.GitConnectionStore implements it.
+//
+// Note what is *not* on it: there is no method here that returns a credential.
+// Reading the Secret a connection references is [ConnectionSecretReader], a
+// separate interface held in a separate field, so the handlers that list and
+// show connections cannot reach the material even by mistake — which is
+// gitconnection.proto's "no RPC in this file can carry a credential value"
+// enforced by the type system rather than by remembering.
+type GitConnectionStore interface {
+	List(ctx context.Context) ([]controlstore.StoredConnection, error)
+	Get(ctx context.Context, name string) (controlstore.StoredConnection, error)
+	Create(ctx context.Context, name string, spec model.GitConnectionSpec, opts controlstore.CreateConnectionOptions) (controlstore.StoredConnection, error)
+	Delete(ctx context.Context, name string, opts controlstore.DeleteConnectionOptions) error
+	UpdateStatus(ctx context.Context, name string, obs controlstore.ConnectionObservation) (controlstore.StoredConnection, error)
+}
+
+// ConnectionSecretReader is the one seam that opens a connection's Secret. Only
+// TestConnection holds it, and what it does with the material is make an
+// outbound call to the forge — the values never come back to a client, because
+// no message in the schema has a field they would fit in.
+type ConnectionSecretReader interface {
+	ReadAuthSecret(ctx context.Context, conn controlstore.StoredConnection) (controlstore.AuthMaterial, error)
+}
+
+// ConnectionStore is what cmd/kelson-server supplies: one object, both halves.
+// [Server] splits it into the two narrowed fields above on the way in, so the
+// narrowing is a property of the handlers rather than of the wiring.
+type ConnectionStore interface {
+	GitConnectionStore
+	ConnectionSecretReader
+}
+
+// ForgeLookup resolves a connection's `spec.provider` to the adapter that
+// speaks it. Nil selects forge.For, internal/forge's own registry.
+//
+// It is a seam for the reason every cluster-facing capability here is one: the
+// production adapters make HTTPS calls, and a handler test that had to stand up
+// an httptest forge to reach the "this provider has no repository browser"
+// branch would be testing the adapter rather than the handler (ADR-0033
+// decision 3's degradation path is exactly what needs covering).
+type ForgeLookup func(provider string) (forge.Provider, bool)
 
 // AgentStore is the agent-identity seam (issue #74, ADR-0024).
 // *controlstore.AgentStore implements it. A nil one is a server with no agent
@@ -324,6 +369,15 @@ type Options struct {
 	Secrets      SecretStore
 	Agents       AgentStore
 
+	// Connections is the GitConnection store behind GitConnectionService
+	// (ADR-0033). A nil one is a server that holds no forge credentials: every
+	// RPC of that service answers CodeUnimplemented, which is the pre-#248
+	// posture exactly.
+	Connections ConnectionStore
+	// Forges overrides the adapter registry TestConnection probes through.
+	// Nil selects forge.For, which is what production wants.
+	Forges ForgeLookup
+
 	// Install builds the platform-component installer (issue #60, ADR-0021);
 	// the seam behind InstallService. Nil answers unimplemented.
 	Install InstallConnector
@@ -361,7 +415,7 @@ type Options struct {
 	WatchInterval time.Duration
 }
 
-// Server implements all fourteen kelson.v1alpha1 services.
+// Server implements all fifteen kelson.v1alpha1 services.
 type Server struct {
 	specs        SpecStore
 	environments EnvironmentStore
@@ -374,6 +428,15 @@ type Server struct {
 	agents       AgentStore
 	install      InstallConnector
 	nodes        NodeReader
+
+	// connections and connectionSecrets are one store seen through two
+	// interfaces. The split is load-bearing: List and Get reach for
+	// `connections`, which has no method that returns credential material, so
+	// the no-secret-on-the-wire promise holds structurally rather than by
+	// review (ADR-0033 decision 1, gitconnection.proto's header).
+	connections       GitConnectionStore
+	connectionSecrets ConnectionSecretReader
+	forges            ForgeLookup
 
 	// authz is the scope, rate-limit and audit interceptor. It is built here
 	// and mounted by Register so no caller can serve these handlers without it
@@ -412,6 +475,8 @@ var (
 	_ kelsonv1alpha1connect.AuditServiceHandler   = (*Server)(nil)
 	_ kelsonv1alpha1connect.InstallServiceHandler = (*Server)(nil)
 	_ kelsonv1alpha1connect.NodeServiceHandler    = (*Server)(nil)
+
+	_ kelsonv1alpha1connect.GitConnectionServiceHandler = (*Server)(nil)
 )
 
 // New returns a Server over the given seams.
@@ -428,6 +493,7 @@ func New(opts Options) *Server {
 		agents:        opts.Agents,
 		install:       opts.Install,
 		nodes:         opts.Nodes,
+		forges:        opts.Forges,
 		authz:         newAuthorizer(opts.Now, opts.Logger, opts.Audit),
 		buildDefaults: opts.BuildDefaults,
 		deployTimeout: opts.DeployTimeout,
@@ -438,6 +504,13 @@ func New(opts Options) *Server {
 	}
 	if s.pollInterval <= 0 {
 		s.pollInterval = DefaultPollInterval
+	}
+	// One store, two narrowed views. Assigning the same value twice is the
+	// point: what a handler can do with it is decided by which field it reads,
+	// and no handler holds the wide interface.
+	if opts.Connections != nil {
+		s.connections = opts.Connections
+		s.connectionSecrets = opts.Connections
 	}
 	s.audit = s.authz.audit
 	s.events = newBroker(s.observeScope, opts.WatchInterval, watchRingSize)
@@ -469,6 +542,7 @@ func (s *Server) Register(mux *http.ServeMux, opts ...connect.HandlerOption) {
 		func() (string, http.Handler) { return kelsonv1alpha1connect.NewAuditServiceHandler(s, opts...) },
 		func() (string, http.Handler) { return kelsonv1alpha1connect.NewInstallServiceHandler(s, opts...) },
 		func() (string, http.Handler) { return kelsonv1alpha1connect.NewNodeServiceHandler(s, opts...) },
+		func() (string, http.Handler) { return kelsonv1alpha1connect.NewGitConnectionServiceHandler(s, opts...) },
 	}
 	for _, build := range handlers {
 		mux.Handle(build())
