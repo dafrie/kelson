@@ -22,14 +22,22 @@
 // chose artifact-per-PR: what runs in a preview is a thing kelson rendered, not
 // a thing a controller templated.
 //
-// # Where it runs
+// # Where it runs: two callers now, and the server is one of them
 //
-// In the application repository's CI, on pull request events, as
-// `kelson preview publish` (ADR-0017, "Stage 2"). That is where the checkout of
-// the pull request ref and the freshly built image both already exist, and
-// where the registry credential already is. The kelson server may grow a Publish
-// RPC later; it is not needed for the flow to work, and a server that polled
-// forges would duplicate the ResourceSetInputProvider that is already running.
+// ADR-0017 decision 8 put the publisher in the application repository's CI, as
+// `kelson preview publish`, because that is where the checkout, the fresh image
+// and the registry credential already were — and deferred rather than rejected
+// a server-side caller, promising it "will call the same package this CLI verb
+// calls".
+//
+// [ADR-0034](docs/adr/0034-forge-driven-delivery.md) decision 3 calls it in.
+// `BuildService.ReportBuild` is CI saying "I built the image, here is where it
+// is", and the server answers it by rendering and publishing here — with the
+// reported digests as [Options.Images]. [Publisher] is that composition;
+// nothing about the render, the package or the tag differs between the two
+// callers, which is the whole reason the deferral was cheap. `kelson preview
+// publish` survives unchanged for pipelines that cannot reach a kelson server
+// at all, demoted from the recommended path to the escape hatch.
 //
 // # Where the publisher lives
 //
