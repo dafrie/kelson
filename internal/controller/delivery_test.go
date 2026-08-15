@@ -140,8 +140,11 @@ func TestDeliverPublishesAndEnsures(t *testing.T) {
 	if out.Digest == "" || !strings.HasPrefix(out.Digest, "sha256:") {
 		t.Errorf("digest = %q, want the artifact's own digest", out.Digest)
 	}
-	if len(out.Images) == 0 || out.Images[0] != "ghcr.io/acme/checkout:1.0.0" {
-		t.Errorf("images = %v, want what the spec resolved to", out.Images)
+	// Each image is recorded under the component that resolved it, which is
+	// what makes a promotion a lookup instead of a repository match.
+	if len(out.Images) != 1 || out.Images[0].Component != "web" ||
+		out.Images[0].Image != "ghcr.io/acme/checkout:1.0.0" {
+		t.Errorf("images = %+v, want what the spec resolved to, named by component", out.Images)
 	}
 	// Nothing has been reconciled yet, so the honest phase is Committed.
 	if out.Phase != v1alpha1.PhaseCommitted {

@@ -8,29 +8,35 @@ import { ErrorPanel } from "../components/ErrorPanel";
 import { StatusPill } from "../components/StatusPill";
 import { phaseToStatus } from "../components/phase";
 import { EmptyState, LoadingState } from "../components/States";
-import { formatWhen, shortSpecHash } from "./history";
+import { formatWhen, shortHash } from "./history";
 
 /**
  * The release history: what was deployed to this environment, newest first.
  *
  * # What this screen can say, and what it refuses to
  *
- * `DeployService.History` returns five strings per revision — revision, spec
- * hash, committed-at, message, author — and the screen shows those five and
- * derives nothing beyond them (see ./history.ts, which holds the derivations and
- * the reasons each one is conservative). Under the rebuilt delivery spine
- * (ADR-0028), `message` is where the outcome, the digest and the images the
- * revision resolved to travel — `HistoryEntry` has no field of its own for any
- * of them yet — so it is rendered as the server's own prose, unparsed. Two
- * absences still shape the layout and are stated on the screen rather than
+ * `DeployService.History` returns eight fields per revision — revision, spec
+ * hash, committed-at, message, author, digest, images and outcome — and the
+ * screen shows what it can of those and derives nothing beyond them (see
+ * ./history.ts, which holds the derivations and the reasons each one is
+ * conservative). The outcome, the digest and the images used to travel as prose
+ * inside `message` because `HistoryEntry` had no field for any of them; they
+ * have fields now, and this screen reads the fields. `message` is not rendered
+ * at all — the server keeps filling it for one release for clients built
+ * against the older schema, and showing prose beside the same facts in fields
+ * would be saying everything twice.
+ *
+ * Two limits still shape the layout and are stated on the screen rather than
  * papered over:
  *
- *  1. **`message`'s outcome is a snapshot, not a live answer.** It is what was
- *     true when the entry was captured, and nothing refreshes it afterwards. So
- *     the phase pill — the same vocabulary as everywhere else — appears on
- *     exactly one row: the revision `DeployService.Status` reports as live,
- *     which is the only revision anything can currently answer *for right now*.
- *     A green pill down the whole column would be an invention.
+ *  1. **A recorded outcome is a snapshot, not a live answer.** `outcome` is what
+ *     the controller recorded when that revision stopped being the current one,
+ *     and nothing refreshes it afterwards. So it is shown on every row as a
+ *     record — labelled "recorded", in the muted meta line — while the phase
+ *     pill, the same vocabulary as everywhere else, appears on exactly one row:
+ *     the revision `DeployService.Status` reports as live, which is the only
+ *     revision anything can currently answer *for right now*. A live-looking
+ *     pill down the whole column would be an invention.
  *  2. **No author yet.** The spine records who deployed nothing
  *     (`internal/api`'s `History`), human or agent, so every entry reads
  *     "unattributed" and the note says why rather than guessing. That
@@ -115,9 +121,9 @@ export function HistoryPage() {
       <p className="k-note">
         Every revision kelson published to this environment, newest first. Each
         one is an immutable artifact tagged with the generation that produced it
-        and a short hash of the spec that rendered it; the message underneath is
-        what the controller recorded about it — the outcome at the time, the
-        artifact digest, the images it resolved to.
+        and a short hash of the spec that rendered it; underneath is what the
+        controller recorded about it — the outcome at the time, the artifact
+        digest, and the image each component resolved to.
       </p>
 
       {/* Promotion is the one action here that is not about a revision in this
@@ -194,7 +200,7 @@ export function HistoryPage() {
                   ? "reading which revision is live…"
                   : liveRevision === ""
                     ? "no “deployed now” marker: the server reports no live revision for this environment"
-                    : "the phase pill is the live revision’s current state — recorded history holds no outcome for the revisions above it"}
+                    : "the phase pill is the live revision’s state right now; each row’s recorded outcome is what the controller saw when that revision stopped being the current one"}
             </p>
             <p className="k-mono k-timeline__note">
               kelson does not record who deployed yet, human or agent (
@@ -248,8 +254,19 @@ function Revision({
 
       <div className="k-timeline__meta k-mono">
         {when !== "" ? <span>{when}</span> : null}
+        {/* The recorded outcome is prefixed rather than shown as a pill, so it
+            cannot be mistaken for the live one above it: it says how that
+            deployment ended, not how it is. */}
+        {entry.outcome !== "" ? (
+          <span title="the delivery phase the controller recorded for this revision; it is frozen once a newer revision takes over">
+            recorded {entry.outcome.toLowerCase()}
+          </span>
+        ) : null}
         {entry.specHash !== "" ? (
-          <span title={entry.specHash}>spec {shortSpecHash(entry.specHash)}</span>
+          <span title={entry.specHash}>spec {shortHash(entry.specHash)}</span>
+        ) : null}
+        {entry.digest !== "" ? (
+          <span title={entry.digest}>artifact {shortHash(entry.digest)}</span>
         ) : null}
         <span
           className={
@@ -265,8 +282,24 @@ function Revision({
         </span>
       </div>
 
-      {entry.message !== "" ? (
-        <p className="k-timeline__message">{entry.message}</p>
+      {/* Each image under the component that resolved it, which is what the
+          controller recorded (ADR-0028 decision 4). A component name is absent
+          only on an entry recorded before it did that, and the image then
+          stands alone rather than under a guessed label. */}
+      {entry.images.length > 0 ? (
+        <div className="k-timeline__images k-mono">
+          {entry.images.map((image) => (
+            <div
+              className="k-timeline__image"
+              key={`${image.component} ${image.image}`}
+            >
+              {image.component !== "" ? (
+                <span className="k-timeline__component">{image.component}</span>
+              ) : null}
+              <span>{image.image}</span>
+            </div>
+          ))}
+        </div>
       ) : null}
 
       <div className="k-timeline__actions">

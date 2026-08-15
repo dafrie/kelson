@@ -273,14 +273,20 @@ func (d *FluxDeliverer) observe(ctx context.Context, rev Revision, revision, dig
 // images is what this revision resolved to, in component order: the answer to
 // "which build is in production", and what a promotion reads (ADR-0016
 // decision 2).
-func images(rev Revision) []string {
+//
+// The component name is recorded beside the image because this is the one place
+// where it is known for certain. Everything downstream — the promotion in
+// particular — used to re-derive it by matching image repositories, which is
+// ambiguous whenever two components share a repository and wrong whenever the
+// component list has changed since the revision was published.
+func images(rev Revision) []v1alpha1.ComponentImage {
 	if rev.Resolved == nil {
 		return nil
 	}
-	out := make([]string, 0, len(rev.Resolved.Components))
+	out := make([]v1alpha1.ComponentImage, 0, len(rev.Resolved.Components))
 	for _, c := range rev.Resolved.Components {
 		if c.Image != "" {
-			out = append(out, c.Image)
+			out = append(out, v1alpha1.ComponentImage{Component: c.Name, Image: c.Image})
 		}
 	}
 	if len(out) == 0 {

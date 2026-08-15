@@ -516,9 +516,23 @@ func (h *harness) assertHistoryEntry(entry v1alpha1.HistoryEntry, revision, imag
 		h.t.Errorf("history entry %s carries spec hash %q, which is too short to name a revision by",
 			revision, entry.SpecHash)
 	}
+	// The attributed list is the record: which component ran which build, so a
+	// promotion reads the answer instead of inferring it from the image
+	// repository. The spine fixture declares exactly one component, so exactly
+	// one pair is expected, under that component's name.
+	if len(entry.ComponentImages) != 1 ||
+		entry.ComponentImages[0].Component != spineComponent ||
+		entry.ComponentImages[0].Image != image {
+		h.t.Errorf("history entry %s records componentImages %+v, want %s running %q — "+
+			"`which build is in production` is what this field answers",
+			revision, entry.ComponentImages, spineComponent, image)
+	}
+	// The deprecated flat mirror is still written for one release, and is still
+	// the same images: a reader on the old shape must not silently see less.
+	//nolint:staticcheck // asserting the deprecated mirror is the point of this block.
 	if !containsString(entry.Images, image) {
-		h.t.Errorf("history entry %s records images %v, which does not include %q — "+
-			"`which build is in production` is what this field answers", revision, entry.Images, image)
+		h.t.Errorf("history entry %s records images %v, which does not include %q",
+			revision, entry.Images, image)
 	}
 }
 

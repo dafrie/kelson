@@ -14,10 +14,11 @@ import { HistoryPage } from "./HistoryPage";
  * rollback link to the revision already deployed.
  *
  * The fixtures use the shapes the rebuilt delivery spine actually sends
- * (ADR-0028, R2 #225): a revision id of `<generation>-<hash8>`, and a message
- * that carries the outcome, the digest and the images inline
- * (`internal/api`'s `revisionSummary`), because `HistoryEntry` has no fields
- * of its own for any of them yet.
+ * (ADR-0028, R2 #225): a revision id of `<generation>-<hash8>`, and the
+ * outcome, the digest and the images in fields of their own. Every entry also
+ * carries the deprecated `message` the server still fills for older clients,
+ * spelled as something the screen must never show — reading it back would be
+ * re-introducing the prose parsing the fields removed.
  */
 
 const ENTRIES = [
@@ -25,22 +26,36 @@ const ENTRIES = [
     revision: "4-b2c3d4e5",
     specHash: `sha256:${"c".repeat(64)}`,
     committedAt: "2026-08-13T10:04:05Z",
-    message: "Healthy · serving · sha256:deadbeef · ghcr.io/acme/hello:1.4.2",
+    message: "prose the screen must not render",
     author: "",
+    outcome: "Healthy",
+    digest: `sha256:${"d".repeat(64)}`,
+    images: [{ component: "web", image: "ghcr.io/acme/hello:1.4.2" }],
   },
   {
     revision: "3-9f0a1b2c",
     specHash: `sha256:${"b".repeat(64)}`,
     committedAt: "2026-08-12T09:00:00Z",
-    message: "Healthy · sha256:cafefeed · ghcr.io/acme/hello:1.4.1",
+    message: "prose the screen must not render",
     author: "",
+    outcome: "Healthy",
+    digest: `sha256:${"e".repeat(64)}`,
+    images: [
+      { component: "web", image: "ghcr.io/acme/hello:1.4.1" },
+      { component: "worker", image: "ghcr.io/acme/worker:1.4.1" },
+    ],
   },
   {
+    // An entry the controller recorded before it attributed images: the image
+    // arrives with no component claimed for it.
     revision: "2-1a2b3c4d",
     specHash: `sha256:${"a".repeat(64)}`,
     committedAt: "2026-08-11T08:00:00Z",
-    message: "Rejected · sha256:aaaabbbb · ghcr.io/acme/hello:1.4.0",
+    message: "prose the screen must not render",
     author: "",
+    outcome: "Rejected",
+    digest: "",
+    images: [{ component: "", image: "ghcr.io/acme/hello:1.4.0" }],
   },
 ];
 
@@ -105,10 +120,42 @@ describe("HistoryPage", () => {
     const newest = await row("4-b2c3d4e5");
     expect(newest.textContent).toContain("2026-08-13 10:04:05Z");
     expect(newest.textContent).toContain(`spec sha256:${"c".repeat(12)}`);
-    // The outcome, digest and images ride in `message` and are shown verbatim.
-    expect(newest.textContent).toContain(
-      "Healthy · serving · sha256:deadbeef · ghcr.io/acme/hello:1.4.2",
+    // The outcome, the digest and the images are fields, each shown as itself.
+    expect(newest.textContent).toContain("recorded healthy");
+    expect(newest.textContent).toContain(`artifact sha256:${"d".repeat(12)}`);
+    expect(newest.textContent).toContain("ghcr.io/acme/hello:1.4.2");
+    // And `message` is not a source for any of it.
+    expect(screen.queryByText(/prose the screen must not render/)).toBeNull();
+  });
+
+  it("names the component each image belongs to, and claims none when the record does not", async () => {
+    renderHistory();
+
+    // Two components, each under its own name: the controller recorded the
+    // pair, so the screen does not have to infer one.
+    const attributed = await row("3-9f0a1b2c");
+    expect(within(attributed).getByText("web")).toBeTruthy();
+    expect(within(attributed).getByText("worker")).toBeTruthy();
+    expect(attributed.textContent).toContain("ghcr.io/acme/worker:1.4.1");
+
+    // A pre-attribution entry shows the image alone rather than under a
+    // fabricated label.
+    const unattributed = await row("2-1a2b3c4d");
+    expect(unattributed.textContent).toContain("ghcr.io/acme/hello:1.4.0");
+    expect(within(unattributed).queryByText("web")).toBeNull();
+  });
+
+  it("shows a recorded outcome on every row without claiming it is live", async () => {
+    renderHistory({ live: "3-9f0a1b2c", phase: "Healthy" });
+
+    // Every row says what was recorded, including one that ended badly...
+    expect((await row("2-1a2b3c4d")).textContent).toContain(
+      "recorded rejected",
     );
+    // ...but only the live row carries a phase pill, because only that one has
+    // an answer for right now.
+    await waitFor(() => expect(screen.getAllByText("deployed now")).toHaveLength(1));
+    expect(document.querySelectorAll(".k-pill")).toHaveLength(1);
   });
 
   it("puts the phase pill only on the revision Status reports as live", async () => {
@@ -125,9 +172,9 @@ describe("HistoryPage", () => {
     );
     expect(within(live).getByText("healthy")).toBeTruthy();
 
-    // Every other revision gets no health claim of any kind, even though its
-    // own message happens to carry an outcome word too — that word is a
-    // snapshot from when it was captured, not a live answer.
+    // Every other revision gets no live claim of any kind, even though it
+    // carries a recorded outcome of its own — that is a snapshot from when it
+    // was captured, not a live answer.
     expect(within(await row("4-b2c3d4e5")).queryByText("deployed now"))
       .toBeNull();
     expect(screen.getAllByText("deployed now")).toHaveLength(1);

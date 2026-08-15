@@ -162,8 +162,32 @@ message HistoryEntry {
   string revision = 1;
   string spec_hash = 2;
   string committed_at = 3;
+  // Message is the same facts as `digest`, `images` and `outcome` rendered as
+  // prose ("Healthy · serving · sha256:… · ghcr.io/acme/hello:1.4.2"). It was
+  // the only carrier before those fields existed, so the server keeps filling
+  // it for one release to keep clients built against the older schema working;
+  // a client reading this schema must read the fields and never parse this.
   string message = 4;
   string author = 5;
+  // Digest is the artifact's OCI digest, sha256:… — what was published, as
+  // opposed to where it was published. A tag is written once and never
+  // rewritten, so the tag and the digest agree forever; the digest proves it.
+  string digest = 6;
+  // Images are the container images this revision resolved to, each named with
+  // the component it belongs to. The component is empty only for an entry the
+  // controller recorded before it attributed images per component.
+  repeated ComponentImage images = 7;
+  // Outcome is the delivery phase this revision reached, the same
+  // delivery.Phase spelling `Transition.phase` and `StatusResponse.phase`
+  // carry. It is frozen once a newer revision takes over, so it says how that
+  // deployment ended rather than what it looked like a second in.
+  string outcome = 8;
+}
+
+// ComponentImage is one component and the image it resolved to.
+message ComponentImage {
+  string component = 1;
+  string image = 2;
 }
 
 // Promotion (issue #11, ADR-0016 decision 2). Promoting is reading the digest

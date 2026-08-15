@@ -224,33 +224,53 @@ func (s *Server) deployedImages(ctx context.Context, project *model.Project, sou
 	if len(errs) > 0 {
 		return "", nil, errs
 	}
-	return running.Revision, attributeImages(resolved, running.Images), nil
+	return running.Revision, attributeImages(resolved, running), nil
 }
 
 // attributeImages says which component each image of a recorded revision
 // belongs to.
 //
-// # Why this is not a zip, and why it is not a guess either
+// # It is read, not derived
 //
-// `status.history[].images` is a list of image references "in component order"
-// with the imageless components left out (internal/controller's images()), so
-// position alone cannot name a component: a component added or removed since
-// that revision shifts everything after it, and a promotion that mis-attributed
-// an image would pin production to the wrong build — the one failure mode this
-// whole path exists to prevent.
+// `status.history[].componentImages` records the component name beside each
+// image, written by the controller at the moment the revision was rendered,
+// where the name is a fact rather than an inference (ADR-0028 decision 4). So
+// the ordinary answer is a copy: no matching, no ambiguity, and a component
+// whose image the revision genuinely did not carry stays absent — promote.Plan
+// turns that into a skip with a reason (promote/not-in-revision), and skipping
+// is never silent.
 //
-// So the correlation is the image *repository*, which survives a tag change and
-// is what actually identifies "the same thing, a different build". The
-// positional pairing is used only where it agrees with the repository, and a
-// component whose repository matches no image, or matches more than one, is
-// simply absent — promote.Plan turns that into a skip with a reason
-// (promote/not-in-revision), and skipping is never silent.
+// # The fallback, and why it is only a fallback
 //
-// This is a re-derivation of something the spine could record directly. A
-// component name on the history entry would make it exact, and that is a change
-// to the custom resource and the controller that writes it — recorded here as
-// the reason this function is more careful than it should have to be.
-func attributeImages(resolved *model.Resolved, images []string) map[string]string {
+// An entry recorded before the controller attributed images has the flat
+// `images` list and nothing else: image references "in component order" with the
+// imageless components left out, so position alone cannot name a component — a
+// component added or removed since that revision shifts everything after it,
+// and a promotion that mis-attributed an image would pin production to the
+// wrong build, the one failure mode this whole path exists to prevent. For
+// those entries the correlation is the image *repository*, which survives a tag
+// change and identifies "the same thing, a different build"; the positional
+// pairing is used only where it agrees with the repository, and a component
+// whose repository matches no image, or matches more than one, is left out.
+//
+// The fallback goes away with the deprecated field, once no history mirror
+// still holds an entry written before the upgrade.
+func attributeImages(resolved *model.Resolved, revision controlstore.Revision) map[string]string {
+	if len(revision.ComponentImages) > 0 {
+		out := make(map[string]string, len(revision.ComponentImages))
+		for _, ci := range revision.ComponentImages {
+			if ci.Component != "" && ci.Image != "" {
+				out[ci.Component] = ci.Image
+			}
+		}
+		return out
+	}
+	return attributeImagesByRepository(resolved, revision.Images)
+}
+
+// attributeImagesByRepository is the pre-attribution fallback [attributeImages]
+// documents.
+func attributeImagesByRepository(resolved *model.Resolved, images []string) map[string]string {
 	type candidate struct {
 		name string
 		repo string

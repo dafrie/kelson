@@ -121,12 +121,26 @@ func (c Condition) True() bool { return c.Status == string(conditionTrue) }
 
 // Revision is one entry of the history mirror (ADR-0028 decision 4).
 type Revision struct {
-	Revision  string
-	Digest    string
-	SpecHash  string
-	Images    []string
-	Outcome   string
-	Timestamp time.Time
+	Revision string
+	Digest   string
+	SpecHash string
+	// Images is the flat list, kept for the readers that only need "which
+	// builds ran" — the image-delta correlation in internal/api/explain.go is
+	// one. It is empty exactly when ComponentImages is.
+	Images []string
+	// ComponentImages is the same list with each image named by the component
+	// that resolved it. It is empty for an entry the controller recorded before
+	// it attributed images, which is the one case a reader must still fall back
+	// from (internal/api's attributeImages).
+	ComponentImages []ComponentImage
+	Outcome         string
+	Timestamp       time.Time
+}
+
+// ComponentImage is one component of a revision and the image it resolved to.
+type ComponentImage struct {
+	Component string
+	Image     string
 }
 
 // conditionStatus mirrors metav1.ConditionStatus without exporting it: the api
@@ -411,14 +425,27 @@ func environmentState(project string, env *v1alpha1.Environment) EnvironmentStat
 		})
 	}
 	for _, h := range env.Status.History {
-		state.History = append(state.History, Revision{
-			Revision:  h.Revision,
-			Digest:    h.Digest,
-			SpecHash:  h.SpecHash,
+		r := Revision{
+			Revision: h.Revision,
+			Digest:   h.Digest,
+			SpecHash: h.SpecHash,
+			//nolint:staticcheck // the deprecated mirror is read on purpose: a status written before the upgrade has only this.
 			Images:    h.Images,
 			Outcome:   h.Outcome,
 			Timestamp: h.Timestamp.Time,
-		})
+		}
+		for _, ci := range h.ComponentImages {
+			r.ComponentImages = append(r.ComponentImages, ComponentImage{Component: ci.Component, Image: ci.Image})
+		}
+		// The deprecated flat field is not written by a controller that fills
+		// ComponentImages' successor forever, so it is derived here rather than
+		// trusted: every reader of Images keeps working the day it is removed.
+		if len(r.Images) == 0 && len(r.ComponentImages) > 0 {
+			for _, ci := range r.ComponentImages {
+				r.Images = append(r.Images, ci.Image)
+			}
+		}
+		state.History = append(state.History, r)
 	}
 	for _, e := range env.Status.ValidationErrors {
 		state.ValidationErrors = append(state.ValidationErrors, model.Error{

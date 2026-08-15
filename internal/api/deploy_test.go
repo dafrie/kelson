@@ -513,6 +513,9 @@ func rolledBack(st controlstore.EnvironmentState, annotations map[string]string)
 // newer one — the shape every rollback question is asked against.
 func twoRevisions() controlstore.EnvironmentState {
 	st := healthyEnvironment("hello", "development", "4-b2c3d4e5")
+	// The older entry deliberately carries only the deprecated flat list: it is
+	// what a mirror written before the controller attributed images looks like,
+	// and every reader must keep working against one.
 	st.History = append(st.History, controlstore.Revision{
 		Revision: "3-9f0a1b2c",
 		Digest:   "sha256:deadbeef",
@@ -985,12 +988,28 @@ func TestHistoryReadsTheStatusMirror(t *testing.T) {
 	if entries[0].GetRevision() != "4-b2c3d4e5" {
 		t.Errorf("entries are not newest-first: %+v", entries)
 	}
-	// The outcome, the digest and the images have no field of their own on the
-	// wire, so the message is where they travel. An entry that dropped them
-	// would make the history a list of tags.
-	if !strings.Contains(entries[0].GetMessage(), "Healthy") ||
-		!strings.Contains(entries[0].GetMessage(), "ghcr.io/acme/hello:1.4.2") {
-		t.Errorf("message = %q, want the outcome and the images", entries[0].GetMessage())
+	// The outcome, the digest and the images are fields, so nothing downstream
+	// has to parse them back out of prose. An entry that dropped them would
+	// make the history a list of tags.
+	head := entries[0]
+	if head.GetOutcome() != string(delivery.PhaseHealthy) || head.GetDigest() == "" {
+		t.Errorf("outcome/digest = %q/%q, want the recorded ones", head.GetOutcome(), head.GetDigest())
+	}
+	if len(head.GetImages()) != 1 || head.GetImages()[0].GetComponent() != "web" ||
+		head.GetImages()[0].GetImage() != "ghcr.io/acme/hello:1.4.2" {
+		t.Errorf("images = %v, want the image under the component that resolved it", head.GetImages())
+	}
+	// The older entry's mirror was written before the controller attributed
+	// images: the image still travels, unlabelled rather than guessed at.
+	older := entries[1].GetImages()
+	if len(older) != 1 || older[0].GetComponent() != "" || older[0].GetImage() != "ghcr.io/acme/hello:1.4.1" {
+		t.Errorf("pre-attribution images = %v, want the image with no component claimed", older)
+	}
+	// `message` stays filled for one release, for clients built against the
+	// schema that had nowhere else to put any of this.
+	if !strings.Contains(head.GetMessage(), "Healthy") ||
+		!strings.Contains(head.GetMessage(), "ghcr.io/acme/hello:1.4.2") {
+		t.Errorf("message = %q, want the deprecated prose still populated", head.GetMessage())
 	}
 	if entries[0].GetAuthor() != "" {
 		t.Errorf("author = %q, want empty: the spine records who deployed nothing", entries[0].GetAuthor())

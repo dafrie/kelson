@@ -16,7 +16,7 @@ const promoteDescription = `Pin an environment's images to what another environm
 
 MUTATES THE STORED SPEC when execute=true: writes an image pin per promoted component into the target environment's document and stores it. execute=false (the default) computes the same plan and writes nothing.
 
-A promotion moves what the source environment's *serving* revision actually RAN — read from its recorded history, images matched to components by registry repository — never what its spec merely declares; a component the source's revision does not name is skipped with promote/not-in-revision rather than guessed. The write is stamped kelson.dev/promoted-from so the stored spec says where the pin came from.
+A promotion moves what the source environment's *serving* revision actually RAN — read from its recorded history, where each image is recorded under the component that resolved it — never what its spec merely declares; a component the source's revision does not name is skipped with promote/not-in-revision rather than guessed. The write is stamped kelson.dev/promoted-from so the stored spec says where the pin came from.
 
 Promoting never deploys. The pins land in the stored spec; call deploy against the target environment afterwards to apply them — this tool says so in its own answer when execute=true succeeds.
 

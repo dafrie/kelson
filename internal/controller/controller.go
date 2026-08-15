@@ -248,8 +248,11 @@ type Outcome struct {
 	// than to a freshly published revision.
 	RolledBack bool
 
-	// Images are what this revision resolved to, in component order.
-	Images []string
+	// Images are what this revision resolved to, one entry per component that
+	// resolved one, in component order. The component name is carried rather
+	// than only the image because it is exact here — the resolved spec is in
+	// hand — and can only ever be guessed at downstream.
+	Images []v1alpha1.ComponentImage
 }
 
 // Deliverer performs ADR-0028's steps 4, 5 and 6: push the rendered set as an

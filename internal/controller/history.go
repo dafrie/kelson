@@ -38,12 +38,13 @@ func recordHistory(history []v1alpha1.HistoryEntry, out Outcome, specHash string
 
 	if out.Published {
 		entry := v1alpha1.HistoryEntry{
-			Revision:  out.Revision,
-			Digest:    out.Digest,
-			SpecHash:  specHash,
-			Images:    out.Images,
-			Outcome:   out.Phase,
-			Timestamp: now,
+			Revision:        out.Revision,
+			Digest:          out.Digest,
+			SpecHash:        specHash,
+			Images:          flatImages(out.Images),
+			ComponentImages: out.Images,
+			Outcome:         out.Phase,
+			Timestamp:       now,
 		}
 		// Drop any earlier entry for this revision before prepending, so the
 		// refreshed one keeps the newest-first ordering rather than appearing
@@ -68,6 +69,21 @@ func recordHistory(history []v1alpha1.HistoryEntry, out Outcome, specHash string
 		}
 	}
 	return trimHistory(history)
+}
+
+// flatImages is the deprecated [v1alpha1.HistoryEntry.Images] mirror of the
+// attributed list: the same images, in the same order, with the component names
+// dropped. It is written for one release so a status reader built against the
+// older shape keeps working, and goes away with the field.
+func flatImages(images []v1alpha1.ComponentImage) []string {
+	if len(images) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(images))
+	for _, i := range images {
+		out = append(out, i.Image)
+	}
+	return out
 }
 
 // trimHistory enforces the bound. It is the schema's bound too

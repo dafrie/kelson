@@ -262,10 +262,15 @@ func TestDeliveryStatusFieldsRoundTrip(t *testing.T) {
 		RollbackRevision:   "6-9f0a1b2c",
 		RollbackGeneration: 7,
 		History: []v1alpha1.HistoryEntry{{
-			Revision:  "7-1a2b3c4d",
-			Digest:    "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
-			SpecHash:  "1a2b3c4d5e6f7788990011223344556677889900aabbccddeeff001122334455",
-			Images:    []string{"ghcr.io/acme/checkout@sha256:abc", "ghcr.io/acme/worker:1.2.3"},
+			Revision: "7-1a2b3c4d",
+			Digest:   "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+			SpecHash: "1a2b3c4d5e6f7788990011223344556677889900aabbccddeeff001122334455",
+			//nolint:staticcheck // the deprecated mirror must still round-trip for one release.
+			Images: []string{"ghcr.io/acme/checkout@sha256:abc", "ghcr.io/acme/worker:1.2.3"},
+			ComponentImages: []v1alpha1.ComponentImage{
+				{Component: "web", Image: "ghcr.io/acme/checkout@sha256:abc"},
+				{Component: "worker", Image: "ghcr.io/acme/worker:1.2.3"},
+			},
 			Outcome:   v1alpha1.PhaseHealthy,
 			Timestamp: metav1.NewTime(time.Now().Truncate(time.Second)),
 		}},
@@ -298,8 +303,20 @@ func TestDeliveryStatusFieldsRoundTrip(t *testing.T) {
 	if entry.Outcome != wantEntry.Outcome {
 		t.Errorf("outcome came back as %q; a field with no schema line is pruned silently", entry.Outcome)
 	}
+	//nolint:staticcheck // asserting the deprecated mirror is the point of this block.
 	if len(entry.Images) != 2 || entry.Images[1] != wantEntry.Images[1] {
 		t.Errorf("images came back as %v", entry.Images)
+	}
+	// The attributed list is an object array, which is the shape a structural
+	// schema prunes hardest: a missing property line silently drops the whole
+	// field, and a missing `required` would let a half-pair through.
+	if len(entry.ComponentImages) != 2 {
+		t.Fatalf("componentImages came back as %+v, want both pairs", entry.ComponentImages)
+	}
+	for i, want := range wantEntry.ComponentImages {
+		if entry.ComponentImages[i] != want {
+			t.Errorf("componentImages[%d] = %+v, want %+v", i, entry.ComponentImages[i], want)
+		}
 	}
 	if entry.Timestamp.IsZero() {
 		t.Error("the timestamp was pruned")
@@ -330,13 +347,27 @@ func TestHistoryBoundIsEnforcedByTheAPIServer(t *testing.T) {
 	if err := c.Create(ctx, e); err != nil {
 		t.Fatalf("creating: %v", err)
 	}
+	// The entries carry the attributed images too: a schema addition inside the
+	// item must not be a way to talk the API server out of the bound.
 	for i := range v1alpha1.MaxHistoryEntries + 1 {
-		e.Status.History = append(e.Status.History,
-			v1alpha1.HistoryEntry{Revision: strconv.Itoa(i) + "-1a2b3c4d"})
+		e.Status.History = append(e.Status.History, v1alpha1.HistoryEntry{
+			Revision: strconv.Itoa(i) + "-1a2b3c4d",
+			ComponentImages: []v1alpha1.ComponentImage{
+				{Component: "web", Image: "ghcr.io/acme/checkout:" + strconv.Itoa(i)},
+			},
+		})
 	}
 	if err := c.Status().Update(ctx, e); err == nil {
 		t.Fatalf("the API server accepted %d history entries; maxItems is not enforced",
 			v1alpha1.MaxHistoryEntries+1)
+	}
+
+	// And the bound is the only thing refused: the same shape at the bound is
+	// accepted, so a red test above means the bound and not the new field.
+	e.Status.History = e.Status.History[:v1alpha1.MaxHistoryEntries]
+	if err := c.Status().Update(ctx, e); err != nil {
+		t.Fatalf("the API server refused %d history entries carrying componentImages: %v",
+			v1alpha1.MaxHistoryEntries, err)
 	}
 }
 

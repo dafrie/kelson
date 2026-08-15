@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"strings"
 
 	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
@@ -17,6 +18,12 @@ import (
 // history journal ADR-0027 deleted. Anything older than the mirror's window
 // is still in the registry, immutably, and reading it is a registry query
 // this command does not make.
+//
+// Every column is a field of `HistoryEntry`; none of them is read out of the
+// entry's prose `message`, which the server still fills only for clients built
+// against the schema that had nowhere else to put them. OUTCOME is what the
+// controller recorded when that revision stopped being the current one, so it
+// says how that deployment ended — `kelson status` is what answers for now.
 func newHistoryCmd() *cobra.Command {
 	opts := &historyOptions{}
 	cmd := &cobra.Command{
@@ -68,9 +75,42 @@ func runHistory(cmd *cobra.Command, opts *historyOptions) error {
 		out.printf("no revisions recorded for this environment\n")
 		return out.err
 	}
-	out.printf("%-24s %-24s %s\n", "REVISION", "COMMITTED", "DETAIL")
+	out.printf("%-16s %-22s %-12s %-20s %s\n", "REVISION", "COMMITTED", "OUTCOME", "DIGEST", "IMAGES")
 	for _, e := range entries {
-		out.printf("%-24s %-24s %s\n", e.GetRevision(), orDash(e.GetCommittedAt()), e.GetMessage())
+		out.printf("%-16s %-22s %-12s %-20s %s\n",
+			e.GetRevision(), orDash(e.GetCommittedAt()), orDash(e.GetOutcome()),
+			orDash(shortDigest(e.GetDigest())), orDash(historyImages(e)))
 	}
 	return out.err
+}
+
+// shortDigest is a digest at reading length: sha256:0123456789ab. Only an
+// algorithm:hex spelling is shortened, and only when there is more hex than the
+// short form would show — a value this does not recognise is far likelier to be
+// a format change than something safe to truncate.
+func shortDigest(digest string) string {
+	algorithm, hex, ok := strings.Cut(digest, ":")
+	if !ok || len(hex) <= shortDigestLength {
+		return digest
+	}
+	return algorithm + ":" + hex[:shortDigestLength]
+}
+
+const shortDigestLength = 12
+
+// historyImages is one revision's images, each labelled with the component that
+// resolved it. A component name is missing only on an entry the controller
+// recorded before it attributed images; the image is printed on its own then,
+// rather than under a fabricated label.
+func historyImages(e *kelsonv1alpha1.HistoryEntry) string {
+	images := e.GetImages()
+	parts := make([]string, 0, len(images))
+	for _, i := range images {
+		if component := i.GetComponent(); component != "" {
+			parts = append(parts, component+"="+i.GetImage())
+			continue
+		}
+		parts = append(parts, i.GetImage())
+	}
+	return strings.Join(parts, " ")
 }

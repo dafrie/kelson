@@ -493,11 +493,12 @@ func healthyEnvironment(project, environment, revision string) controlstore.Envi
 			{Type: "Progressing", Status: "False", Reason: "Settled", Message: "nothing is in flight for generation 1", ObservedGeneration: 1},
 		},
 		History: []controlstore.Revision{{
-			Revision: revision,
-			Digest:   "sha256:" + strings.Repeat("a", 8),
-			SpecHash: "sha256:cafebabe",
-			Images:   []string{"ghcr.io/acme/hello:1.4.2"},
-			Outcome:  string(delivery.PhaseHealthy),
+			Revision:        revision,
+			Digest:          "sha256:" + strings.Repeat("a", 8),
+			SpecHash:        "sha256:cafebabe",
+			Images:          []string{"ghcr.io/acme/hello:1.4.2"},
+			ComponentImages: []controlstore.ComponentImage{{Component: "web", Image: "ghcr.io/acme/hello:1.4.2"}},
+			Outcome:         string(delivery.PhaseHealthy),
 		}},
 	}
 }

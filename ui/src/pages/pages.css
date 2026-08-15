@@ -1049,6 +1049,28 @@
   color: var(--kelson-muted-2);
 }
 
+/* The images a revision resolved to, one per line so a component name and its
+   image read as a pair rather than as a run-on list. */
+.k-timeline__images {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--kelson-text-2);
+}
+
+.k-timeline__image {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.k-timeline__component {
+  min-width: 9ch;
+  color: var(--kelson-muted-deep);
+}
+
 .k-timeline__message {
   margin: 8px 0 0;
   font-size: 13px;

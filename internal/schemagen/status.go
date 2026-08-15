@@ -149,12 +149,35 @@ func environmentStatusSchema() omap {
 	historyItem.set("type", "object")
 	historyItem.set("required", []string{"revision"})
 	historyItem.set("properties", omap{
+		{"componentImages", omap{
+			{"description", "the container images this revision resolved to, each named with the " +
+				"component that resolved it. A promotion reads this to know which component an " +
+				"image belongs to rather than deriving it (ADR-0016 decision 2)."},
+			{"type", "array"},
+			{"items", omap{
+				{"type", "object"},
+				{"required", []string{"component", "image"}},
+				{"properties", omap{
+					{"component", omap{
+						{"description", "the component's name as the resolved spec spelled it"},
+						{"type", "string"},
+					}},
+					{"image", omap{
+						{"description", "the image reference this revision resolved that component to"},
+						{"type", "string"},
+					}},
+				}},
+			}},
+		}},
 		{"digest", omap{
 			{"description", "the artifact's OCI digest — what was put there, as opposed to where"},
 			{"type", "string"},
 		}},
 		{"images", omap{
-			{"description", "the container images this revision resolved to, in component order"},
+			{"description", "DEPRECATED: the container images this revision resolved to, in " +
+				"component order, with no way to tell which component each belongs to. It is a " +
+				"flat mirror of componentImages, kept for one release for readers written against " +
+				"the older shape."},
 			{"type", "array"},
 			{"items", omap{{"type", "string"}}},
 		}},

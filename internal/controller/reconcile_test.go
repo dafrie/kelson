@@ -219,7 +219,8 @@ func TestHistoryGrowsOnlyOnANewPublish(t *testing.T) {
 	c := newClient(t, validProject(), validEnvironment())
 	spy := &spyDeliverer{outcome: Outcome{
 		Revision: "1-1a2b3c4d", Digest: "sha256:abc", Phase: v1alpha1.PhaseCommitted,
-		Published: true, Images: []string{"ghcr.io/acme/checkout:1.0.0"},
+		Published: true,
+		Images:    []v1alpha1.ComponentImage{{Component: "web", Image: "ghcr.io/acme/checkout:1.0.0"}},
 	}}
 	r := &EnvironmentReconciler{Client: c, Profiles: StaticProfileSource{}, Delivery: spy}
 
@@ -237,8 +238,16 @@ func TestHistoryGrowsOnlyOnANewPublish(t *testing.T) {
 	if entry.SpecHash == "" || len(entry.SpecHash) != 64 {
 		t.Errorf("the entry carries no full spec hash: %q", entry.SpecHash)
 	}
+	if len(entry.ComponentImages) != 1 || entry.ComponentImages[0].Component != "web" ||
+		entry.ComponentImages[0].Image != "ghcr.io/acme/checkout:1.0.0" {
+		t.Errorf("componentImages = %+v, want the image under the component that resolved it",
+			entry.ComponentImages)
+	}
+	// The deprecated flat field is written as a mirror for one release, so a
+	// status reader built against the older shape still sees what ran.
+	//nolint:staticcheck // asserting the deprecated mirror is the point of this block.
 	if len(entry.Images) != 1 || entry.Images[0] != "ghcr.io/acme/checkout:1.0.0" {
-		t.Errorf("images = %v", entry.Images)
+		t.Errorf("images = %v, want the flat mirror of componentImages", entry.Images)
 	}
 	if entry.Outcome != v1alpha1.PhaseCommitted || entry.Timestamp.IsZero() {
 		t.Errorf("outcome = %q at %v", entry.Outcome, entry.Timestamp)

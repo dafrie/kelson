@@ -248,10 +248,26 @@ type HistoryEntry struct {
 	SpecHash string `json:"specHash,omitempty"`
 
 	// Images are the container images this revision resolved to, in component
-	// order. It is what makes "which build is in production" a `kubectl get`
-	// rather than an artifact pull, and it is what a promotion reads from the
-	// source environment (ADR-0016 decision 2).
+	// order.
+	//
+	// Deprecated: it is a positional list with the imageless components left
+	// out, so nothing downstream can say which component an image belongs to
+	// without re-deriving it — which is what internal/api's promote path had to
+	// do, and why [HistoryEntry.ComponentImages] exists. It stays populated for
+	// one release, as a flat mirror of ComponentImages, so a status reader
+	// written against the older shape keeps working; new readers must use
+	// ComponentImages.
 	Images []string `json:"images,omitempty"`
+
+	// ComponentImages are the same images, each named with the component that
+	// resolved it. It is what makes "which build is in production" a `kubectl
+	// get` rather than an artifact pull, and it is what a promotion reads from
+	// the source environment (ADR-0016 decision 2) — by name now, rather than
+	// by guessing from the image repository.
+	//
+	// A component that resolved no image is absent, as it is from Images: an
+	// entry here is a record of something that ran.
+	ComponentImages []ComponentImage `json:"componentImages,omitempty"`
 
 	// Outcome is the delivery phase this revision reached — one of the Phase*
 	// constants. It is refreshed while the revision is the current one and then
@@ -261,6 +277,22 @@ type HistoryEntry struct {
 
 	// Timestamp is when the entry was recorded.
 	Timestamp metav1.Time `json:"timestamp,omitempty"`
+}
+
+// ComponentImage is one component of a revision and the image it resolved to.
+//
+// The pair is recorded rather than derived because the component name is known
+// exactly at the moment the revision is rendered — it is in the resolved spec
+// the controller is holding — and is only ever a guess afterwards: a positional
+// list shifts when a component is added or removed, and matching by image
+// repository is ambiguous the moment two components share one.
+type ComponentImage struct {
+	// Component is the component's name as the resolved spec spelled it.
+	Component string `json:"component"`
+
+	// Image is the fully qualified image reference this revision resolved that
+	// component to, tag or digest as authored.
+	Image string `json:"image"`
 }
 
 // ProjectStatus is what the controller observed about a Project.

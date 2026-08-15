@@ -1054,13 +1054,19 @@ func rollbackPreviewGap(st controlstore.EnvironmentState, target controlstore.Re
 // RPC deliberately does not make: a bounded, cheap answer that says how far it
 // goes is more useful than an unbounded one that needs registry credentials.
 //
-// # What the wire cannot carry, and where it went
+// # What the wire carries
 //
-// The spine's entry has a digest, the images it resolved to and the outcome it
-// reached; HistoryEntry has `message` and `author`. So the message carries the
-// outcome, the digest and the images — it is the only slot they fit in — and
-// the author stays empty, because the spine records who deployed nothing. Who
-// did what is the audit trail's question (ADR-0026, QueryAudit).
+// The digest, the images and the outcome are fields of their own on
+// `HistoryEntry` — they used to travel inside `message` as prose, which made
+// every machine reader a parser of free text. `message` is still filled with
+// the same facts for one release, for clients built against the older schema
+// (proto/kelson/v1alpha1/deploy.proto says so on the field). The CLI, the web
+// UI and the promotion path all read the fields now; the one remaining reader
+// of `message` is internal/mcp, which passes it through to an agent unparsed —
+// the audience prose is actually for.
+//
+// `author` stays empty, because the spine records who deployed nothing. Who did
+// what is the audit trail's question (ADR-0026, QueryAudit).
 func (s *Server) History(ctx context.Context, req *connect.Request[kelsonv1alpha1.HistoryRequest]) (*connect.Response[kelsonv1alpha1.HistoryResponse], error) {
 	msg := req.Msg
 	// Resolved, not rendered: history is a question about what ran, and a spec
@@ -1085,6 +1091,9 @@ func (s *Server) History(ctx context.Context, req *connect.Request[kelsonv1alpha
 			SpecHash:    r.SpecHash,
 			CommittedAt: committedAt(r.Timestamp),
 			Message:     revisionSummary(r, r.Revision == st.Revision),
+			Digest:      r.Digest,
+			Images:      wireImages(r),
+			Outcome:     r.Outcome,
 		})
 	}
 	return connect.NewResponse(&kelsonv1alpha1.HistoryResponse{Entries: entries}), nil
@@ -1097,8 +1106,33 @@ func committedAt(t time.Time) string {
 	return t.UTC().Format(time.RFC3339)
 }
 
+// wireImages projects one revision's images onto the wire, named by component.
+//
+// An entry the controller recorded before it attributed images has the flat
+// list and no names, and it travels with the component left empty rather than
+// being dropped or guessed at: the images are still what that revision ran, and
+// only the attribution is missing.
+func wireImages(r controlstore.Revision) []*kelsonv1alpha1.ComponentImage {
+	if len(r.ComponentImages) > 0 {
+		out := make([]*kelsonv1alpha1.ComponentImage, 0, len(r.ComponentImages))
+		for _, ci := range r.ComponentImages {
+			out = append(out, &kelsonv1alpha1.ComponentImage{Component: ci.Component, Image: ci.Image})
+		}
+		return out
+	}
+	out := make([]*kelsonv1alpha1.ComponentImage, 0, len(r.Images))
+	for _, image := range r.Images {
+		out = append(out, &kelsonv1alpha1.ComponentImage{Image: image})
+	}
+	return out
+}
+
 // revisionSummary is the prose the wire's `message` carries for one revision:
 // how that deployment ended, what it published and what it runs.
+//
+// It is kept for one release, for clients built against the schema that had no
+// fields to put any of this in, and for internal/mcp, which hands prose to an
+// agent. Nothing that needs the facts machine-readably reads it.
 func revisionSummary(r controlstore.Revision, serving bool) string {
 	parts := make([]string, 0, 4)
 	if r.Outcome != "" {

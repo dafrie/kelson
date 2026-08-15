@@ -74,6 +74,10 @@ const promotedDigest = "ghcr.io/acme/checkout@sha256:9f6ad2c19f6ad2c19f6ad2c19f6
 func stagingDeployed() controlstore.EnvironmentState {
 	st := healthyEnvironment("checkout", "staging", "7-1a2b3c4d")
 	st.History[0].Images = []string{promotedDigest, promotedDigest}
+	st.History[0].ComponentImages = []controlstore.ComponentImage{
+		{Component: "web", Image: promotedDigest},
+		{Component: "digest", Image: promotedDigest},
+	}
 	return st
 }
 
@@ -225,12 +229,48 @@ func TestPromoteFromAnEnvironmentThatRanNothing(t *testing.T) {
 	}
 }
 
-// TestPromoteAttributesImagesByRepository: `status.history[].images` is a
-// positional list with the imageless components left out, so an image is
-// attributed to a component by what it *is* — the repository — and never by
-// where it sat in the list. A component the revision carries no image for is
-// skipped with a reason, never guessed.
-func TestPromoteAttributesImagesByRepository(t *testing.T) {
+// TestPromoteReadsTheRecordedComponentNames: the controller records which
+// component resolved each image, so the promotion reads the attribution instead
+// of inferring it — including the case no inference could get right, two
+// components sharing one image repository.
+func TestPromoteReadsTheRecordedComponentNames(t *testing.T) {
+	resolved := &model.Resolved{Components: []model.ResolvedComponent{
+		{Name: "web", Image: "ghcr.io/acme/app:v3"},
+		{Name: "worker", Image: "ghcr.io/acme/app:v3"},
+		{Name: "cache", Image: ""},
+	}}
+	// The recorded order is not the spec's order, and both components share one
+	// repository: a positional zip would swap the two builds and a repository
+	// match cannot separate them at all.
+	recorded := controlstore.Revision{
+		Images: []string{"ghcr.io/acme/app:v1", "ghcr.io/acme/app:v2"},
+		ComponentImages: []controlstore.ComponentImage{
+			{Component: "worker", Image: "ghcr.io/acme/app:v1"},
+			{Component: "web", Image: "ghcr.io/acme/app:v2"},
+		},
+	}
+	got := attributeImages(resolved, recorded)
+	if got["web"] != "ghcr.io/acme/app:v2" || got["worker"] != "ghcr.io/acme/app:v1" {
+		t.Fatalf("attribution = %v, want each image on the component that recorded it", got)
+	}
+	if _, ok := got["cache"]; ok {
+		t.Errorf("a component the revision recorded no image for was attributed one: %v", got)
+	}
+	// What the same revision would have produced without the recorded names,
+	// stated so the improvement is not a claim: the heuristic pairs the builds
+	// the wrong way round.
+	heuristic := attributeImagesByRepository(resolved, recorded.Images)
+	if heuristic["web"] == got["web"] && heuristic["worker"] == got["worker"] {
+		t.Errorf("the repository heuristic agreed (%v); this fixture is meant to be one it cannot get right", heuristic)
+	}
+}
+
+// TestPromoteAttributesPreUpgradeEntriesByRepository: an entry written before
+// the controller recorded component names has the flat positional list with the
+// imageless components left out, so an image is attributed by what it *is* —
+// the repository — and never by where it sat in the list. A component the
+// revision carries no image for is skipped with a reason, never guessed.
+func TestPromoteAttributesPreUpgradeEntriesByRepository(t *testing.T) {
 	resolved := &model.Resolved{Components: []model.ResolvedComponent{
 		{Name: "web", Image: "ghcr.io/acme/web:v3"},
 		{Name: "worker", Image: "ghcr.io/acme/worker:v3"},
@@ -238,7 +278,9 @@ func TestPromoteAttributesImagesByRepository(t *testing.T) {
 	}}
 	// The revision ran an older tag of each, in the other order — which is what
 	// a positional zip would get wrong.
-	got := attributeImages(resolved, []string{"ghcr.io/acme/worker:v2", "ghcr.io/acme/web:v2"})
+	got := attributeImages(resolved, controlstore.Revision{
+		Images: []string{"ghcr.io/acme/worker:v2", "ghcr.io/acme/web:v2"},
+	})
 	if got["web"] != "ghcr.io/acme/web:v2" || got["worker"] != "ghcr.io/acme/worker:v2" {
 		t.Fatalf("attribution = %v, want each image on its own component", got)
 	}
@@ -247,7 +289,9 @@ func TestPromoteAttributesImagesByRepository(t *testing.T) {
 	}
 	// An image whose repository matches nothing the spec declares belongs to no
 	// component, and is dropped rather than assigned to whatever was left.
-	got = attributeImages(resolved, []string{"ghcr.io/acme/something-else:v9"})
+	got = attributeImages(resolved, controlstore.Revision{
+		Images: []string{"ghcr.io/acme/something-else:v9"},
+	})
 	if len(got) != 0 {
 		t.Errorf("attribution = %v, want nothing attributed", got)
 	}

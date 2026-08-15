@@ -16,8 +16,23 @@ func TestHistoryListsRevisionsNewestFirst(t *testing.T) {
 				t.Fatalf("unexpected environment %q", req.GetEnvironment())
 			}
 			return &kelsonv1alpha1.HistoryResponse{Entries: []*kelsonv1alpha1.HistoryEntry{
-				{Revision: "3-cccc0000", CommittedAt: "2026-08-15T09:00:00Z", Message: "healthy · serving · ghcr.io/acme/hello:1.2.0"},
-				{Revision: "2-bbbb0000", CommittedAt: "2026-08-14T09:00:00Z", Message: "healthy · ghcr.io/acme/hello:1.1.0"},
+				{
+					Revision: "3-cccc0000", CommittedAt: "2026-08-15T09:00:00Z",
+					Outcome: "Healthy", Digest: "sha256:" + strings.Repeat("a", 64),
+					Images: []*kelsonv1alpha1.ComponentImage{
+						{Component: "web", Image: "ghcr.io/acme/hello:1.2.0"},
+					},
+					// The prose the server still fills for older clients. This
+					// one is deliberately a lie, because nothing may read it.
+					Message: "nonsense · that · must · not · be · printed",
+				},
+				{
+					Revision: "2-bbbb0000", CommittedAt: "2026-08-14T09:00:00Z",
+					Outcome: "Healthy",
+					// An entry recorded before the controller attributed
+					// images: the image with no component claimed for it.
+					Images: []*kelsonv1alpha1.ComponentImage{{Image: "ghcr.io/acme/hello:1.1.0"}},
+				},
 			}}, nil
 		},
 	}
@@ -32,8 +47,22 @@ func TestHistoryListsRevisionsNewestFirst(t *testing.T) {
 	if revIdx3 < 0 || revIdx2 < 0 || revIdx3 > revIdx2 {
 		t.Errorf("revisions are not printed newest first:\n%s", stdout)
 	}
-	if !strings.Contains(stdout, "1.2.0") {
-		t.Errorf("stdout does not carry the entry's detail message:\n%s", stdout)
+	// Every column comes from a field of its own: the outcome, the digest at
+	// reading length, and each image under the component that resolved it.
+	if !strings.Contains(stdout, "web=ghcr.io/acme/hello:1.2.0") {
+		t.Errorf("stdout does not label the image with its component:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "Healthy") || !strings.Contains(stdout, "sha256:"+strings.Repeat("a", 12)) {
+		t.Errorf("stdout does not carry the recorded outcome and short digest:\n%s", stdout)
+	}
+	// A pre-attribution entry prints the image alone rather than under a
+	// fabricated label.
+	if !strings.Contains(stdout, " ghcr.io/acme/hello:1.1.0") || strings.Contains(stdout, "=ghcr.io/acme/hello:1.1.0") {
+		t.Errorf("an unattributed image was labelled:\n%s", stdout)
+	}
+	// The deprecated prose is not a source for anything on screen.
+	if strings.Contains(stdout, "nonsense") {
+		t.Errorf("the entry's deprecated message reached stdout:\n%s", stdout)
 	}
 }
 
