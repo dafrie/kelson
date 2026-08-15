@@ -392,6 +392,24 @@ func (d *DryRun) get(ctx context.Context, t target) (*unstructured.Unstructured,
 	return d.client.Resource(t.mapping.Resource).Namespace(t.obj.GetNamespace()).Get(ctx, t.obj.GetName(), metav1.GetOptions{})
 }
 
+// apply is the L2 probe: one server-side apply, dry-run, per resource.
+//
+// # Why the apply is forced
+//
+// It is forced for the same reason the real one is
+// (internal/controller's FluxDeliverer.ensure): the applier this previews takes
+// ownership of every field it writes, and anything that ever ran `kubectl
+// apply` over a resource leaves `kubectl-client-side-apply` on those fields
+// forever. Unforced, the dry-run answers 409 for a value nobody disagrees
+// with — and a conflict is not one of the shapes [DryRun.rejection] can
+// attribute, so every such resource is reported as an unattributable rejection
+// and the whole preview exits "blocked" over a change the apply would have made
+// without complaint.
+//
+// A preview that does not force is therefore not a cautious preview, it is a
+// wrong one: it models an applier kelson does not have. Forcing here makes L2
+// answer the question it is asked — what happens when kelson applies this —
+// which is the only thing that makes its verdict worth gating on.
 func (d *DryRun) apply(ctx context.Context, t target) (*unstructured.Unstructured, error) {
 	var ri dynamic.ResourceInterface = d.client.Resource(t.mapping.Resource)
 	if t.mapping.Scope.Name() == meta.RESTScopeNameNamespace {
@@ -400,7 +418,7 @@ func (d *DryRun) apply(ctx context.Context, t target) (*unstructured.Unstructure
 	return ri.Apply(ctx, t.obj.GetName(), t.obj, metav1.ApplyOptions{
 		FieldManager: d.manager,
 		DryRun:       []string{metav1.DryRunAll},
-		Force:        false,
+		Force:        true,
 	})
 }
 
