@@ -230,6 +230,11 @@ const sidebars: SidebarsConfig = {
           id: 'adr/0035-sources',
           label: '0035 — Sources',
         },
+        {
+          type: 'doc',
+          id: 'adr/0036-autodeploy',
+          label: '0036 — autoDeploy',
+        },
       ],
     },
   ],
