@@ -37,6 +37,45 @@ const DefaultBuildTimeout = 30 * time.Minute
 // enormous frame.
 const logChunkSize = 32 << 10
 
+// GitSourceLister reads the repositories the instance offers to every project —
+// the GitSources of ADR-0035 decision 2, the global tier a component may bind
+// to by name.
+//
+// It is a seam for the reason every cluster-facing capability in this package
+// is one: a GitSource is a custom resource and this plane may not hold a
+// Kubernetes client (.golangci.yml). It is narrower than the connection store's
+// on purpose — there is no Get, no Create and no Delete, because no RPC in this
+// schema authors one; an operator applies a GitSource with kubectl, exactly as
+// ADR-0035 decision 2 describes, and kelson reads it.
+//
+// A nil one is a server with no global tier, which resolves every project
+// against its own declared sources alone. That is the pre-ADR-0035 posture and
+// stays correct: a project that declares what it builds from is unaffected by
+// whether the instance offers anything.
+type GitSourceLister interface {
+	// ListSources returns every GitSource the instance offers, already in the
+	// shape [model.Resolve] takes (model.GitSource.AsSource).
+	ListSources(ctx context.Context) ([]model.Source, error)
+}
+
+// globalSources reads the instance's tier for one request.
+//
+// A failure is reported rather than swallowed: a build that silently resolved
+// against an empty global tier would refuse a component bound to a GitSource
+// with `ref/unknown-source` — "this instance offers: nothing" — which is a
+// truthful sentence about a lookup that failed and a false one about the
+// instance. The two are told apart here or not at all.
+func (s *Server) globalSources(ctx context.Context) ([]model.Source, error) {
+	if s.gitSources == nil {
+		return nil, nil
+	}
+	sources, err := s.gitSources.ListSources(ctx)
+	if err != nil {
+		return nil, unavailable("api: listing the instance's GitSources: %w", err)
+	}
+	return sources, nil
+}
+
 // logChunkBuffer is how many chunks may sit between the build and the stream.
 // Small on purpose. The buffer exists so a momentary stall in Send does not
 // stall the log copy on every write; it is not a place to accumulate a build's
@@ -60,11 +99,22 @@ const logChunkBuffer = 8
 func (s *Server) Build(ctx context.Context, req *connect.Request[kelsonv1alpha1.BuildRequest], stream *connect.ServerStream[kelsonv1alpha1.BuildResponse]) error {
 	msg := req.Msg
 
-	// resolve, not renderSpec: a build reads spec.source, spec.build and the
-	// Environment's identity, and nothing a ClusterProfile decides. Rendering
-	// would additionally demand an image for the very spec that has none yet,
-	// which is the spec a build exists to serve (#136).
-	project, environment, resolved, err := s.resolve(ctx, msg.GetSpec(), msg.GetEnvironment(), "")
+	// The instance's GitSources, read before the spec is resolved because a
+	// component may bind to one by name and resolution is what turns that name
+	// into a repository (ADR-0035 decisions 2 and 3). A server with no source
+	// store resolves against an empty global tier, which is what every caller
+	// did before this existed and is still correct for a project that declares
+	// its own sources.
+	globals, err := s.globalSources(ctx)
+	if err != nil {
+		return failRequest(err)
+	}
+
+	// resolve, not renderSpec: a build reads the component's source binding,
+	// spec.build and the Environment's identity, and nothing a ClusterProfile
+	// decides. Rendering would additionally demand an image for the very spec
+	// that has none yet, which is the spec a build exists to serve (#136).
+	project, environment, resolved, err := s.resolve(ctx, msg.GetSpec(), msg.GetEnvironment(), "", globals...)
 	if err != nil {
 		return failRequest(err)
 	}
@@ -82,13 +132,13 @@ func (s *Server) Build(ctx context.Context, req *connect.Request[kelsonv1alpha1.
 		return unimplemented("in-cluster builds")
 	}
 
-	source := project.Spec.Source
-	if source == nil || strings.TrimSpace(source.Git) == "" {
-		return failRequest(build.Error{
-			Reason:      build.ReasonNoSource,
-			Message:     fmt.Sprintf("Project %s has no spec.source.git, so there is nothing to build from", project.Metadata.Name),
-			Remediation: "add spec.source.git to the Project, or deploy a pre-built image with an explicit image reference",
-		})
+	// Which repository this build clones is the components' answer now, not the
+	// Project's (ADR-0035 decision 4). The refusals it can return — nothing
+	// bound, or bound to several — are the shared plan's, so this handler and
+	// `kelson build` name them identically (internal/build/binding.go).
+	binding, err := build.SourceToBuild(project.Metadata.Name, resolved)
+	if err != nil {
+		return failRequest(err)
 	}
 
 	// A nil tree is the whole difference between this and the CLI: the server
@@ -128,6 +178,12 @@ func (s *Server) Build(ctx context.Context, req *connect.Request[kelsonv1alpha1.
 		Strategy:    string(detection.Strategy),
 		Namespace:   namespace,
 		PushSecret:  pushSecret,
+		// The connection travels with the target because the ref resolver is
+		// built there and must read this repository as the same identity the
+		// clone will (ADR-0033 decisions 4 and 5). It is the *source's*
+		// connection now rather than the project's, which is the whole of what
+		// ADR-0035 changes about credential resolution.
+		SourceConnection: binding.Source.Connection,
 	})
 	if err != nil {
 		return failRequest(unavailable("api: building the build plane: %w", err))
@@ -140,11 +196,10 @@ func (s *Server) Build(ctx context.Context, req *connect.Request[kelsonv1alpha1.
 	ctx, cancel := context.WithTimeout(ctx, DefaultBuildTimeout)
 	defer cancel()
 
-	ref := msg.GetRef()
-	if ref == "" {
-		ref = source.Ref
-	}
-	revision, err := resolveRevision(ctx, plane.Revisions, source.Git, ref)
+	// One ls-remote, against the bound source's repository and its ref: the ref
+	// is per source (ADR-0035 decision 1), and the request's `ref` overrides it
+	// for this build alone.
+	revision, err := resolveRevision(ctx, plane.Revisions, binding.Source.Git, binding.SourceRef(msg.GetRef()))
 	if err != nil {
 		return failRequest(err)
 	}
@@ -152,15 +207,18 @@ func (s *Server) Build(ctx context.Context, req *connect.Request[kelsonv1alpha1.
 	request := build.Request{
 		Project:     project.Metadata.Name,
 		Environment: environment.Metadata.Name,
-		// Component stays empty: one build serves the whole Project, so
-		// naming one of its components would put a false label on the Job
-		// and on the image (build.DestinationTag says the same thing).
-		SourceGit:  source.Git,
-		SourceRef:  revision,
-		Dockerfile: build.DockerfilePath(project.Spec.Build),
-		Image:      image,
-		Tag:        build.DestinationTag(project.Metadata.Name, revision),
-		Revision:   revision,
+		// Component stays empty: one build serves every component bound to this
+		// source — one clone, shared — so naming one of them would put a false
+		// label on the Job and on the image (build.DestinationTag says the same
+		// thing).
+		SourceGit:        binding.Source.Git,
+		SourceRef:        revision,
+		SourceName:       binding.Source.Name,
+		SourceConnection: binding.Source.Connection,
+		Dockerfile:       build.DockerfilePath(project.Spec.Build),
+		Image:            image,
+		Tag:              build.DestinationTag(project.Metadata.Name, revision),
+		Revision:         revision,
 	}
 
 	if err := stream.Send(&kelsonv1alpha1.BuildResponse{
@@ -366,10 +424,38 @@ func declineReport(p *model.Project) string {
 // because that one is not exported and this one is a different question about
 // the same two fields.
 func kelsonBuildsImages(p *model.Project) bool {
-	if p.Spec.Source == nil || strings.TrimSpace(p.Spec.Source.Git) == "" {
+	if len(projectRepositories(p)) == 0 {
 		return false
 	}
 	return p.Spec.Build == nil || p.Spec.Build.Strategy != model.BuildNone
+}
+
+// projectRepositories are the repositories a Project declares, in spec order
+// and without duplicates: the singular `source:`, the plural `sources:`, or
+// neither.
+//
+// It reads the declarations rather than the bindings because both of its
+// callers ask about the *project* — would kelson build this at all, and is this
+// report about a repository the project reads — and a resolution needs an
+// Environment neither of them has. ADR-0035 decision 4 says the candidate
+// repositories for a project are the union of its sources, and this is that
+// union; a declared source no component binds to is still a repository this
+// project is about.
+func projectRepositories(p *model.Project) []string {
+	if p == nil {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, src := range p.Spec.EffectiveSources() {
+		git := strings.TrimSpace(src.Git)
+		if git == "" || seen[git] {
+			continue
+		}
+		seen[git] = true
+		out = append(out, git)
+	}
+	return out
 }
 
 // publishReportedPreviews is the live half: render and publish this change
@@ -495,16 +581,25 @@ func (s *Server) publishReportedPreviews(ctx context.Context, spec decoded, msg 
 // is the only statement about where these pull requests live, and CI reported
 // for this project by name. That is the ordinary shape of a `by: ci` project, so
 // it matches rather than being skipped for a mismatch nobody stated.
+//
+// A project declaring several sources is compared against all of them, which is
+// ADR-0035 decision 4 in one line: "candidate repositories for a project are the
+// union of its bound sources' repositories". A two-repository project whose
+// previews follow the second one is previewing its own code, and refusing that
+// because it is not the *first* source would make a list order a decision.
 func previewsElsewhere(p *model.Project, env *model.Environment) string {
-	if p.Spec.Source == nil || strings.TrimSpace(p.Spec.Source.Git) == "" {
+	repositories := projectRepositories(p)
+	if len(repositories) == 0 {
 		return ""
 	}
-	source := p.Spec.Source.Git
-	if sameRepository(env.Spec.Previews.Repo, source) {
-		return ""
+	for _, source := range repositories {
+		if sameRepository(env.Spec.Previews.Repo, source) {
+			return ""
+		}
 	}
-	return fmt.Sprintf("environment %s previews %s, which is not this project's source %s, so this report is not "+
-		"about its change requests", env.Metadata.Name, display(env.Spec.Previews.Repo), display(source))
+	return fmt.Sprintf("environment %s previews %s, which is none of this project's sources (%s), so this report "+
+		"is not about its change requests", env.Metadata.Name, display(env.Spec.Previews.Repo),
+		strings.Join(repositories, ", "))
 }
 
 // reportOverlays refuses to publish a preview of a spec that carries overlays,

@@ -84,11 +84,26 @@ So the destination arrives as a flag:
 | tag | `<project>-<project>-<short revision>` — e.g. `shop-shop-0123456789ab` |
 | reference | `<repository>@sha256:…` — what the command prints |
 
-**One repository per Project, not per Component.** The source is
-project-level (`spec.source`), so the build is too. Model rule P3 resolves a
+**One repository per Project, not per Component.** Model rule P3 resolves a
 Component's image to its own `image:` if it has one and to the Project's
 otherwise, which means one built image feeds every component that does not
 name one. One build, one repository, one digest pinned into all of them.
+
+[ADR-0035](adr/0035-sources.md) made the *source* per-component without making
+the image so, and the build plane follows the binding rather than the Project:
+what is cloned is the source the components are bound to — its `git`, its
+`ref`, its `connection` — whether that was declared as the singular `source:`,
+as an entry of `sources:`, or by a `GitSource` the instance offers. Components
+bound to one source share one build and one clone.
+
+A project whose components build from **different** repositories is refused
+with `build/several-sources`, naming each source and the components on it. It
+is the image that has one slot, not the clone: two builds would push two images
+and rule P3 could only deploy one of them. The path that does produce
+per-component images is CI's — set `spec.build.by: ci` and let each
+repository's pipeline report the components it built with
+`kelson ci report-build` ([ADR-0034](adr/0034-forge-driven-delivery.md)
+decision 3).
 
 The tag repeats the project name because `registry.Tag` takes
 `(project, component, revision)` and a project-level build has no single
@@ -299,8 +314,10 @@ image.
 
 ## Revisions
 
-`--ref` takes a branch, a tag or a commit; without it, `spec.source.ref` is
-used, and without that, the repository's default branch.
+`--ref` takes a branch, a tag or a commit; without it, the bound source's own
+`ref:` is used, and without that, the repository's default branch. The ref is
+per source (ADR-0035 decision 1), so a component bound to `tools: {ref: v2}`
+builds `v2` while the project's default source tracks `main`.
 
 Anything that is not already a 40-character commit is resolved once, up front,
 with the `git ls-remote` question — no clone, no working tree. A branch wins
@@ -313,8 +330,14 @@ the commit the build pod checks out are then all the same string. A branch
 resolved separately by each of them could disagree, and "built from main" is
 not a record of anything.
 
-Reading the source repository reuses the delivery credential
-(`KELSON_GIT_TOKEN`); a public repository needs none.
+Reading the source repository uses the credential the source resolves to: the
+`GitConnection` its `connection:` names, else the one whose host matches
+([ADR-0033](adr/0033-git-connections.md) decision 4), else the bootstrap
+`KELSON_GIT_TOKEN`. It is resolved per source rather than per project, so a
+project reading two repositories through two connections resolves each with its
+own — and the ref resolution and the pod's clone are given the same answer, so a
+build can never resolve a commit it then cannot fetch. A public repository needs
+none.
 
 ## Command surface
 
@@ -343,9 +366,12 @@ strategy and why, source and resolved commit, destination) and the deploy hint
 go to stderr, so the last line of stdout is the digest-pinned reference and
 nothing else. A failed build exits 1 with the executor's classified error.
 
-A build needs no `--profile` and does no rendering: it reads `spec.source`,
-`spec.build` and the Environment's identity, and nothing a ClusterProfile
-decides.
+A build needs no `--profile` and does no rendering: it reads the components'
+source bindings, `spec.build` and the Environment's identity, and nothing a
+ClusterProfile decides. The CLI resolves those bindings against the Project's
+own `sources:` alone — the instance's `GitSource` tier is the server's to read —
+so a component bound to a global name is refused locally with
+`ref/unknown-source` naming what was in scope.
 
 ## The same build over the API
 

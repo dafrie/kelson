@@ -32,9 +32,26 @@ import (
 // model.Code and delivery.Code make for their planes, and the same strings
 // travel over the API as kelson.v1alpha1.Error codes.
 const (
-	// ReasonNoSource: the Project names no source repository, so there is
-	// nothing to build from.
+	// ReasonNoSource: no buildable component of the Project is bound to a
+	// source, so there is nothing to build from.
+	//
+	// It used to mean "the Project has no spec.source.git", which was the same
+	// thing until sources became named and per-component (ADR-0035). It is now
+	// the narrower fact it always claimed to be: a project spelling its sources
+	// in the plural builds, and this fires only where nothing is bound.
 	ReasonNoSource = "build/no-source"
+	// ReasonSeveralSources: the Project's components build from more than one
+	// source, and one build produces one image (ADR-0035 decision 4).
+	//
+	// It is a refusal rather than a fan-out because the image is the thing that
+	// cannot be split yet, not the clone: registry.Repository pins one
+	// repository per Project and model rule P3 gives every component without its
+	// own image the Project's one, so two builds of one project would push two
+	// images and only one of them could be deployed. The path that already
+	// produces per-component images is CI's — `spec.build.by: ci` and
+	// ReportBuild's component-keyed map (ADR-0034 decision 3) — and the
+	// remediation says so.
+	ReasonSeveralSources = "build/several-sources"
 	// ReasonNothingToBuild: the spec set build.strategy: none, which means
 	// "deploy spec.image, build nothing".
 	ReasonNothingToBuild = "build/nothing-to-build"
@@ -116,14 +133,17 @@ func ResolveStrategy(spec *model.Build, tree fs.FS) (detect.Detection, error) {
 // DestinationTag names the human-readable tag pushed alongside the digest.
 //
 // registry.Tag's convention is <project>-<component>-<revision>, but a kelson
-// build is per-Project, not per-Component: the source is project-level and
-// model rule P3 gives every component without its own image: the Project's
-// image, so one build feeds all of them. There is no single component to
-// name. The project name is passed for that slot — redundant with the first
-// component, but true; naming the first component instead would read as "this
-// image belongs to web", which is exactly what it does not mean.
-// Reproducibility comes from the digest either way; this tag is for humans
-// reading a registry listing.
+// build is per-Project, not per-Component: model rule P3 gives every component
+// without its own image the Project's image, so one build feeds all of them.
+// There is no single component to name. The project name is passed for that
+// slot — redundant with the first component, but true; naming the first
+// component instead would read as "this image belongs to web", which is exactly
+// what it does not mean. Reproducibility comes from the digest either way; this
+// tag is for humans reading a registry listing.
+//
+// ADR-0035 made the *source* per-component without making the image so, which
+// is why this did not change and why [SourceToBuild] refuses a project that
+// builds from several: it is the image, not the clone, that has one slot.
 func DestinationTag(project, revision string) string {
 	return registry.Tag(project, project, shortRevision(revision))
 }
