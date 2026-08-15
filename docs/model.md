@@ -9,11 +9,13 @@ otherwise.
 **An ADR now says otherwise.** [ADR-0027](adr/0027-crd-native-control-plane.md) makes `Project` and
 `Environment` custom resources, [ADR-0028](adr/0028-delivery-spine.md) deletes delivery modes and the
 `delivery:` block with them, and [ADR-0031](adr/0031-single-cluster-single-tenant.md) deletes
-`Environment.spec.cluster`. This page describes the model those ADRs decided. The code still carries the
-deleted vocabulary until R1/R2 land ([#224](https://github.com/dafrie/kelson/issues/224),
-[#225](https://github.com/dafrie/kelson/issues/225)); every place that matters carries a **Transition**
-note saying so. The two documents themselves are unchanged in shape — the same `apiVersion`, the same
-`kind`, the same `spec` — and are now applied to a cluster as well as read from a file.
+`Environment.spec.cluster`. This page describes the model those ADRs decided. The `delivery:` block and
+its four mode gates are gone from the code as of
+[#234](https://github.com/dafrie/kelson/issues/234); `cluster:` is still accepted and refused by name
+until [#225](https://github.com/dafrie/kelson/issues/225) lands, and the places that still differ carry
+a **Transition** note saying so. The two documents themselves are unchanged in shape — the same
+`apiVersion`, the same `kind`, the same `spec` — and are now applied to a cluster as well as read from
+a file.
 
 **The leaf is a Component.** ADR-0006 called it an Application and put managed data services in a second
 list beside it; ADR-0014 unified the two into one `spec.components` list with a closed set of kinds —
@@ -51,10 +53,11 @@ guessed spelling prejudges the design and delivers nothing. It was already refus
 document that works today stops working. Multi-cluster is
 [#232](https://github.com/dafrie/kelson/issues/232).
 
-> **Transition ([#224](https://github.com/dafrie/kelson/issues/224)).** The field and its
-> `notimplemented.go` row are still in `internal/model` until the removal PR
-> ([#234](https://github.com/dafrie/kelson/issues/234) carries the spec-vocabulary deletions as one
-> behaviour change). Writing it is a `schema/not-implemented` refusal today and an unknown field after.
+> **Transition.** The field and its `notimplemented.go` row are still in `internal/model`. The
+> spec-vocabulary deletion of [#234](https://github.com/dafrie/kelson/issues/234) took the `delivery:`
+> block and the mode gates only ([ADR-0028](adr/0028-delivery-spine.md) decisions 8 and 9); `cluster:`
+> is ADR-0031's and still awaits its removal PR. Writing it is a `schema/not-implemented` refusal
+> today and an unknown field after.
 
 The gate lives in validation only: `internal/model/notimplemented.go` holds the table, and
 `internal/model/coverage_test.go` fails the build if a new spec field is neither consumed nor gated.
@@ -75,16 +78,12 @@ errors, because the check needs a ClusterProfile and validation deliberately has
 
 **No field's availability depends on a delivery mode any more.** There is one spine
 ([ADR-0028](adr/0028-delivery-spine.md)), so `render/helm-requires-flux`,
-`render/previews-require-flux` and `render/sops-requires-flux` are vacuous and deleted with the mode
-plumbing that fed them, and `render/release-requires-direct` becomes a gate-table row
+`render/previews-require-flux` and `render/sops-requires-flux` were vacuous and are deleted with the
+mode plumbing that fed them, and `render/release-requires-direct` is a gate-table row
 ([above](#what-this-document-describes-and-what-kelson-implements-today)) because the mode it required
-is the one that no longer exists. ADR-0016's *"an author can write a valid document that becomes
-invalid by changing `delivery.mode`"* is no longer a property this model has.
-
-> **Transition ([#224](https://github.com/dafrie/kelson/issues/224) /
-> [#234](https://github.com/dafrie/kelson/issues/234)).** The three vacuous codes and the mode plumbing
-> are still in `internal/renderer` and `internal/model`. Their removal is one behaviour-change PR with
-> the label rename, so a document written today may still meet them.
+is the one that no longer exists ([#234](https://github.com/dafrie/kelson/issues/234)). ADR-0016's
+*"an author can write a valid document that becomes invalid by changing `delivery.mode`"* is no longer
+a property this model has: a document that validates renders, everywhere, always.
 
 And not every refusal is either: a field that belongs to another kind is a plain validation error, because
 one list means one type carrying fields only some of its kinds use. `preset` on a worker, `port` on a
@@ -252,11 +251,12 @@ These values never merge across the boundary: there is no "strictest of both" ar
 must stay propose-only, that is written on the production Environment — every guardrail under
 `policy:` is opt-in and therefore visible in the spec (ADR-0025).
 
-> **Transition ([#224](https://github.com/dafrie/kelson/issues/224) /
-> [#234](https://github.com/dafrie/kelson/issues/234)).** `delivery.mode` (defaulting to `direct`) and
-> `delivery.git` are still in the Go types and the JSON Schema. [ADR-0028](adr/0028-delivery-spine.md)
-> decision 9 deletes the whole block — `Delivery`, `DeliveryMode`, `GitTarget` and
-> `semantic/git-target-missing` with it. Nothing in the target model reads them.
+The P4 chain used to start with `delivery.mode`. It is gone: `Delivery`,
+`DeliveryMode`, `GitTarget` and `semantic/git-target-missing` are deleted
+([ADR-0028](adr/0028-delivery-spine.md) decision 9,
+[#234](https://github.com/dafrie/kelson/issues/234)), and a document that still writes a `delivery:`
+block is refused as `schema/unknown-field` with a remediation saying the block is gone and that
+deleting it is the whole migration.
 
 **P5 — Data-component presets:** `Environment.spec.components[].preset` (matched by component name) replaces
 the Project component's preset for that Environment — `shared` in development, `ha-small` in production,
@@ -1482,11 +1482,11 @@ There is no `delivery:` block and no `cluster:` field: one spine
 configuration (`--registry`, `--push-secret`), not application description — the same rule that puts the
 build destination on the server rather than in the spec.
 
-> **Transition ([#224](https://github.com/dafrie/kelson/issues/224) /
-> [#234](https://github.com/dafrie/kelson/issues/234)).** Both fields are still accepted by the schema:
-> `cluster:` as a `schema/not-implemented` refusal, `delivery:` as a live block whose `mode` defaults to
-> `direct`. Documents that set them keep working until the removal PR; documents that omit them are
-> already written for the target model.
+`cluster:` is still *in* the schema, as a `schema/not-implemented` refusal naming the milestone that
+would implement it. `delivery:` is not: the block is deleted
+([#234](https://github.com/dafrie/kelson/issues/234)), and an Environment that still carries one is
+refused as `schema/unknown-field` — with a remediation that says the block is gone rather than
+offering a list of field names to check the spelling against.
 
 ## The minimum viables
 
@@ -1540,10 +1540,10 @@ Stable code taxonomy:
 | `semantic/no-default-source` | semantic | several sources, none named `default`, and a component that builds naming none ([ADR-0035](adr/0035-sources.md)) |
 | `semantic/auth-provider-mismatch` | semantic | GitConnection `auth.githubApp` with `provider: generic` — the app-manifest flow and installation tokens are GitHub's ([ADR-0033](adr/0033-git-connections.md)) |
 
-`semantic/git-target-missing` existed to require a git target for a mode that no longer exists, and goes
-with the `delivery:` block ([ADR-0028](adr/0028-delivery-spine.md) decision 9). The codes are a
-compatibility promise, so a code is retired by deleting what could raise it — never by reusing it for
-something else.
+`semantic/git-target-missing` existed to require a git target for a mode that no longer exists, and is
+gone with the `delivery:` block ([ADR-0028](adr/0028-delivery-spine.md) decision 9,
+[#234](https://github.com/dafrie/kelson/issues/234)). The codes are a compatibility promise, so a code
+is retired by deleting what could raise it — never by reusing it for something else.
 
 Every class carries a remediation: ranges state the accepted range, enums list the valid values,
 references list declared names, and secret literals name the exact `{secret: …, key: …}` replacement
