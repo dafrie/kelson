@@ -127,14 +127,6 @@ export function HistoryPage() {
         <span>newest first</span>
       </div>
 
-      <p className="k-note">
-        Every revision kelson published to this environment, newest first. Each
-        one is an immutable artifact tagged with the generation that produced it
-        and a short hash of the spec that rendered it; underneath is what the
-        controller recorded about it — the outcome at the time, the artifact
-        digest, and the image each component resolved to.
-      </p>
-
       {/* Promotion is the one action here that is not about a revision in this
           list, so it is offered once, above it, rather than on every row: it
           reads whatever the *source* environment's latest revision runs, and a
@@ -145,9 +137,8 @@ export function HistoryPage() {
           Promote into this environment
         </Link>
         <span className="k-mono k-deploy__note">
-          pins {env} to the images another environment's latest revision runs —
-          it writes the spec and deploys nothing, and it never promotes a
-          revision picked from the list below
+          pins {env} to the images another environment runs — it writes the spec
+          and deploys nothing
         </span>
       </div>
 
@@ -163,12 +154,9 @@ export function HistoryPage() {
       ) : null}
 
       {history.data !== undefined && entries.length === 0 ? (
-        <EmptyState title="No recorded history">
-          Nothing has been deployed for this environment yet. A revision is
-          recorded when a deploy publishes one — a rollback repoints Flux at a
-          revision that is already here and adds no entry of its own — so an
-          empty history means the environment has never been written to, not
-          that the record was lost.
+        <EmptyState title="No deploys yet">
+          A rollback adds no entry either — it repoints Flux at a revision that
+          is already here.
         </EmptyState>
       ) : null}
 
@@ -207,14 +195,13 @@ export function HistoryPage() {
                   ? "reading which revision is live…"
                   : liveRevision === ""
                     ? "no “deployed now” marker: the server reports no live revision for this environment"
-                    : "the phase pill is the live revision’s state right now; each row’s recorded outcome is what the controller saw when that revision stopped being the current one"}
+                    : "the phase pill is live; a row’s recorded outcome is what was true when it stopped being current"}
             </p>
             <p className="k-mono k-timeline__note">
-              kelson does not record who deployed yet, human or agent (
-              <a href="https://github.com/dafrie/kelson/issues/74">#74</a>).
-              There is no commit or pull-request link either: a revision is an
-              OCI artifact in a registry, not a commit in a repository, so there
-              is no forge to point at.
+              kelson does not record who deployed yet (
+              <a href="https://github.com/dafrie/kelson/issues/74">#74</a>), and
+              there is no commit or pull-request link — a revision is an
+              artifact, not a commit.
             </p>
           </div>
         </section>
@@ -274,9 +261,9 @@ function Revision({
           It is still restorable: the artifact is immutable. */}
       {entry.beyondWindow ? (
         <div className="k-timeline__meta k-mono">
-          <span title="older than the history kept in Environment.status; confirmed against the registry's tag list (ADR-0028 decision 4)">
-            only the registry remembers this revision — nothing recorded when it
-            was published, which images it ran, or how that deployment ended
+          <span title="older than the history the cluster keeps; confirmed against the registry's tag list">
+            only the registry remembers this revision — nothing was recorded
+            about when it was published, what it ran, or how it ended
           </span>
         </div>
       ) : (
@@ -286,7 +273,7 @@ function Revision({
             cannot be mistaken for the live one above it: it says how that
             deployment ended, not how it is. */}
           {entry.outcome !== "" ? (
-            <span title="the delivery phase the controller recorded for this revision; it is frozen once a newer revision takes over">
+            <span title="recorded when this revision stopped being the current one, and frozen since">
               recorded {entry.outcome.toLowerCase()}
             </span>
           ) : null}
@@ -302,7 +289,7 @@ function Revision({
             }
             title={
               entry.author === ""
-                ? "kelson does not record who deployed yet. Agent and human identities are not recorded yet (#74)."
+                ? "kelson does not record who deployed yet (#74)"
                 : entry.author
             }
           >

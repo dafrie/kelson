@@ -141,7 +141,7 @@ describe("capability phrasing", () => {
     expect(capabilityHeadline(sc)).toBe(
       "Fast branching unavailable — your storage class (local-path) has no snapshot driver.",
     );
-    expect(capabilityDetail(sc)).toContain("No VolumeSnapshotClass serves this provisioner");
+    expect(capabilityDetail(sc)).toContain("This storage cannot snapshot");
     expect(snapshotDriverLine(sc)).toBe("snapshot driver: none detected");
     expect(capabilityStatus("none")).toBe("suspended");
   });
@@ -200,7 +200,8 @@ describe("operator findings", () => {
       "CloudNativePG: detected (1.30.0, in cnpg-system).",
     );
     expect(cnpgLine(undefined)).toContain("CloudNativePG: not detected.");
-    expect(cnpgLine(undefined)).toContain("kelson renders the Cluster manifest either way");
+    // Absent is a finding, and the sentence says what that costs.
+    expect(cnpgLine(undefined)).toContain("never becomes a database");
   });
 
   it("says the same thing about helm-controller, in the same shape (#107)", () => {
@@ -208,11 +209,10 @@ describe("operator findings", () => {
       "helm-controller: detected (1.3.0, in flux-system). A `kind: helm` component has something to reconcile it.",
     );
 
-    // Absent is a finding, and the sentence says what that costs: the manifest
-    // still renders, and nothing installs the chart.
+    // Absent is a finding, and the sentence says what that costs: the
+    // component still deploys, and nothing installs the chart.
     const absent = helmControllerLine(undefined);
     expect(absent).toContain("helm-controller: not detected.");
-    expect(absent).toContain("renders a HelmRelease either way");
     expect(absent).toContain("installs nothing");
   });
 

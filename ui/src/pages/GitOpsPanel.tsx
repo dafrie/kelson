@@ -72,22 +72,20 @@ export function GitOpsBanner({
         {joinNames(kustomizations.map((k) => k))}
       </p>
       <p className="k-gitops__body">
-        Saving here would write to the cluster, and the next Flux reconcile would
-        put the repository's version back — silently, minutes later. So Save is
-        off for this project, and the two things that do survive are below:
-        export the document and commit it yourself, or propose it as a pull
-        request against the repository the Kustomization reads.
+        Saving here would be undone by the next reconcile, so Save is off.
+        Export the documents and commit them yourself, or propose them as a
+        pull request.
       </p>
+      {/* ADR-0036 decision 5: a trigger deploys by writing the spec, so the
+          two writers fight on every push. */}
       {autoDeploy.length > 0 ? (
         <p className="k-gitops__warn">
           {joinNames(autoDeploy.map((name) => `The ${name} environment`))}{" "}
           {autoDeploy.length === 1 ? "declares" : "declare"} <code>autoDeploy</code>,
-          and that does not compose with a git-reconciled Environment. A trigger
-          deploys by <em>writing the spec</em> — it splices the built image into{" "}
-          <code>spec.components[].image</code> — so kelson and your git
-          reconciler would overwrite each other on every push (ADR-0036 decision
-          5). Track the image in the repository instead, or take these documents
-          out of the Kustomization.
+          which does not compose with a git-reconciled Environment: kelson
+          writes each built image into the spec, and the repository writes it
+          back. Track the image in the repository instead, or take these
+          documents out of git.
         </p>
       ) : null}
     </div>
@@ -111,12 +109,12 @@ export function ExportPanel({
   return (
     <section className="k-gitops__section">
       <h2 className="k-gitops__heading">Export</h2>
+      {/* Not the authored bytes: a custom resource has no memory of comments
+          or key order (ADR-0027 decision 6). */}
       <p className="k-note">
-        The stored document, as you would re-author it. This is what the store
-        holds after decoding — an equivalent document rather than the bytes
-        somebody typed, because a custom resource has no memory of comments or
-        key order (ADR-0027 decision 6). Your repository is where byte fidelity
-        lives, and always was.
+        The stored documents, ready to commit. They are equivalent to what was
+        authored rather than byte-for-byte — comments and key order live in
+        your repository.
       </p>
       <div className="k-gitops__actions">
         <Copyable
@@ -298,9 +296,8 @@ export function ProposePanel({
         <h2 className="k-gitops__heading">Proposed</h2>
         <p className="k-note">
           Branch <code>{opened.branch}</code> was pushed to{" "}
-          <code>{target.repository}</code> and a pull request is open. Nothing has
-          changed in the cluster: the change reaches it when somebody merges and
-          Flux reconciles.
+          <code>{target.repository}</code> and a pull request is open. Nothing
+          has changed in the cluster — merging is what deploys it.
         </p>
         <p>
           <a href={opened.url} target="_blank" rel="noreferrer" className="k-link">
@@ -314,12 +311,12 @@ export function ProposePanel({
   return (
     <section className="k-gitops__section">
       <h2 className="k-gitops__heading">Propose as a pull request</h2>
+      {/* kelson cannot read the owning Kustomization's sourceRef and path:
+          that needs RBAC on the Flux kinds in the namespace the user's Flux
+          runs in, and kelson-server holds one namespace by design. */}
       <p className="k-note">
-        kelson knows which Kustomization reconciles these documents and not which
-        repository it reads or where in it the files live — that is on the
-        Kustomization&apos;s own source and path, which this server has no
-        permission to read. So name the repository and the paths once; this
-        browser remembers them for next time.
+        kelson cannot see which repository these documents live in. Name it and
+        the paths once — this browser remembers them.
       </p>
 
       <div className="k-field">
@@ -338,10 +335,8 @@ export function ProposePanel({
           ))}
         </select>
         <span className="k-field__note">
-          the forge credential the pull request is opened with. Opening one needs
-          write access to the repository, which the kelson GitHub App does not ask
-          for by default — if this is refused, the message says exactly which
-          permission to grant.
+          the credential the pull request is opened with — it needs write access
+          to the repository
         </span>
       </div>
 
@@ -359,8 +354,8 @@ export function ProposePanel({
           onChange={(e) => setTarget({ ...target, repository: e.target.value })}
         />
         <span className="k-field__note">
-          owner/name — the repository your Kustomization reads, which is often not
-          the one this project builds from
+          owner/name — the repository these documents are reconciled from, often
+          not the one this project builds from
         </span>
       </div>
 
@@ -416,9 +411,8 @@ export function ProposePanel({
           onChange={(e) => setConfirmed(e.target.checked)}
         />
         <span>
-          I understand each file is replaced whole. kelson holds the document, not
-          the file — if one of these paths also contains something else, this
-          proposal removes it. The pull request&apos;s diff is where that shows up.
+          I understand each file is replaced whole — anything else living at
+          these paths is removed. The pull request&apos;s diff shows it.
         </span>
       </label>
 
@@ -448,8 +442,8 @@ export function ProposePanel({
 }
 
 function proposeNote(dirty: boolean, confirmed: boolean, ready: boolean): string {
-  if (!dirty) return "nothing has changed yet — a proposal of the stored bytes is an empty pull request";
-  if (!confirmed) return "confirm what a whole-file write means first";
+  if (!dirty) return "nothing has changed yet — the pull request would be empty";
+  if (!confirmed) return "confirm the whole-file write first";
   if (!ready) return "choose a connection, a repository and a path for every file";
   return "opens a branch and a pull request in your repository · nothing is deployed";
 }

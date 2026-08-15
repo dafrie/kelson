@@ -291,7 +291,7 @@ describe("PromotePage", () => {
     // The one thing promotion does not do is stated, not implied.
     expect(
       screen.getByText(
-        /nothing has been deployed — production is still running what it was running before this promotion/,
+        /nothing has been deployed — production is still running what it was running before/,
       ),
     ).toBeTruthy();
     expect(

@@ -316,9 +316,8 @@ function Health({
   if (verdict === undefined) {
     return (
       <p className="k-data__note">
-        Live health: no verdict — kelson's status readback covers Deployments,
-        so this service's own health comes from its operator rather than from
-        here.
+        Live health: no verdict — kelson does not watch this service, so its
+        health comes from its operator rather than from here.
       </p>
     );
   }

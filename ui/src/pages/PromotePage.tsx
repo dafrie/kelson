@@ -199,12 +199,9 @@ export function PromotePage() {
       </div>
 
       <p className="k-note">
-        Promoting pins {env}'s components to the images the source environment's
-        latest deployed revision is actually running — the deployed truth, read
-        out of the delivery history rather than out of the source's spec.
-        Nothing is rebuilt and <strong>nothing is deployed</strong>: this writes
-        image pins into the stored spec, and the deploy screen is the separate
-        act that ships them.
+        Pins {env} to the images the source environment is actually running.
+        Nothing is rebuilt and <strong>nothing is deployed</strong> — the deploy
+        screen ships them.
       </p>
 
       <section className="k-section">
@@ -221,9 +218,8 @@ export function PromotePage() {
           ) : null}
           {spec.data !== undefined && sources.length === 0 ? (
             <EmptyState title="There is no environment to promote from">
-              A promotion has a source and a target, and this project declares
-              no environment other than {env}. Add one to the spec — promoting
-              an environment to itself would pin it to what it already runs.
+              This project declares no environment other than {env}. Add one on
+              the edit screen.
             </EmptyState>
           ) : null}
           {sources.length > 0 ? (
@@ -297,9 +293,8 @@ export function PromotePage() {
                   {applyRun.running ? "Pinning…" : "Pin these images"}
                 </button>
                 <span className="k-mono k-deploy__note">
-                  nothing has been written yet — the plan above is a dry run ·
-                  writes against version {plan.version || "—"} · promoting
-                  deploys nothing
+                  nothing has been written yet · writes against version{" "}
+                  {plan.version || "—"} · deploys nothing
                 </span>
               </div>
             </section>
@@ -420,7 +415,7 @@ function Row({ component }: { component: PromotedComponent }) {
           <ImageCell
             image={component.fromImage}
             absent="unpinned"
-            absentWhy="no pin today: this environment follows the component's or the project's image (rule P3)"
+            absentWhy="no pin today: this environment follows the component's or the project's image"
           />
         </td>
         <td>
@@ -497,9 +492,7 @@ function PlanDiff({ plan }: { plan: Plan }) {
       <div className="k-eyebrow">What the pins change</div>
       <div className="k-section__body">
         <p className="k-note">
-          The target environment rendered before and after the pins, computed by
-          the server in the same call — a dry run stores nothing, so there is no
-          "after" a follow-up Diff could compare against.
+          The target environment rendered before and after the pins.
         </p>
         {plan.decodeError !== undefined ? (
           <ErrorPanel
@@ -546,9 +539,8 @@ function ConflictState({
         </span>
       </div>
       <p className="k-edit__conflict-body">
-        Someone — another browser, the CLI, an agent — stored a new version of{" "}
-        {project} after this plan was computed, so the write was refused rather
-        than overwriting theirs. Nothing has been written.
+        Something else stored a new version of {project} after this plan was
+        computed, so the write was refused. Nothing has been written.
       </p>
       <div className="k-actions k-edit__conflict-actions">
         <button
@@ -561,9 +553,8 @@ function ConflictState({
         </button>
       </div>
       <span className="k-mono k-deploy__note">
-        planning again re-reads the documents and re-computes the pins from
-        them — the plan above is about bytes that are no longer stored, so it is
-        not offered for a retry
+        the plan above was computed from documents that are no longer stored, so
+        it is not offered for a retry
       </span>
     </div>
   );
@@ -618,8 +609,8 @@ function Pinned({
           )}
         </span>
         <span className="k-mono">
-          nothing has been deployed — {env} is still running what it was running
-          before this promotion. Deploying is the next, separate act.
+          nothing has been deployed — {env} is still running what it was
+          running before
         </span>
 
         <ul className="k-promote__written">

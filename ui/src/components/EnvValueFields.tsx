@@ -130,8 +130,8 @@ export function envValueNote(value: EnvValue): string {
     case "plain":
       return "a plain value, stored in the spec as written — never a credential";
     case "secret":
-      return "renders as valueFrom.secretKeyRef against a Secret in this environment's namespace; kelson references it and never reads it";
+      return "reads one key of a Secret in this environment's namespace; kelson references it and never reads the value";
     case "binding":
-      return "binds to a data component this project declares — kelson derives the Secret its operator generates";
+      return "binds to a data component this project declares — kelson wires in the credentials it generates";
   }
 }

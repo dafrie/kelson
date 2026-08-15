@@ -299,14 +299,12 @@ describe("HistoryPage", () => {
   it("reports an empty history as never deployed, not as a lost record", async () => {
     renderHistory({ entries: [] });
 
-    expect(await screen.findByText("No recorded history")).toBeTruthy();
+    expect(await screen.findByText("No deploys yet")).toBeTruthy();
     expect(screen.queryByRole("listitem")).toBeNull();
     // A rollback prepends no history entry of its own (ADR-0028 decision 5),
     // so the empty state must not imply one would appear here.
     expect(
-      screen.getByText(
-        /a rollback repoints Flux at a revision that is already here/,
-      ),
+      screen.getByText(/repoints Flux at a revision that is already here/),
     ).toBeTruthy();
   });
 

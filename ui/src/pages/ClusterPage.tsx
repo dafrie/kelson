@@ -141,7 +141,7 @@ function Profile({ data }: { data: Loaded }) {
         <div className="k-eyebrow">Gaps ({data.gaps.length})</div>
         <div className="k-section__body">
           {data.gaps.length === 0 ? (
-            <EmptyState title="No gaps — detection read everything it looked for" />
+            <EmptyState title="No gaps — everything was readable" />
           ) : (
             <div className="k-panel">
               <ul className="k-gaps">

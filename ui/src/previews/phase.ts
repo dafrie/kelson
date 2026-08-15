@@ -48,22 +48,22 @@ export function previewStatus(phase: string, suspended: boolean): StatusKind {
 /** The one line under a preview row: what this state is, and what fixes it. */
 export function previewHeadline(preview: Preview): string {
   if (preview.suspended) {
-    return "Suspended: this preview's Kustomization is paused, so what is running is the last thing that reconciled, not the change request's head.";
+    return "Suspended: what is running is the last thing that reconciled, not this change request's head.";
   }
   switch (preview.phase) {
     case "ready":
-      return "Running: the artifact for this commit was fetched and applied.";
+      return "Running: the manifests for this commit were fetched and applied.";
     case "applying":
-      return "The artifact was fetched; the apply has not settled yet.";
+      return "The manifests for this commit arrived; the rollout has not settled yet.";
     case "awaiting-artifact":
       return (
-        "No artifact for this commit. flux-operator found the change request and is waiting for " +
-        "`kelson preview publish` to push the manifests for this head commit — a CI step, not a deploy."
+        "No manifests for this commit yet — a CI step running `kelson preview publish` " +
+        "is what pushes them."
       );
     case "failed":
-      return "The artifact was fetched and the apply failed. The manifests are the ones `kelson preview render` prints for this commit.";
+      return "The manifests arrived and the rollout failed. `kelson preview render` prints the ones for this commit.";
     default:
-      return "Neither the artifact nor the apply has reported yet.";
+      return "Nothing has reported yet.";
   }
 }
 
@@ -88,20 +88,18 @@ export function lifecycleLine(
       text: "The cluster was not read, so nothing is claimed about what is running.",
     };
   }
+  // `served` is whether fluxcd.controlplane.io answers — previews are
+  // flux-operator's lifecycle (ADR-0017), so without it there is no poller.
   if (!lifecycle.served) {
     return {
       status: "unknown",
-      text:
-        "flux-operator is not installed on this cluster: fluxcd.controlplane.io is not served, so nothing " +
-        "polls the forge and no preview can exist. Previews are flux-operator's lifecycle (ADR-0017).",
+      text: "Previews are not available on this cluster: flux-operator is not installed.",
     };
   }
   if (!lifecycle.present) {
     return {
       status: "unknown",
-      text:
-        `${lifecycle.name} does not exist in the cluster yet. kelson renders the pair from this spec — ` +
-        "deploy this environment and flux-operator starts polling.",
+      text: `${lifecycle.name} does not exist in the cluster yet. Deploy this environment and previews start.`,
     };
   }
   if (lifecycle.providerReady !== "True") {
@@ -110,15 +108,16 @@ export function lifecycleLine(
       text: `The forge poller is not ready${reasonSuffix(lifecycle.providerReason, lifecycle.providerMessage)}`,
     };
   }
+  // The ResourceSet's own Ready condition, said as what it produces.
   if (lifecycle.setReady !== "True") {
     return {
       status: lifecycle.setReady === "False" ? "failed" : "reconciling",
-      text: `The ResourceSet is not ready${reasonSuffix(lifecycle.setReason, lifecycle.setMessage)}`,
+      text: `The preview environments are not ready${reasonSuffix(lifecycle.setReason, lifecycle.setMessage)}`,
     };
   }
   return {
     status: "synced",
-    text: `${lifecycle.name} is polling the forge and instantiating one OCIRepository and Kustomization per change request.`,
+    text: `${lifecycle.name} is polling the forge and standing up one environment per change request.`,
   };
 }
 

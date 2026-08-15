@@ -100,10 +100,8 @@ export function PreviewDetailPage() {
 
       {data !== undefined && !gated && settings === undefined ? (
         <EmptyState title="This environment declares no previews">
-          There is no <code className="k-mono">previews:</code> block on this
-          environment, so pull request {pr || "this one"} was never a
-          candidate for one. Configure previews on the project's edit screen,
-          or in the YAML tab, to change that.
+          Pull request {pr || "this one"} was never a candidate for one. The
+          edit screen is where previews are turned on.
         </EmptyState>
       ) : null}
 
@@ -136,11 +134,9 @@ function NotFound({
     <div className="k-previews__empty">
       <p className="k-previews__lede">
         No preview {pr ? `pr${pr}` : "for this pull request"} is currently
-        reported for {response.environment || "this environment"}. A closed
-        change request, one the filter excludes, and one CI has not published
-        an artifact for yet all look the same absence here — flux-operator
-        only creates the objects this page reads once a change request both
-        matches the filter and has an artifact to apply.
+        reported for {response.environment || "this environment"}. It may be
+        closed, excluded by the filter, or waiting on manifests CI has not
+        published — those look alike from here.
       </p>
       <div className="k-previews__lifecycle">
         <StatusPill status={lifecycle.status} label="lifecycle" />
@@ -253,18 +249,16 @@ function Detail({
             </div>
           ) : (
             <p className="k-mono k-previews__muted">
-              no hostnames — this preview's set declares no routes, or kelson
-              cannot read routes in its namespace. Absence here is not a claim
-              that the preview serves nothing.
+              no hostnames — this preview declares no routes, or kelson cannot
+              read them in its namespace
             </p>
           )}
         </div>
 
         {settings !== undefined && settings.skipLabels.length > 0 ? (
           <p className="k-mono k-previews__artifacts">
-            {settings.repo || "the source repository"}'s previews pause
-            updates when labelled: {settings.skipLabels.join(", ")} — an
-            environment-wide setting, not a fact about this preview alone.
+            updates paused by: {settings.skipLabels.join(", ")} — set for the
+            whole environment, not for this preview
           </p>
         ) : null}
       </div>

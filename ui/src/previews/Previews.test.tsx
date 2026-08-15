@@ -69,7 +69,7 @@ describe("Previews", () => {
     expect(screen.getByText(/Two halves have to be in place/)).toBeTruthy();
     expect(screen.getByText(/kelson preview publish/)).toBeTruthy();
     // And the gate, before anyone configures anything.
-    expect(screen.getByText(/delivery\s+mode only/)).toBeTruthy();
+    expect(screen.getByText(/Previews need the/)).toBeTruthy();
     expect(
       screen.getByRole("link", { name: /Previews: a child environment/ }),
     ).toBeTruthy();
@@ -207,7 +207,7 @@ describe("Previews", () => {
 
     // And the unpublished one names its cause rather than reading as a failure
     // of the manifests.
-    expect(screen.getByText(/No artifact for this commit/)).toBeTruthy();
+    expect(screen.getByText(/No manifests for this commit yet/)).toBeTruthy();
     expect(
       screen.getByText(/OCIArtifactPullFailed: failed to pull artifact/),
     ).toBeTruthy();

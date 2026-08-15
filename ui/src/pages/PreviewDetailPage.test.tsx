@@ -149,7 +149,7 @@ describe("PreviewDetailPage", () => {
 
     expect(await screen.findByText("Preview pr9")).toBeTruthy();
     expect(screen.getByText(/OCIArtifactPullFailed: failed to pull artifact/)).toBeTruthy();
-    expect(screen.getByText(/No artifact for this commit/)).toBeTruthy();
+    expect(screen.getByText(/No manifests for this commit yet/)).toBeTruthy();
     expect(screen.getByText(/no hostnames/)).toBeTruthy();
     // revision is "" on this preview, so the row is withheld rather than shown empty.
     expect(screen.queryByText("applied revision")).toBeNull();
@@ -167,7 +167,7 @@ describe("PreviewDetailPage", () => {
     // The lifecycle line still renders, so a reader can tell the poller apart
     // from a change request that simply isn't labelled.
     expect(
-      screen.getByText(/polling the forge and instantiating one OCIRepository/),
+      screen.getByText(/polling the forge and standing up one environment/),
     ).toBeTruthy();
     // Nothing invents a detail section for a preview that was not found — no
     // forge link, no phase pill, no namespace.
@@ -186,7 +186,7 @@ describe("PreviewDetailPage", () => {
     expect(
       await screen.findByText("This environment declares no previews"),
     ).toBeTruthy();
-    expect(screen.getByText(/pull request 412 was never a candidate/)).toBeTruthy();
+    expect(screen.getByText(/412 was never a candidate/)).toBeTruthy();
   });
 
   it("shows the server's own render/previews-require-flux, code and fix intact", async () => {
