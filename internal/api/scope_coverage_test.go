@@ -145,7 +145,14 @@ func TestEveryScopeRowIsWellFormed(t *testing.T) {
 //     environment) scope can bound, so there is no scoped version of the grant
 //     (ADR-0021; the CLI's confirmation gate makes the same argument).
 //     ListComponents stays a read; Plan and Install are the admin pair.
-var adminServices = []string{"AgentService", "AuditService", "InstallService"}
+//   - GitConnectionService: ADR-0033 decision 6 grants use by visibility and
+//     mutation by ownership, and until tenancy (#231) there is no owner for a
+//     credential to be. A connection is instance-wide — not scoped to a project
+//     — so a project-scoped credential that could delete one would break every
+//     other project's builds, and one that could create one could point this
+//     instance's clones at a host of its choosing. The reads and TestConnection
+//     stay ordinary reads; Create and Delete are the admin pair.
+var adminServices = []string{"AgentService", "AuditService", "InstallService", "GitConnectionService"}
 
 func adminService(procedure string) bool {
 	for _, service := range adminServices {
@@ -160,9 +167,11 @@ func adminService(procedure string) bool {
 // classes are what an operator reasons about when they hand out a credential,
 // so a deploy filed under `read` would make `--allow read` a lie.
 func TestMutatingMethodsAreClassedAsMutations(t *testing.T) {
-	mutating := []string{"PutSpec", "DeleteSpec", "Deploy", "Rollback", "Promote", "Build", "SetSecret", "DeleteSecret"}
+	mutating := []string{"PutSpec", "DeleteSpec", "Deploy", "Rollback", "Promote", "Build", "ReportBuild",
+		"SetSecret", "DeleteSecret"}
 	reading := []string{"GetSpec", "ListSpecs", "Render", "Diff", "GetProfile", "Status", "History",
-		"QueryLogs", "FollowLogs", "Watch", "ListSecrets", "ListPreviews", "Explain"}
+		"QueryLogs", "FollowLogs", "Watch", "ListSecrets", "ListPreviews", "Explain",
+		"ListConnections", "GetConnection", "TestConnection"}
 
 	for procedure, row := range rpcScopes {
 		method := procedure[strings.LastIndex(procedure, "/")+1:]

@@ -53,6 +53,9 @@ const (
 const (
 	// BuildServiceBuildProcedure is the fully-qualified name of the BuildService's Build RPC.
 	BuildServiceBuildProcedure = "/kelson.v1alpha1.BuildService/Build"
+	// BuildServiceReportBuildProcedure is the fully-qualified name of the BuildService's ReportBuild
+	// RPC.
+	BuildServiceReportBuildProcedure = "/kelson.v1alpha1.BuildService/ReportBuild"
 )
 
 // BuildServiceClient is a client for the kelson.v1alpha1.BuildService service.
@@ -79,6 +82,31 @@ type BuildServiceClient interface {
 	// build/detection-needs-source and says to set spec.build.strategy instead.
 	// In-cluster detection before choosing a driver is issue #50.
 	Build(context.Context, *connect.Request[v1alpha1.BuildRequest]) (*connect.ServerStreamForClient[v1alpha1.BuildResponse], error)
+	// ReportBuild is the other end of the same plane: not "build this for me" but
+	// "I built it, here is where it is" (ADR-0034 decision 3). It is `kelson ci
+	// report-build`, and it is what a project with `build.by: ci` uses instead of
+	// Build.
+	//
+	// # CI is a principal
+	//
+	// This RPC authenticates as an agent identity (ADR-0024) — a scoped, expiring
+	// credential minted for the pipeline, auditable per ADR-0026 — and not as the
+	// instance's shared password. CI was always an agent in every sense that
+	// matters; ADR-0034 decision 6 makes it one in the sense kelson enforces, and
+	// invents no new auth mechanism to do it. A credential scoped to one project
+	// therefore cannot report a build for another, checked server-side before the
+	// handler runs, like every other targeted method.
+	//
+	// # It returns as soon as the report is recorded
+	//
+	// The response says what the report triggered, not how those triggers ended:
+	// rendering and publishing happen on the server's own queue, and a pipeline
+	// step that blocked until a preview was live would be CI waiting on a
+	// cluster's convergence for reasons that are not CI's. Where the work went is
+	// `triggered`; how it went is EventService, the preview and environment
+	// status surfaces, and the commit status kelson writes back
+	// (ADR-0034 decision 5).
+	ReportBuild(context.Context, *connect.Request[v1alpha1.ReportBuildRequest]) (*connect.Response[v1alpha1.ReportBuildResponse], error)
 }
 
 // NewBuildServiceClient constructs a client for the kelson.v1alpha1.BuildService service. By
@@ -98,17 +126,29 @@ func NewBuildServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(buildServiceMethods.ByName("Build")),
 			connect.WithClientOptions(opts...),
 		),
+		reportBuild: connect.NewClient[v1alpha1.ReportBuildRequest, v1alpha1.ReportBuildResponse](
+			httpClient,
+			baseURL+BuildServiceReportBuildProcedure,
+			connect.WithSchema(buildServiceMethods.ByName("ReportBuild")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // buildServiceClient implements BuildServiceClient.
 type buildServiceClient struct {
-	build *connect.Client[v1alpha1.BuildRequest, v1alpha1.BuildResponse]
+	build       *connect.Client[v1alpha1.BuildRequest, v1alpha1.BuildResponse]
+	reportBuild *connect.Client[v1alpha1.ReportBuildRequest, v1alpha1.ReportBuildResponse]
 }
 
 // Build calls kelson.v1alpha1.BuildService.Build.
 func (c *buildServiceClient) Build(ctx context.Context, req *connect.Request[v1alpha1.BuildRequest]) (*connect.ServerStreamForClient[v1alpha1.BuildResponse], error) {
 	return c.build.CallServerStream(ctx, req)
+}
+
+// ReportBuild calls kelson.v1alpha1.BuildService.ReportBuild.
+func (c *buildServiceClient) ReportBuild(ctx context.Context, req *connect.Request[v1alpha1.ReportBuildRequest]) (*connect.Response[v1alpha1.ReportBuildResponse], error) {
+	return c.reportBuild.CallUnary(ctx, req)
 }
 
 // BuildServiceHandler is an implementation of the kelson.v1alpha1.BuildService service.
@@ -135,6 +175,31 @@ type BuildServiceHandler interface {
 	// build/detection-needs-source and says to set spec.build.strategy instead.
 	// In-cluster detection before choosing a driver is issue #50.
 	Build(context.Context, *connect.Request[v1alpha1.BuildRequest], *connect.ServerStream[v1alpha1.BuildResponse]) error
+	// ReportBuild is the other end of the same plane: not "build this for me" but
+	// "I built it, here is where it is" (ADR-0034 decision 3). It is `kelson ci
+	// report-build`, and it is what a project with `build.by: ci` uses instead of
+	// Build.
+	//
+	// # CI is a principal
+	//
+	// This RPC authenticates as an agent identity (ADR-0024) — a scoped, expiring
+	// credential minted for the pipeline, auditable per ADR-0026 — and not as the
+	// instance's shared password. CI was always an agent in every sense that
+	// matters; ADR-0034 decision 6 makes it one in the sense kelson enforces, and
+	// invents no new auth mechanism to do it. A credential scoped to one project
+	// therefore cannot report a build for another, checked server-side before the
+	// handler runs, like every other targeted method.
+	//
+	// # It returns as soon as the report is recorded
+	//
+	// The response says what the report triggered, not how those triggers ended:
+	// rendering and publishing happen on the server's own queue, and a pipeline
+	// step that blocked until a preview was live would be CI waiting on a
+	// cluster's convergence for reasons that are not CI's. Where the work went is
+	// `triggered`; how it went is EventService, the preview and environment
+	// status surfaces, and the commit status kelson writes back
+	// (ADR-0034 decision 5).
+	ReportBuild(context.Context, *connect.Request[v1alpha1.ReportBuildRequest]) (*connect.Response[v1alpha1.ReportBuildResponse], error)
 }
 
 // NewBuildServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -150,10 +215,18 @@ func NewBuildServiceHandler(svc BuildServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(buildServiceMethods.ByName("Build")),
 		connect.WithHandlerOptions(opts...),
 	)
+	buildServiceReportBuildHandler := connect.NewUnaryHandler(
+		BuildServiceReportBuildProcedure,
+		svc.ReportBuild,
+		connect.WithSchema(buildServiceMethods.ByName("ReportBuild")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/kelson.v1alpha1.BuildService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case BuildServiceBuildProcedure:
 			buildServiceBuildHandler.ServeHTTP(w, r)
+		case BuildServiceReportBuildProcedure:
+			buildServiceReportBuildHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -165,4 +238,8 @@ type UnimplementedBuildServiceHandler struct{}
 
 func (UnimplementedBuildServiceHandler) Build(context.Context, *connect.Request[v1alpha1.BuildRequest], *connect.ServerStream[v1alpha1.BuildResponse]) error {
 	return connect.NewError(connect.CodeUnimplemented, errors.New("kelson.v1alpha1.BuildService.Build is not implemented"))
+}
+
+func (UnimplementedBuildServiceHandler) ReportBuild(context.Context, *connect.Request[v1alpha1.ReportBuildRequest]) (*connect.Response[v1alpha1.ReportBuildResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("kelson.v1alpha1.BuildService.ReportBuild is not implemented"))
 }

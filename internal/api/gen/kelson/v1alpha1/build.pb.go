@@ -236,6 +236,221 @@ func (*BuildResponse_Log_) isBuildResponse_Event() {}
 
 func (*BuildResponse_Finished_) isBuildResponse_Event() {}
 
+// ReportBuildRequest is the CI hand-off of ADR-0034 decision 3: "I built the
+// image, you take it from here".
+//
+// It is the whole of what CI owes kelson on the `by: ci` path. CI builds and
+// reports; kelson renders and publishes, server-side, through the same
+// resolve → render → publish → ensure spine every other trigger converges on
+// (ADR-0034 decision 1, ADR-0028). CI never runs kelson's renderer, never needs
+// a checkout of the spec, and never holds the artifact-registry credential —
+// which is the shrink ADR-0034 performs on ADR-0017 decision 8's
+// `kelson preview publish`, now the escape hatch for pipelines that cannot
+// reach kelson at all.
+//
+// The message therefore carries exactly what CI knows and nothing it does not:
+// a commit, where that commit came from, and which images exist for it. It does
+// not carry the render, the environment, or a decision about what to deploy —
+// those are the server's, computed from the stored spec at report time, because
+// a report that named its own targets would be CI deciding delivery.
+//
+// # A reported image is trusted on the reporter's word
+//
+// kelson publishes manifests referencing these digests without verifying
+// provenance. That is the same trust boundary ADR-0017 recorded for artifacts —
+// the registry's write access — now with a second writer, and ADR-0034 names it
+// as a consequence rather than hiding it. Signing and verification is one
+// decision for images and artifacts together, and it is still unowned.
+type ReportBuildRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The stored spec's project name. There is no inline-documents form: a report
+	// triggers a server-side render of what the server holds, so a spec supplied
+	// in the request would render something no environment is deployed from.
+	Project string `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
+	// The 40-hex commit the images were built from. It is the join key of the
+	// whole hand-off: the preview publishes at this SHA (ADR-0017's tag), and a
+	// tracking environment redeploys only if this is the head of the ref it
+	// follows. A ref name without it would leave "which commit is running?"
+	// answerable only by racing the forge.
+	Sha string `protobuf:"bytes,2,opt,name=sha,proto3" json:"sha,omitempty"`
+	// The branch or tag the commit was built from, e.g. "refs/heads/main" or
+	// "main". It is what selects tracking environments (ADR-0034 decision 4):
+	// `autoDeploy` environments following this ref re-render, and everything else
+	// ignores the report. Empty reports the images and triggers no environment.
+	Ref string `protobuf:"bytes,3,opt,name=ref,proto3" json:"ref,omitempty"`
+	// The change request number when this build is for one, and 0 when it is not
+	// — the CLI's `--pr`. Non-zero routes the report to that change request's
+	// preview; zero routes it to tracking environments. A separate field rather
+	// than an overload of `ref`, because a pull request's head ref and the branch
+	// an environment follows are different questions that happen to look alike.
+	Pr int32 `protobuf:"varint,4,opt,name=pr,proto3" json:"pr,omitempty"`
+	// Component name to image reference, digest-pinned, e.g.
+	// {"web": "ghcr.io/acme/checkout-web@sha256:…"}. Digest-pinned is a
+	// requirement and not a convention: a mutable tag would make the published
+	// artifact describe something that can change underneath it, which is the
+	// guarantee the build plane exists to provide (#51, ADR-0010).
+	//
+	// A key the Project does not declare is an error naming it, not a silent
+	// drop; a component the Project declares and this map omits keeps whatever
+	// the spec resolves for it, so a partial report is a partial pin rather than
+	// a broken render.
+	Images map[string]string `protobuf:"bytes,5,rep,name=images,proto3" json:"images,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// A report is not convergent the way a build is — it triggers a publish and
+	// records a mapping — so a retry after a timeout must be the same report
+	// rather than a second one (#69). This is the field BuildRequest deliberately
+	// does not have, for the reason stated there: a build's output is a function
+	// of its resolved commit, and a report's effect is not.
+	IdempotencyKey string `protobuf:"bytes,6,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *ReportBuildRequest) Reset() {
+	*x = ReportBuildRequest{}
+	mi := &file_kelson_v1alpha1_build_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReportBuildRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReportBuildRequest) ProtoMessage() {}
+
+func (x *ReportBuildRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_kelson_v1alpha1_build_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReportBuildRequest.ProtoReflect.Descriptor instead.
+func (*ReportBuildRequest) Descriptor() ([]byte, []int) {
+	return file_kelson_v1alpha1_build_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *ReportBuildRequest) GetProject() string {
+	if x != nil {
+		return x.Project
+	}
+	return ""
+}
+
+func (x *ReportBuildRequest) GetSha() string {
+	if x != nil {
+		return x.Sha
+	}
+	return ""
+}
+
+func (x *ReportBuildRequest) GetRef() string {
+	if x != nil {
+		return x.Ref
+	}
+	return ""
+}
+
+func (x *ReportBuildRequest) GetPr() int32 {
+	if x != nil {
+		return x.Pr
+	}
+	return 0
+}
+
+func (x *ReportBuildRequest) GetImages() map[string]string {
+	if x != nil {
+		return x.Images
+	}
+	return nil
+}
+
+func (x *ReportBuildRequest) GetIdempotencyKey() string {
+	if x != nil {
+		return x.IdempotencyKey
+	}
+	return ""
+}
+
+type ReportBuildResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// True when the report was recorded. False with a message is a report kelson
+	// understood and declined to act on — a project whose `build.by` is `kelson`,
+	// so its images come from kelson's own build plane and a CI report would be
+	// publishing over it.
+	Accepted bool `protobuf:"varint,1,opt,name=accepted,proto3" json:"accepted,omitempty"`
+	// What the report triggered, as environment and preview identifiers —
+	// environment names for tracking environments, `pr<number>` for a change
+	// request's preview. Empty is an ordinary answer and not a failure: a report
+	// for a ref no environment follows is recorded and triggers nothing, which is
+	// exactly what a report for a feature branch should do.
+	Triggered []string `protobuf:"bytes,2,rep,name=triggered,proto3" json:"triggered,omitempty"`
+	// Why `triggered` is what it is, in prose: which environments matched, or
+	// that none did and what would have. A pipeline whose report silently did
+	// nothing is the failure mode this field exists to prevent — ADR-0034 names
+	// "why didn't my preview update" as the debugging question the whole trigger
+	// pipeline has to stay answerable for.
+	Message       string `protobuf:"bytes,3,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReportBuildResponse) Reset() {
+	*x = ReportBuildResponse{}
+	mi := &file_kelson_v1alpha1_build_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReportBuildResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReportBuildResponse) ProtoMessage() {}
+
+func (x *ReportBuildResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_kelson_v1alpha1_build_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReportBuildResponse.ProtoReflect.Descriptor instead.
+func (*ReportBuildResponse) Descriptor() ([]byte, []int) {
+	return file_kelson_v1alpha1_build_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *ReportBuildResponse) GetAccepted() bool {
+	if x != nil {
+		return x.Accepted
+	}
+	return false
+}
+
+func (x *ReportBuildResponse) GetTriggered() []string {
+	if x != nil {
+		return x.Triggered
+	}
+	return nil
+}
+
+func (x *ReportBuildResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
 // Started is sent after the strategy is resolved and the ref is resolved to
 // a commit, so everything it carries is settled fact rather than intent.
 type BuildResponse_Started struct {
@@ -250,7 +465,7 @@ type BuildResponse_Started struct {
 
 func (x *BuildResponse_Started) Reset() {
 	*x = BuildResponse_Started{}
-	mi := &file_kelson_v1alpha1_build_proto_msgTypes[2]
+	mi := &file_kelson_v1alpha1_build_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -262,7 +477,7 @@ func (x *BuildResponse_Started) String() string {
 func (*BuildResponse_Started) ProtoMessage() {}
 
 func (x *BuildResponse_Started) ProtoReflect() protoreflect.Message {
-	mi := &file_kelson_v1alpha1_build_proto_msgTypes[2]
+	mi := &file_kelson_v1alpha1_build_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -319,7 +534,7 @@ type BuildResponse_Log struct {
 
 func (x *BuildResponse_Log) Reset() {
 	*x = BuildResponse_Log{}
-	mi := &file_kelson_v1alpha1_build_proto_msgTypes[3]
+	mi := &file_kelson_v1alpha1_build_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -331,7 +546,7 @@ func (x *BuildResponse_Log) String() string {
 func (*BuildResponse_Log) ProtoMessage() {}
 
 func (x *BuildResponse_Log) ProtoReflect() protoreflect.Message {
-	mi := &file_kelson_v1alpha1_build_proto_msgTypes[3]
+	mi := &file_kelson_v1alpha1_build_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -367,7 +582,7 @@ type BuildResponse_Finished struct {
 
 func (x *BuildResponse_Finished) Reset() {
 	*x = BuildResponse_Finished{}
-	mi := &file_kelson_v1alpha1_build_proto_msgTypes[4]
+	mi := &file_kelson_v1alpha1_build_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -379,7 +594,7 @@ func (x *BuildResponse_Finished) String() string {
 func (*BuildResponse_Finished) ProtoMessage() {}
 
 func (x *BuildResponse_Finished) ProtoReflect() protoreflect.Message {
-	mi := &file_kelson_v1alpha1_build_proto_msgTypes[4]
+	mi := &file_kelson_v1alpha1_build_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -435,9 +650,24 @@ const file_kelson_v1alpha1_build_proto_rawDesc = "" +
 	"\bFinished\x12\x1c\n" +
 	"\treference\x18\x01 \x01(\tR\treference\x12\x16\n" +
 	"\x06digest\x18\x02 \x01(\tR\x06digestB\a\n" +
-	"\x05event2X\n" +
+	"\x05event\"\x8f\x02\n" +
+	"\x12ReportBuildRequest\x12\x18\n" +
+	"\aproject\x18\x01 \x01(\tR\aproject\x12\x10\n" +
+	"\x03sha\x18\x02 \x01(\tR\x03sha\x12\x10\n" +
+	"\x03ref\x18\x03 \x01(\tR\x03ref\x12\x0e\n" +
+	"\x02pr\x18\x04 \x01(\x05R\x02pr\x12G\n" +
+	"\x06images\x18\x05 \x03(\v2/.kelson.v1alpha1.ReportBuildRequest.ImagesEntryR\x06images\x12'\n" +
+	"\x0fidempotency_key\x18\x06 \x01(\tR\x0eidempotencyKey\x1a9\n" +
+	"\vImagesEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"i\n" +
+	"\x13ReportBuildResponse\x12\x1a\n" +
+	"\baccepted\x18\x01 \x01(\bR\baccepted\x12\x1c\n" +
+	"\ttriggered\x18\x02 \x03(\tR\ttriggered\x12\x18\n" +
+	"\amessage\x18\x03 \x01(\tR\amessage2\xb2\x01\n" +
 	"\fBuildService\x12H\n" +
-	"\x05Build\x12\x1d.kelson.v1alpha1.BuildRequest\x1a\x1e.kelson.v1alpha1.BuildResponse0\x01BJZHgithub.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1;kelsonv1alpha1b\x06proto3"
+	"\x05Build\x12\x1d.kelson.v1alpha1.BuildRequest\x1a\x1e.kelson.v1alpha1.BuildResponse0\x01\x12X\n" +
+	"\vReportBuild\x12#.kelson.v1alpha1.ReportBuildRequest\x1a$.kelson.v1alpha1.ReportBuildResponseBJZHgithub.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1;kelsonv1alpha1b\x06proto3"
 
 var (
 	file_kelson_v1alpha1_build_proto_rawDescOnce sync.Once
@@ -451,27 +681,33 @@ func file_kelson_v1alpha1_build_proto_rawDescGZIP() []byte {
 	return file_kelson_v1alpha1_build_proto_rawDescData
 }
 
-var file_kelson_v1alpha1_build_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_kelson_v1alpha1_build_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_kelson_v1alpha1_build_proto_goTypes = []any{
 	(*BuildRequest)(nil),           // 0: kelson.v1alpha1.BuildRequest
 	(*BuildResponse)(nil),          // 1: kelson.v1alpha1.BuildResponse
-	(*BuildResponse_Started)(nil),  // 2: kelson.v1alpha1.BuildResponse.Started
-	(*BuildResponse_Log)(nil),      // 3: kelson.v1alpha1.BuildResponse.Log
-	(*BuildResponse_Finished)(nil), // 4: kelson.v1alpha1.BuildResponse.Finished
-	(*SpecRef)(nil),                // 5: kelson.v1alpha1.SpecRef
+	(*ReportBuildRequest)(nil),     // 2: kelson.v1alpha1.ReportBuildRequest
+	(*ReportBuildResponse)(nil),    // 3: kelson.v1alpha1.ReportBuildResponse
+	(*BuildResponse_Started)(nil),  // 4: kelson.v1alpha1.BuildResponse.Started
+	(*BuildResponse_Log)(nil),      // 5: kelson.v1alpha1.BuildResponse.Log
+	(*BuildResponse_Finished)(nil), // 6: kelson.v1alpha1.BuildResponse.Finished
+	nil,                            // 7: kelson.v1alpha1.ReportBuildRequest.ImagesEntry
+	(*SpecRef)(nil),                // 8: kelson.v1alpha1.SpecRef
 }
 var file_kelson_v1alpha1_build_proto_depIdxs = []int32{
-	5, // 0: kelson.v1alpha1.BuildRequest.spec:type_name -> kelson.v1alpha1.SpecRef
-	2, // 1: kelson.v1alpha1.BuildResponse.started:type_name -> kelson.v1alpha1.BuildResponse.Started
-	3, // 2: kelson.v1alpha1.BuildResponse.log:type_name -> kelson.v1alpha1.BuildResponse.Log
-	4, // 3: kelson.v1alpha1.BuildResponse.finished:type_name -> kelson.v1alpha1.BuildResponse.Finished
-	0, // 4: kelson.v1alpha1.BuildService.Build:input_type -> kelson.v1alpha1.BuildRequest
-	1, // 5: kelson.v1alpha1.BuildService.Build:output_type -> kelson.v1alpha1.BuildResponse
-	5, // [5:6] is the sub-list for method output_type
-	4, // [4:5] is the sub-list for method input_type
-	4, // [4:4] is the sub-list for extension type_name
-	4, // [4:4] is the sub-list for extension extendee
-	0, // [0:4] is the sub-list for field type_name
+	8, // 0: kelson.v1alpha1.BuildRequest.spec:type_name -> kelson.v1alpha1.SpecRef
+	4, // 1: kelson.v1alpha1.BuildResponse.started:type_name -> kelson.v1alpha1.BuildResponse.Started
+	5, // 2: kelson.v1alpha1.BuildResponse.log:type_name -> kelson.v1alpha1.BuildResponse.Log
+	6, // 3: kelson.v1alpha1.BuildResponse.finished:type_name -> kelson.v1alpha1.BuildResponse.Finished
+	7, // 4: kelson.v1alpha1.ReportBuildRequest.images:type_name -> kelson.v1alpha1.ReportBuildRequest.ImagesEntry
+	0, // 5: kelson.v1alpha1.BuildService.Build:input_type -> kelson.v1alpha1.BuildRequest
+	2, // 6: kelson.v1alpha1.BuildService.ReportBuild:input_type -> kelson.v1alpha1.ReportBuildRequest
+	1, // 7: kelson.v1alpha1.BuildService.Build:output_type -> kelson.v1alpha1.BuildResponse
+	3, // 8: kelson.v1alpha1.BuildService.ReportBuild:output_type -> kelson.v1alpha1.ReportBuildResponse
+	7, // [7:9] is the sub-list for method output_type
+	5, // [5:7] is the sub-list for method input_type
+	5, // [5:5] is the sub-list for extension type_name
+	5, // [5:5] is the sub-list for extension extendee
+	0, // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_kelson_v1alpha1_build_proto_init() }
@@ -491,7 +727,7 @@ func file_kelson_v1alpha1_build_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_kelson_v1alpha1_build_proto_rawDesc), len(file_kelson_v1alpha1_build_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   5,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
