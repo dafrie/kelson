@@ -151,13 +151,56 @@ func (a AnnotationReconciler) Reconcile(ctx context.Context, k Kustomization) er
 }
 
 func (a AnnotationReconciler) stamp(ctx context.Context, gvr schema.GroupVersionResource, namespace, name, at string) error {
+	return stampRequestedAt(ctx, a.Client, gvr, namespace, name, at)
+}
+
+// InputProviderPoker asks flux-operator to re-poll one
+// ResourceSetInputProvider now instead of at its interval
+// ([ADR-0034](docs/adr/0034-forge-driven-delivery.md) decision 2).
+//
+// It is the same `reconcile.fluxcd.io/requestedAt` stamp
+// [AnnotationReconciler] writes on a Kustomization, against the object that
+// owns the per-pull-request lifecycle — "exactly what a Flux Receiver would do,
+// without requiring notification-controller to be exposed". It lives beside the
+// other reconciler rather than inside the endpoint that calls it so the
+// annotation, the field manager and the GVR are spelled once in this repository.
+//
+// A poke is never load-bearing. Polling stays as configured
+// (`previews.interval`), so a failure here costs latency and never correctness —
+// which is why its caller records it and answers the delivery anyway rather
+// than asking the forge to retry.
+type InputProviderPoker struct {
+	// Client is the dynamic client, the same one DynamicStatusReader reads with.
+	Client dynamic.Interface
+	// Now is injectable so tests get a deterministic stamp.
+	Now func() time.Time
+}
+
+// Poke stamps the ResourceSetInputProvider named by namespace and name.
+func (p InputProviderPoker) Poke(ctx context.Context, namespace, name string) error {
+	if p.Client == nil {
+		return delivery.ApplyFailed("flux/reconcile", "client",
+			"the preview trigger has no Kubernetes client",
+			"build one with internal/delivery/kube.Connect and pass it as Client; without it previews still "+
+				"update at their poll interval, just not immediately")
+	}
+	now := p.Now
+	if now == nil {
+		now = time.Now
+	}
+	return stampRequestedAt(ctx, p.Client, inputProviderGVR, namespace, name, now().UTC().Format(time.RFC3339Nano))
+}
+
+// stampRequestedAt is the annotation patch itself, shared by the two things
+// that ask Flux to act now.
+func stampRequestedAt(ctx context.Context, client dynamic.Interface, gvr schema.GroupVersionResource, namespace, name, at string) error {
 	patch, err := json.Marshal(map[string]any{
 		"metadata": map[string]any{"annotations": map[string]string{requestedAtAnnotation: at}},
 	})
 	if err != nil {
 		return err
 	}
-	_, err = a.Client.Resource(gvr).Namespace(namespace).Patch(
+	_, err = client.Resource(gvr).Namespace(namespace).Patch(
 		ctx, name, types.MergePatchType, patch, metav1.PatchOptions{FieldManager: fieldManager})
 	return err
 }

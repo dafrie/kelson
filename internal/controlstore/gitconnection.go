@@ -405,6 +405,68 @@ func (s *GitConnectionStore) UpdateStatus(ctx context.Context, name string, obs 
 		"retry the probe: something else is writing this connection's status"), last)
 }
 
+// RecordInstallation writes the installation ID a GitHub `installation`
+// webhook reported onto an app connection's spec (ADR-0033 decision 2 step 3).
+//
+// # Why this exists when there is no UpdateConnection
+//
+// The header above says the vocabulary is create and delete, because a
+// connection's host and Secret are what it *is*. This does not contradict that:
+// the installation ID is not something the author writes. The app-manifest flow
+// creates the app and the connection before anybody installs it, so
+// `installationID: 0` is a real intermediate state that only the forge can end,
+// and the alternative to recording it here is a connection that can never mint
+// a token and a user told to type a number GitHub showed them once.
+//
+// It writes exactly that one field, through the same read-modify-write retry
+// [GitConnectionStore.UpdateStatus] uses and for the same reason — an apply
+// under [FieldManager] would state a complete intent and prune whatever else
+// the author wrote. A connection that is not app-authenticated is refused
+// rather than silently ignored: a token connection receiving an installation
+// event means the webhook matched the wrong connection, which is worth a
+// sentence.
+func (s *GitConnectionStore) RecordInstallation(ctx context.Context, name string, installationID int64) (StoredConnection, error) {
+	if err := validSegment("connection", name); err != nil {
+		return StoredConnection{}, err
+	}
+	var last error
+	for range writeAttempts {
+		current, err := s.read(ctx, name)
+		if err != nil {
+			return StoredConnection{}, err
+		}
+		if current == nil {
+			return StoredConnection{}, notStoredConnection(name)
+		}
+		app := current.Spec.Auth.GitHubApp
+		if app == nil {
+			return StoredConnection{}, NotFound(connectionRef(name),
+				fmt.Sprintf("connection %q does not authenticate as a GitHub App, so it has no installation to record", name),
+				"an installation belongs to an app connection. A token connection receiving one means a delivery "+
+					"verified against the wrong secret, which is worth looking at rather than recording")
+		}
+		if app.InstallationID == installationID {
+			// The same event twice writes the same number; not writing it at
+			// all is what keeps a redelivery from bumping the generation and
+			// re-triggering every watcher of this object.
+			return connectionFrom(current), nil
+		}
+		app.InstallationID = installationID
+
+		err = s.client.Update(ctx, current, client.FieldOwner(FieldManager))
+		if err == nil {
+			return connectionFrom(current), nil
+		}
+		if !apierrors.IsConflict(err) {
+			return StoredConnection{}, fmt.Errorf("controlstore: record the installation of %s: %w", connectionRef(name), err)
+		}
+		last = err
+	}
+	return StoredConnection{}, withCause(VersionConflict(connectionRef(name),
+		fmt.Sprintf("connection %q kept changing while its installation was being recorded", name),
+		"retry: something else is writing this connection"), last)
+}
+
 // ReadAuthSecret reads the material the connection references and registers
 // every value with internal/redact before returning it.
 //

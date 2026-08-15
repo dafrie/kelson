@@ -86,6 +86,7 @@ import (
 	"github.com/dafrie/kelson/internal/delivery/install"
 	"github.com/dafrie/kelson/internal/delivery/kube"
 	"github.com/dafrie/kelson/internal/forgeconn"
+	"github.com/dafrie/kelson/internal/forgehttp"
 	"github.com/dafrie/kelson/internal/gitref"
 	"github.com/dafrie/kelson/internal/model"
 	"github.com/dafrie/kelson/internal/observation"
@@ -124,6 +125,17 @@ type config struct {
 	// authentication entirely, which is the pre-#84 behaviour.
 	password string
 
+	// externalURL is where this server is reachable from outside: what the
+	// GitHub App's webhook and redirect URLs are built from (ADR-0033 decision
+	// 2). Empty derives it per request from the Host header and the forwarded
+	// scheme, which is right behind a proxy that sets them.
+	//
+	// It is a flag rather than something detected because the value is baked
+	// into the app GitHub creates: an app made with the wrong webhook URL has
+	// to be deleted and remade, and a guess that is usually right is not good
+	// enough for a value nobody can correct afterwards.
+	externalURL string
+
 	// The build plane's destination configuration. It is flags and not spec for
 	// ADR-0010's reason (docs/build.md): where an image is pushed is
 	// infrastructure, and the same Project must build against a team's ghcr.io
@@ -152,6 +164,11 @@ const insecureRegistriesEnv = "KELSON_INSECURE_REGISTRIES"
 // value is visible in `ps` and in shell history, an environment variable is at
 // least only readable by the process's owner. Same variable kelson-mcp reads.
 const passwordEnv = "KELSON_PASSWORD"
+
+// externalURLEnv supplies --external-url. It is where a deployment normally
+// sets it: the Ingress host is known to whoever wrote the chart values and not
+// to whoever runs the binary.
+const externalURLEnv = "KELSON_EXTERNAL_URL"
 
 // defaultNamespace is where the state ConfigMaps live. It matches the ADR's
 // default and the RBAC the deploy manifests grant.
@@ -266,6 +283,10 @@ func parseFlags(args []string, stderr io.Writer) (config, error) {
 			controlstore.MaxAuditRetentionDays))
 	fs.StringVar(&cfg.password, "password", os.Getenv(passwordEnv),
 		"shared password web clients log in with and non-browser clients send as a bearer token (default: $"+passwordEnv+"); empty disables authentication")
+	fs.StringVar(&cfg.externalURL, "external-url", os.Getenv(externalURLEnv),
+		"base URL this server is reachable at from the internet, e.g. https://kelson.acme.com (default: $"+externalURLEnv+"); "+
+			"the GitHub App's webhook and callback URLs are built from it and are baked into the created app. "+
+			"Empty derives it from each request's Host header and forwarded scheme")
 	fs.StringVar(&cfg.registry, "registry", os.Getenv(registryEnv), "destination registry and namespace for builds, e.g. ghcr.io/acme (default: $"+registryEnv+"); a Build request may override it")
 	fs.StringVar(&cfg.pushSecret, "push-secret", "", "name of an existing kubernetes.io/dockerconfigjson Secret in the build namespace that authenticates the push")
 	fs.StringVar(&cfg.buildNamespace, "build-namespace", "", "namespace build Jobs run in (default: the environment's own namespace, as in the CLI)")
@@ -366,6 +387,19 @@ func newMux(plane *serverPlane, auth *api.Auth) http.Handler {
 	mux := http.NewServeMux()
 	plane.api.Register(mux)
 	auth.Register(mux)
+	// The forge surface (ADR-0033 decision 2, ADR-0034 decisions 1 and 2):
+	// /forge/github/webhook and the two halves of the app-manifest flow. It
+	// sits beside the RPC routes rather than inside internal/api because none
+	// of it is an RPC — a webhook body's schema is GitHub's, and the manifest
+	// flow is browser redirects and a form.
+	//
+	// Like /healthz and /auth/*, it is outside the gate's `/kelson.v1alpha1.*`
+	// prefix, which is right for the webhook (its gate is the HMAC) and is a
+	// stated gap for the manifest endpoints — see internal/forgehttp's package
+	// doc.
+	if plane.forge != nil {
+		plane.forge.Register(mux)
+	}
 	mux.HandleFunc("/healthz", healthz)
 	mux.Handle("/", webui.Handler())
 	return auth.Middleware(mux)
@@ -457,6 +491,10 @@ type serverPlane struct {
 	// connections and no bootstrap token it resolves everything to anonymous,
 	// which is exactly what this server did before connections existed.
 	sources *forgeconn.Resolver
+
+	// forge serves /forge/* — the webhook listener and the app-manifest flow.
+	// Nil is a server that answers 404 there, which a test mux is.
+	forge *forgehttp.Handler
 }
 
 // connectServer builds the api.Server over the real cluster.
@@ -598,7 +636,25 @@ func connectServer(cfg config, attribution *slog.Logger) (*serverPlane, error) {
 			Namespace:  cfg.buildNamespace,
 		},
 	})
-	return &serverPlane{api: server, agents: agents, sources: sources}, nil
+
+	// The /forge surface. It shares the connection resolver with the build
+	// plane above, the spec store with the RPC handlers, and the dynamic client
+	// with everything else that talks to Flux objects — one process, one answer
+	// to "which connections does this instance hold".
+	forgeEndpoints, err := forgehttp.New(forgehttp.Options{
+		Sources:     sources,
+		Connections: connections,
+		Specs:       specs,
+		Secrets:     forgehttp.KubeSecrets{Client: cluster.Typed, Namespace: cfg.namespace},
+		Previews:    flux.InputProviderPoker{Client: cluster.Dynamic},
+		ExternalURL: cfg.externalURL,
+		Logger:      attribution,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &serverPlane{api: server, agents: agents, sources: sources, forge: forgeEndpoints}, nil
 }
 
 // observationConnector is the server's connectObservation: one cluster

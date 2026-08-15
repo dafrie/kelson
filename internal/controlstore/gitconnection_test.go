@@ -386,3 +386,86 @@ func TestStoredConnectionRefUsesTheEffectiveHost(t *testing.T) {
 		t.Fatalf("ref = %+v, want the default GitHub host and the observed account", ref)
 	}
 }
+
+// RecordInstallation is the one field a webhook writes onto a connection's
+// spec (ADR-0033 decision 2 step 3). It exists in a store whose vocabulary is
+// otherwise create and delete, because the installation ID is not something the
+// author writes — the app-manifest flow creates the connection before anybody
+// installs the app, and only the forge can end that state.
+func TestRecordInstallation(t *testing.T) {
+	ctx := context.Background()
+	c := newConnectionClient(t)
+	store := newConnectionStore(t, c)
+
+	appSpec := model.GitConnectionSpec{
+		Provider: model.GitProviderGitHub,
+		Auth: model.GitConnectionAuth{GitHubApp: &model.GitHubAppAuth{
+			AppID:     12345,
+			SecretRef: "acme-github-app",
+		}},
+	}
+	if _, err := store.Create(ctx, testConnection, appSpec, CreateConnectionOptions{}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	recorded, err := store.RecordInstallation(ctx, testConnection, 678910)
+	if err != nil {
+		t.Fatalf("RecordInstallation: %v", err)
+	}
+	if got := recorded.Spec.Auth.GitHubApp.InstallationID; got != 678910 {
+		t.Errorf("installationID = %d, want 678910", got)
+	}
+
+	// The generation must not move for a redelivery of the same event: every
+	// watcher of this object would otherwise re-reconcile for nothing.
+	var before v1alpha1.GitConnection
+	if err := c.Get(ctx, client.ObjectKey{Namespace: testNamespace, Name: testConnection}, &before); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if _, err := store.RecordInstallation(ctx, testConnection, 678910); err != nil {
+		t.Fatalf("replayed RecordInstallation: %v", err)
+	}
+	var after v1alpha1.GitConnection
+	if err := c.Get(ctx, client.ObjectKey{Namespace: testNamespace, Name: testConnection}, &after); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if before.ResourceVersion != after.ResourceVersion {
+		t.Error("recording the same installation twice wrote the object again")
+	}
+
+	// An uninstall clears it: a connection claiming an installation it does not
+	// have fails at clone time instead of at its Ready condition.
+	cleared, err := store.RecordInstallation(ctx, testConnection, 0)
+	if err != nil {
+		t.Fatalf("clearing: %v", err)
+	}
+	if got := cleared.Spec.Auth.GitHubApp.InstallationID; got != 0 {
+		t.Errorf("installationID = %d after an uninstall, want 0", got)
+	}
+}
+
+// A token connection receiving an installation event means a delivery verified
+// against the wrong secret, which is worth a sentence rather than a silent
+// no-op.
+func TestRecordInstallationRefusesATokenConnection(t *testing.T) {
+	ctx := context.Background()
+	store := newConnectionStore(t, newConnectionClient(t))
+	if _, err := store.Create(ctx, testConnection, tokenSpec("acme-git-token"), CreateConnectionOptions{}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	_, err := store.RecordInstallation(ctx, testConnection, 678910)
+	if err == nil {
+		t.Fatal("a token connection accepted an installation")
+	}
+	if !strings.Contains(err.Error(), "GitHub App") {
+		t.Errorf("the refusal must say why: %v", err)
+	}
+}
+
+func TestRecordInstallationOnAMissingConnection(t *testing.T) {
+	store := newConnectionStore(t, newConnectionClient(t))
+	if _, err := store.RecordInstallation(context.Background(), "nope", 1); err == nil {
+		t.Fatal("recording an installation on a connection that does not exist was accepted")
+	}
+}

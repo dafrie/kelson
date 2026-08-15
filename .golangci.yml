@@ -63,6 +63,7 @@ linters:
             - "!**/internal/controller/**"
             - "!**/cmd/kelson-controller/**"
             - "!**/internal/forge/**"
+            - "!**/internal/forgehttp/**"
           allow:
             - $gostd
             - github.com/dafrie/kelson
@@ -176,6 +177,28 @@ linters:
           allow:
             - $gostd
             - github.com/dafrie/kelson
+        # The forge's HTTP surface (ADR-0033 decision 2, ADR-0034 decisions 1
+        # and 2): the app-manifest flow and the webhook listener, mounted on
+        # kelson-server's mux. It is deliberately NOT under the `forge` rule
+        # above — that package is the provider seam and gets the standard
+        # library alone, and a webhook endpoint that could reach a cluster from
+        # inside it would erase the property that makes the seam testable
+        # against fixtures.
+        #
+        # What it needs beyond `main` is one Secret write in kelson's own
+        # namespace (the created app's private key) and the dynamic client that
+        # stamps a ResourceSetInputProvider. That is the cluster-facing plane's
+        # own list, minus controller-runtime, which nothing here builds an apply
+        # configuration with.
+        forgehttp:
+          files:
+            - "**/internal/forgehttp/**"
+          allow:
+            - $gostd
+            - github.com/dafrie/kelson
+            - k8s.io/client-go
+            - k8s.io/api
+            - k8s.io/apimachinery
         # The api plane (ADR-0013 §2): the ConnectRPC handlers and the server
         # binary. It gets the transport and the generated code, and nothing
         # else — the cluster clients stay behind the store interfaces in
