@@ -29,8 +29,8 @@ trigger discipline (an event enqueues reconciliation of true state; it never mut
 # Environment
 spec:
   autoDeploy: true              # default false — manual deploys stay the default
-  components:                   # the environment's existing per-component override block
-    worker:
+  components:                   # the environment's existing per-component override list
+    - name: worker
       autoDeploy: false         # worker stays manual even while the environment tracks
 ```
 
