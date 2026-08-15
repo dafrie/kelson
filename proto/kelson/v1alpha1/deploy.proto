@@ -182,6 +182,22 @@ message HistoryEntry {
   // carry. It is frozen once a newer revision takes over, so it says how that
   // deployment ended rather than what it looked like a second in.
   string outcome = 8;
+  // BeyondWindow marks an entry that came from the registry's tag list rather
+  // than from the bounded mirror in `Environment.status` (ADR-0028 decision 4,
+  // issue #241). The mirror keeps the most recent revisions; the registry keeps
+  // every artifact ever published, immutably, and it is the record.
+  //
+  // On such an entry only `revision` is filled, and every other field is
+  // *unknown* rather than empty: when it was published, which images it ran and
+  // how that deployment ended were observations of a cluster, and a registry
+  // never saw any of them. A client must say so rather than render a blank as a
+  // fact — that is the whole reason this is a field and not something to be
+  // inferred from missing values, which an entry recorded before those fields
+  // existed also has.
+  //
+  // It is still a rollback target: the tag is immutable, so restoring it is the
+  // same pointer move as restoring one inside the window.
+  bool beyond_window = 9;
 }
 
 // ComponentImage is one component and the image it resolved to.

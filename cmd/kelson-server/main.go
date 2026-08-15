@@ -80,6 +80,7 @@ import (
 	"github.com/dafrie/kelson/internal/build/registry"
 	"github.com/dafrie/kelson/internal/clusterprofile"
 	"github.com/dafrie/kelson/internal/clusterprofile/detect"
+	"github.com/dafrie/kelson/internal/controller"
 	"github.com/dafrie/kelson/internal/controlstore"
 	"github.com/dafrie/kelson/internal/delivery/dryrun"
 	"github.com/dafrie/kelson/internal/delivery/flux"
@@ -652,11 +653,23 @@ func connectServer(cfg config, attribution *slog.Logger) (*serverPlane, error) {
 	server := api.New(api.Options{
 		Specs:        specs,
 		Environments: environments,
-		Agents:       agents,
-		Audit:        audit,
-		Connections:  connections,
-		GitSources:   gitSources,
-		Logger:       attribution,
+		// The durable record behind the twenty-entry status mirror (ADR-0028
+		// decision 4, issue #241): it is what lets History page past the window
+		// and a rollback name a revision that has aged out of it. The type and
+		// the configuration are kelson-controller's, deliberately — the two
+		// processes read one registry with one credential, and a server that
+		// derived the repository its own way could answer confidently about
+		// artifacts nobody published.
+		Revisions: controller.RegistryRevisions{
+			Registry:           cfg.registry,
+			RegistryConfig:     cfg.registryConfig,
+			InsecureRegistries: cfg.insecureRegistries,
+		},
+		Agents:      agents,
+		Audit:       audit,
+		Connections: connections,
+		GitSources:  gitSources,
+		Logger:      attribution,
 		// The ReportBuild trigger (ADR-0034 decision 3). The publisher is
 		// internal/preview's — the same package `kelson preview publish` calls,
 		// which is what ADR-0017 decision 10 promised a server-side caller

@@ -2,8 +2,11 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -697,15 +700,28 @@ func (s *Server) Rollback(ctx context.Context, req *connect.Request[kelsonv1alph
 	if err != nil {
 		return failRequest(err)
 	}
-	revision, err := rollbackTarget(st, msg.GetToRevision())
+	target, err := s.rollbackTarget(ctx, st, msg.GetToRevision())
 	if err != nil {
+		// A registry that could not be asked is this server's dependency
+		// failing, not a request the caller got wrong: reporting it as an
+		// invalid argument would tell them to fix a revision that may be
+		// perfectly good (failRequest maps it to Unavailable).
+		var dependency unavailableError
+		if errors.As(err, &dependency) {
+			return failRequest(err)
+		}
 		return fail(connect.CodeInvalidArgument, err)
 	}
+	revision := target.Revision
 
+	findings := []*kelsonv1alpha1.RollbackResponse_Finding{rollbackPreviewGap(st, revision)}
+	if target.BeyondWindow {
+		findings = append(findings, beyondWindowFinding(st, revision))
+	}
 	if err := stream.Send(&kelsonv1alpha1.RollbackResponse{
 		Event: &kelsonv1alpha1.RollbackResponse_Preview_{Preview: &kelsonv1alpha1.RollbackResponse_Preview{
 			ToRevision: revision.Revision,
-			Findings:   []*kelsonv1alpha1.RollbackResponse_Finding{rollbackPreviewGap(st, revision)},
+			Findings:   findings,
 		}},
 	}); err != nil {
 		return err
@@ -970,48 +986,151 @@ func refusedRollback(before, st controlstore.EnvironmentState, revision string) 
 	return true
 }
 
+// rollbackTarget is a verified target and where verifying it succeeded.
+type rollbackTarget struct {
+	// Revision is the target. Everything on it beyond the revision string is
+	// filled only for one the mirror still holds.
+	Revision controlstore.Revision
+	// BeyondWindow means the mirror has forgotten this revision and the
+	// registry — the record it mirrors — still has it. The rollback is exactly
+	// as exact; what kelson can *say* about the target is much less, and the
+	// preview says which case this is (see [beyondWindowFinding]).
+	BeyondWindow bool
+}
+
 // rollbackTarget decides which revision a rollback restores, and refuses every
 // target the controller would refuse.
 //
 // An empty to_revision is "the previous revision": the newest published one
-// that is not the one being served. Anything else must be in the history
-// mirror — kelson will not point an OCIRepository at a tag it cannot confirm it
-// published, and the mirror is bounded, so a correct-but-ancient target reads
-// exactly like a typo and both are refused with the window named.
-func rollbackTarget(st controlstore.EnvironmentState, requested string) (controlstore.Revision, error) {
-	if len(st.History) == 0 {
-		return controlstore.Revision{}, fmt.Errorf(
-			"api: %s/%s has published nothing, so there is no revision to roll back to",
-			st.Project, st.Environment)
-	}
+// that is not the one being served. That answer comes from the mirror and only
+// from the mirror — "the previous one" is a statement about what this
+// environment has been doing lately, and the environment's own status is where
+// lately lives.
+//
+// An explicit target is looked up in the mirror first and then in the registry
+// (ADR-0028 decision 4, issue #241). The mirror is bounded, so before the
+// registry was asked a correct-but-ancient target read exactly like a typo and
+// both were refused with the window named — a revision that still existed and
+// was still deployable, refused because the thing that remembers it is twenty
+// entries long. The registry is the record; a tag it holds is a rollback target.
+//
+// The pre-flight matters even though the controller checks again: this handler
+// refuses in the caller's own request, so a typo is an InvalidArgument with the
+// known revisions listed and *nothing is written* (see [Server.Rollback]).
+func (s *Server) rollbackTarget(ctx context.Context, st controlstore.EnvironmentState, requested string) (rollbackTarget, error) {
 	if requested == "" {
-		previous, ok := st.PreviousRevision()
-		if !ok {
-			return controlstore.Revision{}, fmt.Errorf(
-				"api: %s/%s has published one revision (%s) and it is the one running, so there is no previous one to roll back to",
-				st.Project, st.Environment, st.History[0].Revision)
-		}
-		return previous, nil
+		return s.previousRevision(ctx, st)
 	}
 	if !revisionFormat.MatchString(requested) {
-		return controlstore.Revision{}, fmt.Errorf(
+		example := "7-a1b2c3d4"
+		if len(st.History) > 0 {
+			example = st.History[0].Revision
+		}
+		return rollbackTarget{}, fmt.Errorf(
 			"api: %q is not a revision: a revision is <generation>-<spec-hash-short>, e.g. %s",
-			requested, st.History[0].Revision)
+			requested, example)
 	}
 	if found, ok := st.FindRevision(requested); ok {
-		return found, nil
+		return rollbackTarget{Revision: found}, nil
 	}
-	return controlstore.Revision{}, fmt.Errorf(
-		"api: %s/%s has no revision %q in its history (%s). The mirror holds the most recent %d revisions; "+
-			"the registry holds every one ever published, so an older target is a registry query",
-		st.Project, st.Environment, requested, strings.Join(knownRevisions(st), ", "), len(st.History))
+	if s.revisions == nil {
+		return rollbackTarget{}, fmt.Errorf(
+			"api: %s/%s has no revision %q in its history (%s), and this server has no registry to check the "+
+				"record against. The mirror holds the most recent %d revisions; the registry holds every one "+
+				"ever published (ADR-0028 decision 4)",
+			st.Project, st.Environment, requested, mirrorContents(st), maxHistoryEntries)
+	}
+
+	digest, found, err := s.revisions.Resolve(ctx, st.Project, st.Environment, requested)
+	if err != nil {
+		// The record could not be read, which is not the same as a revision
+		// that is not in it. Refusing this as InvalidArgument would tell a
+		// caller their revision is gone on the strength of a registry that
+		// never answered.
+		return rollbackTarget{}, unavailable(
+			"api: %s/%s has no revision %q in its history, and the registry could not be asked whether it "+
+				"holds one: %w", st.Project, st.Environment, requested, err)
+	}
+	if found {
+		// Only the revision and the digest: the mirror held the timestamp, the
+		// images and the outcome, and a registry never saw any of them. They
+		// stay zero rather than being filled with something plausible.
+		return rollbackTarget{
+			Revision:     controlstore.Revision{Revision: requested, Digest: digest},
+			BeyondWindow: true,
+		}, nil
+	}
+	return rollbackTarget{}, fmt.Errorf(
+		"api: %s/%s has no revision %q, in its history (%s) or in the registry. Both places kelson can "+
+			"confirm a revision from have been asked: the mirror, bounded at %d entries, and the registry's "+
+			"tag list, which is the record it mirrors (ADR-0028 decision 4)",
+		st.Project, st.Environment, requested, mirrorContents(st), maxHistoryEntries)
+}
+
+// previousRevision is what an empty to_revision means, and why the registry
+// does not answer it.
+//
+// "The revision before the one currently serving" is a question about the
+// environment's recent past, and the mirror is exactly the record of that. An
+// environment whose mirror is empty has published nothing this server can see —
+// but it may still have artifacts in the registry, because deleting an
+// Environment deliberately does not delete them (ADR-0028 decision 3's
+// amendment), so a re-created environment finds its whole history still there.
+// Naming one of those is a `--to` away, and the refusal says so instead of
+// stopping at "nothing to roll back to".
+func (s *Server) previousRevision(ctx context.Context, st controlstore.EnvironmentState) (rollbackTarget, error) {
+	if len(st.History) == 0 {
+		published := ""
+		if s.revisions != nil {
+			if revisions, err := s.revisions.Revisions(ctx, st.Project, st.Environment); err == nil && len(revisions) > 0 {
+				published = fmt.Sprintf(". The registry still holds %d revision(s) published under this name, "+
+					"newest %s: name one with --to", len(revisions), revisions[0])
+			}
+		}
+		return rollbackTarget{}, fmt.Errorf(
+			"api: %s/%s has published nothing, so there is no revision to roll back to%s",
+			st.Project, st.Environment, published)
+	}
+	previous, ok := st.PreviousRevision()
+	if !ok {
+		return rollbackTarget{}, fmt.Errorf(
+			"api: %s/%s has published one revision (%s) and it is the one running, so there is no previous one to roll back to",
+			st.Project, st.Environment, st.History[0].Revision)
+	}
+	return rollbackTarget{Revision: previous}, nil
+}
+
+// mirrorContents is what the bounded mirror holds, for a refusal to list.
+func mirrorContents(st controlstore.EnvironmentState) string {
+	if len(st.History) == 0 {
+		return "which is empty"
+	}
+	return strings.Join(knownRevisions(st), ", ")
 }
 
 // revisionFormat is the artifact tag grammar of ADR-0028 decision 2:
-// <generation>-<spec-hash-short>. Checking it before the history lookup is what
-// lets a caller who typed a branch name or a digest read that they typed the
-// wrong *kind* of thing, rather than that their revision is not in the window.
-var revisionFormat = regexp.MustCompile(`^[1-9][0-9]*-[0-9a-f]{8}$`)
+// <generation>-<spec-hash-short>. Checking it before either lookup is what lets
+// a caller who typed a branch name or a digest read that they typed the wrong
+// *kind* of thing, rather than that their revision is in neither place.
+//
+// The generation is captured because a tag list comes back in the registry's
+// own lexical order, where "10-…" precedes "9-…", and a history has to be
+// ordered by the number (see [historyEntries]).
+var revisionFormat = regexp.MustCompile(`^([1-9][0-9]*)-[0-9a-f]{8}$`)
+
+// revisionGeneration reads the generation out of a revision tag. Anything that
+// is not a revision has no generation and no place in a history.
+func revisionGeneration(revision string) (int64, bool) {
+	match := revisionFormat.FindStringSubmatch(revision)
+	if match == nil {
+		return 0, false
+	}
+	generation, err := strconv.ParseInt(match[1], 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return generation, true
+}
 
 func knownRevisions(st controlstore.EnvironmentState) []string {
 	out := make([]string, 0, len(st.History))
@@ -1044,15 +1163,67 @@ func rollbackPreviewGap(st controlstore.EnvironmentState, target controlstore.Re
 	}
 }
 
+// beyondWindowFinding is the second finding a rollback carries when its target
+// came from the registry rather than from the bounded mirror.
+//
+// It is a finding and not a footnote because it changes what the reader is
+// agreeing to. A rollback inside the window is one whose target kelson can
+// describe: it knows when that revision was published, which images it ran and
+// how that deployment ended. Past the window all of that is gone — those were
+// observations of a cluster, and the registry that still holds the artifact
+// never saw any of them — so the operator is restoring something kelson can
+// name and cannot characterise. Saying nothing would let an empty `outcome`
+// read as "nothing went wrong".
+//
+// It is not marked unrecoverable, for the same reason the preview gap is not:
+// the rollback itself is exact. The tag is immutable, the digest resolved from
+// the registry pins the bytes, and the restore is the same pointer move it
+// would be for the newest revision in the window.
+func beyondWindowFinding(st controlstore.EnvironmentState, target controlstore.Revision) *kelsonv1alpha1.RollbackResponse_Finding {
+	return &kelsonv1alpha1.RollbackResponse_Finding{
+		Resource: st.Project + "/" + st.Environment,
+		Cause:    "rollback/beyond-window",
+		Message: fmt.Sprintf("revision %s is older than the %d entries this environment's status keeps, and it "+
+			"was confirmed against the registry's tag list instead (ADR-0028 decision 4). The artifact is "+
+			"there and immutable, so restoring it is exact; what kelson cannot tell you is when it was "+
+			"published, which images it ran or how that deployment ended — the status mirror held those, and "+
+			"a registry never saw them.", target.Revision, maxHistoryEntries),
+		Unrecoverable: false,
+	}
+}
+
 // History lists what this environment has published, newest first.
 //
-// # The record is the registry; this is the window onto it
+// # The record is the registry, and this reads both
 //
-// `Environment.status.history[]` mirrors the most recent
-// [v1alpha1.MaxHistoryEntries] revisions (ADR-0028 decision 4). Anything older
-// is still in the registry, immutably, and reading it is a registry query this
-// RPC deliberately does not make: a bounded, cheap answer that says how far it
-// goes is more useful than an unbounded one that needs registry credentials.
+// `Environment.status.history[]` mirrors the most recent [maxHistoryEntries]
+// revisions (ADR-0028 decision 4) and the registry holds every artifact ever
+// published. This RPC serves the mirror and then pages past it into the
+// registry's tag list, marking what came from where (issue #241).
+//
+// The UX decision that implies is deliberate: **beyond the window is
+// transparent, not a flag.** A list that silently stops at twenty is the bug —
+// it makes a revision that exists and is restorable invisible to everyone who
+// does not already know the window is there, which is precisely the people a
+// history is for. A flag would have kept the honesty and lost the discovery, so
+// the entries arrive and carry `beyond_window` instead: a marked answer rather
+// than an opt-in one.
+//
+// What the registry adds is exactly one fact per revision — that it exists.
+// Timestamp, images and outcome were observations of a cluster and stay empty,
+// with `beyond_window` saying they are unknown rather than absent. Fetching
+// each artifact's annotations would recover two of them at one request per
+// entry, and would still never recover the outcome, which is the fact a reader
+// of a history most wants; a list where some rows are richer than others
+// depending on how many requests kelson was willing to make would be harder to
+// read than a uniform "the record remembers the revision, the mirror remembered
+// the rest".
+//
+// A registry that will not answer does not fail a History whose mirror is
+// short of the bound: nothing has aged out, so nothing is missing, and
+// `kelson history` is exactly what somebody reaches for when other things are
+// broken. A full mirror is the case where the answer would be silently
+// incomplete, and that one is refused rather than trimmed.
 //
 // # What the wire carries
 //
@@ -1096,7 +1267,88 @@ func (s *Server) History(ctx context.Context, req *connect.Request[kelsonv1alpha
 			Outcome:     r.Outcome,
 		})
 	}
-	return connect.NewResponse(&kelsonv1alpha1.HistoryResponse{Entries: entries}), nil
+	beyond, err := s.beyondWindow(ctx, st, entries)
+	if err != nil {
+		return nil, failRequest(err)
+	}
+	return connect.NewResponse(&kelsonv1alpha1.HistoryResponse{
+		Entries: mergeHistory(entries, beyond),
+	}), nil
+}
+
+// beyondWindow is the registry's half of a history: every revision it holds
+// that the mirror no longer does.
+//
+// A failure to read it is returned only when the mirror is at its bound, which
+// is the case where staying silent would be an answer that is incomplete
+// without saying so. Below the bound nothing has aged out, so the mirror *is*
+// the whole history and a registry that did not answer changed nothing about
+// it — see the doc on [Server.History].
+func (s *Server) beyondWindow(ctx context.Context, st controlstore.EnvironmentState,
+	mirrored []*kelsonv1alpha1.HistoryEntry) ([]*kelsonv1alpha1.HistoryEntry, error) {
+	if s.revisions == nil {
+		return nil, nil
+	}
+	revisions, err := s.revisions.Revisions(ctx, st.Project, st.Environment)
+	if err != nil {
+		if len(mirrored) < maxHistoryEntries {
+			return nil, nil
+		}
+		return nil, unavailable("api: %s/%s has a full status.history, so older revisions exist that only the "+
+			"registry remembers, and the registry could not be read: %w", st.Project, st.Environment, err)
+	}
+
+	held := make(map[string]bool, len(mirrored))
+	for _, e := range mirrored {
+		held[e.GetRevision()] = true
+	}
+	out := make([]*kelsonv1alpha1.HistoryEntry, 0, len(revisions))
+	for _, revision := range revisions {
+		if held[revision] {
+			continue
+		}
+		out = append(out, &kelsonv1alpha1.HistoryEntry{
+			Revision:     revision,
+			BeyondWindow: true,
+			// Every other field stays empty and `beyond_window` says why. The
+			// prose `message` is the one exception, because its audience is a
+			// human or an agent reading a sentence (internal/mcp), and "no
+			// outcome recorded" would be read as "the deployment had none".
+			Message: fmt.Sprintf("older than the %d entries status.history keeps: the registry's tag list "+
+				"confirms this revision, and nothing else about it was ever in the registry",
+				maxHistoryEntries),
+		})
+	}
+	return out, nil
+}
+
+// mergeHistory puts the two sources in one order: newest generation first.
+//
+// It is not "mirror, then the rest". The registry can hold a revision newer
+// than anything in the mirror — an Environment deleted and re-applied keeps its
+// artifacts (ADR-0028 decision 3's amendment) while its status starts empty —
+// and a list that showed that revision under twenty older ones would be
+// ordered by where kelson found things rather than by when they happened.
+//
+// A revision whose tag does not parse cannot be placed by generation, so it
+// keeps its position relative to the mirror it came from rather than being
+// sorted to an arbitrary end.
+func mergeHistory(mirrored, beyond []*kelsonv1alpha1.HistoryEntry) []*kelsonv1alpha1.HistoryEntry {
+	if len(beyond) == 0 {
+		return mirrored
+	}
+	merged := make([]*kelsonv1alpha1.HistoryEntry, 0, len(mirrored)+len(beyond))
+	merged = append(merged, mirrored...)
+	merged = append(merged, beyond...)
+	sort.SliceStable(merged, func(i, j int) bool {
+		left, leftOK := revisionGeneration(merged[i].GetRevision())
+		right, rightOK := revisionGeneration(merged[j].GetRevision())
+		if !leftOK || !rightOK {
+			return false
+		}
+		return left > right
+	})
+	return merged
 }
 
 func committedAt(t time.Time) string {
