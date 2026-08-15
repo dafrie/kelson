@@ -700,10 +700,11 @@ naming just those two components remains a supported and common shape
 > [ADR-0016](adr/0016-delivery-flows-v0.md) decision 5 decided the shape. It is the **one feature that
 > needs flux-operator** ([ADR-0030](adr/0030-flux-aio-install.md) decision 4): `ResourceSet` and
 > `ResourceSetInputProvider` are its CRDs. **Two halves have to be in place**: the `previews:` block
-> below, and a CI step that runs
-> `kelson preview publish` — read [Publishing the artifacts](#publishing-the-artifacts) before turning
-> this on. Once they are, `PreviewService.ListPreviews` and the web UI's previews section say which
-> change requests are running ([Seeing your previews](#seeing-your-previews)).
+> below, and something that publishes the artifacts it points at — either a CI step reporting its
+> build to kelson-server, or `kelson preview publish` in CI. Read
+> [Publishing the artifacts](#publishing-the-artifacts) before turning this on. Once they are,
+> `PreviewService.ListPreviews` and the web UI's previews section say which change requests are
+> running ([Seeing your previews](#seeing-your-previews)).
 
 An environment may spawn a child environment per open pull request. kelson does not poll the forge and
 does not garbage-collect: a flux-operator `ResourceSetInputProvider` finds the change requests and a
@@ -796,11 +797,32 @@ same way it fails the parent environment's (see [data services](data-services.md
 
 ### Publishing the artifacts
 
-The `previews:` block renders the cluster-side machinery and nothing else. The manifests each preview
-applies are pushed by **`kelson preview publish`, run in the application repository's CI on pull
+The `previews:` block renders the cluster-side machinery and nothing else. Something has to push the
+manifests each preview applies, and there are now two things that can. Without either, flux-operator
+finds the labelled pull requests, creates an `OCIRepository` for each, and reports that the artifact
+does not exist.
+
+**The server publishes, and CI only reports** ([ADR-0034](adr/0034-forge-driven-delivery.md)
+decision 3). A project that sets `build.by: ci` hands kelson one sentence per build — this commit,
+this change request, these digest-pinned images — and kelson renders the preview from the spec it
+already holds, publishes the artifact under the head commit and asks flux-operator to look now. CI
+never runs kelson's renderer, never needs a checkout of the spec and never holds the
+artifact-registry credential.
+
+> **What exists today.** The server side is complete: `BuildService.ReportBuild` publishes, and
+> kelson-server publishes with the credential in `--registry-config`. The *client* side is the RPC
+> itself — the `kelson ci report-build` verb ADR-0034 sketches is not written yet
+> ([#248](https://github.com/dafrie/kelson/issues/248)), so a pipeline calls the method directly. A
+> report for a project whose `build.by` is `kelson` (the default for a project with `source:`) is
+> answered `accepted: false` naming the field, because those images come from kelson's own build
+> plane; a report with no `--pr` is refused, because the tracking environments it would feed
+> (`autoDeploy`, decision 4) are not in the model yet.
+
+**Or CI publishes, with `kelson preview publish`, run in the application repository's CI on pull
 request events** — that is where the pull request's checkout and the image built from it already are
-([ADR-0017](adr/0017-pr-previews.md) decision 8). Without that step, flux-operator finds the labelled
-pull requests, creates an `OCIRepository` for each, and reports that the artifact does not exist.
+([ADR-0017](adr/0017-pr-previews.md) decision 8). ADR-0034 demotes this from the recommended path to
+the escape hatch for pipelines that cannot reach a kelson server at all — an air-gapped runner, a
+control plane behind a network the runner has no route to — and it is unchanged for those.
 
 ```yaml
 # .github/workflows/preview.yml
