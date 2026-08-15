@@ -42,6 +42,12 @@ locally:
 report. Write conventional commits that reference the issue. Open the PR against `main` using the
 repository template, referencing the issue it closes and any ADR it touches.
 
+Then report the PR number rather than merging it yourself. The coordinator merges, because it is the
+only one that knows what else is in flight and can sequence two PRs that touch adjacent ground — and
+it merges promptly, so this is sequencing, not a review queue. If your change alters behaviour,
+golden files or a public contract, spell that out in the PR body: the disclosure keeps the change
+reviewable after the fact, it is not a request for permission.
+
 **Report honestly.** Give the PR number, what you changed, what you found that the coordinator should
 know, and what you deliberately did not do. If tests fail or something is half-finished, say so with
 the output. A summary that overstates completeness is worse than no summary: the coordinator closes

@@ -38,7 +38,9 @@ DONE MEANS
 
 DELIVER
 Branch ag/<letter>-<topic> off main, push, open a PR against main using the repo template,
-reference #N and any ADR. Do not merge — report back with the PR number.
+reference #N and any ADR. Report the PR number rather than merging — I merge, so that PRs
+touching adjacent ground get sequenced. That is sequencing, not a review queue: it lands as
+soon as CI is green.
 
 REPORT
 PR number, what you changed, anything you found that I should know, and anything you deliberately
@@ -76,7 +78,8 @@ DONE MEANS
 - make lint passes
 
 DELIVER
-Branch ag/w-envtest off main, push, PR against main referencing #243 and ADR-0028. Do not merge.
+Branch ag/w-envtest off main, push, PR against main referencing #243 and ADR-0028. Report the
+PR number; I merge once CI is green.
 
 REPORT
 PR number, which tests un-skipped, and whether any needed behaviour changes in non-test code —
@@ -97,6 +100,8 @@ agent that knows the exact command will run it before reporting.
 **Inventing a shared type.** Two agents meeting at one seam will produce two incompatible types
 unless you hand both the same text. Fix the contract before dispatch, never during.
 
-**Letting the agent merge behaviour changes.** Low-stakes work can self-merge once CI is green.
-Anything touching behaviour, golden files, a public contract or an ADR-governed decision comes back
-to you. Say which of the two this task is, in the brief, so the agent does not have to guess.
+**Treating the PR as the finish line.** It isn't — the merge is, and merging is your job. A brief
+that stops at "open a PR" tends to produce a session that ends with four open PRs and nothing
+delivered. Say in the brief that the agent reports the number and you land it, so nobody waits on
+anybody. If the change touches behaviour, golden files or a public contract, ask for that to be
+spelled out in the PR body: it keeps the change reviewable after the fact without holding it up.

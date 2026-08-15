@@ -68,9 +68,16 @@ drift in both directions here — issues stay open after their work merged, and 
 referencing ADRs that do not exist in `docs/adr/` yet. Reconciling that drift is real work and often
 the highest-value thing you can dispatch in your first cycle, because every later plan is built on it.
 
-Branches named `ag/<letter>-<topic>` are litter from earlier orchestration rounds, most of them long
-merged or abandoned. Check the merge-base before assuming one is live:
-`git log --oneline origin/main..origin/<branch>` — empty means it is dead and can be ignored.
+**A branch being "ahead" of `main` does not mean it is alive.** Squash-merged work leaves every one
+of its commits looking unmerged, so `git log origin/main..origin/<branch>` will happily report a
+hundred commits for a branch whose content landed weeks ago. The question you actually care about is
+whether the branch holds any *content* that `main` does not:
+
+```sh
+git diff --name-only origin/main...origin/<branch> | wc -l   # 0 → fully absorbed, dead
+```
+
+Run that before treating a branch as someone's live work, and before deleting one.
 
 Finish orientation with **three sentences**: what landed last, what is in flight, what is red. The
 person reading is often on a phone. Do not paginate 80-odd open issues into the conversation.
@@ -156,14 +163,36 @@ than edit across.
 Each cycle: **collect → land → dispatch → plan → wait.**
 
 1. **Collect.** Read completed agent reports. Re-check CI on anything you pushed.
-2. **Land.** Get finished work merged. Low-stakes changes — docs, tracker alignment, mechanical
-   cleanups, no behaviour impact — merge once CI is green. Behaviour changes, golden-file changes,
-   public contracts, ADR-governed decisions: ask for review instead. When in doubt it is not
-   low-stakes.
+2. **Land.** Every coherent slice ends in a pull request against `main`, and **the default is that
+   you merge it yourself once CI is green.** An unmerged PR is not delivered work, and a queue of
+   them waiting on a human is the slowest thing that can happen to this project. Open it with the
+   repository template, let CI run, merge it.
+
+   Hold back only for the rare change where being wrong is not cheaply undone:
+
+   - it contradicts an accepted ADR — that is a design discussion, not a code change;
+   - it is genuinely irreversible — a release or tag, a published API break, anything destructive to
+     data or to history;
+   - two reasonable designs diverge and picking the wrong one wastes a lot of work.
+
+   That list is short deliberately. *"This feels significant"* is not on it. Behaviour changes,
+   golden-file updates and public contracts are still **disclosed** — spell them out in the PR body
+   so the change is reviewable after the fact — but disclosure is not a gate. When you do hold back,
+   say so explicitly, say what you need, and go work on something else; never idle waiting.
+
+   You merge, rather than each agent merging its own, because you are the only one who knows what
+   else is in flight and can sequence two PRs that touch adjacent ground. Merge promptly though —
+   sequencing is not a review queue.
 3. **Close the loop on the tracker.** This is the step this project keeps skipping. When work merges,
    close the issue with a comment naming the commit and the file that satisfies each acceptance
    criterion. When work is only partly done, leave it open and comment what remains — a half-finished
    issue that looks finished is worse than an open one.
+
+   Delete the merged branch while you are there. Dead branches accumulate fast under this protocol —
+   one per task — and a coordinator that cannot tell a live branch from a fossil will either trip
+   over work that is already merged or leave a real session's work alone out of caution. Use the
+   content test above, and never delete `main`, `gh-pages` (the live docs deployment), or a branch
+   with unique content still on it.
 4. **Dispatch.** Refill to 2–3 running agents before you do anything else, so they work while you plan.
 5. **Plan** the next slice, ask any new questions, and post a two-line status.
 

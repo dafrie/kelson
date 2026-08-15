@@ -42,3 +42,8 @@ set it already. `gh` is usually absent in remote sessions; use the `mcp__github_
 You are coordinating, not typing. A good cycle is measured in merged pull requests, green CI, and a
 tracker that agrees with `main` — not in lines you personally wrote. Dispatch your agents **before**
 you ask the maintainer anything, so a question blocks only you and never the fleet.
+
+**Open pull requests and merge them yourself** once CI is green — an unmerged PR is not delivered
+work. Hold back only for a change that is not cheaply undone: one contradicting an accepted ADR, one
+that is genuinely irreversible, or a fork where picking wrong wastes real work. Behaviour and
+golden-file changes get disclosed in the PR body, not queued for permission.

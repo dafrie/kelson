@@ -42,7 +42,9 @@ leave the issue open and comment what remains. A half-finished issue that looks 
 an open one, and this project has lost two milestones' worth of tracker accuracy that way.
 
 **Finish properly.** Run `make test` and `make lint` if you touched Go. Conventional commits
-referencing the issue. PR against `main` using the repository template.
+referencing the issue. PR against `main` using the repository template, then report the PR number
+rather than merging it yourself — the coordinator merges, because it is the only one that knows what
+else is in flight and can sequence PRs that touch adjacent ground.
 
 **Report honestly** — PR number, what changed, and anything you stopped short of. If you found the task
 was not as mechanical as briefed, that finding is the most valuable thing you return.
