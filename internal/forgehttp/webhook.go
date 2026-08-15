@@ -232,9 +232,8 @@ func sameRepository(previewsRepo, connectionHost string, event forge.Event) bool
 	if !ok {
 		return false
 	}
-	if path := strings.ToLower(strings.Trim(event.RepoFullName, "/")); path != "" && path != wantPath {
-		return false
-	} else if path == "" {
+	path := strings.ToLower(strings.Trim(event.RepoFullName, "/"))
+	if path == "" || path != wantPath {
 		return false
 	}
 	// The connection's host is the authority on where the delivery came from;
