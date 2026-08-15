@@ -50,8 +50,11 @@ func newBuildCmdFactory(connect buildConnector) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "build -f spec.yaml --registry <prefix>",
 		Short: "Build the project's source into an image with an in-cluster build job",
-		Long: "Build clones the Project's source in the cluster, builds it rootlessly and pushes the result,\n" +
-			"streaming the build log as it happens.\n\n" +
+		Long: "Build clones the source its components are bound to in the cluster, builds it rootlessly and\n" +
+			"pushes the result, streaming the build log as it happens.\n\n" +
+			"A component builds from the source it names, or from the project's default when it names none\n" +
+			"(ADR-0035). One build clones one repository and pushes one image, so a project whose components\n" +
+			"build from different repositories is refused by name rather than built by half.\n\n" +
 			"Strategy selection follows ADR-0010: an explicit spec.build.strategy wins, otherwise a\n" +
 			"Dockerfile selects BuildKit and its absence selects Cloud Native Buildpacks. Detecting the\n" +
 			"strategy needs to see the source tree, which the CLI can only do for a local checkout — pass -C\n" +
@@ -72,7 +75,7 @@ func newBuildCmdFactory(connect buildConnector) *cobra.Command {
 	f.StringVar(&opts.insecureRegistries, "insecure-registries", "",
 		"comma-separated registry hosts served over plain HTTP, e.g. localhost:5000 (default: $"+insecureRegistriesEnv+"); only the listed hosts are affected")
 	f.StringVar(&opts.pushSecret, "push-secret", "", "name of an existing kubernetes.io/dockerconfigjson Secret in the build namespace that authenticates the push")
-	f.StringVar(&opts.ref, "ref", "", "git branch, tag or commit to build (default: the Project's spec.source.ref, else the default branch)")
+	f.StringVar(&opts.ref, "ref", "", "git branch, tag or commit to build (default: the bound source's ref, else the repository's default branch)")
 	f.StringVarP(&opts.sourceDir, "source-dir", "C", "", "local checkout of the source, used only to detect the build strategy when it is not named in the spec")
 	f.StringVar(&opts.kubeconfig, "kubeconfig", "", "path to a kubeconfig (default: $KUBECONFIG, in-cluster credentials, then ~/.kube/config)")
 	f.StringVar(&opts.namespace, "namespace", "", "namespace the build Job runs in (default: the environment's namespace)")
@@ -152,13 +155,13 @@ func buildImage(cmd *cobra.Command, opts *buildOptions) (build.Result, error) {
 		return build.Result{}, errs
 	}
 
-	source := project.Spec.Source
-	if source == nil || strings.TrimSpace(source.Git) == "" {
-		return build.Result{}, build.Error{
-			Reason:      build.ReasonNoSource,
-			Message:     fmt.Sprintf("Project %s has no spec.source.git, so there is nothing to build from", project.Metadata.Name),
-			Remediation: "add spec.source.git to the Project, or deploy a pre-built image with `kelson deploy --image`",
-		}
+	// Which repository this build clones is the components' answer, not the
+	// Project's (ADR-0035 decision 4), and the refusals — nothing bound, or
+	// bound to several — come from the plan this command shares with
+	// BuildService so the two cannot name them differently.
+	binding, err := build.SourceToBuild(project.Metadata.Name, resolved)
+	if err != nil {
+		return build.Result{}, err
 	}
 
 	detection, err := resolveBuildStrategy(project.Spec.Build, opts.sourceDir)
@@ -183,11 +186,9 @@ func buildImage(cmd *cobra.Command, opts *buildOptions) (build.Result, error) {
 	ctx, cancel := context.WithTimeout(cmd.Context(), opts.timeout)
 	defer cancel()
 
-	ref := opts.ref
-	if ref == "" {
-		ref = source.Ref
-	}
-	revision, err := resolveRevision(ctx, plane.revisions, source.Git, ref)
+	// One ls-remote, against the bound source's repository and its own ref;
+	// --ref overrides it for this build alone.
+	revision, err := resolveRevision(ctx, plane.revisions, binding.Source.Git, binding.SourceRef(opts.ref))
 	if err != nil {
 		return build.Result{}, err
 	}
@@ -195,22 +196,30 @@ func buildImage(cmd *cobra.Command, opts *buildOptions) (build.Result, error) {
 	req := build.Request{
 		Project:     project.Metadata.Name,
 		Environment: environment.Metadata.Name,
-		// Component is deliberately empty: one build serves the whole
-		// Project (see destinationTag), so naming one of its components here
+		// Component is deliberately empty: one build serves every component
+		// bound to this source (see destinationTag), so naming one of them here
 		// would put a false label on the Job and on the image.
-		SourceGit:  source.Git,
-		SourceRef:  revision,
-		Dockerfile: build.DockerfilePath(project.Spec.Build),
-		Image:      image,
-		Tag:        build.DestinationTag(project.Metadata.Name, revision),
-		Revision:   revision,
+		SourceGit:        binding.Source.Git,
+		SourceRef:        revision,
+		SourceName:       binding.Source.Name,
+		SourceConnection: binding.Source.Connection,
+		Dockerfile:       build.DockerfilePath(project.Spec.Build),
+		Image:            image,
+		Tag:              build.DestinationTag(project.Metadata.Name, revision),
+		Revision:         revision,
 	}
 
 	// The plan is context for a human watching the build, so it goes to stderr
 	// alongside the deploy hint and leaves stdout to the log and the reference.
+	//
+	// The source line names the binding and not merely the URL: with sources
+	// declared and bound by name, "which repository is this cloning" and "why
+	// that one" are two questions, and the second is answered by the source's
+	// name and the components that asked for it.
 	plan := &printer{w: cmd.ErrOrStderr()}
 	plan.printf("strategy    %s\n", detection.Message)
-	plan.printf("source      %s at %s\n", source.Git, revision)
+	plan.printf("source      %s %s at %s (%s)\n", binding.Source.Name, binding.Source.Git, revision,
+		componentsPhrase(binding.Components))
 	plan.printf("destination %s:%s (namespace %s)\n", req.Image, req.Tag, namespace)
 	if err := plan.err; err != nil {
 		return build.Result{}, err
@@ -232,6 +241,17 @@ func buildImage(cmd *cobra.Command, opts *buildOptions) (build.Result, error) {
 		return build.Result{}, fmt.Errorf("the build returned %s, which is not pinned by digest", res.Reference)
 	}
 	return res, nil
+}
+
+// componentsPhrase names the components one build serves, which is what makes
+// the shared clone visible: two components bound to one source are one build,
+// and the plan says so rather than leaving a reader to infer it from a single
+// Job appearing where they expected two.
+func componentsPhrase(components []string) string {
+	if len(components) == 1 {
+		return "component " + components[0]
+	}
+	return "components " + strings.Join(components, ", ")
 }
 
 func registryPrefix(opts *buildOptions) string {
