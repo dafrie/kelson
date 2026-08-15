@@ -30,7 +30,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file kelson/v1alpha1/build.proto.
  */
 export const file_kelson_v1alpha1_build: GenFile = /*@__PURE__*/
-  fileDesc("ChtrZWxzb24vdjFhbHBoYTEvYnVpbGQucHJvdG8SD2tlbHNvbi52MWFscGhhMSJ/CgxCdWlsZFJlcXVlc3QSJgoEc3BlYxgBIAEoCzIYLmtlbHNvbi52MWFscGhhMS5TcGVjUmVmEhMKC2Vudmlyb25tZW50GAIgASgJEhAKCHJlZ2lzdHJ5GAMgASgJEhMKC3B1c2hfc2VjcmV0GAQgASgJEgsKA3JlZhgFIAEoCSLeAgoNQnVpbGRSZXNwb25zZRI5CgdzdGFydGVkGAEgASgLMiYua2Vsc29uLnYxYWxwaGExLkJ1aWxkUmVzcG9uc2UuU3RhcnRlZEgAEjEKA2xvZxgCIAEoCzIiLmtlbHNvbi52MWFscGhhMS5CdWlsZFJlc3BvbnNlLkxvZ0gAEjsKCGZpbmlzaGVkGAMgASgLMicua2Vsc29uLnYxYWxwaGExLkJ1aWxkUmVzcG9uc2UuRmluaXNoZWRIABpUCgdTdGFydGVkEhAKCHN0cmF0ZWd5GAEgASgJEhgKEGltYWdlX3JlcG9zaXRvcnkYAiABKAkSCwoDdGFnGAMgASgJEhAKCHJldmlzaW9uGAQgASgJGhQKA0xvZxINCgVjaHVuaxgBIAEoDBotCghGaW5pc2hlZBIRCglyZWZlcmVuY2UYASABKAkSDgoGZGlnZXN0GAIgASgJQgcKBWV2ZW50MlgKDEJ1aWxkU2VydmljZRJICgVCdWlsZBIdLmtlbHNvbi52MWFscGhhMS5CdWlsZFJlcXVlc3QaHi5rZWxzb24udjFhbHBoYTEuQnVpbGRSZXNwb25zZTABQkpaSGdpdGh1Yi5jb20vZGFmcmllL2tlbHNvbi9pbnRlcm5hbC9hcGkvZ2VuL2tlbHNvbi92MWFscGhhMTtrZWxzb252MWFscGhhMWIGcHJvdG8z", [file_kelson_v1alpha1_render]);
+  fileDesc("ChtrZWxzb24vdjFhbHBoYTEvYnVpbGQucHJvdG8SD2tlbHNvbi52MWFscGhhMSJ/CgxCdWlsZFJlcXVlc3QSJgoEc3BlYxgBIAEoCzIYLmtlbHNvbi52MWFscGhhMS5TcGVjUmVmEhMKC2Vudmlyb25tZW50GAIgASgJEhAKCHJlZ2lzdHJ5GAMgASgJEhMKC3B1c2hfc2VjcmV0GAQgASgJEgsKA3JlZhgFIAEoCSLeAgoNQnVpbGRSZXNwb25zZRI5CgdzdGFydGVkGAEgASgLMiYua2Vsc29uLnYxYWxwaGExLkJ1aWxkUmVzcG9uc2UuU3RhcnRlZEgAEjEKA2xvZxgCIAEoCzIiLmtlbHNvbi52MWFscGhhMS5CdWlsZFJlc3BvbnNlLkxvZ0gAEjsKCGZpbmlzaGVkGAMgASgLMicua2Vsc29uLnYxYWxwaGExLkJ1aWxkUmVzcG9uc2UuRmluaXNoZWRIABpUCgdTdGFydGVkEhAKCHN0cmF0ZWd5GAEgASgJEhgKEGltYWdlX3JlcG9zaXRvcnkYAiABKAkSCwoDdGFnGAMgASgJEhAKCHJldmlzaW9uGAQgASgJGhQKA0xvZxINCgVjaHVuaxgBIAEoDBotCghGaW5pc2hlZBIRCglyZWZlcmVuY2UYASABKAkSDgoGZGlnZXN0GAIgASgJQgcKBWV2ZW50ItQBChJSZXBvcnRCdWlsZFJlcXVlc3QSDwoHcHJvamVjdBgBIAEoCRILCgNzaGEYAiABKAkSCwoDcmVmGAMgASgJEgoKAnByGAQgASgFEj8KBmltYWdlcxgFIAMoCzIvLmtlbHNvbi52MWFscGhhMS5SZXBvcnRCdWlsZFJlcXVlc3QuSW1hZ2VzRW50cnkSFwoPaWRlbXBvdGVuY3lfa2V5GAYgASgJGi0KC0ltYWdlc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEiSwoTUmVwb3J0QnVpbGRSZXNwb25zZRIQCghhY2NlcHRlZBgBIAEoCBIRCgl0cmlnZ2VyZWQYAiADKAkSDwoHbWVzc2FnZRgDIAEoCTKyAQoMQnVpbGRTZXJ2aWNlEkgKBUJ1aWxkEh0ua2Vsc29uLnYxYWxwaGExLkJ1aWxkUmVxdWVzdBoeLmtlbHNvbi52MWFscGhhMS5CdWlsZFJlc3BvbnNlMAESWAoLUmVwb3J0QnVpbGQSIy5rZWxzb24udjFhbHBoYTEuUmVwb3J0QnVpbGRSZXF1ZXN0GiQua2Vsc29uLnYxYWxwaGExLlJlcG9ydEJ1aWxkUmVzcG9uc2VCSlpIZ2l0aHViLmNvbS9kYWZyaWUva2Vsc29uL2ludGVybmFsL2FwaS9nZW4va2Vsc29uL3YxYWxwaGExO2tlbHNvbnYxYWxwaGExYgZwcm90bzM", [file_kelson_v1alpha1_render]);
 
 /**
  * @generated from message kelson.v1alpha1.BuildRequest
@@ -233,6 +233,156 @@ export const BuildResponse_FinishedSchema: GenMessage<BuildResponse_Finished> = 
   messageDesc(file_kelson_v1alpha1_build, 1, 2);
 
 /**
+ * ReportBuildRequest is the CI hand-off of ADR-0034 decision 3: "I built the
+ * image, you take it from here".
+ *
+ * It is the whole of what CI owes kelson on the `by: ci` path. CI builds and
+ * reports; kelson renders and publishes, server-side, through the same
+ * resolve → render → publish → ensure spine every other trigger converges on
+ * (ADR-0034 decision 1, ADR-0028). CI never runs kelson's renderer, never needs
+ * a checkout of the spec, and never holds the artifact-registry credential —
+ * which is the shrink ADR-0034 performs on ADR-0017 decision 8's
+ * `kelson preview publish`, now the escape hatch for pipelines that cannot
+ * reach kelson at all.
+ *
+ * The message therefore carries exactly what CI knows and nothing it does not:
+ * a commit, where that commit came from, and which images exist for it. It does
+ * not carry the render, the environment, or a decision about what to deploy —
+ * those are the server's, computed from the stored spec at report time, because
+ * a report that named its own targets would be CI deciding delivery.
+ *
+ * # A reported image is trusted on the reporter's word
+ *
+ * kelson publishes manifests referencing these digests without verifying
+ * provenance. That is the same trust boundary ADR-0017 recorded for artifacts —
+ * the registry's write access — now with a second writer, and ADR-0034 names it
+ * as a consequence rather than hiding it. Signing and verification is one
+ * decision for images and artifacts together, and it is still unowned.
+ *
+ * @generated from message kelson.v1alpha1.ReportBuildRequest
+ */
+export type ReportBuildRequest = Message<"kelson.v1alpha1.ReportBuildRequest"> & {
+  /**
+   * The stored spec's project name. There is no inline-documents form: a report
+   * triggers a server-side render of what the server holds, so a spec supplied
+   * in the request would render something no environment is deployed from.
+   *
+   * @generated from field: string project = 1;
+   */
+  project: string;
+
+  /**
+   * The 40-hex commit the images were built from. It is the join key of the
+   * whole hand-off: the preview publishes at this SHA (ADR-0017's tag), and a
+   * tracking environment redeploys only if this is the head of the ref it
+   * follows. A ref name without it would leave "which commit is running?"
+   * answerable only by racing the forge.
+   *
+   * @generated from field: string sha = 2;
+   */
+  sha: string;
+
+  /**
+   * The branch or tag the commit was built from, e.g. "refs/heads/main" or
+   * "main". It is what selects tracking environments (ADR-0034 decision 4):
+   * `autoDeploy` environments following this ref re-render, and everything else
+   * ignores the report. Empty reports the images and triggers no environment.
+   *
+   * @generated from field: string ref = 3;
+   */
+  ref: string;
+
+  /**
+   * The change request number when this build is for one, and 0 when it is not
+   * — the CLI's `--pr`. Non-zero routes the report to that change request's
+   * preview; zero routes it to tracking environments. A separate field rather
+   * than an overload of `ref`, because a pull request's head ref and the branch
+   * an environment follows are different questions that happen to look alike.
+   *
+   * @generated from field: int32 pr = 4;
+   */
+  pr: number;
+
+  /**
+   * Component name to image reference, digest-pinned, e.g.
+   * {"web": "ghcr.io/acme/checkout-web@sha256:…"}. Digest-pinned is a
+   * requirement and not a convention: a mutable tag would make the published
+   * artifact describe something that can change underneath it, which is the
+   * guarantee the build plane exists to provide (#51, ADR-0010).
+   *
+   * A key the Project does not declare is an error naming it, not a silent
+   * drop; a component the Project declares and this map omits keeps whatever
+   * the spec resolves for it, so a partial report is a partial pin rather than
+   * a broken render.
+   *
+   * @generated from field: map<string, string> images = 5;
+   */
+  images: { [key: string]: string };
+
+  /**
+   * A report is not convergent the way a build is — it triggers a publish and
+   * records a mapping — so a retry after a timeout must be the same report
+   * rather than a second one (#69). This is the field BuildRequest deliberately
+   * does not have, for the reason stated there: a build's output is a function
+   * of its resolved commit, and a report's effect is not.
+   *
+   * @generated from field: string idempotency_key = 6;
+   */
+  idempotencyKey: string;
+};
+
+/**
+ * Describes the message kelson.v1alpha1.ReportBuildRequest.
+ * Use `create(ReportBuildRequestSchema)` to create a new message.
+ */
+export const ReportBuildRequestSchema: GenMessage<ReportBuildRequest> = /*@__PURE__*/
+  messageDesc(file_kelson_v1alpha1_build, 2);
+
+/**
+ * @generated from message kelson.v1alpha1.ReportBuildResponse
+ */
+export type ReportBuildResponse = Message<"kelson.v1alpha1.ReportBuildResponse"> & {
+  /**
+   * True when the report was recorded. False with a message is a report kelson
+   * understood and declined to act on — a project whose `build.by` is `kelson`,
+   * so its images come from kelson's own build plane and a CI report would be
+   * publishing over it.
+   *
+   * @generated from field: bool accepted = 1;
+   */
+  accepted: boolean;
+
+  /**
+   * What the report triggered, as environment and preview identifiers —
+   * environment names for tracking environments, `pr<number>` for a change
+   * request's preview. Empty is an ordinary answer and not a failure: a report
+   * for a ref no environment follows is recorded and triggers nothing, which is
+   * exactly what a report for a feature branch should do.
+   *
+   * @generated from field: repeated string triggered = 2;
+   */
+  triggered: string[];
+
+  /**
+   * Why `triggered` is what it is, in prose: which environments matched, or
+   * that none did and what would have. A pipeline whose report silently did
+   * nothing is the failure mode this field exists to prevent — ADR-0034 names
+   * "why didn't my preview update" as the debugging question the whole trigger
+   * pipeline has to stay answerable for.
+   *
+   * @generated from field: string message = 3;
+   */
+  message: string;
+};
+
+/**
+ * Describes the message kelson.v1alpha1.ReportBuildResponse.
+ * Use `create(ReportBuildResponseSchema)` to create a new message.
+ */
+export const ReportBuildResponseSchema: GenMessage<ReportBuildResponse> = /*@__PURE__*/
+  messageDesc(file_kelson_v1alpha1_build, 3);
+
+/**
  * BuildService builds a Project's source into an image, in the cluster.
  *
  * @generated from service kelson.v1alpha1.BuildService
@@ -267,6 +417,39 @@ export const BuildService: GenService<{
     methodKind: "server_streaming";
     input: typeof BuildRequestSchema;
     output: typeof BuildResponseSchema;
+  },
+  /**
+   * ReportBuild is the other end of the same plane: not "build this for me" but
+   * "I built it, here is where it is" (ADR-0034 decision 3). It is `kelson ci
+   * report-build`, and it is what a project with `build.by: ci` uses instead of
+   * Build.
+   *
+   * # CI is a principal
+   *
+   * This RPC authenticates as an agent identity (ADR-0024) — a scoped, expiring
+   * credential minted for the pipeline, auditable per ADR-0026 — and not as the
+   * instance's shared password. CI was always an agent in every sense that
+   * matters; ADR-0034 decision 6 makes it one in the sense kelson enforces, and
+   * invents no new auth mechanism to do it. A credential scoped to one project
+   * therefore cannot report a build for another, checked server-side before the
+   * handler runs, like every other targeted method.
+   *
+   * # It returns as soon as the report is recorded
+   *
+   * The response says what the report triggered, not how those triggers ended:
+   * rendering and publishing happen on the server's own queue, and a pipeline
+   * step that blocked until a preview was live would be CI waiting on a
+   * cluster's convergence for reasons that are not CI's. Where the work went is
+   * `triggered`; how it went is EventService, the preview and environment
+   * status surfaces, and the commit status kelson writes back
+   * (ADR-0034 decision 5).
+   *
+   * @generated from rpc kelson.v1alpha1.BuildService.ReportBuild
+   */
+  reportBuild: {
+    methodKind: "unary";
+    input: typeof ReportBuildRequestSchema;
+    output: typeof ReportBuildResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_kelson_v1alpha1_build, 0);

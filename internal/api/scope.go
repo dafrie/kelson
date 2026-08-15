@@ -298,6 +298,69 @@ var rpcScopes = map[string]methodScope{
 		},
 	},
 
+	// ReportBuild is the CI hand-off (ADR-0034 decision 3), and decision 6 makes
+	// the reporter a principal: it is called by an agent identity minted for the
+	// pipeline, so it must be reachable by a scoped credential rather than
+	// administrative. It is a mutation — it triggers a server-side render and
+	// publish — and it names its project directly, so a credential scoped to one
+	// project cannot report a build for another. Like every project-only target,
+	// a credential restricted by *environment* is refused, because the report
+	// names no environment and the server decides which ones it feeds.
+	kelsonv1alpha1connect.BuildServiceReportBuildProcedure: {
+		Operation: controlstore.OpMutate,
+		Reach:     reachTargeted,
+		Targets: func(msg any) ([]scopeTarget, bool) {
+			req, ok := msg.(*kelsonv1alpha1.ReportBuildRequest)
+			if !ok {
+				return nil, false
+			}
+			return project(req.GetProject())
+		},
+	},
+
+	// GitConnectionService (ADR-0033). A connection is instance-wide
+	// configuration in kelson-system: there is no project in the question and
+	// none in the answer, so every row here is cluster-wide and only the
+	// operation class applies.
+	//
+	// The reads are ordinary reads — references and provider-reported facts,
+	// never material (ADR-0009, ADR-0033 decision 1) — and ADR-0033 decision 6
+	// grants *use* by visibility, so any credential that may read at all may
+	// see which forges this instance can pull from. TestConnection is filed with
+	// them: it spends the credential on an outbound call but changes no state,
+	// and its answer is the same reachable/account/count triple the status
+	// subresource already carries.
+	kelsonv1alpha1connect.GitConnectionServiceListConnectionsProcedure: {
+		Operation: controlstore.OpRead,
+		Reach:     reachClusterWide,
+	},
+	kelsonv1alpha1connect.GitConnectionServiceGetConnectionProcedure: {
+		Operation: controlstore.OpRead,
+		Reach:     reachClusterWide,
+	},
+	kelsonv1alpha1connect.GitConnectionServiceTestConnectionProcedure: {
+		Operation: controlstore.OpRead,
+		Reach:     reachClusterWide,
+	},
+	// Creating and deleting are administrative, which is ADR-0033 decision 6
+	// read literally: use is granted by visibility, but *mutation belongs to the
+	// owner and to instance admins*. Until #231 there is no owner to be, so the
+	// only honest enforcement of that sentence is the admin class — and the
+	// alternative is worse than theoretical: a connection is not scoped to a
+	// project, so OpMutate plus cluster-wide reach would let a credential
+	// minted for one project delete the connection every other project builds
+	// through, and create one pointing anywhere. That is wider than any (project,
+	// environment) scope can bound, which is InstallService's argument for the
+	// same class, unchanged (ADR-0021, ADR-0024 §3).
+	kelsonv1alpha1connect.GitConnectionServiceCreateConnectionProcedure: {
+		Operation: controlstore.OpAdmin,
+		Reach:     reachClusterWide,
+	},
+	kelsonv1alpha1connect.GitConnectionServiceDeleteConnectionProcedure: {
+		Operation: controlstore.OpAdmin,
+		Reach:     reachClusterWide,
+	},
+
 	// SecretService. Listing is a read of names and keys — no RPC in the
 	// schema can return a value (ADR-0009) — and writing is a mutation of the
 	// environment's namespace.

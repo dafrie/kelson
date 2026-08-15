@@ -12,6 +12,7 @@ import (
 	"github.com/dafrie/kelson/internal/build"
 	"github.com/dafrie/kelson/internal/build/registry"
 	"github.com/dafrie/kelson/internal/controlstore"
+	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/model"
 	"github.com/dafrie/kelson/internal/redact"
 )
@@ -193,6 +194,37 @@ func (s *Server) Build(ctx context.Context, req *connect.Request[kelsonv1alpha1.
 			},
 		},
 	})
+}
+
+// ReportBuild is gated (ADR-0034 decision 3).
+//
+// The RPC exists on the wire because the schema is the contract CI is written
+// against, and a pipeline cannot be built against a method that is not there.
+// What is behind it is not: recording images for a commit, resolving which
+// environments and previews that commit feeds, and driving the server-side
+// render→publish are the trigger pipeline of
+// [ADR-0034](docs/adr/0034-forge-driven-delivery.md) decision 1, which stands on
+// the [ADR-0028](docs/adr/0028-delivery-spine.md) spine and starts after it.
+//
+// It refuses rather than accepting and dropping the report. `accepted: true`
+// with nothing triggered is a lie a pipeline would believe — CI would go green
+// having published nothing — and ADR-0034 names "why didn't my preview update"
+// as the question this whole path must stay answerable for. Unimplemented tells
+// an agent to stop; a cheerful empty response would tell it to carry on.
+//
+// The tracking slot names the ADR's pipeline rather than an issue, which is the
+// one place this departs from [delivery.NotImplemented]'s contract. That
+// contract asks for an issue reference so a caller can find out when the answer
+// changes, and ADR-0034 is proposed with its implementation sequencing
+// explicitly left to the tracker ("Revisit when: R2 lands and the first slice
+// ships") — so no issue exists to name yet. Naming the ADR is the findable
+// reference that does exist; the issue replaces it when the slice is filed.
+func (s *Server) ReportBuild(_ context.Context, _ *connect.Request[kelsonv1alpha1.ReportBuildRequest]) (*connect.Response[kelsonv1alpha1.ReportBuildResponse], error) {
+	return nil, fail(connect.CodeUnimplemented, delivery.NotImplemented("report-build",
+		"kelson cannot accept a build report: the trigger pipeline that turns one into a server-side "+
+			"render and publish (ADR-0034) is not built, and neither is the image-for-commit record it "+
+			"reads",
+		"the ADR-0034 trigger pipeline"))
 }
 
 // runBuild runs the builder on its own goroutine and pumps its output onto the
