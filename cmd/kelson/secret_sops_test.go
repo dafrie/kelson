@@ -81,6 +81,7 @@ func TestSOPSBackendIsRefusedAndReachesNoStore(t *testing.T) {
 		args []string
 	}{
 		{"set", []string{"secret", "set", "checkout-db", "-f", spec, "--env", "production", "url=" + setSentinel}},
+		{"unset", []string{"secret", "unset", "checkout-db", "-f", spec, "--env", "production", "url"}},
 		{"list", []string{"secret", "list", "-f", spec, "--env", "production"}},
 		{"delete", []string{"secret", "delete", "checkout-db", "-f", spec, "--env", "production", "--yes"}},
 		{"rotate", []string{"secret", "rotate", "-f", spec, "--env", "production"}},
@@ -92,7 +93,7 @@ func TestSOPSBackendIsRefusedAndReachesNoStore(t *testing.T) {
 			if code != exitErr {
 				t.Fatalf("exit = %d, want %d\n%s", code, exitErr, stdout)
 			}
-			if len(cluster.sets)+len(cluster.deletes)+len(cluster.lists) != 0 {
+			if len(cluster.sets)+len(cluster.unsets)+len(cluster.deletes)+len(cluster.lists) != 0 {
 				t.Fatalf("the cluster store was reached for a sops environment: %+v", cluster)
 			}
 			assertNoValue(t, "stdout", stdout)

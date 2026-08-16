@@ -508,8 +508,8 @@ manifest harder to read.
 
 **The URI never carries the password, and this does not change when `auth:` is set.**
 `redis://:<password>@host:6379` would be a credential written into a container's `env[].value`,
-in a manifest that is diffed, previewed, stored in the delivery repository and read back through
-the API — precisely the thing ADR-0009 forbids and ADR-0018 makes structurally impossible. So
+in a manifest that is diffed, previewed, published in the OCI artifact and read back through the
+API — precisely the thing ADR-0009 forbids and ADR-0018 makes structurally impossible. So
 `uri` stays the address form at every setting, and **an authenticated client assembles its
 connection from the parts**: bind `host`, `port` and `password` (or `uri` *and* `password`, which
 every mainstream client accepts as a URL plus a separate credential option) and hand them to the

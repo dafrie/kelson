@@ -15,6 +15,7 @@ import (
 
 	kelsonv1alpha1 "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1"
 	"github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1/kelsonv1alpha1connect"
+	"github.com/dafrie/kelson/internal/controlstore"
 	"github.com/dafrie/kelson/internal/secret"
 )
 
@@ -31,10 +32,11 @@ type fakeSecrets struct {
 	mu sync.Mutex
 	// items is namespace/name -> keys -> value. The values are held so a test
 	// can assert one arrived; nothing in the handler can read them back.
-	items map[string]map[string]string
-	sets  []secret.SetRequest
-	dels  []secret.DeleteRequest
-	err   error
+	items  map[string]map[string]string
+	sets   []secret.SetRequest
+	unsets []secret.UnsetRequest
+	dels   []secret.DeleteRequest
+	err    error
 }
 
 func newFakeSecrets() *fakeSecrets {
@@ -69,6 +71,43 @@ func (f *fakeSecrets) Set(_ context.Context, req secret.SetRequest) (secret.Secr
 		held[k] = v
 	}
 	return secret.Secret{Name: req.Name, Namespace: namespace, Keys: sortedMapKeys(held),
+		CreatedAt: fakeSecretCreatedAt()}, nil
+}
+
+// Unset reproduces the two rules the handler leans on: a key that is not there
+// is a refusal, and the Secret survives its last key (internal/secret's own
+// tests are where that behaviour is asserted against a cluster).
+func (f *fakeSecrets) Unset(_ context.Context, req secret.UnsetRequest) (secret.Secret, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.unsets = append(f.unsets, req)
+	if f.err != nil {
+		return secret.Secret{}, f.err
+	}
+	namespace, err := req.Resolve()
+	if err != nil {
+		return secret.Secret{}, err
+	}
+	held, ok := f.items[f.key(namespace, req.Name)]
+	if !ok {
+		return secret.Secret{}, secret.Error{Code: secret.ErrNotFound,
+			Resource: "Secret/" + f.key(namespace, req.Name), Message: "no such Secret"}
+	}
+	left := map[string]string{}
+	for k, v := range held {
+		left[k] = v
+	}
+	for _, k := range req.RemovedKeys() {
+		if _, there := left[k]; !there {
+			return secret.Secret{}, secret.Error{Code: secret.ErrKeyNotFound,
+				Resource: "Secret/" + f.key(namespace, req.Name), Message: "no key " + k}
+		}
+		delete(left, k)
+	}
+	if !req.DryRun {
+		f.items[f.key(namespace, req.Name)] = left
+	}
+	return secret.Secret{Name: req.Name, Namespace: namespace, Keys: sortedMapKeys(left),
 		CreatedAt: fakeSecretCreatedAt()}, nil
 }
 
@@ -251,6 +290,316 @@ func TestDeleteSecretRemovesAndThenReportsNotFound(t *testing.T) {
 	}))
 	if connect.CodeOf(err) != connect.CodeNotFound {
 		t.Errorf("deleting it twice = %v, want CodeNotFound", connect.CodeOf(err))
+	}
+}
+
+// TestUnsetSecretRemovesKeysAndReportsWhatIsLeft: the complement of the merge
+// over the wire (issue #269). Values travel in neither direction, so the
+// response is the same masked read-back every other RPC here returns.
+func TestUnsetSecretRemovesKeysAndReportsWhatIsLeft(t *testing.T) {
+	store := newFakeSecrets()
+	c := serve(t, Options{Secrets: store})
+	if _, err := c.secrets.SetSecret(context.Background(), connect.NewRequest(&kelsonv1alpha1.SetSecretRequest{
+		Target: secretTargetOf("checkout", "production"), Name: "payments",
+		Values: map[string]string{"api-key": "sk-live-unset-0001", "webhook": "whsec-unset-0002"},
+	})); err != nil {
+		t.Fatalf("SetSecret: %v", err)
+	}
+
+	res, err := c.secrets.UnsetSecret(context.Background(), connect.NewRequest(&kelsonv1alpha1.UnsetSecretRequest{
+		Target: secretTargetOf("checkout", "production"), Name: "payments", Keys: []string{"webhook"},
+	}))
+	if err != nil {
+		t.Fatalf("UnsetSecret: %v", err)
+	}
+	if got := res.Msg.GetRemovedKeys(); len(got) != 1 || got[0] != "webhook" {
+		t.Errorf("removed_keys = %v", got)
+	}
+	if got := res.Msg.GetSecret().GetKeys(); len(got) != 1 || got[0] != "api-key" {
+		t.Errorf("keys left = %v, want the one that was not named", got)
+	}
+	if _, still := store.held("checkout-production", "payments")["webhook"]; still {
+		t.Error("the key survived in the store")
+	}
+	assertNoSentinel(t, "UnsetSecret response", []byte(res.Msg.String()), "whsec-unset-0002")
+}
+
+// TestUnsetSecretOfAKeyThatIsNotThereIsNotFound: the store's refusal reaches
+// the caller as a code it can branch on, and nothing was removed.
+func TestUnsetSecretOfAKeyThatIsNotThereIsNotFound(t *testing.T) {
+	store := newFakeSecrets()
+	c := serve(t, Options{Secrets: store})
+	if _, err := c.secrets.SetSecret(context.Background(), connect.NewRequest(&kelsonv1alpha1.SetSecretRequest{
+		Target: secretTargetOf("checkout", "production"), Name: "payments",
+		Values: map[string]string{"api-key": "sk-live-typo-0001"},
+	})); err != nil {
+		t.Fatalf("SetSecret: %v", err)
+	}
+
+	_, err := c.secrets.UnsetSecret(context.Background(), connect.NewRequest(&kelsonv1alpha1.UnsetSecretRequest{
+		Target: secretTargetOf("checkout", "production"), Name: "payments", Keys: []string{"pasword"},
+	}))
+	if got := connect.CodeOf(err); got != connect.CodeNotFound {
+		t.Fatalf("code = %v, want CodeNotFound (%v)", got, err)
+	}
+	assertWireCode(t, err, string(secret.ErrKeyNotFound))
+	if _, gone := store.held("checkout-production", "payments")["api-key"]; !gone {
+		t.Error("a refused unset removed something")
+	}
+}
+
+// TestUnsetSecretRefusesAnEmptyKeyList before the store: an unset that removed
+// nothing and reported success is a caller who believes a credential is gone.
+func TestUnsetSecretRefusesAnEmptyKeyList(t *testing.T) {
+	store := newFakeSecrets()
+	c := serve(t, Options{Secrets: store})
+	_, err := c.secrets.UnsetSecret(context.Background(), connect.NewRequest(&kelsonv1alpha1.UnsetSecretRequest{
+		Target: secretTargetOf("checkout", "production"), Name: "payments",
+	}))
+	if got := connect.CodeOf(err); got != connect.CodeInvalidArgument {
+		t.Fatalf("code = %v, want CodeInvalidArgument (%v)", got, err)
+	}
+	assertWireCode(t, err, string(secret.ErrNoKeys))
+	if len(store.unsets) != 0 {
+		t.Errorf("a refused request reached the store: %+v", store.unsets)
+	}
+}
+
+// TestUnsetSecretRenderDryRunTouchesNothing, and reports nothing about what the
+// Secret holds: whether the named keys are even there is the precondition, and
+// answering it needs the cluster this rung never opens.
+func TestUnsetSecretRenderDryRunTouchesNothing(t *testing.T) {
+	store := newFakeSecrets()
+	c := serve(t, Options{Secrets: store})
+	res, err := c.secrets.UnsetSecret(context.Background(), connect.NewRequest(&kelsonv1alpha1.UnsetSecretRequest{
+		Target: secretTargetOf("checkout", "production"), Name: "payments",
+		Keys: []string{"webhook"}, DryRun: kelsonv1alpha1.DryRun_DRY_RUN_RENDER,
+	}))
+	if err != nil {
+		t.Fatalf("UnsetSecret: %v", err)
+	}
+	if !res.Msg.GetDryRun() {
+		t.Error("a render dry run did not say so")
+	}
+	if keys := res.Msg.GetSecret().GetKeys(); len(keys) != 0 {
+		t.Errorf("a render dry run reported the Secret's keys (%v); it never looked", keys)
+	}
+	if len(store.unsets) != 0 {
+		t.Errorf("a render dry run reached the store: %+v", store.unsets)
+	}
+}
+
+// --- the backend gate (issue #269) -------------------------------------------
+
+// specWithBackend stores a one-environment project whose secrets block is the
+// given YAML, so the handler has a real spec to resolve the backend out of.
+func specWithBackend(t *testing.T, secrets string) *fakeSpecStore {
+	t.Helper()
+	store := newFakeSpecStore()
+	environment := `apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata:
+  name: production
+spec:
+  project: checkout
+`
+	if secrets != "" {
+		environment += "  secrets:\n" + secrets
+	}
+	project := `apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata:
+  name: checkout
+spec:
+  image: ghcr.io/acme/checkout:1
+  components:
+    - name: web
+      port: 8080
+`
+	if _, err := store.Put(context.Background(), "checkout", controlstore.Documents{
+		Project:      []byte(project),
+		Environments: map[string][]byte{"production": []byte(environment)},
+	}, controlstore.PutOptions{}); err != nil {
+		t.Fatalf("seeding the spec store: %v", err)
+	}
+	return store
+}
+
+// TestWritesAreRefusedForABackendKelsonMustNotWrite is issue #269's second
+// half. Before it, every mutation here wrote a cluster Secret whichever backend
+// the environment had selected — under sops into a namespace the delivery spine
+// applies its own decrypted Secret into, so the credential would be replaced on
+// the next reconcile. What matters as much as the refusal is that the store is
+// never reached: a gate that leaked to the cluster store would be worse than
+// the missing feature.
+func TestWritesAreRefusedForABackendKelsonMustNotWrite(t *testing.T) {
+	for _, backend := range []struct {
+		name    string
+		secrets string
+		want    connect.Code
+		code    string
+		says    string
+	}{
+		{
+			name:    "sops",
+			secrets: "    backend: sops\n    ageRecipients: [age13w78znajf5kee8msacel80jz6qeuc9tyxhuqkwnqcsaymlrj7clsy4fgdw]\n",
+			want:    connect.CodeUnimplemented,
+			code:    "delivery/not-implemented",
+			says:    "#224",
+		},
+		{
+			name:    "externalSecrets",
+			secrets: "    backend: externalSecrets\n    store: vault-backend\n",
+			want:    connect.CodeFailedPrecondition,
+			code:    string(secret.ErrExternalBackend),
+			says:    "vault-backend",
+		},
+	} {
+		t.Run(backend.name, func(t *testing.T) {
+			store := newFakeSecrets()
+			c := serve(t, Options{Secrets: store, Specs: specWithBackend(t, backend.secrets)})
+
+			calls := map[string]func() error{
+				"set": func() error {
+					_, err := c.secrets.SetSecret(context.Background(), connect.NewRequest(&kelsonv1alpha1.SetSecretRequest{
+						Target: secretTargetOf("checkout", "production"), Name: "checkout-db",
+						Values: map[string]string{"url": "postgres://backend-gate-0001"},
+					}))
+					return err
+				},
+				"unset": func() error {
+					_, err := c.secrets.UnsetSecret(context.Background(), connect.NewRequest(&kelsonv1alpha1.UnsetSecretRequest{
+						Target: secretTargetOf("checkout", "production"), Name: "checkout-db", Keys: []string{"url"},
+					}))
+					return err
+				},
+				"delete": func() error {
+					_, err := c.secrets.DeleteSecret(context.Background(), connect.NewRequest(&kelsonv1alpha1.DeleteSecretRequest{
+						Target: secretTargetOf("checkout", "production"), Name: "checkout-db",
+					}))
+					return err
+				},
+				// The preview rung is refused too: an agent sends RENDER to find
+				// out whether a write would land, and "yes" would be a preview of
+				// something that is never going to happen.
+				"set (render dry run)": func() error {
+					_, err := c.secrets.SetSecret(context.Background(), connect.NewRequest(&kelsonv1alpha1.SetSecretRequest{
+						Target: secretTargetOf("checkout", "production"), Name: "checkout-db",
+						Values: map[string]string{"url": "postgres://backend-gate-0002"},
+						DryRun: kelsonv1alpha1.DryRun_DRY_RUN_RENDER,
+					}))
+					return err
+				},
+			}
+			for verb, call := range calls {
+				err := call()
+				if err == nil {
+					t.Fatalf("%s was accepted for backend %s", verb, backend.name)
+				}
+				if got := connect.CodeOf(err); got != backend.want {
+					t.Errorf("%s: code = %v, want %v (%v)", verb, got, backend.want, err)
+				}
+				assertWireCode(t, err, backend.code)
+				if !strings.Contains(err.Error(), backend.says) {
+					t.Errorf("%s: the refusal should say %q, got %v", verb, backend.says, err)
+				}
+			}
+			if len(store.sets)+len(store.unsets)+len(store.dels) != 0 {
+				t.Fatalf("the cluster store was reached for backend %s: %+v", backend.name, store)
+			}
+		})
+	}
+}
+
+// TestReadsAreNotGatedByTheBackend: listing is a read of what is in the
+// namespace, and under any backend that is a true answer — including the
+// decrypted Secrets a sops environment's delivery applied. Gating it would
+// remove the one view that shows a credential is missing.
+func TestReadsAreNotGatedByTheBackend(t *testing.T) {
+	c := serve(t, Options{
+		Secrets: newFakeSecrets(),
+		Specs:   specWithBackend(t, "    backend: externalSecrets\n    store: vault-backend\n"),
+	})
+	if _, err := c.secrets.ListSecrets(context.Background(), connect.NewRequest(&kelsonv1alpha1.ListSecretsRequest{
+		Target: secretTargetOf("checkout", "production"),
+	})); err != nil {
+		t.Errorf("ListSecrets was refused for a backend it only reads around: %v", err)
+	}
+}
+
+// TestTheClusterBackendIsUnaffected keeps the gate above from reading as
+// "SecretService is broken": a stored spec that selects cluster — or selects
+// nothing at all — writes exactly as it always did.
+func TestTheClusterBackendIsUnaffected(t *testing.T) {
+	for name, secrets := range map[string]string{
+		"explicitly cluster": "    backend: cluster\n",
+		"nothing selected":   "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			store := newFakeSecrets()
+			c := serve(t, Options{Secrets: store, Specs: specWithBackend(t, secrets)})
+			if _, err := c.secrets.SetSecret(context.Background(), connect.NewRequest(&kelsonv1alpha1.SetSecretRequest{
+				Target: secretTargetOf("checkout", "production"), Name: "checkout-db",
+				Values: map[string]string{"url": "postgres://cluster-unaffected-0001"},
+			})); err != nil {
+				t.Fatalf("SetSecret: %v", err)
+			}
+			if len(store.sets) != 1 {
+				t.Errorf("the store received %d writes, want 1", len(store.sets))
+			}
+		})
+	}
+}
+
+// TestAProjectTheStoreDoesNotHoldWritesAsCluster: the same three answers
+// storedPolicy gives. A project nobody has stored has selected no backend, and
+// `cluster` is both the model's default and what this service has always
+// written — refusing it would break every server whose specs live on disk.
+func TestAProjectTheStoreDoesNotHoldWritesAsCluster(t *testing.T) {
+	store := newFakeSecrets()
+	c := serve(t, Options{Secrets: store, Specs: newFakeSpecStore()})
+	if _, err := c.secrets.SetSecret(context.Background(), connect.NewRequest(&kelsonv1alpha1.SetSecretRequest{
+		Target: secretTargetOf("checkout", "production"), Name: "checkout-db",
+		Values: map[string]string{"url": "postgres://unstored-0001"},
+	})); err != nil {
+		t.Fatalf("SetSecret: %v", err)
+	}
+	if len(store.sets) != 1 {
+		t.Errorf("the store received %d writes, want 1", len(store.sets))
+	}
+}
+
+// TestAStoredSpecThatDoesNotResolveRefusesTheWrite: an unknown backend is not
+// the default backend. Assuming `cluster` when the spec cannot be read is
+// exactly how a credential reaches the one place a sops environment must not
+// have it.
+func TestAStoredSpecThatDoesNotResolveRefusesTheWrite(t *testing.T) {
+	// It decodes — every document is valid on its own — and fails the
+	// cross-document resolution, which is the shape that matters: the spec
+	// store holds it, and nothing can say which backend it selects.
+	specs := newFakeSpecStore()
+	if _, err := specs.Put(context.Background(), "checkout", controlstore.Documents{
+		Project: []byte("apiVersion: kelson.dev/v1alpha1\nkind: Project\nmetadata: {name: checkout}\n" +
+			"spec:\n  image: ghcr.io/acme/checkout:1\n  components:\n    - {name: web, port: 8080}\n"),
+		Environments: map[string][]byte{"production": []byte(
+			"apiVersion: kelson.dev/v1alpha1\nkind: Environment\nmetadata: {name: production}\n" +
+				"spec:\n  project: checkout\n  components:\n    - {name: nope, image: ghcr.io/acme/nope:1}\n")},
+	}, controlstore.PutOptions{}); err != nil {
+		t.Fatalf("seeding the spec store: %v", err)
+	}
+	store := newFakeSecrets()
+	c := serve(t, Options{Secrets: store, Specs: specs})
+
+	_, err := c.secrets.SetSecret(context.Background(), connect.NewRequest(&kelsonv1alpha1.SetSecretRequest{
+		Target: secretTargetOf("checkout", "production"), Name: "checkout-db",
+		Values: map[string]string{"url": "postgres://unresolvable-0001"},
+	}))
+	if got := connect.CodeOf(err); got != connect.CodeFailedPrecondition {
+		t.Fatalf("code = %v, want CodeFailedPrecondition (%v)", got, err)
+	}
+	assertWireCode(t, err, string(secret.ErrBackendUnreadable))
+	if len(store.sets) != 0 {
+		t.Errorf("the write happened anyway: %+v", store.sets)
 	}
 }
 

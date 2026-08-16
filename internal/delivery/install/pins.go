@@ -231,8 +231,8 @@ var Components = []Component{
 		SHA256:       "51c707087ca7b6d342b71b79270d13416b2a1b24fb30e39ebc8ac07922e1b56a",
 		Namespace:    "flux-system",
 		ProfileField: "flux",
-		Provides: "the GitOps delivery mode (ADR-0012): the GitRepository and Kustomization kelson commits " +
-			"against, and the helm-controller every `kind: helm` component needs",
+		Provides: "the delivery spine (ADR-0028): the OCIRepository and Kustomization the kelson controller " +
+			"writes, and the helm-controller every `kind: helm` component needs",
 	},
 	{
 		Name:         "cert-manager",

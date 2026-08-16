@@ -28,6 +28,17 @@ const (
 	// no-op because the alternative is a command that reports success for a
 	// mistyped `key=value` it silently dropped.
 	ErrNoValues Code = "secret/no-values"
+	// ErrNoKeys is an Unset that names no key. Same argument as ErrNoValues
+	// from the other side: an unset that removed nothing and said "done" is a
+	// command whose caller believes a credential is gone.
+	ErrNoKeys Code = "secret/no-keys"
+	// ErrKeyNotFound is an Unset naming a key the Secret does not hold. It is
+	// the removal's whole safety property: kelson cannot report which value it
+	// removed (it reports no values at all), so "the key you named is not
+	// there" is the only signal a caller gets that they removed something other
+	// than what they meant. The message names the missing keys and lists the
+	// ones the Secret does hold.
+	ErrKeyNotFound Code = "secret/key-not-found"
 	// ErrNamespaceMissing is a target namespace that does not exist. Creating
 	// it is the delivery plane's job (the renderer emits the Namespace and
 	// `kelson deploy` applies it), so this package reports the gap rather than
@@ -46,6 +57,21 @@ const (
 	// ErrReadFailed is the same for a read: a list or a read-back that the API
 	// server would not answer.
 	ErrReadFailed Code = "secret/read-failed"
+
+	// ErrBackendUnreadable is a write kelson refuses because it could not work
+	// out which backend the environment uses — an unreadable spec store, a
+	// stored spec that does not decode or does not resolve. Assuming `cluster`
+	// there would write a credential to the one place a `sops` environment must
+	// not have it, which is the failure issue #269 exists to close: an unknown
+	// backend is not the default backend.
+	ErrBackendUnreadable Code = "secret/backend-unreadable"
+	// ErrExternalBackend is a write against an environment whose backend is
+	// `externalSecrets`. Under that backend no value passes through kelson at
+	// all (ADR-0020): external-secrets owns the Secret it syncs, so a key
+	// kelson wrote into it would survive until the next sync and then vanish.
+	// It is a permanent statement about how that backend works rather than a
+	// gap, which is why it is not spelled `not-implemented`.
+	ErrExternalBackend Code = "secret/external-backend"
 
 	// The `sops` backend's own refusals (issue #81, ADR-0022). They are in this
 	// package's vocabulary rather than the git plane's because what a user is
@@ -92,9 +118,12 @@ const DocsBaseURL = "https://kelson.dev/model/errors"
 //
 // It carries no field locator: a secret is not a document and there is no line
 // to point at. What it does carry is Resource — `Secret/<namespace>/<name>` —
-// because every one of these errors is about a specific object in a specific
-// namespace, and "not managed by kelson" without saying which Secret in which
-// namespace is unactionable.
+// because almost every one of these errors is about a specific object in a
+// specific namespace, and "not managed by kelson" without saying which Secret
+// in which namespace is unactionable. The exception is a refusal about the
+// *backend*, where nothing is wrong with any one Secret: those name the
+// environment instead ([environmentOf]), because that is where the field that
+// caused the refusal lives.
 type Error struct {
 	Code        Code   `json:"code"`
 	Resource    string `json:"resource"`
@@ -133,6 +162,61 @@ func (e Error) withCause(err error) Error {
 		e.Cause = err.Error()
 	}
 	return e
+}
+
+// ExternalBackend is the refusal every surface gives for a write against an
+// `externalSecrets` environment (ADR-0020, issue #269).
+//
+// It lives here, beside the codes, because three surfaces have to give the same
+// answer: `kelson secret set` refuses it while it is choosing a store, and
+// SecretService refuses it after reading the backend off the stored spec. The
+// resource is the environment rather than a Secret — nothing is wrong with the
+// Secret, and under this backend there may not be one on kelson's side at all.
+//
+// store is the environment's `secrets.store`, empty when the spec leaves the
+// SecretStore to be resolved by the cluster.
+// The store is named in the message rather than only in the remediation
+// because a surface may show one and not the other: the CLI prints
+// [Error.Error], which is code and message, and "write it in your secret
+// manager" without saying which store is a sentence a reader cannot act on.
+func ExternalBackend(t Target, store string) error {
+	where := "the SecretStore this environment resolves to"
+	if store != "" {
+		where = "secrets.store " + store
+	}
+	return newError(ErrExternalBackend, environmentOf(t),
+		fmt.Sprintf("environment %q uses secret backend externalSecrets, where the value is written in your "+
+			"secret manager (%s) and external-secrets syncs it into the cluster. kelson never holds it (ADR-0020)",
+			t.Environment, where),
+		"write the value at that store, or change secrets.backend if you meant kelson to hold it. A Secret "+
+			"kelson wrote here would survive only until the next sync, because external-secrets owns the "+
+			"object it creates (creationPolicy: Owner)")
+}
+
+// BackendUnreadable is the refusal for a write whose backend kelson could not
+// determine (issue #269). `what` names the step that failed, in a phrase that
+// completes "kelson cannot tell which secret backend … uses: <what>".
+//
+// It is a refusal rather than a fallback to `cluster` on purpose: the two
+// answers are indistinguishable to a caller and one of them writes a credential
+// into a namespace a `sops` environment's delivery would fight over.
+func BackendUnreadable(t Target, what string, cause error) error {
+	return newError(ErrBackendUnreadable, environmentOf(t),
+		fmt.Sprintf("kelson cannot tell which secret backend environment %q uses: %s", t.Environment, what),
+		"repair the stored spec (`kelson spec get <project>` then `kelson apply`), or write the secret with "+
+			"the CLI against the spec on disk (`kelson secret set <name> -f <spec> --env "+t.Environment+" …`), "+
+			"which reads secrets.backend from the file. kelson refuses the write rather than assuming the "+
+			"default backend, because assuming it is how a credential ends up in the wrong place").
+		withCause(cause)
+}
+
+// environmentOf names an environment the way the policy plane does, for the
+// errors that are about the environment rather than about one Secret in it.
+func environmentOf(t Target) string {
+	if t.Project == "" {
+		return "environment/" + t.Environment
+	}
+	return "environment/" + t.Project + "/" + t.Environment
 }
 
 // resourceOf is the Resource string every error in this package uses.

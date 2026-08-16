@@ -152,7 +152,7 @@
             },
             "repo": {
               "type": "string",
-              "description": "HTTP(S) URL of the source repository whose change requests become previews; not delivery.git.repo"
+              "description": "HTTP(S) URL of the source repository whose change requests become previews"
             },
             "secretRef": {
               "type": "string",

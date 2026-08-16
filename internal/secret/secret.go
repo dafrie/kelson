@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -93,6 +94,19 @@ type SetRequest struct {
 	DryRun bool
 }
 
+// UnsetRequest is one `kelson secret unset`: which Secret, and which of its
+// keys to remove.
+type UnsetRequest struct {
+	Target
+	Name string
+	// Keys are the keys to remove. Every one of them must be in the Secret —
+	// see [Store.Unset] — and keys not named here are left alone.
+	Keys []string
+	// DryRun asks the API server to validate and discard the write, exactly as
+	// [SetRequest.DryRun] does.
+	DryRun bool
+}
+
 // DeleteRequest is one `kelson secret delete`.
 type DeleteRequest struct {
 	Target
@@ -164,6 +178,49 @@ func (r SetRequest) Validate() (string, error) {
 // "written", and it exists so no caller has to sort a map and get the order
 // non-deterministic.
 func (r SetRequest) Keys() []string { return sortedKeys(r.Values) }
+
+// Validate is [SetRequest.Validate] for an unset: everything decidable without
+// a cluster, returning the target namespace.
+//
+// It deliberately does not check the key alphabet the way a set does. A key
+// outside it cannot be in a Secret, so it is already covered by the
+// present-or-refused rule — and [ErrKeyNotFound] is the better answer, because
+// it lists the keys the Secret actually holds while `secret/invalid-key` would
+// only restate the alphabet.
+func (r UnsetRequest) Validate() (string, error) {
+	namespace, err := r.Resolve()
+	if err != nil {
+		return "", err
+	}
+	if err := checkName(namespace, r.Name); err != nil {
+		return "", err
+	}
+	if len(r.RemovedKeys()) == 0 {
+		return "", newError(ErrNoKeys, resourceOf(namespace, r.Name),
+			"an unset with no keys would remove nothing",
+			"name at least one key, e.g. `kelson secret unset "+r.Name+" --project "+r.Project+
+				" --env "+r.Environment+" <key>`; `kelson secret list` shows what the Secret holds")
+	}
+	return namespace, nil
+}
+
+// RemovedKeys is the sorted, de-duplicated key set an Unset removes. A key
+// named twice is one removal, not an error: unlike a set — where a key supplied
+// twice means two values and one of them is being silently dropped — a key
+// named twice here means the same thing both times.
+func (r UnsetRequest) RemovedKeys() []string {
+	seen := make(map[string]bool, len(r.Keys))
+	out := make([]string, 0, len(r.Keys))
+	for _, k := range r.Keys {
+		if k == "" || seen[k] {
+			continue
+		}
+		seen[k] = true
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
 
 // Validate is [SetRequest.Validate] for a delete: everything decidable without
 // a cluster, returning the target namespace.
@@ -276,6 +333,142 @@ func (s *Store) carryForward(ctx context.Context, namespace, name string, data m
 	return nil
 }
 
+// Unset removes the named keys from a Secret kelson manages and returns the
+// masked read-back of what is left.
+//
+// It is the complement of the merge (issue #269): [Store.Set] never prunes, so
+// without this there is no way to express "this key should not exist" short of
+// deleting the Secret and writing it again. Three rules make it safe to give a
+// removal to the same surfaces that have the write.
+//
+// # A key that is not there is a refusal, not a no-op
+//
+// Every named key must be in the Secret or the whole call fails with
+// [ErrKeyNotFound] and the missing keys named. Nothing here reports values, so
+// a caller has no other way to notice that `kelson secret unset db pasword`
+// removed nothing while they believed a credential was gone — and an unset that
+// silently succeeded on a typo would make that belief permanent. The refusal is
+// all-or-nothing for the same reason: a partial removal would leave the caller
+// having to work out which half happened.
+//
+// # The last key leaves an empty Secret; it does not delete it
+//
+// This is the decision issue #269 left to the implementation. An unset that
+// deleted the object when its last key went would make `kelson secret unset db
+// url` a delete — without the confirmation `kelson secret delete` asks for,
+// without the UID precondition it applies, and reachable from an agent through
+// a tool the surface deliberately does not give it (internal/mcp/secret.go).
+// Keeping the object bounds every removal to what the caller actually named:
+// keys. What is left is an empty managed Secret, which is honest state — it
+// lists with no keys, `set` refills it by merge, and `delete` removes it — and
+// it is not a worse failure for a workload than a deleted one, because a
+// `secretKeyRef` to a key that is not there fails a pod start either way.
+//
+// # It writes with Update, not Apply
+//
+// A server-side apply prunes only the fields kelson's own field manager owns,
+// so a key some other writer had set would survive an apply that omitted it and
+// this method would report a removal it did not make. An Update writes the
+// object whole, and the ResourceVersion the read carried makes it a
+// compare-and-swap: a Secret that changed between the read and the write is a
+// conflict rather than a removal computed against a stale copy — the same
+// window [Store.Delete]'s UID precondition closes.
+func (s *Store) Unset(ctx context.Context, req UnsetRequest) (Secret, error) {
+	namespace, err := req.Validate()
+	if err != nil {
+		return Secret{}, err
+	}
+
+	live, err := s.clientset.CoreV1().Secrets(namespace).Get(ctx, req.Name, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return Secret{}, secretMissing(namespace, req.Name)
+		}
+		return Secret{}, newError(ErrReadFailed, resourceOf(namespace, req.Name),
+			"the Secret could not be read, so kelson cannot tell whether it manages it",
+			"check that the credentials in use may get Secrets in this namespace; the removal is refused "+
+				"rather than attempted, because a write computed against a Secret kelson could not read "+
+				"would drop keys it never saw").withCause(err)
+	}
+	// Every value in the object is registered before anything else touches it,
+	// for the reason [Store.Set]'s first statement gives: this method holds the
+	// whole Secret in order to write the remainder back, and a value kelson
+	// holds is a value kelson must not be able to print (issue #117).
+	for _, v := range live.Data {
+		redact.Register(string(v))
+	}
+	for _, v := range live.StringData {
+		redact.Register(v)
+	}
+	if !IsManaged(live) {
+		return Secret{}, notManaged(namespace, req.Name)
+	}
+
+	removing := req.RemovedKeys()
+	held := summarize(live).Keys
+	if missing := absent(removing, held); len(missing) > 0 {
+		return Secret{}, newError(ErrKeyNotFound, resourceOf(namespace, req.Name),
+			fmt.Sprintf("Secret %q in namespace %q does not hold %s", req.Name, namespace, quoteList(missing)),
+			"nothing was removed: an unset is all-or-nothing, so a mistyped key cannot take a key you did "+
+				"mean to keep. This Secret holds "+quoteList(held)+
+				" — `kelson secret list` shows the same thing for every Secret in the environment")
+	}
+
+	next := live.DeepCopy()
+	for _, k := range removing {
+		delete(next.Data, k)
+		delete(next.StringData, k)
+	}
+	updated, err := s.clientset.CoreV1().Secrets(namespace).Update(ctx, next,
+		metav1.UpdateOptions{FieldManager: FieldManager, DryRun: dryRunOptions(req.DryRun)})
+	if err != nil {
+		if apierrors.IsConflict(err) {
+			return Secret{}, newError(ErrWriteFailed, resourceOf(namespace, req.Name),
+				"the Secret changed while the removal was being computed, so the write was rejected",
+				"retry: the removal is recomputed against the Secret as it is now, which is what stops it "+
+					"restoring a key somebody else removed in between").withCause(err)
+		}
+		if apierrors.IsNotFound(err) {
+			return Secret{}, secretMissing(namespace, req.Name)
+		}
+		return Secret{}, newError(ErrWriteFailed, resourceOf(namespace, req.Name),
+			"the API server refused the write",
+			"retry, and check that the credentials in use may update Secrets in this namespace").withCause(err)
+	}
+	return summarize(updated), nil
+}
+
+// absent is the keys of want that are not in have. Both are sorted, so the
+// answer is too and an error message reads the same on every run.
+func absent(want, have []string) []string {
+	set := make(map[string]bool, len(have))
+	for _, k := range have {
+		set[k] = true
+	}
+	var out []string
+	for _, k := range want {
+		if !set[k] {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// quoteList renders a key list for an error message. Keys are quoted because a
+// Secret key may hold dots and dashes and an unquoted list of them is hard to
+// read; "none" is spelled out because an empty list in a sentence reads as a
+// missing word rather than as a fact.
+func quoteList(keys []string) string {
+	if len(keys) == 0 {
+		return "no keys"
+	}
+	quoted := make([]string, 0, len(keys))
+	for _, k := range keys {
+		quoted = append(quoted, fmt.Sprintf("%q", k))
+	}
+	return strings.Join(quoted, ", ")
+}
+
 // List returns every Secret kelson manages in the target namespace, masked,
 // sorted by name.
 //
@@ -325,9 +518,7 @@ func (s *Store) Delete(ctx context.Context, req DeleteRequest) error {
 	live, err := s.clientset.CoreV1().Secrets(namespace).Get(ctx, req.Name, metav1.GetOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return newError(ErrNotFound, resourceOf(namespace, req.Name),
-				fmt.Sprintf("no Secret named %q exists in namespace %q", req.Name, namespace),
-				"run `kelson secret list` for this environment to see what kelson manages here")
+			return secretMissing(namespace, req.Name)
 		}
 		return newError(ErrReadFailed, resourceOf(namespace, req.Name),
 			"the Secret could not be read, so kelson cannot tell whether it manages it",
@@ -344,9 +535,7 @@ func (s *Store) Delete(ctx context.Context, req DeleteRequest) error {
 	})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return newError(ErrNotFound, resourceOf(namespace, req.Name),
-				fmt.Sprintf("no Secret named %q exists in namespace %q", req.Name, namespace),
-				"run `kelson secret list` for this environment to see what kelson manages here")
+			return secretMissing(namespace, req.Name)
 		}
 		return newError(ErrWriteFailed, resourceOf(namespace, req.Name),
 			"the API server refused the delete",
@@ -440,6 +629,15 @@ func namespaceMissing(namespace, name string) error {
 		"deploy the environment first (`kelson deploy`), which creates its namespace, or pass --namespace "+
 			"if the Environment's spec.namespace names a different one. kelson does not create the namespace here: "+
 			"a Secret in a namespace no environment targets is one nothing will ever read")
+}
+
+// secretMissing is the answer for a named Secret that is not there. Both verbs
+// that take a name — delete and unset — need it, and they need the same one: a
+// name kelson cannot find is the same fact whichever verb asked.
+func secretMissing(namespace, name string) error {
+	return newError(ErrNotFound, resourceOf(namespace, name),
+		fmt.Sprintf("no Secret named %q exists in namespace %q", name, namespace),
+		"run `kelson secret list` for this environment to see what kelson manages here")
 }
 
 func notManaged(namespace, name string) error {

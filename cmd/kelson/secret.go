@@ -55,6 +55,7 @@ import (
 // ([sopsUnavailable]), never quietly written somewhere else.
 type secretStore interface {
 	Set(ctx context.Context, req secret.SetRequest) (secret.Secret, error)
+	Unset(ctx context.Context, req secret.UnsetRequest) (secret.Secret, error)
 	List(ctx context.Context, t secret.Target) ([]secret.Secret, error)
 	Delete(ctx context.Context, req secret.DeleteRequest) error
 }
@@ -113,6 +114,7 @@ func newSecretCmdFactory(connect secretConnector) *cobra.Command {
 	}
 	cmd.AddCommand(
 		newSecretSetCmd(connect),
+		newSecretUnsetCmd(connect),
 		newSecretListCmd(connect),
 		newSecretDeleteCmd(connect),
 		newSecretRotateCmd(connect),
@@ -201,21 +203,15 @@ func (t *secretTarget) store() (secretStore, error) {
 		// (creationPolicy: Owner, ADR-0020) — kelson's keys would survive
 		// until the next sync and then vanish. Under that backend no value
 		// passes through kelson at all, and saying so is the whole point.
-		return nil, fmt.Errorf("environment %q uses secret backend externalSecrets, where the value is "+
-			"written in your secret manager and external-secrets syncs it into the cluster. kelson never holds "+
-			"it (ADR-0020): write it at the store this environment reads from (%s), or change "+
-			"secrets.backend if you meant kelson to hold it",
-			resolved.Environment.Name, storeOrAny(resolved.Environment.Secrets.Store))
+		//
+		// The refusal is internal/secret's rather than this file's because
+		// kelson-server refuses the same thing for the same reason (issue
+		// #269), and an author who hits it from the CLI and from an agent
+		// should not have to work out that they are the same wall.
+		return nil, secret.ExternalBackend(t.target(), resolved.Environment.Secrets.Store)
 	default:
 		return t.connect(t.kubeconfig)
 	}
-}
-
-func storeOrAny(name string) string {
-	if name == "" {
-		return "the SecretStore this environment resolves to"
-	}
-	return "secrets.store " + name
 }
 
 // --- set ---------------------------------------------------------------------
@@ -235,9 +231,9 @@ func newSecretSetCmd(connect secretConnector) *cobra.Command {
 		Long: "Set writes the given keys into the named Secret, creating it if it does not exist, and prints the\n" +
 			"resulting key list. Values are never printed back.\n\n" +
 			"Under backend cluster, keys not named here are preserved: `set` adds and replaces keys, it does not\n" +
-			"replace the Secret. Under backend sops it replaces the file, because carrying the other keys forward\n" +
-			"would need the age identity kelson never holds — so a set that would drop keys is refused with those\n" +
-			"keys named, and you pass them all.\n\n" +
+			"replace the Secret. Nothing here removes a key — `kelson secret unset` is what does. Under backend\n" +
+			"sops it replaces the file, because carrying the other keys forward would need the age identity kelson\n" +
+			"never holds — so a set that would drop keys is refused with those keys named, and you pass them all.\n\n" +
 			"Three ways to supply a value, and the first is the one to avoid for a real credential:\n\n" +
 			"  key=value            convenient, but the value lands in your shell history and in a CI job's\n" +
 			"                       recorded command line, where it outlives the secret\n" +
@@ -373,6 +369,83 @@ func preservedKeys(all []string, written map[string]string) []string {
 		}
 	}
 	return out
+}
+
+// --- unset --------------------------------------------------------------------
+
+type secretUnsetOptions struct {
+	secretTarget
+	dryRun bool
+}
+
+// `kelson secret unset` is the complement of `set`'s merge (issue #269): the
+// only way to say "this key should not exist".
+//
+// It asks for no confirmation, which is deliberate and is not the same
+// judgement `delete` makes. `set` overwrites a credential with no prompt and is
+// exactly as unrecoverable — kelson keeps no previous value either way — so the
+// prompt would be inconsistent rather than careful. What makes the difference
+// is that this command cannot remove an object: every key it removes is a key
+// the caller typed, a key that is not there stops the whole command, and a
+// Secret whose last key goes is left empty rather than deleted. `delete` takes
+// an object away on the strength of one name, which is why that one asks.
+func newSecretUnsetCmd(connect secretConnector) *cobra.Command {
+	opts := &secretUnsetOptions{secretTarget: secretTarget{connect: connect}}
+	cmd := &cobra.Command{
+		Use:   "unset <name> <key> [<key> ...] --env <environment> [-f spec.yaml]",
+		Short: "Remove keys from a Secret in the environment's namespace",
+		Long: "Unset removes the named keys from a Secret kelson manages and prints what is left. It exists\n" +
+			"because `set` merges: a write never prunes what it does not name, so without this there is no way\n" +
+			"to remove one key short of deleting the Secret and writing it again.\n\n" +
+			"Every key named must be in the Secret. A key that is not there stops the command with the keys it\n" +
+			"does hold listed, and nothing is removed — kelson reports no values, so a typo that quietly\n" +
+			"removed nothing would leave you believing a credential is gone when it is not.\n\n" +
+			"Removing the last key leaves an EMPTY Secret rather than deleting it. Removing keys never removes\n" +
+			"an object: `kelson secret delete` is the command that does, and it asks first.\n\n" +
+			"kelson removes keys only from Secrets it wrote, exactly as `set` and `delete` do.",
+		Example: "  kelson secret unset checkout-db --project checkout --env production old-url\n" +
+			"  kelson secret unset payments -f spec.yaml --env production webhook-secret legacy-key",
+		Args: cobra.MinimumNArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error { return runSecretUnset(cmd, opts, args) },
+	}
+	opts.bind(cmd)
+	cmd.Flags().BoolVar(&opts.dryRun, "dry-run", false,
+		"validate the removal and discard it; nothing is changed")
+	return cmd
+}
+
+func runSecretUnset(cmd *cobra.Command, opts *secretUnsetOptions, args []string) error {
+	name, keys := args[0], args[1:]
+	store, err := opts.store()
+	if err != nil {
+		return err
+	}
+
+	request := secret.UnsetRequest{Target: opts.target(), Name: name, Keys: keys, DryRun: opts.dryRun}
+	left, err := store.Unset(cmd.Context(), request)
+	if err != nil {
+		return err
+	}
+
+	out := &printer{w: cmd.OutOrStdout()}
+	verb := "removed"
+	if opts.dryRun {
+		verb = "would remove"
+	}
+	out.printf("%s %s from Secret %s in namespace %s\n",
+		verb, strings.Join(request.RemovedKeys(), ", "), left.Name, left.Namespace)
+	if len(left.Keys) > 0 {
+		out.printf("  keys left:    %s\n", strings.Join(left.Keys, ", "))
+	} else {
+		out.printf("  the Secret is now empty and still exists. Remove it with `kelson secret delete %s`.\n", left.Name)
+	}
+	if opts.dryRun {
+		out.printf("\ndry run: the API server validated this and changed nothing.\n")
+		return out.err
+	}
+	out.printf("\nkelson kept no copy of the value. A component still referencing a removed key keeps the value its\n")
+	out.printf("pods already read, and fails at its next pod start.\n")
+	return out.err
 }
 
 // --- list ---------------------------------------------------------------------

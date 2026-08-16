@@ -1421,15 +1421,17 @@ back with its secrets**, because they are in it. What has to survive outside is 
 | **`set` writes the whole Secret** | carrying the other keys forward would need the identity kelson does not have, so a write that would drop keys is refused with those keys named (`secret/sops-partial-set`) |
 
 One step is still the operator's, because kelson cannot do it: creating the Secret that holds the age
-**identity** in the cluster. `kelson secret set` prints the command. [Secrets](secrets.md) is the full
-guide — setup, rotation and recovery — and [ADR-0022](adr/0022-sops-age.md) records why the format is
-implemented rather than imported and why rotation reports rather than re-encrypts.
+**identity** in the cluster. [Secrets](secrets.md) is the full guide — setup, rotation and recovery —
+and [ADR-0022](adr/0022-sops-age.md) records why the format is implemented rather than imported and why
+rotation reports rather than re-encrypts.
 
-> **Transition ([#225](https://github.com/dafrie/kelson/issues/225)).** `kelson secret set` writes the
-> ciphertext to `<delivery.git.path>/secrets/<name>.enc.yaml` today, because the transport is still a
-> git repository. Where the ciphertext is held once the artifact is the transport — so that the
-> publisher picks it up — is R2 work; the ADRs decide that it travels *in the artifact* and do not
-> decide where it is stored on the way there.
+> **Where the ciphertext lives ([#225](https://github.com/dafrie/kelson/issues/225)).** Nowhere, today.
+> kelson used to write it to a path in a delivery git repository, and both that writer and the
+> `delivery.git` field it was addressed by went with [ADR-0028](adr/0028-delivery-spine.md), which
+> decides the ciphertext travels **inside the published artifact** instead. Where `kelson secret set`
+> holds it on the way there is the open question — and it is why the verb refuses under a `sops`
+> environment ([#224](https://github.com/dafrie/kelson/issues/224)) rather than writing the file
+> somewhere provisional.
 
 ## Environment schema
 

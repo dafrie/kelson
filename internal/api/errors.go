@@ -330,9 +330,15 @@ func failSecret(err error) error {
 		return failRequest(err)
 	}
 	switch se.Code {
-	case secret.ErrNotManaged, secret.ErrNamespaceMissing:
+	// The backend refusals of #269 are failed preconditions for the same
+	// reason: the request is well-formed and something outside it — the
+	// environment's `secrets.backend`, or a stored spec that will not say what
+	// it is — refuses it. An agent that read InvalidArgument would rewrite its
+	// arguments, and no argument it can send would help.
+	case secret.ErrNotManaged, secret.ErrNamespaceMissing,
+		secret.ErrExternalBackend, secret.ErrBackendUnreadable:
 		return fail(connect.CodeFailedPrecondition, err)
-	case secret.ErrNotFound:
+	case secret.ErrNotFound, secret.ErrKeyNotFound:
 		return fail(connect.CodeNotFound, err)
 	case secret.ErrReadFailed, secret.ErrWriteFailed:
 		return fail(connect.CodeUnavailable, err)

@@ -14,8 +14,8 @@ value where the reference points — one field on one Environment, and no spec t
 
 | Backend | Where the value lives | Who writes it | In the delivered artifact |
 |---|---|---|---|
-| `cluster` (default) | a Kubernetes Secret | `kelson secret set` | no |
-| `sops` | the artifact kelson publishes, encrypted with age | `kelson secret set` | **yes**, encrypted |
+| `cluster` (default) | a Kubernetes Secret | `kelson secret set` / `unset` | no |
+| `sops` | the artifact kelson publishes, encrypted with age | nothing, today — see below | **yes**, encrypted |
 | `externalSecrets` | Vault, AWS/GCP/Azure secret manager | you, in that store | no |
 
 `cluster` needs no setup at all and is the right answer for most people. Its one real cost is written
@@ -24,7 +24,44 @@ restore the secrets.** `sops` is what closes that, and this page is mostly about
 
 ---
 
+## The `cluster` backend, in four verbs
+
+```sh
+kelson secret set checkout-db --project checkout --env production url=postgres://…
+kelson secret list --project checkout --env production
+kelson secret unset checkout-db --project checkout --env production old-url
+kelson secret delete checkout-db --project checkout --env production
+```
+
+`set` **merges**: keys it does not name are preserved, so rotating one credential never silently drops
+another. That is why removing a key needs its own verb.
+
+`unset` removes the keys you name and nothing else. Two rules follow from kelson reporting no values
+anywhere:
+
+- **A key that is not there is refused**, with the keys the Secret does hold listed, and nothing is
+  removed. A typo that quietly removed nothing would leave you believing a credential is gone.
+- **Removing the last key leaves an empty Secret** rather than deleting it. Removing keys never removes
+  an object: `kelson secret delete` is the verb that does, and it is the one that asks first. An empty
+  Secret still lists, and `set` refills it.
+
+Both refuse a Secret kelson did not write (`secret/not-managed`), exactly as `delete` does. Over the API
+and on the agent surface the same removal is `UnsetSecret` and `set_secret`'s `remove_keys`; there is no
+tool that deletes a Secret.
+
+---
+
 ## The `sops` backend
+
+> **Not writable today ([#224](https://github.com/dafrie/kelson/issues/224)).** Everything in this
+> section describes the mechanism, which is decided and unchanged. What is missing is the destination:
+> the writer that used to commit the encrypted Secret went with the git delivery machinery
+> ([ADR-0028](adr/0028-delivery-spine.md)), and nothing puts one inside the published artifact yet. So
+> **every `kelson secret` verb refuses an environment on `backend: sops`** — by name, with
+> `delivery/not-implemented` and the issue number — rather than writing the value somewhere the delivery
+> spine would overwrite it. kelson-server and the `set_secret` tool refuse it for the same reason
+> ([#269](https://github.com/dafrie/kelson/issues/269)). Encryption itself is unaffected: the age
+> recipients, the file format and in-cluster decryption are all still here and still tested.
 
 Values are encrypted with [age](https://age-encryption.org) and travel **inside the artifact kelson
 publishes**, beside the workloads that reference them. kustomize-controller decrypts them on the way
@@ -92,11 +129,6 @@ by skipping a step.** Without that block an encrypted file is applied verbatim, 
 is the literal string `ENC[AES256_GCM,…]` and a workload that starts with a credential that is not one.
 Nobody has to remember it now.
 
-> **Transition ([#224](https://github.com/dafrie/kelson/issues/224)).** Until R1 lands the transport is
-> still a git repository, the Kustomization that reconciles it is still yours to write, and
-> `kelson secret set` still prints the decryption block for you to paste. The `sops-age` Secret lives
-> in whatever namespace that Kustomization does — `flux-system` in the usual bootstrap.
-
 `ageRecipients` holds **public** keys. They are not secret and they belong in the repository in the
 clear — that is the shape of the mechanism, not a compromise: encrypting needs the recipient, decrypting
 needs the identity, and kelson only ever does the first.
@@ -110,9 +142,18 @@ kelson secret set checkout-db -f spec.yaml --env production url=postgres://user:
 `-f` is what tells kelson which backend to use — it reads `secrets.backend` from the spec. Without it,
 kelson assumes `cluster` and writes to the API server instead.
 
+**Today this refuses**, for the reason in the callout above: there is nowhere to put the ciphertext that
+the delivery spine will read. The refusal names the backend and
+[#224](https://github.com/dafrie/kelson/issues/224), and nothing is written anywhere — in particular not
+as a plain Secret in the namespace, which would be a credential in a place a `sops` environment must not
+have one. Until it returns, write the value with `kubectl create secret generic` (and keep it out of the
+artifact), or move the environment to `backend: cluster` and use `kelson secret set`.
+
+The rest of this section is what the mechanism does when it writes, because none of it changed.
+
 The value is encrypted **in memory** and only the ciphertext is stored. No plaintext file is ever
-created: kelson writes through an in-memory filesystem, so neither the plaintext nor the encrypted form
-touches your disk. Use `--from-stdin` or `--from-file` to keep the value out of your shell history:
+created: kelson encrypts inside its own process, so neither the plaintext nor the encrypted form touches
+your disk. `--from-stdin` and `--from-file` keep the value out of your shell history:
 
 ```sh
 read -rs PW && printf '%s' "$PW" |
@@ -150,11 +191,12 @@ Only the **values** are encrypted. The Secret's name, namespace and key names st
 what makes an encrypted secret reviewable: a diff shows which Secret gained which key, and shows the
 value as ciphertext.
 
-> **Transition ([#225](https://github.com/dafrie/kelson/issues/225)).** Today the file is written to
-> `<delivery.git.path>/secrets/<name>.enc.yaml` in the delivery repository and travels to the cluster as
-> a commit. [ADR-0028](adr/0028-delivery-spine.md) §7 decides that the ciphertext travels in the
-> artifact; where `kelson secret set` holds it on the way there, so the publisher picks it up, is R2
-> work the ADRs do not settle.
+> **Where that file lives ([#225](https://github.com/dafrie/kelson/issues/225)).** Nowhere, today.
+> kelson used to write it to a path in a delivery git repository, and both the writer and the
+> `delivery.git` field it was addressed by are gone with [ADR-0028](adr/0028-delivery-spine.md), which
+> decides that the ciphertext travels **inside the published artifact** instead. Where `kelson secret set`
+> holds it on the way there, so the publisher picks it up, is the open question — and it is why the verb
+> refuses rather than writing the file somewhere provisional.
 
 ### `set` writes the whole Secret
 
@@ -170,7 +212,8 @@ Secret/checkout-production/checkout-db [secret/sops-partial-set]: this write nam
 encrypted Secret also holds "token", which it would drop
 ```
 
-Pass every key the Secret should have. To drop a key deliberately, `kelson secret delete` first.
+Pass every key the Secret should have. `kelson secret unset` is a `cluster` verb for the same reason:
+removing one key from a file kelson cannot open would need the identity it never holds.
 
 ### Listing
 
@@ -180,7 +223,8 @@ kelson secret list -f spec.yaml --env production
 
 reads the encrypted files and reports names and key names. It needs no key at all — SOPS encrypts
 values, not structure. There is no age column: a file's age is a fact about where it is stored rather
-than about the credential.
+than about the credential. Like the write, it is refused while there are no files to read
+([#224](https://github.com/dafrie/kelson/issues/224)).
 
 There is no `kelson secret get` under any backend. Reading a value is `kubectl get secret` (or
 `sops -d`), with the cluster's or the store's own access control behind it.
@@ -192,7 +236,8 @@ kelson secret delete checkout-db -f spec.yaml --env production
 ```
 
 removes the encrypted file; kustomize-controller prunes the Secret on the next reconcile, because the
-`Kustomization` owns what it applied and runs with `prune: true`.
+`Kustomization` owns what it applied and runs with `prune: true`. It is refused today for the same
+reason the write is ([#224](https://github.com/dafrie/kelson/issues/224)).
 
 **Every previous version is still readable by anyone holding the age identity** — in the repository's
 history, and in the immutable artifacts kelson has already published, which are never deleted. A deleted
@@ -219,7 +264,9 @@ Adding a second recipient costs one line in each encrypted file and buys the rec
 
 ### Rotating the age key
 
-Rotation is add-then-remove, and `kelson secret rotate` is what tells you where you are in it.
+Rotation is add-then-remove, and `kelson secret rotate` is what tells you where you are in it — once
+there are encrypted files again to compare against ([#224](https://github.com/dafrie/kelson/issues/224);
+it refuses alongside the other verbs until then).
 
 **1. Add the new recipient** to `ageRecipients` alongside the old one, and apply the spec.
 
@@ -339,8 +386,14 @@ it, because the first step is treating its contents as compromised.
 - **kelson does not content-sniff your logs.** The guarantee is the one kelson can keep: kelson never
   adds a secret to a log ([ADR-0009](adr/0009-secrets.md), amendment). What your own process prints is
   yours to control.
-- **The API and MCP surfaces write cluster Secrets only.** `set_secret` addresses a project and an
-  environment and has no spec, so it cannot see `secrets.backend`. Under a sops environment, use the CLI.
+- **The API and MCP surfaces write only where the backend says they may.** A `SetSecret` request names a
+  project and an environment and carries no spec, so kelson-server reads the environment's effective
+  `secrets.backend` off the stored spec. Under `cluster` it writes as before; under `sops` and
+  `externalSecrets` it refuses by name — `delivery/not-implemented` naming
+  [#224](https://github.com/dafrie/kelson/issues/224), and `secret/external-backend` naming the store the
+  value belongs in. It does not fall back to writing a plain cluster Secret, which is what it used to do
+  ([#269](https://github.com/dafrie/kelson/issues/269)). A stored spec kelson cannot read or resolve is
+  refused too, with `secret/backend-unreadable`: an unknown backend is not the default backend.
 
 ## See also
 

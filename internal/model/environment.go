@@ -371,10 +371,8 @@ type Previews struct {
 	Provider PreviewProvider `yaml:"provider" json:"provider" jsonschema:"required,enum=github,enum=gitlab,description=the forge whose change requests become previews"`
 
 	// Repo is the HTTP(S) URL of the repository whose pull requests become
-	// previews. It is the *source* repository, not delivery.git.repo — those
-	// are usually different repositories and kelson defaults neither from the
-	// other.
-	Repo string `yaml:"repo" json:"repo" jsonschema:"required,description=HTTP(S) URL of the source repository whose change requests become previews; not delivery.git.repo"`
+	// previews — the *source* repository, the one the component builds from.
+	Repo string `yaml:"repo" json:"repo" jsonschema:"required,description=HTTP(S) URL of the source repository whose change requests become previews"`
 
 	// SecretRef names the Secret holding forge credentials, in the
 	// environment's namespace. Its keys are flux-operator's: username and

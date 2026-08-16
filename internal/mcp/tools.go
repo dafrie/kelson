@@ -42,6 +42,7 @@ var (
 	rpcExplain = rpc{kelsonv1alpha1connect.ExplainServiceName, "Explain"}
 
 	rpcSetSecret   = rpc{kelsonv1alpha1connect.SecretServiceName, "SetSecret"}
+	rpcUnsetSecret = rpc{kelsonv1alpha1connect.SecretServiceName, "UnsetSecret"}
 	rpcListSecrets = rpc{kelsonv1alpha1connect.SecretServiceName, "ListSecrets"}
 )
 
@@ -71,6 +72,11 @@ type tool struct {
 // it answers is a diagnosis: a workload in CreateContainerConfigError is the
 // failure a missing Secret or a missing key produces, and ADR-0018 records that
 // kelson has nothing else that correlates a reference with the Secret it names.
+//
+// #269's key removal took the same rule the same way: it is `remove_keys` on
+// set_secret rather than a tenth tool, because removing a key is what an agent
+// does about a key it wrote under the wrong name — the second half of a task,
+// not a task (secret.go's setSecretTool says the rest).
 func surface(c *clients) []tool {
 	return []tool{
 		listComponentsTool(c),

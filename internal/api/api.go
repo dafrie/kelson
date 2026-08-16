@@ -463,6 +463,7 @@ type BuildTarget struct {
 // here could send one even by mistake.
 type SecretStore interface {
 	Set(ctx context.Context, req secret.SetRequest) (secret.Secret, error)
+	Unset(ctx context.Context, req secret.UnsetRequest) (secret.Secret, error)
 	List(ctx context.Context, t secret.Target) ([]secret.Secret, error)
 	Delete(ctx context.Context, req secret.DeleteRequest) error
 }

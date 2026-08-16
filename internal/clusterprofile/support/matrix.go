@@ -150,9 +150,9 @@ var Components = []Component{
 		Minimum:  "2.0.0",
 		Degrade:  DegradeRefuse,
 		GapField: "flux",
-		Affects: "the GitOps delivery flow: the GitRepository and Kustomization kelson commits against, and " +
-			"the chart source a HelmRelease fetches from",
-		Note: "flux v2's GitRepository/Kustomization API is what kelson commits against in GitOps mode.",
+		Affects: "the delivery spine: the OCIRepository and Kustomization the kelson controller writes for " +
+			"every environment, and the chart source a HelmRelease fetches from",
+		Note: "flux v2's Kustomization/OCIRepository API is what the kelson controller writes (ADR-0028).",
 	},
 	{
 		Name:     "helm-controller",
@@ -180,8 +180,8 @@ var Components = []Component{
 		Minimum:  "2.9.0",
 		Degrade:  DegradeRefuse,
 		GapField: "argocd",
-		Affects: "the Argo CD delivery path. No Argo adapter ships today (issue #138, ADR-0012), so nothing " +
-			"degrades yet — the floor is kept because the delivery seam stays pluggable",
+		Affects: "the Argo CD delivery path. None ships (issue #138) and the spine is Flux-only " +
+			"(ADR-0028), so nothing degrades yet — the floor is recorded so detection can say what it saw",
 		Note: "the Application CRD kelson targets for the Argo CD delivery path.",
 	},
 	{
