@@ -4,14 +4,20 @@ import { Code, ConnectError, createRouterTransport } from "@connectrpc/connect";
 import type { Transport } from "@connectrpc/connect";
 
 import { DeployService } from "../gen/kelson/v1alpha1/deploy_pb";
-import { renderAt } from "../test/render";
-import { HistoryPage } from "./HistoryPage";
+import { SpecService } from "../gen/kelson/v1alpha1/spec_pb";
+import { renderRoutes } from "../test/render";
+import { environmentRoutes } from "../test/routes";
 
 /**
  * The screen's contract is that it shows what History returned and nothing
  * more, so most of these tests assert an absence: no phase pill on a revision
  * nothing can answer for, no author (the spine records none yet, #74), no
- * rollback link to the revision already deployed.
+ * rollback link to the newest revision.
+ *
+ * Since #260's rail the placement of each stop is asserted too, off `data-rail`
+ * — the marker's position on the rail is the screen's main statement and it
+ * would otherwise be untested drawing — and the per-stop actions are asserted
+ * after a click, because they are collapsed until the stop is opened.
  *
  * The fixtures use the shapes the rebuilt delivery spine actually sends
  * (ADR-0028, R2 #225): a revision id of `<generation>-<hash8>`, and the
@@ -66,6 +72,15 @@ interface Stub {
   phase?: string;
   /** When set, Status fails with this code instead of answering. */
   statusError?: Code;
+  /** The environment has drifted, with this `cause` on the answer. */
+  stale?: boolean;
+  cause?: string;
+  /**
+   * The project's environments. The rail's head offers the promotion only when
+   * there is another one to promote from, so a one-environment project is a
+   * fixture in its own right.
+   */
+  environments?: string[];
 }
 
 function transportFor({
@@ -73,26 +88,43 @@ function transportFor({
   live = "3-9f0a1b2c",
   phase = "Healthy",
   statusError,
+  stale = false,
+  cause = "",
+  environments = ["staging", "production"],
 }: Stub): Transport {
   return createRouterTransport((router) => {
+    router.service(SpecService, {
+      getSpec: () => ({
+        spec: {
+          project: "checkout",
+          version: "7",
+          environments,
+          documents: { environments: {} },
+        },
+      }),
+    });
     router.service(DeployService, {
       history: () => ({ entries }),
       status: () => {
         if (statusError !== undefined) {
           throw new ConnectError("no delivery plane", statusError);
         }
-        return { phase, revision: live, cause: "", detail: {} };
+        return { phase, revision: live, cause, stale, detail: {} };
       },
     });
   });
 }
 
-function renderHistory(stub: Stub = {}) {
-  return renderAt(
+/**
+ * The History tab, mounted under the environment layout it is a tab of (#260).
+ * The tab reads the layout's spec for the promotion's possible sources, so a
+ * test of the tab alone would be testing a screen the app does not ship.
+ */
+function renderHistory(stub: Stub = {}, search = "") {
+  return renderRoutes(
     transportFor(stub),
-    "/projects/checkout/production/history",
-    "/projects/:project/:env/history",
-    <HistoryPage />,
+    `/projects/checkout/production/history${search}`,
+    environmentRoutes(),
   );
 }
 
@@ -100,8 +132,25 @@ function renderHistory(stub: Stub = {}) {
 async function row(text: string): Promise<HTMLElement> {
   const node = await screen.findByText(text);
   const item = node.closest("li");
-  if (item === null) throw new Error(`no timeline item for ${text}`);
+  if (item === null) throw new Error(`no rail stop for ${text}`);
   return item;
+}
+
+/** Open one stop's offer, the way a reader does. */
+async function open(revision: string): Promise<HTMLElement> {
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: `Actions for revision ${revision}`,
+    }),
+  );
+  return row(revision);
+}
+
+/** Every stop's placement on the rail, top to bottom. */
+function rail(): (string | null)[] {
+  return Array.from(document.querySelectorAll(".k-history__rail > li")).map(
+    (li) => li.getAttribute("data-rail"),
+  );
 }
 
 describe("HistoryPage", () => {
@@ -145,14 +194,14 @@ describe("HistoryPage", () => {
     expect(within(unattributed).queryByText("web")).toBeNull();
   });
 
-  it("shows a recorded outcome on every row without claiming it is live", async () => {
+  it("shows a recorded outcome on every stop without claiming it is live", async () => {
     renderHistory({ live: "3-9f0a1b2c", phase: "Healthy" });
 
-    // Every row says what was recorded, including one that ended badly...
+    // Every stop says what was recorded, including one that ended badly...
     expect((await row("2-1a2b3c4d")).textContent).toContain(
       "recorded rejected",
     );
-    // ...but only the live row carries a phase pill, because only that one has
+    // ...but only the marker carries a phase pill, because only that one has
     // an answer for right now.
     await waitFor(() =>
       expect(screen.getAllByText("deployed now")).toHaveLength(1),
@@ -212,6 +261,8 @@ describe("HistoryPage", () => {
     // The history itself is unaffected: an unreadable present is not an
     // unreadable past.
     expect(screen.getAllByRole("listitem")).toHaveLength(3);
+    // And no stop is placed relative to a marker that is not there.
+    expect(rail()).toEqual(["unmarked", "unmarked", "unmarked"]);
   });
 
   it("distinguishes a server that names no live revision from one that failed", async () => {
@@ -233,92 +284,6 @@ describe("HistoryPage", () => {
     const unattributed = await screen.findAllByText("unattributed");
     expect(unattributed).toHaveLength(3);
     expect(unattributed[0]?.getAttribute("title")).toContain("#74");
-  });
-
-  it("links each revision to the comparison against what is deployed now", async () => {
-    renderHistory();
-
-    // The comparison is a panel of this tab now (#260) and not a screen of its
-    // own, but it is still a URL: `?from=` on this same path is what the
-    // retired diff route redirects into, so a link out of a pull request and a
-    // press on this row land on the same thing.
-    const item = await row("2-1a2b3c4d");
-    expect(
-      within(item)
-        .getByRole("link", { name: "Diff against current" })
-        .getAttribute("href"),
-    ).toBe("/projects/checkout/production/history?from=2-1a2b3c4d");
-  });
-
-  it("opens the comparison in place when a revision is named", async () => {
-    renderAt(
-      transportFor({}),
-      "/projects/checkout/production/history?from=3-9f0a1b2c",
-      "/projects/:project/:env/history",
-      <HistoryPage />,
-    );
-
-    // The panel opens on the mode the revision belongs to, and the record it
-    // was opened from is still on screen underneath it.
-    expect(
-      (
-        await screen.findByRole("button", { name: "Against deployed revision" })
-      ).getAttribute("aria-current"),
-    ).toBe("true");
-    expect(screen.getByText("Revisions (3)")).toBeTruthy();
-  });
-
-  it("offers the comparison against the cluster once, above the list", async () => {
-    const { router } = renderHistory();
-
-    // The mode that is about no particular revision: it is offered once, above
-    // the rows, which is what the bare diff route used to be.
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Diff against the cluster" }),
-    );
-    await waitFor(() =>
-      expect(router.state.location.search).toBe("?compare=1"),
-    );
-    expect(
-      screen.getByRole("button", { name: "Against live cluster" }),
-    ).toBeTruthy();
-  });
-
-  it("links a rollback that carries the revision, except for the newest", async () => {
-    renderHistory();
-
-    const older = await row("3-9f0a1b2c");
-    expect(
-      within(older)
-        .getByRole("link", { name: "Roll back to this" })
-        .getAttribute("href"),
-    ).toBe("/projects/checkout/production/actions/rollback?to=3-9f0a1b2c");
-
-    // Restoring the newest revision is not a rollback, and the rollback screen
-    // disables that target, so the link is not offered at all.
-    const newest = await row("4-b2c3d4e5");
-    expect(
-      within(newest).queryByRole("link", { name: "Roll back to this" }),
-    ).toBeNull();
-  });
-
-  it("offers no promotion of its own: it is an action of the environment (#11)", async () => {
-    renderHistory();
-
-    // Promotion reads the *source* environment's latest revision, so no row
-    // could offer it without promising a promotion the RPC does not make. It
-    // moved to the environment's action bar (#260), where it is offered once
-    // for the environment rather than once per view of it.
-    await screen.findByText("Revisions (3)");
-    expect(
-      screen.queryByRole("link", { name: "Promote into this environment" }),
-    ).toBeNull();
-    const newest = await row("4-b2c3d4e5");
-    expect(
-      within(newest).queryByRole("link", {
-        name: "Promote into this environment",
-      }),
-    ).toBeNull();
   });
 
   it("says what the record does not carry", async () => {
@@ -343,44 +308,18 @@ describe("HistoryPage", () => {
     ).toBeTruthy();
   });
 
-  it("says a registry-only revision is only a revision, and offers it anyway", async () => {
-    // The list runs past the bounded history the cluster keeps into the
-    // registry's tag list (#241). Such an entry carries one fact, so the row
-    // must not print an absent outcome and an absent timestamp beside
-    // "unattributed" and let a reader take the blanks for a deployment that
-    // had none.
-    renderHistory({
-      entries: [
-        ...ENTRIES,
-        {
-          revision: "1-0badc0de",
-          specHash: "",
-          committedAt: "",
-          message: "prose the screen must not render",
-          author: "",
-          outcome: "",
-          digest: "",
-          images: [],
-          beyondWindow: true,
-        },
-      ] as typeof ENTRIES,
-    });
-
-    const aged = await row("1-0badc0de");
-    expect(within(aged).getByText("registry only")).toBeTruthy();
-    expect(aged.textContent).toContain("only the registry remembers");
-    // "unattributed" says the record has an author-shaped hole in it. This
-    // record has nothing in it at all, and saying both would be saying the
-    // wrong one.
-    expect(within(aged).queryByText("unattributed")).toBeNull();
-    // It is still restorable, which is the reason for listing it.
-    expect(
-      within(aged).getByText("Roll back to this").getAttribute("href"),
-    ).toContain("to=1-0badc0de");
-  });
-
   it("surfaces a history the server could not read", async () => {
     const transport = createRouterTransport((router) => {
+      router.service(SpecService, {
+        getSpec: () => ({
+          spec: {
+            project: "checkout",
+            version: "7",
+            environments: ["production"],
+            documents: { environments: {} },
+          },
+        }),
+      });
       router.service(DeployService, {
         history: () => {
           throw new ConnectError("no delivery plane", Code.Unimplemented);
@@ -393,15 +332,331 @@ describe("HistoryPage", () => {
         }),
       });
     });
-    renderAt(
+    renderRoutes(
       transport,
       "/projects/checkout/production/history",
-      "/projects/:project/:env/history",
-      <HistoryPage />,
+      environmentRoutes(),
     );
 
     expect(
       await screen.findByText("Cannot read the recorded history"),
     ).toBeTruthy();
+  });
+
+  describe("the rail", () => {
+    it("places the marker where Status put it and every other stop around it", async () => {
+      renderHistory({ live: "3-9f0a1b2c" });
+
+      // The marker is the middle stop, so one revision sits above it and one
+      // below. Position is the screen's statement and this is the assertion of
+      // it.
+      await waitFor(() => expect(rail()).toEqual(["above", "live", "below"]));
+      expect((await row("3-9f0a1b2c")).getAttribute("data-rail")).toBe("live");
+    });
+
+    it("puts the marker at the top when the newest revision is the live one", async () => {
+      renderHistory({ live: "4-b2c3d4e5" });
+
+      await waitFor(() => expect(rail()).toEqual(["live", "below", "below"]));
+    });
+
+    it("sits the marker below the top when the environment has drifted, and says why once", async () => {
+      // The case the drift field exists to make visible: healthy, and not on
+      // the revision the spec asks for, because a rollback pinned it.
+      renderHistory({
+        live: "2-1a2b3c4d",
+        stale: true,
+        cause: "RollbackPinned: restored 2-1a2b3c4d",
+      });
+
+      await waitFor(() => expect(rail()).toEqual(["above", "above", "live"]));
+
+      // The sentence is the drift mark's, on the marker's own stop, and there
+      // is exactly one of it — the rail shows the position, the mark says what
+      // the position means, and neither repeats the other.
+      const live = await row("2-1a2b3c4d");
+      expect(
+        within(live).getByText("pinned to an older revision"),
+      ).toBeTruthy();
+      expect(document.querySelectorAll(".k-drift")).toHaveLength(1);
+      // No count: "two revisions behind" is a claim about the spec's
+      // generation and nothing on the wire carries one.
+      expect(live.textContent).not.toMatch(/\d+ revisions? behind/);
+    });
+
+    it("fades the registry-only revisions into the rail's tail, and keeps the marker out of it", async () => {
+      const aged = {
+        revision: "1-0badc0de",
+        specHash: "",
+        committedAt: "",
+        message: "prose the screen must not render",
+        author: "",
+        outcome: "",
+        digest: "",
+        images: [],
+        beyondWindow: true,
+      };
+      renderHistory({
+        entries: [...ENTRIES, aged] as typeof ENTRIES,
+        live: "3-9f0a1b2c",
+      });
+
+      await waitFor(() =>
+        expect(rail()).toEqual(["above", "live", "below", "tail"]),
+      );
+
+      const tail = await row("1-0badc0de");
+      expect(within(tail).getByText("registry only")).toBeTruthy();
+      expect(tail.textContent).toContain("only the registry remembers");
+      // "unattributed" says the record has an author-shaped hole in it. This
+      // record has nothing in it at all, and saying both would be saying the
+      // wrong one.
+      expect(within(tail).queryByText("unattributed")).toBeNull();
+    });
+
+    it("keeps the marker on a registry-only revision a rollback pinned it to", async () => {
+      // The marker wins over the tail: fading the one stop that is live would
+      // hide the marker on the rail it is the point of.
+      renderHistory({
+        entries: [
+          ...ENTRIES,
+          {
+            revision: "1-0badc0de",
+            specHash: "",
+            committedAt: "",
+            message: "prose the screen must not render",
+            author: "",
+            outcome: "",
+            digest: "",
+            images: [],
+            beyondWindow: true,
+          },
+        ] as typeof ENTRIES,
+        live: "1-0badc0de",
+      });
+
+      await waitFor(() =>
+        expect(rail()).toEqual(["above", "above", "above", "live"]),
+      );
+      expect(
+        within(await row("1-0badc0de")).getByText("deployed now"),
+      ).toBeTruthy();
+    });
+  });
+
+  describe("opening a stop", () => {
+    it("offers nothing until a stop is opened", async () => {
+      renderHistory();
+
+      await screen.findByText("Revisions (3)");
+      // Two standing buttons per row is twenty-four controls on a twelve
+      // revision environment; the rail is quiet until a stop is pressed.
+      expect(
+        screen.queryByRole("link", { name: "Diff against current" }),
+      ).toBeNull();
+      expect(
+        screen.queryByRole("link", { name: "Roll back to this" }),
+      ).toBeNull();
+    });
+
+    it("offers the comparison and the rollback, each carrying the revision", async () => {
+      renderHistory();
+      const older = await open("3-9f0a1b2c");
+
+      // The comparison is a panel of this tab (#260) and not a screen of its
+      // own, but it is still a URL: `?from=` on this same path is what the
+      // retired diff route redirects into, so a link out of a pull request and
+      // a press on this stop land on the same thing.
+      expect(
+        within(older)
+          .getByRole("link", { name: "Diff against current" })
+          .getAttribute("href"),
+      ).toBe("/projects/checkout/production/history?from=3-9f0a1b2c");
+      // Rollback stays whole: the stop carries its revision to the flow's own
+      // screen, which previews before it applies.
+      expect(
+        within(older)
+          .getByRole("link", { name: "Roll back to this" })
+          .getAttribute("href"),
+      ).toBe("/projects/checkout/production/actions/rollback?to=3-9f0a1b2c");
+    });
+
+    it("opens the comparison panel when the stop's link is followed", async () => {
+      const { router } = renderHistory();
+      const older = await open("3-9f0a1b2c");
+
+      fireEvent.click(
+        within(older).getByRole("link", { name: "Diff against current" }),
+      );
+      await waitFor(() =>
+        expect(router.state.location.search).toBe("?from=3-9f0a1b2c"),
+      );
+      expect(
+        await screen.findByRole("button", { name: "Against deployed revision" }),
+      ).toBeTruthy();
+    });
+
+    it("keeps one stop open at a time", async () => {
+      renderHistory();
+      await open("3-9f0a1b2c");
+      const other = await open("2-1a2b3c4d");
+
+      expect(
+        within(other).getByRole("link", { name: "Roll back to this" }),
+      ).toBeTruthy();
+      expect(
+        within(await row("3-9f0a1b2c")).queryByRole("link", {
+          name: "Roll back to this",
+        }),
+      ).toBeNull();
+    });
+
+    it("closes a stop that is pressed again", async () => {
+      renderHistory();
+      await open("3-9f0a1b2c");
+      const again = await open("3-9f0a1b2c");
+
+      expect(
+        within(again).queryByRole("link", { name: "Diff against current" }),
+      ).toBeNull();
+      expect(
+        within(again)
+          .getByRole("button", { name: "Actions for revision 3-9f0a1b2c" })
+          .getAttribute("aria-expanded"),
+      ).toBe("false");
+    });
+
+    it("offers no rollback to the newest revision, and says why", async () => {
+      renderHistory();
+      const newest = await open("4-b2c3d4e5");
+
+      // The rollback screen disables its newest entry, so the offer does not
+      // carry a target that would arrive disabled.
+      expect(
+        within(newest).queryByRole("link", { name: "Roll back to this" }),
+      ).toBeNull();
+      expect(newest.textContent).toContain(
+        "The newest revision is not a rollback target.",
+      );
+      // The comparison is still offered: it is a question about the record,
+      // not an action on it.
+      expect(
+        within(newest).getByRole("link", { name: "Diff against current" }),
+      ).toBeTruthy();
+    });
+
+    it("offers a registry-only revision as a rollback target anyway", async () => {
+      renderHistory({
+        entries: [
+          ...ENTRIES,
+          {
+            revision: "1-0badc0de",
+            specHash: "",
+            committedAt: "",
+            message: "prose the screen must not render",
+            author: "",
+            outcome: "",
+            digest: "",
+            images: [],
+            beyondWindow: true,
+          },
+        ] as typeof ENTRIES,
+      });
+
+      // The artifact is immutable, so the restore is exact even though nothing
+      // else about the revision was recorded — which is the reason for listing
+      // it at all.
+      const tail = await open("1-0badc0de");
+      expect(
+        within(tail)
+          .getByRole("link", { name: "Roll back to this" })
+          .getAttribute("href"),
+      ).toContain("to=1-0badc0de");
+    });
+  });
+
+  describe("the rail's head", () => {
+    it("offers the promotion above the newest revision", async () => {
+      renderHistory();
+
+      // Nothing stands there until it is opened, like every other stop.
+      const head = await screen.findByRole("button", {
+        name: "what comes next",
+      });
+      expect(
+        within(head.parentElement as HTMLElement).queryByRole("link", {
+          name: "Promote into this environment",
+        }),
+      ).toBeNull();
+
+      fireEvent.click(head);
+      const stop = head.closest(".k-history__stop") as HTMLElement;
+      expect(
+        within(stop)
+          .getByRole("link", { name: "Promote into this environment" })
+          .getAttribute("href"),
+      ).toBe("/projects/checkout/production/actions/promote");
+      // Promotion writes pins and publishes nothing, so the head says what
+      // still has to happen for a revision to arrive there.
+      expect(stop.textContent).toContain("A deploy publishes them.");
+    });
+
+    it("draws no head when the project declares nowhere to promote from", async () => {
+      renderHistory({ environments: ["production"] });
+
+      await screen.findByText("Revisions (3)");
+      // The same condition the environment's action bar uses: an offer that
+      // could only open an empty picker is not made.
+      expect(
+        screen.queryByRole("button", { name: "what comes next" }),
+      ).toBeNull();
+      expect(document.querySelector(".k-history__stop--head")).toBeNull();
+    });
+
+    it("offers no promotion on a stop: a revision here is not a source", async () => {
+      // Promotion reads the *source* environment's latest revision, which no
+      // stop on this rail knows. It belongs at the head, where it promises
+      // nothing the RPC does not do.
+      renderHistory();
+      const newest = await open("4-b2c3d4e5");
+      expect(
+        within(newest).queryByRole("link", {
+          name: "Promote into this environment",
+        }),
+      ).toBeNull();
+    });
+  });
+
+  describe("the comparison against the cluster", () => {
+    it("opens in place when a revision is named in the URL", async () => {
+      renderHistory({}, "?from=3-9f0a1b2c");
+
+      // The panel opens on the mode the revision belongs to, and the record it
+      // was opened from is still on screen underneath it.
+      expect(
+        (
+          await screen.findByRole("button", {
+            name: "Against deployed revision",
+          })
+        ).getAttribute("aria-current"),
+      ).toBe("true");
+      expect(screen.getByText("Revisions (3)")).toBeTruthy();
+    });
+
+    it("is offered once, above the rail", async () => {
+      const { router } = renderHistory();
+
+      // The mode that is about no particular revision: it is offered once,
+      // above the stops, which is what the bare diff route used to be.
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Diff against the cluster" }),
+      );
+      await waitFor(() =>
+        expect(router.state.location.search).toBe("?compare=1"),
+      );
+      expect(
+        screen.getByRole("button", { name: "Against live cluster" }),
+      ).toBeTruthy();
+    });
   });
 });
