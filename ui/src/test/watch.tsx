@@ -84,7 +84,15 @@ export function watchStub(messages: WatchResponse[] = []): WatchStub {
   };
 }
 
-/** A STATUS_TRANSITION event on the wire. */
+/**
+ * A STATUS_TRANSITION event on the wire.
+ *
+ * `atUnixMs` is overridable because the ticker renders it as an age (#260) and
+ * a fixed instant in 2023 would print as a fixed number of days for as long as
+ * the test suite exists. A test that cares passes a value relative to its own
+ * `Date.now()`; one that does not gets the constant, which is what every test
+ * written before the field mattered already relied on.
+ */
 export function transitionEvent(fields: {
   project: string;
   environment: string;
@@ -93,13 +101,14 @@ export function transitionEvent(fields: {
   revision?: string;
   cause?: string;
   cursor?: string;
+  atUnixMs?: number;
 }): WatchResponse {
   return create(WatchResponseSchema, {
     body: {
       case: "event",
       value: {
         cursor: fields.cursor ?? "nonce.1",
-        atUnixMs: BigInt(1_700_000_000_000),
+        atUnixMs: BigInt(fields.atUnixMs ?? 1_700_000_000_000),
         project: fields.project,
         environment: fields.environment,
         payload: {

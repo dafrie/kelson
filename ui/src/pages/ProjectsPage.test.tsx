@@ -432,7 +432,12 @@ describe("ProjectsPage live updates", () => {
     ).toBeTruthy();
     const pills = await screen.findAllByText("live", { selector: ".k-pill" });
     expect(pills).toHaveLength(2);
-    expect(screen.getByText("9d3f0aa")).toBeTruthy();
+    // The environment's own meta line. The same revision is also on the
+    // ticker's row for this transition (#260) — the meta line is what is
+    // running, the row is what happened — so the assertion names which.
+    expect(
+      screen.getByText("9d3f0aa", { selector: ".k-card__rev .k-copy__value" }),
+    ).toBeTruthy();
     expect(screen.getByText("3/3 replicas ready")).toBeTruthy();
     // In place: the environment was updated, not refetched.
     expect(statusCalls()).toBe(1);

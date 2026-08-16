@@ -21,6 +21,8 @@ import { DataServices } from "../dataservices/DataServices";
 import { isDataServiceVerdict } from "../dataservices/parse";
 import { PhaseRail } from "../deploy/PhaseRail";
 import { parseCause, type RailInput } from "../deploy/rail";
+import { Ticker } from "../live/Ticker";
+import { useTicker } from "../live/ticker";
 import { Previews } from "../previews/Previews";
 import { SecretsPanel } from "../secrets/SecretsPanel";
 import { useEnvironment } from "./EnvironmentPage";
@@ -78,7 +80,14 @@ export function EnvironmentOverview() {
   );
 
   const [live, setLive] = useState<Live>(NO_EVENTS);
+  // The ticker is a second reader of this same stream, not a second stream:
+  // `record` keeps the sequence the overlay below overwrites.
+  const ticker = useTicker(
+    useMemo(() => ({ project, environment }), [project, environment]),
+  );
+  const recordTick = ticker.record;
   const onEvent = useCallback((event: WatchResponse_Event) => {
+    recordTick(event);
     const payload = event.payload;
     setLive((prev) => {
       if (payload.case === "statusTransition") {
@@ -97,7 +106,7 @@ export function EnvironmentOverview() {
       }
       return prev;
     });
-  }, []);
+  }, [recordTick]);
 
   const reload = status.reload;
   const onResync = useCallback(() => {
@@ -248,6 +257,19 @@ export function EnvironmentOverview() {
             </div>
           </>
         ) : null}
+
+        {/* The sequence behind the rail above: what this environment has been
+            doing since the page opened, newest first. It sits outside the
+            `read.read` block on purpose — a transition about an environment
+            whose Status call failed is still a real phase, and the stream is
+            then the only thing on the page that can say anything at all. No
+            subject on the rows: the heading is already this environment. */}
+        <Ticker
+          entries={ticker.entries}
+          state={watch}
+          subject={false}
+          name={`Activity in ${environment}`}
+        />
 
         {/* Outside the status block on purpose: what a spec declares is
             readable without a cluster, and an environment whose status cannot

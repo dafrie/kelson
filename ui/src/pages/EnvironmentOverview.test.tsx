@@ -390,7 +390,12 @@ describe("EnvironmentOverview live updates", () => {
     expect(
       await screen.findAllByText("live", { selector: ".k-pill" }),
     ).toBeTruthy();
-    expect(screen.getByText("9d3f0aa")).toBeTruthy();
+    // The `revision` row of the status block. The same value is also on the
+    // ticker's row for this transition (#260) — one says what is running, the
+    // other says what happened — so the assertion names which one it means.
+    expect(
+      screen.getByText("9d3f0aa", { selector: ".k-copy__value" }),
+    ).toBeTruthy();
     expect(screen.getByText("3/3 replicas ready")).toBeTruthy();
 
     events.push(

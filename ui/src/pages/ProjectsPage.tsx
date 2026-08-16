@@ -21,6 +21,8 @@ import {
   type StatusWord,
 } from "../components/status";
 import { EmptyState, LoadingState } from "../components/States";
+import { Ticker } from "../live/Ticker";
+import { useTicker } from "../live/ticker";
 import {
   componentsFromVerdicts,
   deliveryFacts,
@@ -129,7 +131,14 @@ export function ProjectsPage() {
   const [live, setLive] = useState<Record<string, EnvironmentLive>>({});
   const [generation, setGeneration] = useState(0);
 
+  // Instance-wide: no scope, so every watched pair's transitions land in one
+  // ring. It reads the same events the overlay below does — one stream, two
+  // readers, and the ticker is the one that keeps the sequence.
+  const ticker = useTicker();
+  const recordTick = ticker.record;
+
   const onEvent = useCallback((event: WatchResponse_Event) => {
+    recordTick(event);
     const key = `${event.project}/${event.environment}`;
     const payload = event.payload;
     setLive((prev) => {
@@ -157,7 +166,7 @@ export function ProjectsPage() {
       }
       return prev;
     });
-  }, []);
+  }, [recordTick]);
 
   const reloadSpecs = specs.reload;
   const onResync = useCallback(() => {
@@ -267,9 +276,20 @@ export function ProjectsPage() {
           </section>
         ),
       )}
+
+      {/* Last on the page, and absent until something happens. Home's job is
+          "what is the state of everything", which the grid above answers; this
+          is "what has been happening while I watched", which is context for it
+          and never the headline. Short, too — the ring holds twenty and this
+          shows the newest few, because a home screen is already long and an
+          ambient strip that pushes the projects up is not ambient. */}
+      <Ticker entries={ticker.entries} state={watch} limit={HOME_TICKS} />
     </>
   );
 }
+
+/** How many rows home draws of the ring it keeps. */
+const HOME_TICKS = 5;
 
 /**
  * The band, which is absent when there is nothing in it.

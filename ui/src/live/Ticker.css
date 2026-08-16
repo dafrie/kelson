@@ -1,0 +1,105 @@
+/*
+ * The reconciliation ticker (#260).
+ *
+ * A strip of hairline rows, and the quietest object on either screen that
+ * carries it: micro type, muted ink, no fill, no border around the whole, no
+ * motion. It sits under the state it is the history of, and it must never
+ * compete with it — the pill above says what is true now, and twenty rows
+ * saying what was true earlier have to read as background until one of them is
+ * a failure.
+ *
+ * Which is the whole colour rule: `rowTone` in `ticker.ts` hands a tone to the
+ * settled failures and to nothing else, so the only saturated thing in the
+ * strip is a word like `failed`. A ticker that painted `deploying` blue would
+ * put twenty coloured objects on a screen where everything is normal.
+ */
+
+.k-ticker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 20px;
+}
+
+.k-ticker__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Hairline-separated and flush to the surface, like the verdict and matrix
+   rows: there is no elevation in this system and a ticker is not a card. */
+.k-tick {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+  padding: 3px 0;
+  border-top: 1px solid var(--kelson-hairline);
+  font-size: var(--kelson-size-micro);
+  color: var(--kelson-muted);
+}
+
+.k-tick:first-child {
+  border-top: none;
+}
+
+/* Right-aligned and tabular so the column of ages reads as a column rather
+   than as a ragged edge — `now`, `12s` and `4m` are different widths. */
+.k-tick__at {
+  min-width: 4ch;
+  text-align: right;
+  font-size: var(--kelson-size-micro);
+  color: var(--kelson-muted);
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+
+/* Names, so sans. Undecorated for the reason the matrix rows are: a column of
+   underlines is a striped column, and the underline arrives on hover. */
+.k-tick__subject {
+  min-width: 20ch;
+  font-family: var(--kelson-font);
+  font-size: var(--kelson-size-micro);
+  color: var(--kelson-text-2);
+  text-decoration: none;
+}
+
+.k-tick__subject:hover {
+  color: var(--kelson-text);
+  text-decoration: underline;
+  text-decoration-color: currentColor;
+}
+
+.k-tick__word {
+  min-width: 9ch;
+  font-size: var(--kelson-size-micro);
+  color: var(--kelson-text-2);
+  flex: none;
+}
+
+/* The two loud tones, and there are no others here. `ticker.ts` decides which
+   words are allowed to arrive with a tone at all. */
+.k-tick__word[data-tone="degraded"] {
+  color: var(--kelson-degraded);
+}
+
+.k-tick__word[data-tone="failed"] {
+  color: var(--kelson-failed);
+}
+
+.k-tick__move,
+.k-tick__rev {
+  font-size: var(--kelson-size-micro);
+  color: var(--kelson-muted);
+  overflow-wrap: anywhere;
+}
+
+.k-ticker__gap {
+  margin: 0;
+  font-size: var(--kelson-size-micro);
+  color: var(--kelson-muted);
+}
