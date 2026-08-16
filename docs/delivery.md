@@ -404,38 +404,69 @@ client on a loop that already requeues), no `pods/log`, and no other workload
 kind: the classifier reads a `Deployment` and its Pods, so `CronJob`s, `Job`s
 and the operator-owned data services stay covered by `wait: true` alone.
 
-### Release commands, and the barrier that is not built yet
+### Release commands, and the barrier that carries them
 
 A rendered set is *ordered* — namespaces first, then the data services and charts, then the release
 Job of any component that declares one, then the workloads — and order is all a set of manifests can
 express ([#89](https://github.com/dafrie/kelson/issues/89)). Applying a Job before a Deployment does
 not mean the Job finished first, so somebody has to wait.
 
-The only path that could wait was the one where kelson performed the apply itself, and that path is
-gone. `components[].release` is therefore a **validated refusal**
-([ADR-0028](adr/0028-delivery-spine.md) decision 8): it is in `internal/model`'s gate table, refused by
-name, rendering nothing, with [#227](https://github.com/dafrie/kelson/issues/227) in the message —
-the mechanism this project already uses for a field it cannot honour, and strictly better than silently
-dropping a migration.
+The waiting is Flux's ([#227](https://github.com/dafrie/kelson/issues/227)). An environment whose
+components declare `release:` gets **two `Kustomization`s over one `OCIRepository`** instead of one:
 
-**The Flux-native replacement is known and not built.** Two `Kustomization`s with `dependsOn`: the
-first containing the release Job with a health check, the second the workloads. kustomize-controller
-already waits on `dependsOn` and already assesses Job health, so the barrier becomes a dependency
-edge instead of a pause in an apply loop — and it is possible only because kelson now owns the
-`Kustomization` ([ADR-0028](adr/0028-delivery-spine.md) decision 3). ADR-0019's own "Revisit when"
-predicted exactly this, and said that when it happens ADR-0019 is superseded rather than amended.
+| object | `path` | `prune` | `wait` | what it applies |
+|---|---|---|---|---|
+| `<project>-<environment>-release` | `./release` | `false` | `true` | the release Jobs, plus everything they need to run — the `Namespace`, the Secrets their env references, the data services they migrate, and the `ServiceAccount` their pods name |
+| `<project>-<environment>` | `./` | `true` | `true` | the workloads, and everything else. `dependsOn` the object above |
 
-What the barrier must still guarantee when it is built is what the deleted apply loop guaranteed, and
-these three claims carry forward from [ADR-0019](adr/0019-release-command-hook.md) unchanged:
+kustomize-controller does not begin applying a `Kustomization` whose dependency is not `Ready`, and
+`wait: true` means `Ready` is a health verdict rather than an apply verdict — kstatus reads a `Job` as
+healthy only once it has **completed**. Those two facts, together, are the barrier. ADR-0019's own
+"Revisit when" predicted exactly this, and said that when it happened ADR-0019 would be superseded
+rather than amended; it is possible only because kelson now owns the `Kustomization`
+([ADR-0028](adr/0028-delivery-spine.md) decision 3).
+
+**What is Flux's and what is kelson's.** Almost all of the guarantee is Flux's: the dependency edge,
+the health assessment, the refusal to apply. kelson adds three things Flux has no way to know — which
+resources are on which side of the barrier (the renderer marks them, and the publisher lays the
+artifact out in two directories accordingly), the release `Kustomization`'s `spec.timeout` (its health
+wait otherwise defaults to the reconcile interval, five minutes, which is shorter than the ten a
+release command gets), and the sentence an operator reads, because Flux's own answer on a blocked
+deployment is `DependencyNotReady` and a message naming another `Kustomization`.
+
+Three claims carry forward from [ADR-0019](adr/0019-release-command-hook.md) unchanged:
 
 - **A failed migration fails the deploy before anything rolls.** No workload of the new revision is
-  applied and nothing is pruned, so the previous revision keeps serving. The error is
-  `delivery/release-failed`, naming the Job and carrying the tail of its pod's output.
-- **The wait is visible.** The Job is reported in the same `delivery.Status` shape the state machine
-  consumes: `Reconciling` while it runs, `Rejected` when it fails, with the Job in `Cause`. No new
-  phase — see the ADR.
-- **A rollback does not re-run it.** Rolling the workload back does not roll a migration back, so
-  re-running the old revision's release command would only repeat work the database has already done.
+  applied and nothing is pruned, so the previous revision keeps serving.
+- **The wait is visible, in the phases that already exist.** `Reconciling` while the Job runs,
+  `Rejected` when it fails — the revision was processed, refused, and is not live — with the Job named
+  in the cause and `kubectl logs` spelled out beside it. No new phase.
+- **A rollback does not re-run it.** A pinned rollback drops the release `Kustomization` entirely for
+  the duration of the pin, so repointing the source at an older tag cannot replay that revision's
+  migration.
+
+**Two consequences worth knowing before you write one.**
+
+The release `Kustomization` **never prunes**, and that is what makes the Job's name mean something. A
+Job is named `release-<component>-<first 8 hex of the spec hash>`, so re-applying a revision addresses
+the Job that already ran and a completed Job is not run again — the idempotency key of ADR-0019
+decision 3. Pruning would delete it the moment a newer revision replaced it, and re-applying the older
+revision would then run the migration a second time. The cost is that completed release Jobs
+accumulate, one per component per revision that changed it, until the namespace goes.
+
+**A failed migration stays failed until a new revision.** A `Job` past its `backoffLimit` does not
+become complete on its own, and re-applying the same spec addresses the same Job — so the environment
+stays `Rejected` and the previous revision keeps serving until you deploy a fix, which renders a new
+Job name and starts its own lifecycle. That is a deliberate difference from the deleted direct
+adapter, which deleted and re-ran a failed Job: on this spine the retry that matters is a re-deploy,
+which is a human decision (ADR-0019 decision 5's rationale, arrived at from the other direction).
+`kubectl delete job -n <namespace> <name>` is the manual escape hatch.
+
+**Previews get this for free.** A preview's manifests come out of the same renderer and the same
+publisher as its parent environment's ([ADR-0028](adr/0028-delivery-spine.md) decision 2), so a
+preview artifact already carries the release stage; the `ResourceSet` template the renderer writes
+instantiates the same two `Kustomization`s per change request. That closes the second acceptance
+criterion of [#104](https://github.com/dafrie/kelson/issues/104), which ADR-0019 recorded as *not met*.
 
 ### History is the registry
 
