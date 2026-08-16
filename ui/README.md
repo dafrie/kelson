@@ -634,6 +634,68 @@ One animation exists: `kelson-pulse`, reserved for reconciling status dots. If
 something else starts pulsing, the signal stops meaning "work is in flight". It
 honours `prefers-reduced-motion` in both themes.
 
+### The Console
+
+The visual system, shipped for
+[#260](https://github.com/dafrie/kelson/issues/260) from direction A of
+[`docs/research/ux-overhaul.md`](../docs/research/ux-overhaul.md) §6. Four rules,
+and every one of them is enforceable somewhere:
+
+**1. Monochrome surface; colour is status.** Backgrounds, borders, headings, nav
+and controls are neutral. The six status ramps in `tokens.css` are the only
+saturated colour on any screen. The consequence people notice first is that
+`--kelson-accent` is *not the brand green any more*: it is the page's own ink
+(`#e6ebf0` dark, `#1a2026` light), because green is what `live` is painted in and
+one hue cannot mean both "healthy" and "clickable". A link is the ink with a
+1px underline in `--kelson-line`, and the underline — not the colour — is what
+changes on hover. The primary button is a solid neutral fill. `--kelson-green`
+is untouched: it is the mark's colour and the mark is not chrome.
+`tokens.test.ts` asserts the accent equals no tone and stays channel-neutral.
+
+**2. Mono means the machine produced this exact string.** Revisions, digests,
+image references, namespaces, hosts, pod and resource names, refs, structured
+codes, kinds, presets, phases, byte counts and the numbers in a status line are
+`.k-mono`. Names people chose — projects, components, environments — and every
+word a person reads are the UI sans, and so is the server's own prose: a
+remediation, a cause and a health message are sentences, and mono on a sentence
+spends the signal on something that is not true of it. Two consequences that
+look like exceptions and are not:
+
+- the **eyebrow is sans**, because a section label is a label; and
+- the **status pill is mono**, because its text is never a label — it is either
+  the state machine's computed word or a structured code rendered verbatim, and
+  those two must not look like different kinds of thing.
+
+`.k-mono` sets the face and the size and deliberately **not** the colour, so a
+value inside a sentence reads at the sentence's ink and a value that should
+recede is dimmed by the row it sits in.
+
+**3. Density, from Coolify's published `DESIGN.md`** (§2.3 of the research):
+13.5px body, 12.5px facts, 11.5px micro, **32px controls**, 20/15/13.5px
+headings, hairline rules instead of borders-around-boxes, and **no elevation at
+all** — `--kelson-shadow` is gone from both palettes, along with the card
+gallery it was holding up. Sizes, control heights and the two radii are tokens
+(`--kelson-size-*`, `--kelson-control-h`, `--kelson-radius-*`) so a screen asks
+for "a fact" rather than for "11.5px".
+
+**4. Quiet when healthy.** The status badge has three loudness tiers and which
+tier a tone is in *is* the design:
+
+| Tier | Tones | How it paints |
+| --- | --- | --- |
+| quiet | `live`, `suspended`, `unknown` | no fill, hairline ring, neutral ink — the tone survives only in the 5px dot |
+| working | `deploying`, `waiting` | no fill, a ring and the word in `--kelson-reconciling` |
+| loud | `unhealthy`, `stuck`, `failed` | fill, ring and word all in the tone |
+
+So a screen where everything is live carries no saturated colour larger than a
+dot, and the first thing that goes wrong is the only coloured object in view.
+The same bargain is made everywhere: the deploy outcome panel is neutral even
+when the news is good, the `live` tally is ordinary text while the failed one
+keeps its red, the stream indicator says `streaming` in grey with a green dot,
+and the promote plan colours only the rows it is *skipping*. **The only two
+filled objects left in the UI are the needs-attention band and the error
+panel** — which is what makes them unmissable without being large.
+
 ### Copy
 
 A screen states facts and offers actions; it does not explain kelson's
@@ -748,22 +810,42 @@ light surface: the logo board in `docs/design/Kelson Logo.dc.html`. Its paper
 body `0.42`, eyebrow `0.55`, borders `0.88` and `0.93` — converted to sRGB, is
 the text ramp and the hairlines. Everything else moves along the board's own
 axes: neutrals stay on hue 250, and each status hue keeps its dark-theme hue and
-drops in lightness until its 11.5px mono pill text clears WCAG AA against its own
-fill (synced 5.4:1, reconciling 5.4:1, degraded 4.9:1, failed 5.8:1, suspended
-4.9:1).
+drops in lightness until it clears WCAG AA.
 
 Two consequences worth knowing:
 
-- **`--kelson-green` and `--kelson-accent` are different tokens.** The mark's
-  `#0FA36B` is theme-independent — a logo does not change hue because the page
-  went white. Brand-as-*text* (links, `fix:` labels, primary buttons) is
-  `--kelson-accent`, and on light it drops to `#0b724b`, the darkest step of the
-  ramp in `website/src/css/custom.css`, because `#0FA36B` on white is 3.2:1 and
-  fails AA.
-- **`--kelson-shadow` is the only elevation in the system**, `none` under dark
-  and a 1px whisper under light, where a white panel on near-white paper needs
-  more than a border to read as raised. It is on `.k-panel` and `.k-env` and
-  nowhere else; this is a calm console, not a card gallery.
+- **`--kelson-green` and `--kelson-accent` are different tokens**, and since
+  #260 they are different *kinds* of thing. The mark's `#0FA36B` is
+  theme-independent — a logo does not change hue because the page went white.
+  The accent is interaction, and it is neutral in both themes; see "The Console"
+  above for why.
+- **There is no elevation.** Both themes separate surfaces with a hairline, and
+  `--kelson-shadow` no longer exists. This is a calm console, not a card
+  gallery.
+
+**The contrast pins.** `tokens.test.ts` computes WCAG ratios and pins the pairs
+the design rests on, each with its own floor because "you read this" and "you
+notice this" are different jobs:
+
+| Pinned | Floor | Why |
+| --- | --- | --- |
+| `text` and `accent` on page/panel/panel-dim | 7:1 | what a reader actually reads, and links are text first |
+| `page` on `accent` | 7:1 | the primary button, inverted |
+| `text-2`, `text-3` on the three surfaces | 4.5:1 | labels and facts are 11.5–12.5px, which is normal text by WCAG |
+| `muted` on the three surfaces | 4:1 | see the disclosure below |
+| `synced`/`reconciling`/`degraded`/`failed` on the three surfaces | 4.5:1 | **new**: badges lost their fills, so a tone that is text now sits on a bare surface |
+| `suspended` on the three surfaces | 3:1 | it is only ever a dot — a graphical object under WCAG 1.4.11 |
+| `text`/`text-2`/tone on `degraded-fill` and `failed-fill` | 7 / 4.5 / 4.5 | the band and the error panel are the last filled objects, so everything on them is pinned |
+| `line` on panel | 1.4–3:1 | a link's underline: visible, and quieter than its ink |
+| `hairline` vs `line` on panel | strictly quieter | a row separator must never read as a border |
+
+One of those is a **disclosure, not a pass**: `--kelson-muted` is `#6f7b89` in
+dark, which is 4.18:1 on a panel — under AA. It is one of the values pinned to
+`docs/design/assets/README.md`, so raising it is a decision about the recorded
+design and not a side effect of a visual pass. What #260 did do is stop using
+the step *below* it (`--kelson-muted-deep`, 2.46:1) for text at all — every meta
+line, gauge label, rail actor and log timestamp moved up to `--kelson-muted`,
+and `--kelson-muted-deep` now paints only glyphs.
 
 There are no CSS frameworks and no component library: the primitives in
 `src/styles/base.css` and `src/pages/pages.css` are hand-rolled against the
