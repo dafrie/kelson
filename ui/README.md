@@ -82,7 +82,7 @@ moved where, and for the redirects that keep the old paths working.
 | `/projects/new` | Create a project and its first component: three fields, a rendered preview, then the store | `PutSpec` at `RENDER`, then with an idempotency key |
 | `/projects/:project` | The component × environment matrix and the stored documents. A column header is the link into that environment | `GetSpec`, one `Status` per environment |
 | `/projects/:project/:env` | **Overview**, the environment whole: status, workload verdicts, data services, its PR previews and Secrets. The index tab of the layout that carries Logs, History and the three actions | `GetSpec` (the layout's), `Status`, `Watch`, `GetProfile`, `ListPreviews`, `ListSecrets`, `Render` (deferred presets only), `SetSecret`/`DeleteSecret` on use |
-| `/projects/:project/:env/components/:component` | One component in one environment: its shape, the image its documents resolve to and the scope that set it, the source it builds from, the environment's revision and namespace, its own workload verdict — and links into its environment's tabs and actions, with itself preselected in the logs | `GetSpec`, `Status` |
+| `/projects/:project/:env/components/:component` | One component in one environment: its shape, the image its documents resolve to and the scope that set it, the source it builds from, the environment's revision and namespace, the effective-config table, its own workload verdict — and links into its environment's tabs and actions, with itself preselected in the logs | `GetSpec`, `Status`, `GetEffectiveConfig` |
 | `/projects/:project/edit` | Edit the stored spec: a form tab and a raw YAML tab, a diff before saving, an optimistic-concurrency save. The form reaches `spec.previews` (ADR-0017; the retired `delivery:` stanza is gone per ADR-0028), and appends a component to `spec.components` (`?add=component` opens on it) | `GetSpec`, `PutSpec` at `RENDER` then for real, `Diff` |
 | `/projects/:project/edit`, git-owned | The same screen when `GetSpec` reports a Flux Kustomization owns these documents (#248): `GitOpsBanner` names the owner and the `autoDeploy` collision, Save is replaced by `ExportPanel` (the documents, copyable and downloadable, no server call) and `ProposePanel` (the same bytes as a pull request through a connection that can open one) — `src/pages/GitOpsPanel.tsx` | `GetSpec`, `Diff`, `ProposeSpec`, `ListConnections` |
 | `/projects/:project/:env/actions/deploy` | **Action.** Preview (render dry-run) then a confirm that streams the deployment live. Its step one is the server-side comparison, which is why there is no diff screen | `Deploy` at `RENDER`, then at `NONE`; optional `Diff` at `SERVER` |
@@ -149,6 +149,61 @@ selected by a strip of buttons, and reused the column it was already showing;
 it is the Overview tab of the environment's route instead, so the environment a
 reader is looking at is in the URL and the panel reads its own single `Status`.
 A column header is the link into it.
+
+## The effective-config table
+
+`src/config/` is the component page's answer to *what is this actually running
+with here, and which file put that there*
+([#260](https://github.com/dafrie/kelson/issues/260)). Every environment
+variable, image, replica count, resource quantity, hostname and preset a
+component runs with is the winner of a two- or three-level merge across two
+documents, and until this landed the only way to read it was to open both and
+merge them in your head.
+
+**The merge is not done here, and must never be.** `GetSpec` returns the
+authored documents and `Render` returns the finished manifests; neither answers
+the question, so `SpecService.GetEffectiveConfig` was added to. It carries the
+winning value *and* the block that set it, computed in `internal/model` beside
+the resolver and tested for agreement with it value-for-value on the fixture
+that exercises every precedence rule at once. A copy of that merge in
+TypeScript would drift, silently, in exactly the direction that makes a
+provenance claim wrong — `src/config/effective.ts` therefore reads the answer
+and computes nothing.
+
+Five things the table is deliberate about:
+
+- **A setting the answer did not mention is absent, not blank.** A component
+  awaiting its first build has no `image` row, because nothing in either
+  document names one — the resolver's own placeholder for that state is a
+  sentinel that must not reach a manifest, and it must not reach a table of
+  what runs either. A row with an em dash in it would claim the question was
+  asked and answered.
+- **A secret stays a reference.** The wire's value is a union whose two mapping
+  arms carry a Secret's name and a key, and no message in the schema has a
+  field a value could arrive in — kelson never reads the Secret. The row prints
+  `{ secret: checkout-db, key: url }` through the same `envValueText` the spec
+  builders write, so what a reader sees is what the editor would have produced.
+- **The provenance is a sentence, not a code.** Five answers — "kelson's
+  default", "set on the project", "set on the component", "set on production",
+  "set on production, for this component" — said as facts about two files
+  rather than as the rule numbers that govern them. The two environment answers
+  are parallel to the two project ones so a reader learns the shape once, and a
+  level this build cannot read says "not stated" rather than falling back to
+  something plausible.
+- **A row nobody wrote recedes.** kelson's own defaults are dimmed, because the
+  rows a reader is looking for are the ones a file put there — and dimming is
+  what makes them findable without colouring anything.
+- **Rows are separated on the group, never on the name.** An environment
+  variable is named by its author and `resources.requests.cpu` by the model, so
+  a project is free to declare a variable called `image` and it is a different
+  row from the workload setting. The wire says which group each row is in.
+
+The JSONPath into the document — `$.spec.components[0].env.LOG_LEVEL`, the same
+spelling a structured error's `field` uses — rides on the row's `title` rather
+than taking a column, and the environment's own settings (its secret backend,
+its agent policy) are the table's third group, because one of them changes what
+a row above *means*: a `{secret, key}` reference is served by whichever backend
+this environment names.
 
 ## Flow consolidation
 

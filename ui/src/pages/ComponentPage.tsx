@@ -9,6 +9,7 @@ import { ErrorPanel } from "../components/ErrorPanel";
 import { StatusPill } from "../components/StatusPill";
 import { driftFor, statusFor, verdictTone } from "../components/status";
 import { EmptyState, LoadingState } from "../components/States";
+import { EffectiveConfigTable } from "../config/EffectiveConfigTable";
 import {
   bindingFor,
   effectiveImage,
@@ -268,6 +269,18 @@ export function ComponentPage() {
               </div>
             </div>
           </section>
+
+          {/* The three-level merge, drawn. The facts above are what this page
+              could read out of the documents itself; this is the answer only
+              the resolver has — every effective setting and the block that set
+              it — and it is a third call rather than a derivation, because a
+              second copy of the precedence rules in a browser would drift from
+              the one the renderer uses. */}
+          <EffectiveConfigTable
+            project={project}
+            environment={env}
+            component={component}
+          />
 
           <section className="k-section">
             <div className="k-env__head">

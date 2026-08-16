@@ -1,0 +1,74 @@
+/* The effective-config table (#260).
+   Hairlines and no fills: this is the quietest surface in the app, and the
+   only coloured object it can produce is the error panel. The shape follows
+   the promote plan's table, which is the house's one existing dense table. */
+
+.k-config {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--kelson-size-fact);
+}
+
+.k-config th,
+.k-config td {
+  padding: 5px 16px 5px 0;
+  text-align: left;
+  vertical-align: baseline;
+  border-bottom: 1px solid var(--kelson-hairline);
+}
+
+.k-config thead th {
+  font-family: var(--kelson-font);
+  font-size: var(--kelson-size-micro);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--kelson-muted);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* A group heading is a label inside the table, so it takes the eyebrow's
+   treatment and no rule of its own — the row below it already has one. */
+.k-config__group th {
+  padding-top: 14px;
+  font-family: var(--kelson-font);
+  font-size: var(--kelson-size-micro);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--kelson-muted);
+  font-weight: 500;
+  border-bottom: none;
+}
+
+.k-config__name {
+  color: var(--kelson-text);
+  white-space: nowrap;
+}
+
+.k-config__value {
+  color: var(--kelson-text-2);
+  word-break: break-all;
+}
+
+/* The sentence, not a value: sans, and quieter than what it describes. */
+.k-config__setat {
+  font-family: var(--kelson-font);
+  font-size: var(--kelson-size-fact);
+  color: var(--kelson-muted);
+  white-space: nowrap;
+}
+
+/* A value nobody wrote recedes: kelson's own defaults are the rows a reader is
+   *not* looking for, and dimming them is what makes the authored ones findable
+   without colouring anything. */
+.k-config__row--default .k-config__name,
+.k-config__row--default .k-config__value {
+  color: var(--kelson-muted);
+}
+
+/* An empty string is a value that was set, so it is named rather than left
+   blank — a blank cell is what "kelson did not answer" would look like. */
+.k-config__empty {
+  font-family: var(--kelson-font);
+  color: var(--kelson-muted);
+}

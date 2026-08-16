@@ -119,6 +119,14 @@ func (f *fakeServer) ProposeSpec(context.Context, *connect.Request[kelsonv1alpha
 	return nil, notWired("ProposeSpec")
 }
 
+// GetEffectiveConfig is unwired for the same reason: no MCP tool reaches it
+// yet (#260). An agent asking what a component runs with is a real question and
+// the answer is now on the wire, but exposing it is the agent surface's own
+// decision rather than a side effect of adding the RPC.
+func (f *fakeServer) GetEffectiveConfig(context.Context, *connect.Request[kelsonv1alpha1.GetEffectiveConfigRequest]) (*connect.Response[kelsonv1alpha1.GetEffectiveConfigResponse], error) {
+	return nil, notWired("GetEffectiveConfig")
+}
+
 func (f *fakeServer) Status(_ context.Context, req *connect.Request[kelsonv1alpha1.StatusRequest]) (*connect.Response[kelsonv1alpha1.StatusResponse], error) {
 	if f.status == nil {
 		return nil, notWired("Status")
