@@ -88,7 +88,7 @@ moved where, and for the redirects that keep the old paths working.
 | `/projects/:project/:env/actions/deploy` | **Action.** Preview (render dry-run) then a confirm that streams the deployment live. Its step one is the server-side comparison, which is why there is no diff screen | `Deploy` at `RENDER`, then at `NONE`; optional `Diff` at `SERVER` |
 | `/projects/:project/:env/actions/promote` | **Action.** The environment in the path is the **target**: pick a source, read the plan and the diff it produces, then write the pins. It never deploys | `GetSpec`, `Promote` at `RENDER` then `NONE` |
 | `/projects/:project/:env/actions/rollback` | **Action.** Revision picker, irreversibility preview, then the apply. `?to=<revision>` preselects and previews a target, never applies it | `History`, `Rollback` at `RENDER` then `NONE` |
-| `/projects/:project/:env/history` | **Tab.** The recorded revisions, newest first: what each was, when, the spec hash, the recorded author (unattributed today, #74), and a phase pill on the live one. `?from=<revision>` opens the comparison against that revision in place; `?compare=1` opens it against the live cluster | `History`, `Status`, then `Diff` when the comparison is open |
+| `/projects/:project/:env/history` | **Tab.** The revision rail: the recorded revisions newest first, one stop each, a single marker on the live one, and a faded tail where the record thins out into the registry. A stop opens on a click and offers the comparison and the rollback; the head above the newest offers the promotion. `?from=<revision>` opens the comparison against that revision in place; `?compare=1` opens it against the live cluster | `History`, `Status`, then `Diff` when the comparison is open |
 | `/projects/:project/:env/logs` | **Tab.** Bounded Query, and a live tail that pauses, filters, reconnects and saves. `?component=<name>` opens on one component — the link a component's own page carries | `QueryLogs`, `FollowLogs`, `Status` for the namespace |
 | `/projects/:project/:env/previews/:pr` | One change request's preview: phase, hosts, the pinned commit and applied revision, the two Ready conditions, when it appeared — everything `Preview` reports and nothing it doesn't. `:pr` is the change-request number, the identifier a human types (ADR-0017); there is no `GetPreview`, so the page reads the same `ListPreviews` the environment Overview's Previews section does and picks out the matching row, honestly reporting when none matches. The route a commit status and a PR comment link to (ADR-0017 stage 3, #248) | `ListPreviews` |
 | `/cluster` | Server build, the node inventory (count, readiness, CPU/memory usage where metrics.k8s.io answers), the platform-component checklist with its install flow, and the detected ClusterProfile | `/healthz`, `GetProfile`, `GetNodes`, `ListComponents`, `PlanInstall`, `Install` |
@@ -185,9 +185,11 @@ Three things it is deliberate about:
 - **The layout reads the spec; the tabs read the cluster.** `EnvironmentPage`
   issues one `GetSpec` — it is what says this environment exists and what its
   siblings are, which is what the promote action needs — and hands the stored
-  documents down. Every cluster-touching call still belongs to the tab that
-  wants it: the logs tab opens no `Status` for a rail it does not draw, and
-  Overview reads the one `Status` the panel always read.
+  documents down, along with the sibling list itself: the logs tab reads the
+  components out of the documents and the History tab reads the siblings to
+  decide whether its rail has a head. Every cluster-touching call still belongs
+  to the tab that wants it: the logs tab opens no `Status` for a phase rail it
+  does not draw, and Overview reads the one `Status` the panel always read.
 - **A tab is a link, an action is a link, and the log screen's two modes are
   buttons.** They look the same and they are not the same: the first two are
   routes worth pasting, the third is one screen with a switch on it.
@@ -919,6 +921,68 @@ those against receipt time would date every one of them to now. The skew is
 handled by clamping at zero — a server whose clock runs ahead prints `now`,
 never a time in the future — and an event carrying no stamp at all falls back to
 when this browser received it. The exact instant stays on the row's `title`.
+
+### The revision rail
+
+The borrowed interaction
+([#260](https://github.com/dafrie/kelson/issues/260), direction B of the UX
+research): the History tab's record is drawn as a **rail** — one vertical line,
+one stop per revision, one filled marker on the revision that is live.
+`src/pages/history.ts`'s `railPlacements` decides where every stop sits and
+`.k-history__*` in `src/pages/pages.css` is the whole of the drawing.
+
+The rail exists because the question this screen is asked is not "what happened"
+but **"what is running, and is it the top one"** — and that is a question about a
+position, not about a list. An environment a rollback pinned shows its marker two
+stops down and the answer arrives before a word is read.
+
+Five decisions:
+
+- **Position is the statement, and it is the only one.** The five placements —
+  `live`, `above`, `below`, `tail`, `unmarked` — are purely spatial, and `above`
+  and `below` paint identically. There is deliberately **no count**: "two
+  revisions behind" is a claim about the spec's generation and nothing on the
+  wire carries one, which is the same reason `DriftMark` refuses it. The drift
+  mark stays the sentence and renders on the marker's own stop exactly as
+  before; the rail adds no second one.
+- **The marker wins over the tail.** The rail runs past the cluster's bounded
+  history into the registry's tag list ([#241](https://github.com/dafrie/kelson/issues/241))
+  and fades there — dotted rail, dimmed ink — because the record thins out rather
+  than ending. But a rollback can pin an environment to a revision the cluster
+  has forgotten, and fading the one stop that is live would hide the marker on
+  the rail it is the point of. `live` is therefore checked before `beyondWindow`.
+- **Click-first, and no drag.** Direction B makes dragging the marker the
+  rollback and dragging it sideways the promotion; its own recommendation is to
+  ship the click first and add the gestures once the confirm flows are proven. So
+  a stop **opens**: a quiet expansion of the row, no modal, no overlay, offering
+  two links into flows that already exist — `?from=` for the comparison panel on
+  this same page and `actions/rollback?to=` for the whole irreversibility-preview
+  screen. The rail never applies anything. A rollback's preview must not be
+  skippable, so there is one rollback flow in this UI and the rail only carries a
+  revision to it.
+- **The offers are collapsed, and that is what makes the rail readable.** Two
+  standing buttons per row is twenty-four controls on a twelve-revision
+  environment. Quiet-when-healthy applies to chrome as much as to colour. The
+  whole summary is the click target — a stretched button under the row with the
+  values lifted back above it — and the caret at the end of the head line is the
+  visible half.
+- **The head is where the next revision arrives, and the only place promotion
+  belongs.** Above the newest stop is one more, which is not a revision; opening
+  it offers `actions/promote` with the environment action bar's label unchanged,
+  because it is the same action. It is drawn only when the project declares
+  another environment to promote from — the same condition that bar uses. A
+  *row* still offers no promotion: a row's revision is this environment's, and a
+  promotion reads the source environment's latest, which no row here knows.
+
+**Sideways promotion, noted and not built.** The research's second gesture —
+dragging a notch from staging's rail into production's — has a cheap click-first
+expression that this slice deliberately did not build, because it is
+cross-environment UI and belongs where environments are already juxtaposed: the
+project page's matrix draws one column per environment with each column's live
+revision in it. A "promote this column into that one" entry there would need one
+thing that does not exist yet — `PromotePage` reads no `?from=` and picks its
+source on screen — so the whole of it is a query parameter, a preselected radio
+and one link per adjacent column pair. No RPC, no proto, no second promote flow.
 
 ### Two themes
 
