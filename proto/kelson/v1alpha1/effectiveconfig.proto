@@ -124,7 +124,19 @@ message EffectiveValue {
   }
 }
 
-// EffectiveSetting is one setting, its value, and the block that set it.
+// ShadowedValue is one value the winner replaced: what a losing block held,
+// and which block it was.
+//
+// The value is an EffectiveValue for the same reason the winner's is: a
+// shadowed `{secret, key}` is still a reference and there is no value behind it
+// to flatten it into. A client renders it as the reference it is.
+message ShadowedValue {
+  EffectiveValue value = 1;
+  SetAt set_at = 2;
+}
+
+// EffectiveSetting is one setting, its value, the block that set it, and the
+// values that block replaced.
 message EffectiveSetting {
   // The variable's name for an env setting, the model's own field name
   // otherwise: "image", "command", "replicas", "resources.requests.cpu",
@@ -133,6 +145,19 @@ message EffectiveSetting {
   SettingGroup group = 2;
   EffectiveValue value = 3;
   SetAt set_at = 4;
+  // What this setting's winner replaced, **outermost first** — the Project's
+  // value before the component's, the component's before the environment's.
+  //
+  // That is the order the merge applies the scopes in, so the list plus the
+  // winning value reads as the whole chain in one direction and a client draws
+  // it without sorting. The order is part of the contract and does not change.
+  //
+  // Only a block that actually wrote a value at that field appears. A scope
+  // that said nothing about the setting is a silence, not a loser, and an entry
+  // for it would claim a merge that did not happen. The winner is never in its
+  // own list, and an unshadowed setting carries none at all — which is most of
+  // them.
+  repeated ShadowedValue shadowed = 5;
 }
 
 // EffectiveComponent is one component's effective configuration.

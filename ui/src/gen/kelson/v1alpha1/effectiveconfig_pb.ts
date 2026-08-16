@@ -39,7 +39,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file kelson/v1alpha1/effectiveconfig.proto.
  */
 export const file_kelson_v1alpha1_effectiveconfig: GenFile = /*@__PURE__*/
-  fileDesc("CiVrZWxzb24vdjFhbHBoYTEvZWZmZWN0aXZlY29uZmlnLnByb3RvEg9rZWxzb24udjFhbHBoYTEifAoFU2V0QXQSKgoFbGV2ZWwYASABKA4yGy5rZWxzb24udjFhbHBoYTEuU2V0QXRMZXZlbBIQCghkb2N1bWVudBgCIAEoCRITCgtlbnZpcm9ubWVudBgDIAEoCRIRCgljb21wb25lbnQYBCABKAkSDQoFZmllbGQYBSABKAkiMQoSU2VjcmV0S2V5UmVmZXJlbmNlEg4KBnNlY3JldBgBIAEoCRILCgNrZXkYAiABKAkiNwoXU2VydmljZUJpbmRpbmdSZWZlcmVuY2USDwoHc2VydmljZRgBIAEoCRILCgNrZXkYAiABKAkioAEKDkVmZmVjdGl2ZVZhbHVlEhEKB2xpdGVyYWwYASABKAlIABI1CgZzZWNyZXQYAiABKAsyIy5rZWxzb24udjFhbHBoYTEuU2VjcmV0S2V5UmVmZXJlbmNlSAASOwoHYmluZGluZxgDIAEoCzIoLmtlbHNvbi52MWFscGhhMS5TZXJ2aWNlQmluZGluZ1JlZmVyZW5jZUgAQgcKBXZhbHVlIqYBChBFZmZlY3RpdmVTZXR0aW5nEgwKBG5hbWUYASABKAkSLAoFZ3JvdXAYAiABKA4yHS5rZWxzb24udjFhbHBoYTEuU2V0dGluZ0dyb3VwEi4KBXZhbHVlGAMgASgLMh8ua2Vsc29uLnYxYWxwaGExLkVmZmVjdGl2ZVZhbHVlEiYKBnNldF9hdBgEIAEoCzIWLmtlbHNvbi52MWFscGhhMS5TZXRBdCJlChJFZmZlY3RpdmVDb21wb25lbnQSDAoEbmFtZRgBIAEoCRIMCgRraW5kGAIgASgJEjMKCHNldHRpbmdzGAMgAygLMiEua2Vsc29uLnYxYWxwaGExLkVmZmVjdGl2ZVNldHRpbmcipQEKD0VmZmVjdGl2ZUNvbmZpZxIPCgdwcm9qZWN0GAEgASgJEhMKC2Vudmlyb25tZW50GAIgASgJEjMKCHNldHRpbmdzGAMgAygLMiEua2Vsc29uLnYxYWxwaGExLkVmZmVjdGl2ZVNldHRpbmcSNwoKY29tcG9uZW50cxgEIAMoCzIjLmtlbHNvbi52MWFscGhhMS5FZmZlY3RpdmVDb21wb25lbnQiVAoZR2V0RWZmZWN0aXZlQ29uZmlnUmVxdWVzdBIPCgdwcm9qZWN0GAEgASgJEhMKC2Vudmlyb25tZW50GAIgASgJEhEKCWNvbXBvbmVudBgDIAEoCSJ2ChpHZXRFZmZlY3RpdmVDb25maWdSZXNwb25zZRIwCgZjb25maWcYASABKAsyIC5rZWxzb24udjFhbHBoYTEuRWZmZWN0aXZlQ29uZmlnEiYKBmVycm9ycxgCIAMoCzIWLmtlbHNvbi52MWFscGhhMS5FcnJvcirBAQoKU2V0QXRMZXZlbBIcChhTRVRfQVRfTEVWRUxfVU5TUEVDSUZJRUQQABIZChVTRVRfQVRfTEVWRUxfQlVJTFRfSU4QARIYChRTRVRfQVRfTEVWRUxfUFJPSkVDVBACEhoKFlNFVF9BVF9MRVZFTF9DT01QT05FTlQQAxIcChhTRVRfQVRfTEVWRUxfRU5WSVJPTk1FTlQQBBImCiJTRVRfQVRfTEVWRUxfRU5WSVJPTk1FTlRfQ09NUE9ORU5UEAUqlwEKDFNldHRpbmdHcm91cBIdChlTRVRUSU5HX0dST1VQX1VOU1BFQ0lGSUVEEAASFQoRU0VUVElOR19HUk9VUF9FTlYQARIaChZTRVRUSU5HX0dST1VQX1dPUktMT0FEEAISFgoSU0VUVElOR19HUk9VUF9EQVRBEAMSHQoZU0VUVElOR19HUk9VUF9FTlZJUk9OTUVOVBAEQkpaSGdpdGh1Yi5jb20vZGFmcmllL2tlbHNvbi9pbnRlcm5hbC9hcGkvZ2VuL2tlbHNvbi92MWFscGhhMTtrZWxzb252MWFscGhhMWIGcHJvdG8z", [file_kelson_v1alpha1_common]);
+  fileDesc("CiVrZWxzb24vdjFhbHBoYTEvZWZmZWN0aXZlY29uZmlnLnByb3RvEg9rZWxzb24udjFhbHBoYTEifAoFU2V0QXQSKgoFbGV2ZWwYASABKA4yGy5rZWxzb24udjFhbHBoYTEuU2V0QXRMZXZlbBIQCghkb2N1bWVudBgCIAEoCRITCgtlbnZpcm9ubWVudBgDIAEoCRIRCgljb21wb25lbnQYBCABKAkSDQoFZmllbGQYBSABKAkiMQoSU2VjcmV0S2V5UmVmZXJlbmNlEg4KBnNlY3JldBgBIAEoCRILCgNrZXkYAiABKAkiNwoXU2VydmljZUJpbmRpbmdSZWZlcmVuY2USDwoHc2VydmljZRgBIAEoCRILCgNrZXkYAiABKAkioAEKDkVmZmVjdGl2ZVZhbHVlEhEKB2xpdGVyYWwYASABKAlIABI1CgZzZWNyZXQYAiABKAsyIy5rZWxzb24udjFhbHBoYTEuU2VjcmV0S2V5UmVmZXJlbmNlSAASOwoHYmluZGluZxgDIAEoCzIoLmtlbHNvbi52MWFscGhhMS5TZXJ2aWNlQmluZGluZ1JlZmVyZW5jZUgAQgcKBXZhbHVlImcKDVNoYWRvd2VkVmFsdWUSLgoFdmFsdWUYASABKAsyHy5rZWxzb24udjFhbHBoYTEuRWZmZWN0aXZlVmFsdWUSJgoGc2V0X2F0GAIgASgLMhYua2Vsc29uLnYxYWxwaGExLlNldEF0ItgBChBFZmZlY3RpdmVTZXR0aW5nEgwKBG5hbWUYASABKAkSLAoFZ3JvdXAYAiABKA4yHS5rZWxzb24udjFhbHBoYTEuU2V0dGluZ0dyb3VwEi4KBXZhbHVlGAMgASgLMh8ua2Vsc29uLnYxYWxwaGExLkVmZmVjdGl2ZVZhbHVlEiYKBnNldF9hdBgEIAEoCzIWLmtlbHNvbi52MWFscGhhMS5TZXRBdBIwCghzaGFkb3dlZBgFIAMoCzIeLmtlbHNvbi52MWFscGhhMS5TaGFkb3dlZFZhbHVlImUKEkVmZmVjdGl2ZUNvbXBvbmVudBIMCgRuYW1lGAEgASgJEgwKBGtpbmQYAiABKAkSMwoIc2V0dGluZ3MYAyADKAsyIS5rZWxzb24udjFhbHBoYTEuRWZmZWN0aXZlU2V0dGluZyKlAQoPRWZmZWN0aXZlQ29uZmlnEg8KB3Byb2plY3QYASABKAkSEwoLZW52aXJvbm1lbnQYAiABKAkSMwoIc2V0dGluZ3MYAyADKAsyIS5rZWxzb24udjFhbHBoYTEuRWZmZWN0aXZlU2V0dGluZxI3Cgpjb21wb25lbnRzGAQgAygLMiMua2Vsc29uLnYxYWxwaGExLkVmZmVjdGl2ZUNvbXBvbmVudCJUChlHZXRFZmZlY3RpdmVDb25maWdSZXF1ZXN0Eg8KB3Byb2plY3QYASABKAkSEwoLZW52aXJvbm1lbnQYAiABKAkSEQoJY29tcG9uZW50GAMgASgJInYKGkdldEVmZmVjdGl2ZUNvbmZpZ1Jlc3BvbnNlEjAKBmNvbmZpZxgBIAEoCzIgLmtlbHNvbi52MWFscGhhMS5FZmZlY3RpdmVDb25maWcSJgoGZXJyb3JzGAIgAygLMhYua2Vsc29uLnYxYWxwaGExLkVycm9yKsEBCgpTZXRBdExldmVsEhwKGFNFVF9BVF9MRVZFTF9VTlNQRUNJRklFRBAAEhkKFVNFVF9BVF9MRVZFTF9CVUlMVF9JThABEhgKFFNFVF9BVF9MRVZFTF9QUk9KRUNUEAISGgoWU0VUX0FUX0xFVkVMX0NPTVBPTkVOVBADEhwKGFNFVF9BVF9MRVZFTF9FTlZJUk9OTUVOVBAEEiYKIlNFVF9BVF9MRVZFTF9FTlZJUk9OTUVOVF9DT01QT05FTlQQBSqXAQoMU2V0dGluZ0dyb3VwEh0KGVNFVFRJTkdfR1JPVVBfVU5TUEVDSUZJRUQQABIVChFTRVRUSU5HX0dST1VQX0VOVhABEhoKFlNFVFRJTkdfR1JPVVBfV09SS0xPQUQQAhIWChJTRVRUSU5HX0dST1VQX0RBVEEQAxIdChlTRVRUSU5HX0dST1VQX0VOVklST05NRU5UEARCSlpIZ2l0aHViLmNvbS9kYWZyaWUva2Vsc29uL2ludGVybmFsL2FwaS9nZW4va2Vsc29uL3YxYWxwaGExO2tlbHNvbnYxYWxwaGExYgZwcm90bzM", [file_kelson_v1alpha1_common]);
 
 /**
  * SetAt is one provenance answer: the level, the names that make it concrete,
@@ -186,7 +186,37 @@ export const EffectiveValueSchema: GenMessage<EffectiveValue> = /*@__PURE__*/
   messageDesc(file_kelson_v1alpha1_effectiveconfig, 3);
 
 /**
- * EffectiveSetting is one setting, its value, and the block that set it.
+ * ShadowedValue is one value the winner replaced: what a losing block held,
+ * and which block it was.
+ *
+ * The value is an EffectiveValue for the same reason the winner's is: a
+ * shadowed `{secret, key}` is still a reference and there is no value behind it
+ * to flatten it into. A client renders it as the reference it is.
+ *
+ * @generated from message kelson.v1alpha1.ShadowedValue
+ */
+export type ShadowedValue = Message<"kelson.v1alpha1.ShadowedValue"> & {
+  /**
+   * @generated from field: kelson.v1alpha1.EffectiveValue value = 1;
+   */
+  value?: EffectiveValue | undefined;
+
+  /**
+   * @generated from field: kelson.v1alpha1.SetAt set_at = 2;
+   */
+  setAt?: SetAt | undefined;
+};
+
+/**
+ * Describes the message kelson.v1alpha1.ShadowedValue.
+ * Use `create(ShadowedValueSchema)` to create a new message.
+ */
+export const ShadowedValueSchema: GenMessage<ShadowedValue> = /*@__PURE__*/
+  messageDesc(file_kelson_v1alpha1_effectiveconfig, 4);
+
+/**
+ * EffectiveSetting is one setting, its value, the block that set it, and the
+ * values that block replaced.
  *
  * @generated from message kelson.v1alpha1.EffectiveSetting
  */
@@ -214,6 +244,24 @@ export type EffectiveSetting = Message<"kelson.v1alpha1.EffectiveSetting"> & {
    * @generated from field: kelson.v1alpha1.SetAt set_at = 4;
    */
   setAt?: SetAt | undefined;
+
+  /**
+   * What this setting's winner replaced, **outermost first** — the Project's
+   * value before the component's, the component's before the environment's.
+   *
+   * That is the order the merge applies the scopes in, so the list plus the
+   * winning value reads as the whole chain in one direction and a client draws
+   * it without sorting. The order is part of the contract and does not change.
+   *
+   * Only a block that actually wrote a value at that field appears. A scope
+   * that said nothing about the setting is a silence, not a loser, and an entry
+   * for it would claim a merge that did not happen. The winner is never in its
+   * own list, and an unshadowed setting carries none at all — which is most of
+   * them.
+   *
+   * @generated from field: repeated kelson.v1alpha1.ShadowedValue shadowed = 5;
+   */
+  shadowed: ShadowedValue[];
 };
 
 /**
@@ -221,7 +269,7 @@ export type EffectiveSetting = Message<"kelson.v1alpha1.EffectiveSetting"> & {
  * Use `create(EffectiveSettingSchema)` to create a new message.
  */
 export const EffectiveSettingSchema: GenMessage<EffectiveSetting> = /*@__PURE__*/
-  messageDesc(file_kelson_v1alpha1_effectiveconfig, 4);
+  messageDesc(file_kelson_v1alpha1_effectiveconfig, 5);
 
 /**
  * EffectiveComponent is one component's effective configuration.
@@ -260,7 +308,7 @@ export type EffectiveComponent = Message<"kelson.v1alpha1.EffectiveComponent"> &
  * Use `create(EffectiveComponentSchema)` to create a new message.
  */
 export const EffectiveComponentSchema: GenMessage<EffectiveComponent> = /*@__PURE__*/
-  messageDesc(file_kelson_v1alpha1_effectiveconfig, 5);
+  messageDesc(file_kelson_v1alpha1_effectiveconfig, 6);
 
 /**
  * EffectiveConfig is one (project, environment) pair's effective configuration.
@@ -297,7 +345,7 @@ export type EffectiveConfig = Message<"kelson.v1alpha1.EffectiveConfig"> & {
  * Use `create(EffectiveConfigSchema)` to create a new message.
  */
 export const EffectiveConfigSchema: GenMessage<EffectiveConfig> = /*@__PURE__*/
-  messageDesc(file_kelson_v1alpha1_effectiveconfig, 6);
+  messageDesc(file_kelson_v1alpha1_effectiveconfig, 7);
 
 /**
  * @generated from message kelson.v1alpha1.GetEffectiveConfigRequest
@@ -330,7 +378,7 @@ export type GetEffectiveConfigRequest = Message<"kelson.v1alpha1.GetEffectiveCon
  * Use `create(GetEffectiveConfigRequestSchema)` to create a new message.
  */
 export const GetEffectiveConfigRequestSchema: GenMessage<GetEffectiveConfigRequest> = /*@__PURE__*/
-  messageDesc(file_kelson_v1alpha1_effectiveconfig, 7);
+  messageDesc(file_kelson_v1alpha1_effectiveconfig, 8);
 
 /**
  * @generated from message kelson.v1alpha1.GetEffectiveConfigResponse
@@ -356,7 +404,7 @@ export type GetEffectiveConfigResponse = Message<"kelson.v1alpha1.GetEffectiveCo
  * Use `create(GetEffectiveConfigResponseSchema)` to create a new message.
  */
 export const GetEffectiveConfigResponseSchema: GenMessage<GetEffectiveConfigResponse> = /*@__PURE__*/
-  messageDesc(file_kelson_v1alpha1_effectiveconfig, 8);
+  messageDesc(file_kelson_v1alpha1_effectiveconfig, 9);
 
 /**
  * SetAtLevel names the block that set a value: which document, and which part

@@ -7,7 +7,13 @@ import {
   SetAtSchema,
   SettingGroup,
 } from "../gen/kelson/v1alpha1/effectiveconfig_pb";
-import { configGroups, answersFor, setAtSentence, valueOf } from "./effective";
+import {
+  configGroups,
+  answersFor,
+  setAtSentence,
+  shadowSentence,
+  valueOf,
+} from "./effective";
 
 /**
  * The table, as logic. Every fixture here is the shape
@@ -54,17 +60,38 @@ const CONFIG = create(EffectiveConfigSchema, {
       name: "web",
       kind: "service",
       settings: [
-        literal(
-          "LOG_LEVEL",
-          SettingGroup.ENV,
-          "warn",
-          setAt(SetAtLevel.ENVIRONMENT_COMPONENT, {
-            document: "Environment",
-            environment: "production",
-            component: "web",
-            field: "$.spec.components[0].env.LOG_LEVEL",
-          }),
-        ),
+        {
+          ...literal(
+            "LOG_LEVEL",
+            SettingGroup.ENV,
+            "warn",
+            setAt(SetAtLevel.ENVIRONMENT_COMPONENT, {
+              document: "Environment",
+              environment: "production",
+              component: "web",
+              field: "$.spec.components[0].env.LOG_LEVEL",
+            }),
+          ),
+          // The chain the winner replaced, in the wire's own order: the
+          // project's value, then the component's.
+          shadowed: [
+            {
+              value: { value: { case: "literal" as const, value: "info" } },
+              setAt: setAt(SetAtLevel.PROJECT, {
+                document: "Project",
+                field: "$.spec.env.LOG_LEVEL",
+              }),
+            },
+            {
+              value: { value: { case: "literal" as const, value: "debug" } },
+              setAt: setAt(SetAtLevel.COMPONENT, {
+                document: "Project",
+                component: "web",
+                field: "$.spec.components[1].env.LOG_LEVEL",
+              }),
+            },
+          ],
+        },
         literal(
           "REGION",
           SettingGroup.ENV,
@@ -88,6 +115,22 @@ const CONFIG = create(EffectiveConfigSchema, {
             component: "web",
             field: "$.spec.components[1].env.STRIPE_KEY",
           }),
+          // A shadowed reference is still a reference: there is no value behind
+          // either arm of the chain.
+          shadowed: [
+            {
+              value: {
+                value: {
+                  case: "secret" as const,
+                  value: { secret: "checkout-stripe-test", key: "secretKey" },
+                },
+              },
+              setAt: setAt(SetAtLevel.PROJECT, {
+                document: "Project",
+                field: "$.spec.env.STRIPE_KEY",
+              }),
+            },
+          ],
         },
         {
           name: "DATABASE_URL",
@@ -103,10 +146,26 @@ const CONFIG = create(EffectiveConfigSchema, {
             field: "$.spec.env.DATABASE_URL",
           }),
         },
-        literal("EMPTY", SettingGroup.ENV, "", setAt(SetAtLevel.PROJECT, {
-          document: "Project",
-          field: "$.spec.env.EMPTY",
-        })),
+        {
+          // The unset case: production overrides a project variable to "", so
+          // the winner says nothing about itself and the shadow is the only
+          // thing that can say what was unset.
+          ...literal("EMPTY", SettingGroup.ENV, "", setAt(SetAtLevel.ENVIRONMENT_COMPONENT, {
+            document: "Environment",
+            environment: "production",
+            component: "web",
+            field: "$.spec.components[0].env.EMPTY",
+          })),
+          shadowed: [
+            {
+              value: { value: { case: "literal" as const, value: "on" } },
+              setAt: setAt(SetAtLevel.PROJECT, {
+                document: "Project",
+                field: "$.spec.env.EMPTY",
+              }),
+            },
+          ],
+        },
         literal(
           "image",
           SettingGroup.WORKLOAD,
@@ -167,6 +226,37 @@ describe("setAtSentence", () => {
   it("falls back to a nameless environment rather than printing an empty name", () => {
     expect(setAtSentence(setAt(SetAtLevel.ENVIRONMENT))).toBe(
       "set on this environment",
+    );
+  });
+});
+
+describe("shadowSentence", () => {
+  it("names where a replaced value was written and where it was taken away", () => {
+    expect(
+      shadowSentence(
+        setAt(SetAtLevel.COMPONENT),
+        setAt(SetAtLevel.ENVIRONMENT_COMPONENT, { environment: "production" }),
+      ),
+    ).toBe("set on the component, overridden for production");
+    expect(
+      shadowSentence(setAt(SetAtLevel.PROJECT), setAt(SetAtLevel.COMPONENT)),
+    ).toBe("set on the project, overridden on the component");
+    expect(
+      shadowSentence(
+        setAt(SetAtLevel.PROJECT),
+        setAt(SetAtLevel.ENVIRONMENT, { environment: "production" }),
+      ),
+    ).toBe("set on the project, overridden for production");
+  });
+
+  it("says only that it was overridden when the winner names no block", () => {
+    // A block chain taken whole can leave kelson's own default in force, and a
+    // default has no block to name — the row above already says whose it is.
+    expect(
+      shadowSentence(setAt(SetAtLevel.PROJECT), setAt(SetAtLevel.BUILT_IN)),
+    ).toBe("set on the project, overridden");
+    expect(shadowSentence(setAt(SetAtLevel.PROJECT), undefined)).toBe(
+      "set on the project, overridden",
     );
   });
 });
@@ -239,6 +329,46 @@ describe("configGroups", () => {
       secret: "checkout-stripe",
       key: "secretKey",
     });
+  });
+
+  it("carries the chain each winner replaced, in the wire's order", () => {
+    const env = configGroups(CONFIG, "web")[0]?.rows ?? [];
+    const logLevel = env.find((r) => r.name === "LOG_LEVEL");
+    expect(logLevel?.shadows.map((s) => s.value)).toEqual([
+      { kind: "plain", value: "info" },
+      { kind: "plain", value: "debug" },
+    ]);
+    expect(logLevel?.shadows.map((s) => s.setAt)).toEqual([
+      "set on the project, overridden for production",
+      "set on the component, overridden for production",
+    ]);
+    expect(logLevel?.shadows[0]?.where).toBe("$.spec.env.LOG_LEVEL");
+
+    // A row nothing overrode carries no chain at all, which is what keeps the
+    // table the height it was.
+    expect(env.find((r) => r.name === "REGION")?.shadows).toEqual([]);
+  });
+
+  it("keeps a shadowed reference a reference", () => {
+    const env = configGroups(CONFIG, "web")[0]?.rows ?? [];
+    expect(env.find((r) => r.name === "STRIPE_KEY")?.shadows[0]?.value).toEqual({
+      kind: "secret",
+      secret: "checkout-stripe-test",
+      key: "secretKey",
+    });
+  });
+
+  it("says what an empty override unset", () => {
+    const env = configGroups(CONFIG, "web")[0]?.rows ?? [];
+    const empty = env.find((r) => r.name === "EMPTY");
+    expect(empty?.value).toEqual({ kind: "plain", value: "" });
+    expect(empty?.shadows).toEqual([
+      {
+        value: { kind: "plain", value: "on" },
+        setAt: "set on the project, overridden for production",
+        where: "$.spec.env.EMPTY",
+      },
+    ]);
   });
 
   it("marks the rows nobody wrote, so the authored ones are findable", () => {
