@@ -33,12 +33,15 @@ The *shape* is deliberately not the API's:
   asserts it never gains one.
 - **Described for models.** Every tool states its preconditions, whether it mutates, what it costs
   and when to prefer a neighbouring tool.
-- **Nine tools.** The count is a design decision: every tool added costs tool-selection accuracy for
+- **Ten tools.** The count is a design decision: every tool added costs tool-selection accuracy for
   the ones already there. `set_secret` earned one because writing a credential is a task; *listing*
   secrets did not, because it is something an agent needs mid-diagnosis rather than as an errand of
   its own, so it became a section of `diagnose_component`. Capturing a `ClusterProfile` went the same
   way: not a task, but the [version skew](detection.md#version-skew-and-explicit-degradation) in it
   explains failures that arrive long after the deploy that caused them, so it is a section too.
+  `effective_config` earned one anyway ([#268](https://github.com/dafrie/kelson/issues/268)): "what
+  is this running with, and why" is a question a developer asks on its own, not only while
+  diagnosing a failure, so it stands beside `diagnose_component` rather than inside it.
 
 ## The tools
 
@@ -47,6 +50,7 @@ The *shape* is deliberately not the API's:
 | `list_components` | no | Every stored project with the live phase, revision and workload health of each environment. Start here when you do not know what exists. |
 | `diagnose_component` | no | The flagship composition: the server's structured causes with confidence, evidence and the revision that introduced the change each blames (the `WHY` section); phase, revision, namespace and cause; workload verdicts with remediation; a log window around the failure; the last 5 revisions; a compact spec summary; the kelson-managed Secrets by name and key; and the cluster's version skew against what kelson renders against — in one call. |
 | `logs_window` | no | A bounded log window (≤ 200 lines) for one component, optionally the lines before a container terminated, optionally filtered. Never follows. |
+| `effective_config` | no | What one or every component in an environment actually runs with, and which block of which document set each value — plus, per setting, what that winner shadowed and where the loser came from ([#268](https://github.com/dafrie/kelson/issues/268)). A `{secret, key}` or `{from: {service, key}}` value renders as the reference it is, never a value. A `kind: helm` component reports no settings of its own. |
 | `deploy` | **yes**, unless `dry_run` (default `render`) | Renders, server-side dry-runs or deploys. With `dry_run="none"` it consumes the deploy stream to the settled outcome and returns that — never a stream. |
 | `rollback` | **yes**, when `execute=true` | Previews the rollback — the diff between the revision running and the revision restored, computed from both artifacts' recorded manifests ([#247](https://github.com/dafrie/kelson/issues/247)) — with what it cannot revert flagged, and applies it on request. A server that cannot pull one of the two artifacts sends the `rollback/preview-unavailable` finding saying which and why, never an empty diff. |
 | `promote_component` | **yes** (the *spec*, not the cluster), when `execute=true` | Pins one environment to the images another environment is *serving* right now, and returns the resulting diff. Writes the target `Environment`'s image pins and stamps `kelson.dev/promoted-from`; deploys nothing. |
