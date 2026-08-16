@@ -8,10 +8,11 @@ import type { SpecDocuments } from "../gen/kelson/v1alpha1/common_pb";
 import type { StatusResponse } from "../gen/kelson/v1alpha1/deploy_pb";
 import type { WatchResponse_Event } from "../gen/kelson/v1alpha1/events_pb";
 import { Disclosure, YamlBlock } from "../components/Disclosure";
+import { DriftMark } from "../components/DriftMark";
 import { ErrorPanel } from "../components/ErrorPanel";
 import { LiveIndicator } from "../components/LiveIndicator";
 import { StatusPill } from "../components/StatusPill";
-import { statusForPhase } from "../components/status";
+import { driftFor, statusForDelivery } from "../components/status";
 import { EmptyState, LoadingState } from "../components/States";
 import {
   effectiveImage,
@@ -24,6 +25,7 @@ import {
 } from "../spec/components";
 import { environmentPath } from "./flows";
 import {
+  deliveryFacts,
   mergeVerdicts,
   NO_READ,
   readCell,
@@ -293,23 +295,14 @@ function column(
   const failure =
     answer?.error === undefined ? undefined : toFailure(answer.error);
   const loading = answer === undefined && statuses.loading;
-  // A transition replaces the three fields it carries whole: the fetched
-  // revision and cause described the phase the column has just left.
-  const phase = events.transition?.phase ?? answer?.data?.phase ?? "";
-  const revision = events.transition
-    ? events.transition.revision
-    : (answer?.data?.revision ?? "");
-  const cause = events.transition
-    ? events.transition.cause
-    : (answer?.data?.cause ?? "");
+  // A transition replaces the fields it carries whole, and voids the two it
+  // does not — `matrix.ts`'s deliveryFacts is where that rule is written down.
   const read: EnvironmentRead =
     answer?.data === undefined
       ? { ...NO_READ, environment }
       : {
+          ...deliveryFacts(answer.data, events.transition),
           environment,
-          phase,
-          revision,
-          cause,
           namespace: answer.data.namespace,
           verdicts: mergeVerdicts(answer.data.verdicts, events.verdicts),
           read: true,
@@ -466,7 +459,7 @@ function Matrix({
  * a reader ends up is in the address bar instead of in this page's state.
  */
 function ColumnHead({ project, column }: { project: string; column: Column }) {
-  const state = statusForPhase(column.read.phase);
+  const state = statusForDelivery(column.read.answer, column.read.phase);
   return (
     <>
       <Link
@@ -484,8 +477,12 @@ function ColumnHead({ project, column }: { project: string; column: Column }) {
           <StatusPill status={state.tone} label={state.word} />
         )}
       </Link>
-      <span className="k-mono k-matrix__rev">
-        {column.read.revision || "no revision"}
+      {/* The revision line is the column's mono fact, stated once for every
+          cell below it. When it has drifted, the sans sentence about it goes
+          on the same line — the word above is untouched. */}
+      <span className="k-matrix__rev">
+        <span className="k-mono">{column.read.revision || "no revision"}</span>
+        <DriftMark drift={driftFor(column.read)} />
       </span>
     </>
   );

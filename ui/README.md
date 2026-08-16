@@ -118,10 +118,11 @@ Five things it is deliberate about:
 - **A component overrules its environment downward, never upward.** A degraded
   workload inside a Healthy environment reads `unhealthy`; a healthy workload
   inside a reconciling environment reads `deploying`, because the delivery
-  answer is the wider claim. A verdict that is neither healthy nor degraded is a
-  wait state and is `deploying` — observation's `Stuck` does not survive the
-  wire projection, so "gave up waiting" and "still starting" are one word here
-  and the code beside it is what tells them apart.
+  answer is the wider claim. `WorkloadVerdict.stuck` is the fourth case and it
+  reads `stuck`: the probe gave up waiting, `code` stays a *wait* code such as
+  `workload/progressing`, and before that field existed "gave up waiting" and
+  "still starting" were one word here. A verdict with all three flags false is
+  the latter and is `deploying`, never a failure.
 - **The revision is the environment's and the image is the component's.** One
   publish carries every component (ADR-0028), so the revision is stated once per
   column; the image differs per cell and is rule P3's winner across the three
@@ -137,7 +138,10 @@ Five things it is deliberate about:
   `stuck`, `failed` and `unknown` — not `deploying` or `waiting`, because a band
   that fills up during every deploy is a band people stop reading, and not
   `suspended`, because nothing is trying on purpose. `unknown` is in it: "we
-  could not tell" is exactly the state somebody has to go and look at.
+  could not tell" is exactly the state somebody has to go and look at. **Drift
+  is not in it and cannot be**: the band is keyed on the word, and `stale` never
+  becomes one — a stale environment that is `live` stays out, and a stale one
+  that is `stuck` is already in on the strength of `stuck`.
 
 The project page issues one `Status` per environment — one per column — and that
 is now all it issues. The environment's own panel used to sit below the grid,
@@ -742,14 +746,25 @@ relabelled:
 | `live` | answer `live`, phase `Healthy`, preview `ready` | synced |
 | `deploying` | answer `progressing`, phases `Reconciling`/`Applied` | reconciling |
 | `waiting` | answer `waiting`, phases `Proposed`/`Committed`, preview `awaiting-artifact` | reconciling |
-| `stuck` | answer `stuck` | degraded |
+| `stuck` | answer `stuck`, `WorkloadVerdict.stuck` | degraded |
 | `unhealthy` | answer `degraded`, phase `Degraded` | degraded |
 | `failed` | answer `rejected`, phase `Rejected`, preview `failed` | failed |
 | `suspended` | `Preview.suspended` | suspended |
 | `unknown` | anything the maps do not know | unknown |
 
-Three things follow from it:
+Five things follow from it:
 
+- **The word comes from `answer`, and only falls back to the phase.**
+  `StatusResponse.answer` is the engine's own verdict for this environment, so
+  `statusForDelivery` reads it and derives from `phase` only when it is empty.
+  The phase cannot express all six — `stuck` is not a phase but a verdict about
+  one — and re-deriving is a second opinion free to disagree with the CLI's. The
+  one source that legitimately sends no answer is `EventService`'s
+  `StatusTransition` (four fields, no answer), which is why the fallback exists;
+  a *non-empty* token this build cannot read stays `unknown` rather than
+  falling back to something cheerier. A transition also voids the fetched
+  answer, because it was a verdict about the phase that has just been left
+  (`src/pages/matrix.ts`'s `deliveryFacts`).
 - **`StatusKind` is a tone, not a word.** `synced`, `reconciling` and the rest
   name the six colour ramps in `tokens.css` and stay as they are, because a
   colour does not change when the word painted in it does. `StatusPill`'s
@@ -761,13 +776,54 @@ Three things follow from it:
   Flux — and the preview page's `artifact ready` / `applied ready` conditions
   are unchanged.
 - **A workload verdict reaches the vocabulary through `statusForVerdict`.**
-  Healthy keeps the environment's word, degraded is `unhealthy`, and anything
-  else is `deploying` — the three cases the matrix's cells need, decided in the
-  module rather than on each screen.
+  Healthy keeps the environment's word, stuck is `stuck`, degraded is
+  `unhealthy`, and all-three-false is `deploying` — the four cases the matrix's
+  cells need, decided in the module rather than on each screen. `verdictTone`
+  reads the same classification, so the colour on a workload line and the word
+  in a cell cannot drift apart. On a verdict *row*, where the pill's label is
+  observation's own code verbatim, a stuck verdict grows a second pill carrying
+  the word: `code` stays a wait code, so nothing else on the row could say it.
 - **`suspended` is a seventh state and not a flavour of `waiting`.** Waiting
   means something is expected to act; suspended means nothing is, deliberately,
   and what is running is the last thing that reconciled. It is only ever shown
   when the wire reported it.
+
+### Drift, the one card only kelson holds
+
+`StatusResponse.stale` answers "am I looking at what I asked for?", and until
+[#260](https://github.com/dafrie/kelson/issues/260) no screen drew it. It is a
+statement about **revisions and not about health** — a stale environment is very
+often `live`, because revision 44 is up and well and simply is not revision 45 —
+so it is rendered *beside* the word and never instead of it. `driftFor` in
+`src/components/status.ts` decides whether there is drift and what the sentence
+is; `DriftMark` is the whole of the drawing.
+
+Four decisions, each of them the one that keeps the claim honest:
+
+- **The tone is quiet, with one mark.** No fill, no amber, no red, and no place
+  in the attention band. It takes the quiet tier's shape — hairline ring,
+  neutral ink — and the only colour on it is a 5px dot in `--kelson-suspended`,
+  the palette's single "nothing is tracking this, and it may be on purpose" hue,
+  already pinned as a graphical object rather than as text. Painting drift amber
+  would spend the whole colour budget on news that is not bad.
+- **Two sentences, because the wire can tell them apart.** A stale environment
+  reads **"older than the spec"**; one whose `cause` names a rollback pin reads
+  **"pinned to an older revision"**. A pin is stale by construction and
+  correctly so, and the pinned wording is what keeps a deliberate state from
+  reading as neglect. The pin is recognised by the controller's own reason token
+  (`RollbackPinned` / `RolledBack`) as a whole segment of `Cause.String()`, never
+  by matching the message's prose.
+- **The mark never repeats the revision.** Every site that draws it already has
+  the revision on screen as a mono value — the matrix column's revision line,
+  Overview's `revision` row, home's meta line, the component page's revision
+  fact, the History row's own id — and the mark is the sans sentence about it.
+  The revision it means is on the title attribute.
+- **It says nothing about *how far* behind.** "The spec is at 45" is not a claim
+  this message supports: `stale` is a boolean and `StatusResponse` carries no
+  generation, so the revision's own generation is readable from its tag and the
+  spec's current one is not on the wire at all. Non-stale renders exactly as
+  before — currency is the norm and recedes, drift is the exception and
+  advances.
 
 The transport indicator says **streaming**, not "live", for the same reason: a
 connected event stream and a running revision are different claims and must not

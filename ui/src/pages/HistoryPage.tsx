@@ -4,9 +4,14 @@ import { useAsync, useClients } from "../api/data";
 import { toFailure } from "../api/errors";
 import type { HistoryEntry } from "../gen/kelson/v1alpha1/deploy_pb";
 import { Copyable } from "../components/Copyable";
+import { DriftMark } from "../components/DriftMark";
 import { ErrorPanel } from "../components/ErrorPanel";
 import { StatusPill } from "../components/StatusPill";
-import { statusForPhase } from "../components/status";
+import {
+  driftFor,
+  statusForDelivery,
+  type Drift,
+} from "../components/status";
 import { EmptyState, LoadingState } from "../components/States";
 import { ComparePanel } from "../diff/ComparePanel";
 import { formatWhen, shortHash } from "./history";
@@ -117,6 +122,12 @@ export function HistoryPage() {
   const entries = history.data?.entries ?? [];
   const liveRevision = status.data?.revision ?? "";
   const livePhase = status.data?.phase ?? "";
+  const liveAnswer = status.data?.answer ?? "";
+  // The drift is the environment's and it belongs on the one row that is about
+  // right now. A pinned rollback is exactly the case a reader opens this screen
+  // for: the live marker is on an older row and this says it was chosen.
+  const drift =
+    status.data === undefined ? undefined : driftFor(status.data);
   const statusFailure =
     status.error === undefined ? undefined : toFailure(status.error);
   const statusLoading = status.loading && status.data === undefined;
@@ -193,6 +204,8 @@ export function HistoryPage() {
                   base={base}
                   live={liveRevision !== "" && entry.revision === liveRevision}
                   livePhase={livePhase}
+                  liveAnswer={liveAnswer}
+                  drift={drift}
                   // The rollback screen disables its newest entry — restoring
                   // the revision you are already on is not a rollback — so the
                   // action is not offered for a target that would arrive
@@ -236,8 +249,8 @@ export function HistoryPage() {
  * exactly one row — the revision Status reports as live — because that is the
  * only one anything can answer for right now.
  */
-function LivePill({ phase }: { phase: string }) {
-  const state = statusForPhase(phase);
+function LivePill({ phase, answer }: { phase: string; answer: string }) {
+  const state = statusForDelivery(answer, phase);
   return <StatusPill status={state.tone} label={state.word} />;
 }
 
@@ -250,12 +263,16 @@ function Revision({
   base,
   live,
   livePhase,
+  liveAnswer,
+  drift,
   newest,
 }: {
   entry: HistoryEntry;
   base: string;
   live: boolean;
   livePhase: string;
+  liveAnswer: string;
+  drift: Drift | undefined;
   newest: boolean;
 }) {
   const when = formatWhen(entry.committedAt);
@@ -276,7 +293,11 @@ function Revision({
         {live ? (
           <>
             <span className="k-chip k-timeline__live">deployed now</span>
-            <LivePill phase={livePhase} />
+            <LivePill phase={livePhase} answer={liveAnswer} />
+            {/* The row's own revision id is the mono value this qualifies, one
+                element to the left of it, so the mark says only why it matters.
+                It is the answer to "why is the marker not on the top row". */}
+            <DriftMark drift={drift} />
           </>
         ) : null}
       </div>

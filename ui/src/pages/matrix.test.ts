@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   componentsFromVerdicts,
+  deliveryFacts,
   mergeVerdicts,
   needsAttention,
+  NO_DELIVERY,
   readCell,
   shortImage,
   verdictFor,
@@ -16,6 +18,7 @@ function verdict(partial: Partial<VerdictRow> & { resource: string }): VerdictRo
     code: "healthy",
     healthy: true,
     degraded: false,
+    stuck: false,
     message: "",
     remediation: "",
     ...partial,
@@ -23,9 +26,12 @@ function verdict(partial: Partial<VerdictRow> & { resource: string }): VerdictRo
 }
 
 const PRODUCTION: EnvironmentRead = {
+  ...NO_DELIVERY,
   environment: "production",
   phase: "Healthy",
-  revision: "8f2c1ad",
+  answer: "live",
+  revision: "45-8f2c1ad0",
+  observedRevision: "45-8f2c1ad0",
   cause: "",
   namespace: "checkout-production",
   verdicts: [
@@ -111,7 +117,11 @@ describe("readCell", () => {
   });
 
   it("does not call a green Deployment live inside an environment that is not", () => {
-    const reconciling: EnvironmentRead = { ...PRODUCTION, phase: "Reconciling" };
+    const reconciling: EnvironmentRead = {
+      ...PRODUCTION,
+      phase: "Reconciling",
+      answer: "progressing",
+    };
     const cell = readCell(
       reconciling,
       verdictFor(reconciling, {
@@ -140,19 +150,62 @@ describe("readCell", () => {
   });
 
   it("reads a wait state as work in flight and never as a failure", () => {
-    // The wire's `degraded` is `!healthy && !stuck && IsFailure(code)`, so a
-    // verdict that is merely not-ready-yet arrives with both false.
+    // All three false is a rollout still in flight.
     const cell = readCell(
       PRODUCTION,
       verdict({
         resource: "Deployment/checkout-production/web",
-        code: "progressing",
+        code: "workload/progressing",
         healthy: false,
         degraded: false,
         message: "web is rolling out",
       }),
     );
     expect(cell.status.word).toBe("deploying");
+  });
+
+  it("says stuck when the probe gave up, and it is not the wait state", () => {
+    // The fourth state the wire can finally report. `code` stays a WAIT code —
+    // `stuck` is a timeout verdict and deliberately not a failure — so the only
+    // thing that separates it from the row above is the flag.
+    const stuck = verdict({
+      resource: "Deployment/checkout-production/web",
+      code: "workload/progressing",
+      healthy: false,
+      degraded: false,
+      stuck: true,
+      message: "no progress for 10m0s",
+    });
+    const cell = readCell(PRODUCTION, stuck);
+    expect(cell.status.word).toBe("stuck");
+    expect(cell.code).toBe("workload/progressing");
+
+    const waiting = readCell(PRODUCTION, { ...stuck, stuck: false });
+    expect(waiting.status.word).toBe("deploying");
+    const failing = readCell(PRODUCTION, { ...stuck, stuck: false, degraded: true });
+    expect(failing.status.word).toBe("unhealthy");
+    // Three verdicts, one code, three words: the flag is what tells them apart.
+    expect(
+      new Set([cell.status.word, waiting.status.word, failing.status.word]).size,
+    ).toBe(3);
+  });
+
+  it("takes the environment's word from the answer, not from the phase", () => {
+    // `stuck` is not a phase — a deployment that gave up waiting is wedged in
+    // whatever phase it reached — so a cell deriving from the phase alone would
+    // read `waiting` and say nothing is wrong.
+    const wedged: EnvironmentRead = {
+      ...PRODUCTION,
+      phase: "Committed",
+      answer: "stuck",
+      verdicts: [],
+    };
+    expect(readCell(wedged, undefined).status.word).toBe("stuck");
+    // The same read with no answer is the honest fallback, and it is the older
+    // claim: the phase can only say that something is expected to act.
+    expect(readCell({ ...wedged, answer: "" }, undefined).status.word).toBe(
+      "waiting",
+    );
   });
 
   it("borrows the environment's word, and says that is what it did", () => {
@@ -211,6 +264,30 @@ describe("mergeVerdicts", () => {
     expect(rows[0]?.remediation).toBe("");
   });
 
+  it("drops a stuck flag the event cannot re-state", () => {
+    // HealthChange carries a code, a verdict and a message. `stuck` was the
+    // probe's timeout verdict about the code this event just replaced, so
+    // keeping it would attach a finding to a reading that never produced one.
+    const rows = mergeVerdicts(
+      [
+        verdict({
+          resource: "Deployment/checkout-production/web",
+          code: "workload/progressing",
+          healthy: false,
+          stuck: true,
+        }),
+      ],
+      {
+        "Deployment/checkout-production/web": {
+          code: "healthy",
+          healthy: true,
+          message: "",
+        },
+      },
+    );
+    expect(rows[0]?.stuck).toBe(false);
+  });
+
   it("appends a workload the event names and the fetch never saw", () => {
     const rows = mergeVerdicts([], {
       "Deployment/checkout-production/new": {
@@ -222,6 +299,61 @@ describe("mergeVerdicts", () => {
     expect(rows.map((r) => r.resource)).toEqual([
       "Deployment/checkout-production/new",
     ]);
+  });
+});
+
+describe("deliveryFacts", () => {
+  const READ = {
+    phase: "Healthy",
+    answer: "live",
+    revision: "44-1a2b3c4d",
+    observedRevision: "44-1a2b3c4d",
+    cause: "",
+    stale: true,
+  };
+
+  it("keeps the poll's own answer and drift when nothing streamed", () => {
+    expect(deliveryFacts(READ, undefined)).toEqual(READ);
+  });
+
+  it("voids the answer a transition did not re-state", () => {
+    // The answer was the engine's verdict about the phase that was polled. A
+    // transition to another phase is not a verdict about it, so the word falls
+    // back to being derived — which is what this UI did before the field.
+    const next = deliveryFacts(READ, {
+      phase: "Reconciling",
+      revision: "45-9e8d7c6b",
+      cause: "",
+    });
+    expect(next.answer).toBe("");
+    expect(next.phase).toBe("Reconciling");
+  });
+
+  it("voids the drift when the transition names another revision", () => {
+    // `stale` was computed against the revision that was polled, and there is
+    // nothing here to compare the new one with. The wire's own false means
+    // exactly that, and this UI renders it as no claim rather than "current".
+    expect(
+      deliveryFacts(READ, {
+        phase: "Reconciling",
+        revision: "45-9e8d7c6b",
+        cause: "",
+      }).stale,
+    ).toBe(false);
+  });
+
+  it("keeps the drift when the transition is about the same revision", () => {
+    expect(
+      deliveryFacts(READ, {
+        phase: "Healthy",
+        revision: "44-1a2b3c4d",
+        cause: "",
+      }).stale,
+    ).toBe(true);
+  });
+
+  it("is empty for an environment nothing answered for", () => {
+    expect(deliveryFacts(undefined, undefined)).toEqual(NO_DELIVERY);
   });
 });
 
@@ -237,6 +369,24 @@ describe("needsAttention", () => {
     expect(needsAttention("live")).toBe(false);
     // Nothing is trying, on purpose: that is not a to-do.
     expect(needsAttention("suspended")).toBe(false);
+  });
+
+  it("does not raise an environment for having drifted", () => {
+    // Stale is a statement about revisions, not about health: revision 44 is up
+    // and well and simply is not 45, and a rollback pin is stale on purpose.
+    // The band is keyed on the word, and drift never becomes one.
+    const drifted: EnvironmentRead = {
+      ...PRODUCTION,
+      stale: true,
+      verdicts: [],
+    };
+    const cell = readCell(drifted, undefined);
+    expect(cell.status.word).toBe("live");
+    expect(needsAttention(cell.status.word)).toBe(false);
+
+    // Stale AND wedged is in the band, and it is `stuck` that puts it there.
+    const wedged = readCell({ ...drifted, answer: "stuck" }, undefined);
+    expect(needsAttention(wedged.status.word)).toBe(true);
   });
 });
 

@@ -165,6 +165,72 @@ describe("EnvironmentOverview", () => {
     expect(screen.getByRole("link", { name: "Deploy" })).toBeTruthy();
   });
 
+  it("says stuck on a workload that gave up waiting, and only on that one", async () => {
+    // The fourth state `WorkloadVerdict` can finally report (#260). `code`
+    // stays a WAIT code on a stuck verdict — stuck is a timeout verdict and
+    // deliberately not a failure — so the code chip alone cannot tell a
+    // workload that gave up from one that is still starting, and the word
+    // beside it is what does.
+    const stalled = createRouterTransport((router) => {
+      router.service(SpecService, {
+        getSpec: () => ({
+          spec: { project: "checkout", version: "7", environments: ["production"] },
+        }),
+      });
+      router.service(DeployService, {
+        status: () => ({
+          phase: "Applied",
+          answer: "progressing",
+          revision: "8f2c1ad",
+          namespace: "checkout-production",
+          verdicts: [
+            {
+              resource: "Deployment/checkout-production/web",
+              code: "workload/progressing",
+              healthy: false,
+              degraded: false,
+              stuck: true,
+              message: "no progress for 10m0s",
+            },
+            {
+              resource: "Deployment/checkout-production/worker",
+              code: "workload/progressing",
+              healthy: false,
+              degraded: false,
+              stuck: false,
+              message: "1 of 3 replicas updated",
+            },
+            {
+              resource: "Deployment/checkout-production/api",
+              code: "crash-loop-back-off",
+              healthy: false,
+              degraded: true,
+              stuck: false,
+              message: "api is restarting repeatedly",
+            },
+          ],
+        }),
+      });
+    });
+    renderRoutes(stalled, "/projects/checkout/production", environmentRoutes());
+
+    // Two rows carry the same code and only one of them is stuck.
+    expect(
+      (await screen.findAllByText("workload/progressing")).length,
+    ).toBe(2);
+    const stuck = screen.getAllByText("stuck", { selector: ".k-pill" });
+    expect(stuck).toHaveLength(1);
+    expect(
+      stuck[0]?.closest(".k-verdict")?.textContent?.includes("no progress"),
+    ).toBe(true);
+    // And it is not the degraded row either: that one keeps its own code and
+    // grows no word.
+    const degraded = screen.getByText("crash-loop-back-off");
+    expect(
+      degraded.closest(".k-verdict")?.querySelectorAll(".k-pill"),
+    ).toHaveLength(1);
+  });
+
   it("reads Status once for the environment in the URL", async () => {
     const calls: string[] = [];
     const counted = createRouterTransport((router) => {
