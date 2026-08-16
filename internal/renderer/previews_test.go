@@ -353,3 +353,47 @@ func previewsSpecHash(t *testing.T, previews *model.ResolvedPreviews) string {
 	t.Fatalf("no ResourceSet in %v", kinds(ms))
 	return ""
 }
+
+// TestPreviewTemplateSplitsForAReleaseHook is #104's second acceptance
+// criterion, the one ADR-0019 recorded as *not met* and ADR-0028 left tracked on
+// #227: a preview runs the project's migrations before its workloads roll.
+//
+// Nothing preview-specific was built for it. The preview's artifact comes out of
+// the same renderer and the same publisher as the environment's (ADR-0028
+// decision 2), so it already carries the release stage; the only thing that had
+// to learn anything is the one Kustomization kelson writes as text, and it
+// learns it from the same resolved spec. What this pins is that it did — because
+// a preview that applied a staged artifact in one pass would run the migration
+// beside the rollout, which is the failure the whole split exists to prevent,
+// reintroduced through the one place the topology is not the controller's.
+func TestPreviewTemplateSplitsForAReleaseHook(t *testing.T) {
+	resolved := previewsFixture(githubPreviews())
+	resolved.Components[0].Release = &model.ResolvedRelease{
+		Command:        []string{"./manage.py", "migrate"},
+		TimeoutSeconds: 900,
+	}
+	tmpl := renderedTemplate(t, resolved)
+	for _, want := range []string{
+		"  name: checkout-production-pr<< inputs.id >>-release\n",
+		"  path: ./release\n",
+		"  prune: false\n",
+		"  timeout: 960s\n",
+		"  dependsOn:\n    - name: checkout-production-pr<< inputs.id >>-release\n",
+	} {
+		if !strings.Contains(tmpl, want) {
+			t.Errorf("a preview of a project with a release hook must carry %q:\n%s", want, tmpl)
+		}
+	}
+	if n := strings.Count(tmpl, "kind: Kustomization"); n != 2 {
+		t.Errorf("the template holds %d Kustomizations, want 2 — the release stage and the workloads:\n%s", n, tmpl)
+	}
+}
+
+// TestPreviewTemplateStaysSingleWithoutAHook: the split must not tax a project
+// that does not use it, in a preview exactly as in an environment.
+func TestPreviewTemplateStaysSingleWithoutAHook(t *testing.T) {
+	tmpl := renderedTemplate(t, previewsFixture(githubPreviews()))
+	if strings.Contains(tmpl, "dependsOn") || strings.Contains(tmpl, "-release") {
+		t.Errorf("a project with no release hook must template one Kustomization:\n%s", tmpl)
+	}
+}

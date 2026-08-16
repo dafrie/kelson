@@ -17,7 +17,62 @@ type Manifest struct {
 	Name       string
 	Namespace  string
 
+	// Stage says which of the two delivery stages this resource belongs to
+	// when the set carries a release hook. It is a fact about the resource, not
+	// a delivery decision: the renderer says "this Job must finish before the
+	// workloads roll", and the controller decides that the way to express that
+	// is two Kustomizations with a dependsOn (release.go, ADR-0028 decision 3).
+	Stage Stage
+
 	doc *yaml.Node
+}
+
+// Stage is a rendered resource's position relative to the release hook
+// (issue #227, ADR-0019 decision 2).
+//
+// A rendered set expresses sequencing only through order, and order is not a
+// wait (issue #89). What a release hook needs is a *barrier*: the migration has
+// to finish before the workloads roll. The renderer cannot build a barrier — it
+// emits manifests — but it is the only thing that knows which side of one each
+// resource belongs on, so it says so here and the delivery plane builds the
+// barrier out of it.
+//
+// The three values are a partition into two sets, not three:
+//
+//	release stage  = StagePrerequisite + StageRelease
+//	workload stage = StagePrerequisite + StageWorkload
+//
+// StagePrerequisite is in *both* deliberately. The Job's pod needs the
+// Namespace, the ServiceAccount it names, the Secrets its env references and
+// the database it migrates, and duplicating those into the release stage is
+// what lets the release stage stand up on its own — while leaving the workload
+// stage's ownership of them exactly where it already was, so nothing changes
+// about what prunes what (internal/controller/fluxobjects.go).
+type Stage uint8
+
+const (
+	// StageWorkload is the default and the whole set when nothing declares a
+	// release hook: the resources that roll once the hook has succeeded.
+	StageWorkload Stage = iota
+	// StagePrerequisite is a resource both stages apply — everything the
+	// renderer emits before the release Job, plus the ServiceAccount the Job's
+	// pod names.
+	StagePrerequisite
+	// StageRelease is the release stage alone: the hook Jobs, which must never
+	// reach the Kustomization that applies the workloads.
+	StageRelease
+)
+
+// HasReleaseStage reports whether a rendered set carries a release hook, which
+// is the one thing that makes the split worth paying for. A set without one is
+// published and delivered exactly as it was before #227.
+func HasReleaseStage(manifests []Manifest) bool {
+	for _, m := range manifests {
+		if m.Stage == StageRelease {
+			return true
+		}
+	}
+	return false
 }
 
 // YAML encodes the manifest as a single YAML document.
