@@ -12,7 +12,7 @@ import {
   sinceLabel,
   TICKER_LIMIT,
   type TickerEntry,
-} from "./ticker";
+} from "./ring";
 
 /**
  * The reconciliation ticker, drawn (#260).

@@ -22,7 +22,7 @@ import {
 } from "../components/status";
 import { EmptyState, LoadingState } from "../components/States";
 import { Ticker } from "../live/Ticker";
-import { useTicker } from "../live/ticker";
+import { useTicker } from "../live/ring";
 import {
   componentsFromVerdicts,
   deliveryFacts,

@@ -3,7 +3,7 @@ import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
 import { Ticker } from "./Ticker";
-import { entryFor, type TickerEntry } from "./ticker";
+import { entryFor, type TickerEntry } from "./ring";
 import type { WatchState } from "../api/watch";
 import { create } from "@bufbuild/protobuf";
 import { WatchResponse_EventSchema } from "../gen/kelson/v1alpha1/events_pb";

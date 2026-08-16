@@ -25,7 +25,7 @@ import { isDataServiceVerdict } from "../dataservices/parse";
 import { PhaseRail } from "../deploy/PhaseRail";
 import { parseCause, type RailInput } from "../deploy/rail";
 import { Ticker } from "../live/Ticker";
-import { useTicker } from "../live/ticker";
+import { useTicker } from "../live/ring";
 import { Previews } from "../previews/Previews";
 import { SecretsPanel } from "../secrets/SecretsPanel";
 import { useEnvironment } from "./EnvironmentPage";
