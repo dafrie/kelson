@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { isDataComponentKind, isKnownKind, parseComponents } from "./components";
+import {
+  bindingFor,
+  effectiveImage,
+  isDataComponentKind,
+  isKnownKind,
+  parseComponents,
+  parseOverrides,
+  parseSources,
+  projectImage,
+} from "./components";
 
 /**
  * The kind table of docs/model.md, read out of a document nobody promised was
@@ -102,5 +111,182 @@ spec:
     expect(isDataComponentKind("postgres")).toBe(true);
     expect(isDataComponentKind("valkey")).toBe(true);
     expect(isDataComponentKind("worker")).toBe(false);
+  });
+});
+
+/**
+ * The source binding (ADR-0035), which is what a component page states beside
+ * the image: a name, a repository and a ref, and how the binding was decided.
+ */
+describe("parseSources and bindingFor", () => {
+  const LISTED = `kind: Project
+metadata:
+  name: checkout
+
+spec:
+  sources:
+    - name: app
+      git: https://github.com/acme/checkout
+      ref: main
+    - name: tools
+      git: https://github.com/acme/build-tools
+      ref: v2
+      connection: acme-github
+
+  components:
+    - {name: web, port: 8080, source: app}
+    - {name: worker, source: tools}
+    - name: orphan
+      source: platform
+    - name: unbound
+`;
+
+  it("reads the declared list, with each entry's own ref and connection", () => {
+    expect(parseSources(LISTED)).toEqual([
+      {
+        name: "app",
+        git: "https://github.com/acme/checkout",
+        ref: "main",
+        connection: "",
+        shorthand: false,
+      },
+      {
+        name: "tools",
+        git: "https://github.com/acme/build-tools",
+        ref: "v2",
+        connection: "acme-github",
+        shorthand: false,
+      },
+    ]);
+  });
+
+  it("reads the singular shorthand as the one-entry list it declares", () => {
+    const shorthand = `spec:
+  source:
+    git: https://github.com/acme/checkout
+    ref: main
+  components:
+    - name: web
+      port: 8080
+`;
+    expect(parseSources(shorthand)).toEqual([
+      {
+        name: "default",
+        git: "https://github.com/acme/checkout",
+        ref: "main",
+        connection: "",
+        shorthand: true,
+      },
+    ]);
+    // And a component that names none binds to it, because a list of one is
+    // not a decision anybody took.
+    const web = parseComponents(shorthand)[0];
+    expect(web).toBeDefined();
+    if (web) {
+      const binding = bindingFor(web, parseSources(shorthand));
+      expect(binding.basis).toBe("sole");
+      expect(binding.source?.git).toBe("https://github.com/acme/checkout");
+    }
+  });
+
+  it("binds a component to the source it names", () => {
+    const byName = new Map(parseComponents(LISTED).map((c) => [c.name, c]));
+    const sources = parseSources(LISTED);
+    const worker = byName.get("worker");
+    expect(worker).toBeDefined();
+    if (worker) {
+      const binding = bindingFor(worker, sources);
+      expect(binding.basis).toBe("named");
+      expect(binding.source?.ref).toBe("v2");
+    }
+  });
+
+  it("reports a name this document does not declare as exactly that", () => {
+    // It may be a perfectly good instance-wide GitSource, which no document
+    // can see — so the reader states what it knows and refuses to call it an
+    // error.
+    const orphan = parseComponents(LISTED).find((c) => c.name === "orphan");
+    expect(orphan).toBeDefined();
+    if (orphan) {
+      const binding = bindingFor(orphan, parseSources(LISTED));
+      expect(binding.basis).toBe("undeclared");
+      expect(binding.requested).toBe("platform");
+      expect(binding.source).toBeUndefined();
+    }
+  });
+
+  it("refuses to pick between several sources when none is the default", () => {
+    const unbound = parseComponents(LISTED).find((c) => c.name === "unbound");
+    expect(unbound).toBeDefined();
+    if (unbound) {
+      expect(bindingFor(unbound, parseSources(LISTED)).basis).toBe("ambiguous");
+      // With a `default` entry there is a decision to read.
+      const withDefault = parseSources(
+        "spec:\n  sources:\n    - name: default\n      git: https://example.test/a\n    - name: other\n      git: https://example.test/b\n",
+      );
+      expect(bindingFor(unbound, withDefault).basis).toBe("default");
+    }
+  });
+
+  it("says a project with no source at all has none", () => {
+    const imageOnly = parseComponents(
+      "spec:\n  image: ghcr.io/acme/checkout:1.4.2\n  components:\n    - name: web\n      port: 8080\n",
+    )[0];
+    expect(imageOnly).toBeDefined();
+    if (imageOnly) {
+      expect(bindingFor(imageOnly, []).basis).toBe("none");
+    }
+  });
+});
+
+/** Rule P3, and the scope that decided it — the half a merge usually hides. */
+describe("effectiveImage", () => {
+  const PROJECT_DOC = `spec:
+  image: ghcr.io/acme/checkout:1.4.2
+  components:
+    - name: web
+      port: 8080
+    - name: worker
+      image: ghcr.io/acme/checkout-worker:1.4.2
+`;
+  const ENVIRONMENT_DOC = `spec:
+  components:
+    - name: web
+      image: ghcr.io/acme/checkout:1.4.3
+`;
+
+  it("gives the innermost scope that names one, and says which it was", () => {
+    const byName = new Map(parseComponents(PROJECT_DOC).map((c) => [c.name, c]));
+    const overrides = parseOverrides(ENVIRONMENT_DOC);
+    const web = byName.get("web");
+    const worker = byName.get("worker");
+    expect(
+      web && effectiveImage(web, overrides.get("web"), projectImage(PROJECT_DOC)),
+    ).toEqual({
+      image: "ghcr.io/acme/checkout:1.4.3",
+      scope: "environment",
+    });
+    expect(
+      worker &&
+        effectiveImage(worker, overrides.get("worker"), projectImage(PROJECT_DOC)),
+    ).toEqual({
+      image: "ghcr.io/acme/checkout-worker:1.4.2",
+      scope: "component",
+    });
+    expect(
+      web && effectiveImage(web, undefined, projectImage(PROJECT_DOC)),
+    ).toEqual({ image: "ghcr.io/acme/checkout:1.4.2", scope: "project" });
+  });
+
+  it("treats no image anywhere as a scope of its own, not as a blank", () => {
+    // A component with no image builds from its source; that is not an error
+    // and must not read as a missing value.
+    const nothing = parseComponents(
+      "spec:\n  components:\n    - name: web\n      port: 8080\n",
+    )[0];
+    expect(nothing && effectiveImage(nothing, undefined, "")).toEqual({
+      image: "",
+      scope: "none",
+    });
   });
 });
