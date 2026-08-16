@@ -4,18 +4,18 @@ import { useAsync, useClients } from "../api/data";
 import { Copyable } from "../components/Copyable";
 import { ErrorPanel } from "../components/ErrorPanel";
 import { StatusPill } from "../components/StatusPill";
-import { formatAge } from "../components/phase";
+import { formatAge } from "../components/format";
 import { EmptyState, LoadingState } from "../components/States";
 import type {
   ListPreviewsResponse,
   Preview,
   PreviewSettings,
 } from "../gen/kelson/v1alpha1/preview_pb";
+import { PreviewPill } from "../previews/Previews";
 import {
   changeRequestUrl,
   lifecycleLine,
   previewHeadline,
-  previewStatus,
   shortSha,
 } from "../previews/phase";
 import "../previews/previews.css";
@@ -174,10 +174,7 @@ function Detail({
 
       <div className="k-section__body k-previews__detail-body">
         <div className="k-previews__head">
-          <StatusPill
-            status={previewStatus(preview.phase, preview.suspended)}
-            label={preview.suspended ? "suspended" : preview.phase || "unknown"}
-          />
+          <PreviewPill preview={preview} />
           {preview.sha ? (
             <Copyable
               value={preview.sha}

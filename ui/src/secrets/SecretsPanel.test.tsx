@@ -7,7 +7,7 @@ import {
   SecretService,
   type SetSecretRequest,
 } from "../gen/kelson/v1alpha1/secret_pb";
-import { formatAge } from "../components/phase";
+import { formatAge } from "../components/format";
 import { renderAt } from "../test/render";
 import { SecretsPanel } from "./SecretsPanel";
 

@@ -665,56 +665,7 @@ function SpecForm({
                 errors={errorsFor(`environment.${env.name}.namespace`)}
                 note="override the model's default; blank leaves the default in place"
               />
-              <EditField
-                label="Delivery mode"
-                narrow
-                value={env.delivery.mode}
-                onChange={(v) =>
-                  setEnvironment(i, { delivery: { ...env.delivery, mode: v } })
-                }
-                readOnly={readOnly}
-                placeholder="direct"
-                errors={errorsFor(`environment.${env.name}.delivery.mode`)}
-                note="direct or flux; blank is the model's default (direct)"
-              />
             </div>
-
-            {env.delivery.mode.trim() === "" ? null : (
-              <div className="k-new__row">
-                <EditField
-                  label="Deployment repository"
-                  value={env.delivery.gitRepo}
-                  onChange={(v) =>
-                    setEnvironment(i, { delivery: { ...env.delivery, gitRepo: v } })
-                  }
-                  readOnly={readOnly}
-                  placeholder="git@github.com:acme/deploy.git"
-                  errors={errorsFor(`environment.${env.name}.delivery.gitRepo`)}
-                  note="where kelson commits rendered manifests — required in flux mode, and not the previews source repository"
-                />
-                <EditField
-                  label="Branch"
-                  narrow
-                  value={env.delivery.gitBranch}
-                  onChange={(v) =>
-                    setEnvironment(i, { delivery: { ...env.delivery, gitBranch: v } })
-                  }
-                  readOnly={readOnly}
-                  placeholder="main"
-                  errors={errorsFor(`environment.${env.name}.delivery.gitBranch`)}
-                />
-                <EditField
-                  label="Path"
-                  value={env.delivery.gitPath}
-                  onChange={(v) =>
-                    setEnvironment(i, { delivery: { ...env.delivery, gitPath: v } })
-                  }
-                  readOnly={readOnly}
-                  placeholder={`${env.project}/${env.name}`}
-                  errors={errorsFor(`environment.${env.name}.delivery.gitPath`)}
-                />
-              </div>
-            )}
 
             <PreviewsFields
               environment={env}
@@ -736,14 +687,15 @@ function SpecForm({
  * `enabled:` key in the schema and this does not invent one — an environment
  * either declares previews or does not.
  *
- * Two things this form states rather than enforces. Previews render in flux
- * delivery mode only, so a block written under any other mode is
- * `render/previews-require-flux` from the server on Check — the note says so
- * and the refusal arrives with its own remediation, which is better than a
- * disabled control that cannot explain itself. And the block alone stands up no
- * preview: a CI step running `kelson preview publish` is the other half, and
- * the field notes point at it, because an environment configured here and
- * nowhere else gets change requests whose artifacts never arrive.
+ * The block alone stands up no preview: a CI step running `kelson preview
+ * publish` is the other half, and the field notes point at it, because an
+ * environment configured here and nowhere else gets change requests whose
+ * artifacts never arrive.
+ *
+ * There is no delivery-mode gate to state any more. Previews used to require
+ * the flux mode and the note said so; the mode vocabulary was deleted with the
+ * `delivery:` block (ADR-0028 decision 8, #234), and an environment that
+ * declares previews renders them.
  */
 function PreviewsFields({
   environment: env,
@@ -760,7 +712,6 @@ function PreviewsFields({
   const set = (patch: Partial<PreviewsEdit>) => onChange({ ...p, ...patch });
   const field = (name: string) =>
     errorsFor(`environment.${env.name}.previews.${name}`);
-  const fluxMode = env.delivery.mode.trim() === "flux";
 
   return (
     <div className="k-edit__previews">
@@ -775,9 +726,7 @@ function PreviewsFields({
       </label>
       <span className="k-field__note k-mono">
         {p.enabled
-          ? fluxMode
-            ? "one environment per open pull request. A CI step running `kelson preview publish` supplies its manifests — without it, every preview waits for an artifact nobody pushed."
-            : "previews need the flux delivery mode — set it above, or Check will refuse this document."
+          ? "one environment per open pull request. A CI step running `kelson preview publish` supplies its manifests — without it, every preview waits for an artifact nobody pushed."
           : "off: this environment has no per-pull-request children."}
       </span>
 
@@ -801,7 +750,7 @@ function PreviewsFields({
               readOnly={readOnly}
               placeholder="https://github.com/acme/checkout"
               errors={field("repo")}
-              note="whose pull requests become previews — the HTTP(S) URL, and not the deployment repository above"
+              note="whose pull requests become previews; the HTTP(S) URL"
             />
             <EditField
               label="Forge credential"

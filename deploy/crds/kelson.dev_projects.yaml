@@ -200,7 +200,7 @@ spec:
                         description: five-field cron expression
                         type: string
                       source:
-                        description: a source name for a buildable component (ADR-0035) or the chart source of a helm component — exactly one of repository or oci (ADR-0016)
+                        description: a source name for a buildable component or the chart source of a helm component — exactly one of repository or oci
                         x-kubernetes-preserve-unknown-fields: true
                       tools:
                         description: 'agent components only; refused until issue #75'

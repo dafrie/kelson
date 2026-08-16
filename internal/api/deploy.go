@@ -1046,7 +1046,7 @@ func (s *Server) rollbackTarget(ctx context.Context, st controlstore.Environment
 		return rollbackTarget{}, fmt.Errorf(
 			"api: %s/%s has no revision %q in its history (%s), and this server has no registry to check the "+
 				"record against. The mirror holds the most recent %d revisions; the registry holds every one "+
-				"ever published (ADR-0028 decision 4)",
+				"ever published",
 			st.Project, st.Environment, requested, mirrorContents(st), maxHistoryEntries)
 	}
 
@@ -1072,7 +1072,7 @@ func (s *Server) rollbackTarget(ctx context.Context, st controlstore.Environment
 	return rollbackTarget{}, fmt.Errorf(
 		"api: %s/%s has no revision %q, in its history (%s) or in the registry. Both places kelson can "+
 			"confirm a revision from have been asked: the mirror, bounded at %d entries, and the registry's "+
-			"tag list, which is the record it mirrors (ADR-0028 decision 4)",
+			"tag list, which is the record it mirrors",
 		st.Project, st.Environment, requested, mirrorContents(st), maxHistoryEntries)
 }
 
@@ -1259,7 +1259,7 @@ func rollbackPreviewGap(st controlstore.EnvironmentState, target controlstore.Re
 		Resource: st.Project + "/" + st.Environment,
 		Cause:    "rollback/preview-unavailable",
 		Message: fmt.Sprintf("kelson cannot show what changes between %s and %s: %s. The rollback itself is "+
-			"exact — it repoints at bytes that already exist and cannot have changed (ADR-0028 decision 4).",
+			"exact — it repoints at bytes that already exist and cannot have changed.",
 			from, target.Revision, why),
 		Unrecoverable: false,
 	}
@@ -1286,7 +1286,7 @@ func beyondWindowFinding(st controlstore.EnvironmentState, target controlstore.R
 		Resource: st.Project + "/" + st.Environment,
 		Cause:    "rollback/beyond-window",
 		Message: fmt.Sprintf("revision %s is older than the %d entries this environment's status keeps, and it "+
-			"was confirmed against the registry's tag list instead (ADR-0028 decision 4). The artifact is "+
+			"was confirmed against the registry's tag list instead. The artifact is "+
 			"there and immutable, so restoring it is exact; what kelson cannot tell you is when it was "+
 			"published, which images it ran or how that deployment ended — the status mirror held those, and "+
 			"a registry never saw them.", target.Revision, maxHistoryEntries),

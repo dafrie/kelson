@@ -200,8 +200,8 @@ func externalSecretsInstalled(resolved *model.Resolved, profile clusterprofile.C
 			"Secret, but the cluster profile reports no external-secrets operator",
 		Remediation: "install external-secrets in the target cluster (it serves the external-secrets.io " +
 			"API group and reconciles ExternalSecret into a Kubernetes Secret), or set secrets.backend: cluster " +
-			"and write the Secret with kelson secret set. kelson delegates to the operator and does not install " +
-			"it (ADR-0005); an ExternalSecret applied where nothing reconciles it is a manifest that does nothing",
+			"and write the Secret with kelson secret set. kelson delegates to the operator and does not " +
+			"install it; an ExternalSecret applied where nothing reconciles it is a manifest that does nothing",
 	}}
 }
 
@@ -254,7 +254,7 @@ func resolveStore(resolved *model.Resolved, profile clusterprofile.ClusterProfil
 			Remediation: "name a store the cluster has, or create the SecretStore. kelson renders a reference " +
 				"to a store and never configures one: the backend credentials (Vault address and role, an AWS " +
 				"region and IRSA role, a GCP service account) live in the SecretStore's spec.provider, which is " +
-				"the cluster administrator's to write (ADR-0005, ADR-0020)",
+				"the cluster administrator's to write",
 		}}
 	}
 

@@ -172,7 +172,7 @@ describe("HistoryPage", () => {
     await waitFor(() =>
       expect(within(live).getByText("deployed now")).toBeTruthy(),
     );
-    expect(within(live).getByText("healthy")).toBeTruthy();
+    expect(within(live).getByText("live")).toBeTruthy();
 
     // Every other revision gets no live claim of any kind, even though it
     // carries a recorded outcome of its own — that is a snapshot from when it
@@ -189,11 +189,11 @@ describe("HistoryPage", () => {
 
     const live = await row("4-b2c3d4e5");
     await waitFor(() =>
-      expect(within(live).getByText("degraded")).toBeTruthy(),
+      expect(within(live).getByText("unhealthy")).toBeTruthy(),
     );
     expect(
       within(live)
-        .getByText("degraded")
+        .getByText("unhealthy")
         .closest(".k-pill")
         ?.getAttribute("data-status"),
     ).toBe("degraded");

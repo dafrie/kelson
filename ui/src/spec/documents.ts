@@ -631,13 +631,13 @@ export type ErrorTarget =
   | { doc: "project"; on: "component"; index: number; field: ComponentField }
   | { doc: "project"; on: "component-env"; index: number; name: string }
   | { doc: "environment"; on: "name" | "namespace"; environment: string }
-  // The two nested Environment stanzas the edit form reaches. `field` is the
-  // path after the stanza — "git.repo", "artifacts.repository",
-  // "filter.labels[1]" — left whole here and projected onto inputs by whichever
-  // form has them, exactly as a component's subfield is.
+  // The nested Environment stanza the edit form reaches. `field` is the path
+  // after the stanza — "artifacts.repository", "filter.labels[1]" — left whole
+  // here and projected onto inputs by whichever form has them, exactly as a
+  // component's subfield is.
   | {
       doc: "environment";
-      on: "delivery" | "previews";
+      on: "previews";
       environment: string;
       field: string;
     };
@@ -653,13 +653,17 @@ export function errorTarget(error: WireError): ErrorTarget | undefined {
     if (path === "$.spec.namespace") {
       return { doc: "environment", on: "namespace", environment: name };
     }
-    const stanza = /^\$\.spec\.(delivery|previews)(?:\.(.+))?$/.exec(path);
-    if (stanza?.[1] !== undefined) {
+    // `$.spec.delivery` is deliberately absent: the block is retired
+    // (ADR-0028, #234) and the model answers a document carrying one with
+    // "delete the whole `delivery:` block". No input can fix that, so the
+    // finding falls through to the general panel where its remediation is.
+    const stanza = /^\$\.spec\.previews(?:\.(.+))?$/.exec(path);
+    if (stanza !== null) {
       return {
         doc: "environment",
-        on: stanza[1] === "delivery" ? "delivery" : "previews",
+        on: "previews",
         environment: name,
-        field: stanza[2] ?? "",
+        field: stanza[1] ?? "",
       };
     }
     return undefined;

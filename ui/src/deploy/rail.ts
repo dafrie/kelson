@@ -1,4 +1,10 @@
 import type { StatusKind } from "../components/StatusPill";
+import {
+  statusFor,
+  statusForAnswer,
+  type Status,
+  type StatusWord,
+} from "../components/status";
 
 /**
  * The deployment state machine, as something a person can read (issue #68).
@@ -7,7 +13,7 @@ import type { StatusKind } from "../components/StatusPill";
  * spinner, because the three ways it fails demand three different actions and a
  * single red badge would hide which one you are in:
  *
- *   1. nothing picked the commit up      → check the delivery configuration
+ *   1. nothing picked the revision up    → check this environment's configuration
  *   2. the reconciler refused it         → fix the manifest
  *   3. it is applied and unhealthy       → debug the workload
  *
@@ -64,12 +70,16 @@ export interface RailInput {
    */
   reachedPhase?: string | undefined;
   /**
-   * Delivery mode / adapter name as the SERVER reported it — DeployRequest.mode
-   * echoed on the Proposed event, and DeployResponse.Committed.adapter. Never a
-   * guess made in the browser: an unnamed reconciler is rendered as "reconciler"
-   * with the honest note that the wire did not say which one.
+   * The reconciler's name as the SERVER reported it —
+   * DeployResponse.Committed.adapter. Never a guess made in the browser: an
+   * unnamed reconciler is rendered as "reconciler" with the honest note that
+   * the wire did not say which one.
+   *
+   * `Proposed.mode` used to be a second source. It carried the delivery mode,
+   * the server stopped setting it when the mode vocabulary was deleted
+   * (ADR-0028, #234), and reading a field nothing writes is how a dead concept
+   * survives.
    */
-  mode?: string | undefined;
   adapter?: string | undefined;
   /** Workloads whose health verdict is not healthy (StatusResponse.verdicts). */
   unhealthyWorkloads?: number | undefined;
@@ -115,20 +125,27 @@ export interface Diagnosis {
 
 export interface Rail {
   stages: RailStage[];
-  /** The engine's answer: waiting|progressing|live|stuck|rejected|degraded|unknown. */
+  /** The engine's answer, verbatim: waiting|progressing|live|stuck|rejected|degraded. */
   answer: string;
+  /** The same answer as the word and colour every screen shows it in. */
+  status: Status;
   headline: string;
   diagnosis: Diagnosis | undefined;
   /** Healthy or Rejected: the question is answered for this revision. */
   settled: boolean;
 }
 
+/**
+ * A stage's state as one of the shared words, so the rail is painted from the
+ * same palette policy as every pill: a done stage is green the way `live` is,
+ * a current one pulses the way `deploying` does.
+ */
 const STAGE_STATUS: Record<StageState, StatusKind> = {
-  done: "synced",
-  current: "reconciling",
-  stuck: "degraded",
-  failed: "failed",
-  pending: "unknown",
+  done: statusFor("live").tone,
+  current: statusFor("deploying").tone,
+  stuck: statusFor("stuck").tone,
+  failed: statusFor("failed").tone,
+  pending: statusFor("unknown").tone,
 };
 
 function indexOfPhase(phase: string): number {
@@ -138,14 +155,13 @@ function indexOfPhase(phase: string): number {
 /**
  * Reconciler names we can print because the server named the adapter.
  *
- * Flux is the only reconciler kelson has (ADR-0028: "delivery mode ceases to
- * be a concept"), and `Committed.adapter` is hardcoded to `"flux"` server-side
- * (`internal/api`'s `adapterName`) — so this table has one entry. It stays a
- * table, and a name outside it is still printed verbatim rather than hidden,
- * because the wire's word must never be silently discarded: an older server or
- * a value this build has not seen yet is still worth showing, just without a
- * friendly translation. Only an EMPTY mode degrades to the unnamed
- * "reconciler".
+ * Flux is the only reconciler kelson has (ADR-0028), and `Committed.adapter` is
+ * hardcoded to `"flux"` server-side (`internal/api`'s `adapterName`) — so this
+ * table has one entry. It stays a table, and a name outside it is still printed
+ * verbatim rather than hidden, because the wire's word must never be silently
+ * discarded: an older server or a value this build has not seen yet is still
+ * worth showing, just without a friendly translation. Only an EMPTY name
+ * degrades to the unnamed "reconciler".
  */
 const RECONCILERS: Record<string, string> = {
   flux: "Flux (kustomize-controller)",
@@ -154,22 +170,22 @@ const RECONCILERS: Record<string, string> = {
 /**
  * Who reconciles, and whether we actually know.
  *
- * Three sources, most authoritative first: the adapter the Committed event
- * named, the mode the Proposed event echoed, and the component a failure cause
- * blamed. DeployService.StatusResponse carries NONE of them — it has phase,
- * revision, cause, detail, verdicts and namespace — so on a screen fed by
- * Status alone the reconciler is unknown until something fails and names a
- * component. Naming it would need a `mode` (or `adapter`) field on
- * StatusResponse, mirroring DeployResponse.Committed.adapter; until that exists
- * this returns known=false and the UI says "not reported" rather than guessing
- * from the spec, which is what would be deployed and not what did deploy.
+ * Two sources, most authoritative first: the adapter the Committed event named,
+ * and the component a failure cause blamed. DeployService.StatusResponse
+ * carries neither — it has phase, revision, cause, detail, verdicts and
+ * namespace — so on a screen fed by Status alone the reconciler is unknown
+ * until something fails and names a component. Naming it would need an
+ * `adapter` field on StatusResponse, mirroring
+ * DeployResponse.Committed.adapter; until that exists this returns known=false
+ * and the UI says "not reported" rather than guessing from the spec, which is
+ * what would be deployed and not what did deploy.
  */
 export function reconcilerActor(input: RailInput): {
   name: string;
   known: boolean;
 } {
   const cause = input.cause ?? NO_CAUSE;
-  const named = [input.adapter, input.mode, cause.component]
+  const named = [input.adapter, cause.component]
     .map((s) => (s ?? "").trim())
     .find((s) => s !== "" && s !== "reconciler");
   if (named === undefined) return { name: "reconciler", known: false };
@@ -267,14 +283,19 @@ export function parseCause(text: string): RailCause {
   return { component, reason, message: parts.slice(at).join(": ") };
 }
 
-const HEADLINES: Record<string, string> = {
+/**
+ * One sentence per word, keyed by the word rather than by the engine's token,
+ * so the headline and the pill above it cannot drift apart.
+ */
+const HEADLINES: Record<StatusWord, string> = {
   waiting: "Committed. Waiting for a reconciler to pick it up.",
-  progressing: "In flight.",
+  deploying: "Deploying.",
   live: "Live and healthy.",
   stuck: "No progress.",
-  rejected: "Rejected before anything was applied.",
-  degraded: "Applied, but not healthy.",
-  unknown: "The delivery state could not be read.",
+  failed: "Refused before anything was applied.",
+  unhealthy: "Applied, but not healthy.",
+  suspended: "Paused. What is running is the last thing that reconciled.",
+  unknown: "This deployment's state could not be read.",
 };
 
 /** Builds the rail. Pure: same input, same rail, no clock and no routing. */
@@ -299,10 +320,13 @@ export function buildRail(input: RailInput): Rail {
     };
   });
 
+  const status = statusForAnswer(answer);
+
   return {
     stages,
     answer,
-    headline: diagnosis?.title ?? HEADLINES[answer] ?? HEADLINES.unknown ?? "",
+    status,
+    headline: diagnosis?.title ?? HEADLINES[status.word],
     diagnosis,
     settled: phase === "Healthy" || phase === "Rejected",
   };
@@ -455,9 +479,10 @@ function diagnose({
       kind: "unhealthy",
       stage: "Healthy",
       title: `Live, but ${workloads} are unhealthy`,
-      detail: `The revision arrived — the delivery phase is ${phase}. The health verdicts below are what is failing.`,
+      detail:
+        "The revision arrived and was applied. The health verdicts below are what is failing.",
       nextStep:
-        "Debug the workload — the delivery side is done, so this is the component's own problem.",
+        "Debug the workload — delivery is done, so this is the component's own problem.",
       action: { kind: "logs", label: "Open logs" },
       component: cause.component,
     };
@@ -473,22 +498,23 @@ function stuckTitle(phase: string, who: string): string {
     case "Reconciling":
       return `${who} started, then stopped making progress`;
     default:
-      return `${who} has not picked this commit up`;
+      return `${who} has not picked this revision up`;
   }
 }
 
 /**
- * All three read "check the delivery configuration", because that IS the action
- * for every flavour of "nothing is moving" — the classic cause is kelson writing
- * to a path nothing watches. The sentences differ because what to check differs.
+ * All three read "check this environment's configuration", because that IS the
+ * action for every flavour of "nothing is moving" — the classic cause is
+ * nothing watching what kelson published. The sentences differ because what to
+ * check differs.
  */
 function stuckNextStep(phase: string, who: string): string {
   switch (phase) {
     case "Proposed":
-      return "Check the delivery configuration — the commit step never completed, so this environment's delivery target is what to look at first.";
+      return "Check this environment's configuration — the publish step never completed, so nothing was handed to a reconciler.";
     case "Reconciling":
-      return `Check the delivery configuration, then ${who} itself — it took the revision and stalled, so its own logs and conditions hold the reason.`;
+      return `Check this environment's configuration, then ${who} itself — it took the revision and stalled, so its own logs and conditions hold the reason.`;
     default:
-      return `Check the delivery configuration — ${who} must watch the path kelson writes to, and its source must be syncing.`;
+      return `Check this environment's configuration — ${who} must be watching what kelson published, and its source must be syncing.`;
   }
 }

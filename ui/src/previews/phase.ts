@@ -1,4 +1,5 @@
 import type { StatusKind } from "../components/StatusPill";
+import { statusForPreview, type Status } from "../components/status";
 import type {
   Preview,
   PreviewLifecycle,
@@ -11,11 +12,13 @@ import type {
  * The phase itself is decided server-side (internal/delivery/flux/previews.go)
  * for the reason every other vocabulary in kelson is: one place decides what a
  * state means and the CLI, the UI and an agent render the same word. What lives
- * here is the *rendering* of it — which pill, and the one sentence that says
- * what a reader should do about it — because that sentence is different in a
- * browser than it is in a terminal and neither belongs in the other.
+ * here is the *rendering* of it — the one sentence that says what a reader
+ * should do about it — because that sentence is different in a browser than it
+ * is in a terminal and neither belongs in the other.
  *
- * A phase this module does not know is `unknown`, never a guess.
+ * The pill itself is not this module's to name: a preview is an environment and
+ * a reader asks the same question of it as of any other, so the word and the
+ * colour come from `components/status.ts` like everything else's.
  */
 
 /** The phases internal/delivery/flux publishes. */
@@ -27,22 +30,8 @@ export const PREVIEW_PHASES = [
   "unknown",
 ] as const;
 
-const PHASE_PILLS: Record<string, StatusKind> = {
-  ready: "synced",
-  applying: "reconciling",
-  // Not "failed": a missing artifact is almost always a CI step nobody added,
-  // and drawing it as a failure sends a reader to the manifests instead of to
-  // the workflow (ADR-0017 decision 8).
-  "awaiting-artifact": "degraded",
-  failed: "failed",
-};
-
-export function previewStatus(phase: string, suspended: boolean): StatusKind {
-  // Suspension wins over the phase for the same reason Flux reports it
-  // separately: a suspended Kustomization keeps its last conditions, so its
-  // phase describes a moment that is no longer being maintained.
-  if (suspended) return "suspended";
-  return PHASE_PILLS[phase] ?? "unknown";
+export function previewStatus(phase: string, suspended: boolean): Status {
+  return statusForPreview(phase, suspended);
 }
 
 /** The one line under a preview row: what this state is, and what fixes it. */

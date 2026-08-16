@@ -21,7 +21,7 @@ This reference is **generated** from the committed JSON Schema [`schema/environm
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `autoDeploy` | boolean | no | `false` | follow the components' sources — a push to a bound repository re-renders and republishes this environment (ADR-0036) |
+| `autoDeploy` | boolean | no | `false` | follow the components' sources — a push to a bound repository re-renders and republishes this environment |
 | `cluster` | string | no |  |  |
 | `components` | array of object | no |  |  |
 | `namespace` | string | no |  |  |
@@ -36,10 +36,10 @@ This reference is **generated** from the committed JSON Schema [`schema/environm
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `autoDeploy` | boolean | no |  | workloads only; follow this component's source here — it overrides the environment's own setting (ADR-0036) |
+| `autoDeploy` | boolean | no |  | workloads only; follow this component's source here — it overrides the environment's own setting |
 | `env` | map of one of: string, object {from}, object {secret, key} | no |  |  |
 | `image` | string | no |  | pins this component's image in this environment only; the promotion primitive (rule P3) |
-| `imageTracked` | boolean | no |  | workloads only; the image named here is a starting point rather than a hold — tracking may still advance it and the trigger overwrites it on the next push (ADR-0036 decision 5) |
+| `imageTracked` | boolean | no |  | workloads only; the image named here is a starting point rather than a hold — tracking may still advance it and the trigger overwrites it on the next push |
 | `name` | string | yes |  |  |
 | `preset` | string enum `"shared"`, `"small"`, `"ha-small"`, `"ha-medium"`, `"branch"` | no |  | data components only |
 | `replicas` | object | no |  |  |
@@ -100,7 +100,7 @@ This reference is **generated** from the committed JSON Schema [`schema/environm
 | `interval` | string | no | `"10m"` | how often the forge is polled for change requests |
 | `provider` | string enum `"github"`, `"gitlab"` | yes |  | the forge whose change requests become previews |
 | `repo` | string | yes |  | HTTP(S) URL of the source repository whose change requests become previews; not delivery.git.repo |
-| `secretRef` | string | no |  | name of the Secret holding forge credentials; never a token. Omit it to have kelson materialize one from the git connection covering previews.repo (ADR-0033) |
+| `secretRef` | string | no |  | name of the Secret holding forge credentials; never a token. Omit it to have kelson materialize one from the git connection covering previews.repo |
 | `skip` | object | no |  |  |
 
 ##### `spec.previews.artifacts`

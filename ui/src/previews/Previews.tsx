@@ -4,7 +4,7 @@ import { useAsync, useClients } from "../api/data";
 import { Copyable } from "../components/Copyable";
 import { ErrorPanel } from "../components/ErrorPanel";
 import { StatusPill } from "../components/StatusPill";
-import { formatAge } from "../components/phase";
+import { formatAge } from "../components/format";
 import type {
   ListPreviewsResponse,
   Preview,
@@ -36,10 +36,10 @@ import "./previews.css";
  *     and disappears when the change request closes. A control here would either
  *     lie about what it did or do the publisher's job without the checkout and
  *     the image reference CI already has (ADR-0017 decision 8).
- *   - **Hide the delivery-mode gate.** An environment in direct mode that
- *     declares previews gets the server's own render/previews-require-flux,
- *     code, message and remediation intact, in the same panel every other
- *     structured refusal reaches the reader through.
+ *   - **Swallow a structured refusal.** Whatever ListPreviews reports about
+ *     this environment arrives with its code, message and remediation intact,
+ *     in the same panel every other structured refusal reaches the reader
+ *     through.
  *   - **Read an empty list as "nothing is wrong".** flux-operator missing, the
  *     lifecycle pair never delivered and a poller that cannot reach the forge
  *     all produce no previews, and each gets its own sentence (previews.ts).
@@ -93,7 +93,7 @@ export function Previews({
         />
       ) : null}
 
-      {/* The gate and any other structured finding, verbatim. */}
+      {/* Any structured finding, verbatim. */}
       {data !== undefined && data.errors.length > 0 ? (
         <ErrorPanel
           title="This environment cannot run previews"
@@ -102,7 +102,7 @@ export function Previews({
       ) : null}
 
       {data !== undefined && settings === undefined && data.errors.length === 0 ? (
-        <NotConfigured mode={data.mode} />
+        <NotConfigured />
       ) : null}
 
       {settings !== undefined ? (
@@ -122,7 +122,7 @@ export function Previews({
  * The empty state, which is where most readers meet this feature: what previews
  * are, the two halves that have to be in place, and where the rest is written.
  */
-function NotConfigured({ mode }: { mode: string }) {
+function NotConfigured() {
   return (
     <div className="k-previews__empty">
       <p className="k-previews__lede">
@@ -132,14 +132,10 @@ function NotConfigured({ mode }: { mode: string }) {
       <p className="k-previews__lede">
         <strong>Two halves have to be in place.</strong> A{" "}
         <code className="k-mono">previews:</code> block on the Environment says
-        which pull requests qualify, and a CI step running{" "}
+        which pull requests qualify — the edit screen has the fields — and a CI
+        step running{" "}
         <code className="k-mono">kelson preview publish --pr … --sha …</code>{" "}
         pushes the manifests each preview applies.
-      </p>
-      <p className="k-previews__lede">
-        Previews need the <span className="k-mono">flux</span> delivery mode;
-        this environment is <span className="k-mono">{mode || "unset"}</span>.
-        The edit screen has the fields.
       </p>
       <a
         className="k-previews__docs k-mono"
@@ -217,6 +213,23 @@ function Configured({
   );
 }
 
+/**
+ * A preview's word, with flux-operator's own phase kept beside it as a labelled
+ * fact. The word answers "is this change request up"; the phase is what to
+ * quote at the operator when it is not.
+ */
+export function PreviewPill({ preview }: { preview: Preview }) {
+  const state = previewStatus(preview.phase, preview.suspended);
+  return (
+    <>
+      <StatusPill status={state.tone} label={state.word} />
+      {preview.phase !== "" ? (
+        <span className="k-mono k-previews__muted">phase {preview.phase}</span>
+      ) : null}
+    </>
+  );
+}
+
 function PreviewRow({
   preview,
   settings,
@@ -259,10 +272,7 @@ function PreviewRow({
         >
           details →
         </Link>
-        <StatusPill
-          status={previewStatus(preview.phase, preview.suspended)}
-          label={preview.suspended ? "suspended" : preview.phase || "unknown"}
-        />
+        <PreviewPill preview={preview} />
         {/* The full commit is what the tag is, so the abbreviation is a label
             over the whole value rather than a value of its own. */}
         {preview.sha ? (

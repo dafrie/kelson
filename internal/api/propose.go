@@ -295,9 +295,8 @@ type connectionProposal struct {
 func (s *Server) proposer(ctx context.Context, name string) (connectionProposal, error) {
 	if strings.TrimSpace(name) == "" {
 		return connectionProposal{}, failRequest(fmt.Errorf("api: ProposeSpec needs the connection to propose " +
-			"through. It is not resolved by host match: ADR-0033 decision 4's match answers \"which credential " +
-			"clones this project's source\", and the repository holding a project's documents is routinely a " +
-			"different one"))
+			"through. It is not resolved by host match: a host match answers \"which credential clones this " +
+			"project's source\", and the repository holding a project's documents is routinely a different one"))
 	}
 	if s.connections == nil {
 		return connectionProposal{}, unimplemented("the git connection store")
@@ -326,7 +325,7 @@ func (s *Server) proposer(ctx context.Context, name string) (connectionProposal,
 			Message: fmt.Sprintf("connection %q speaks %q, and that adapter opens no pull requests: a bare git "+
 				"host has none to open. What it can do is %s", conn.Name, conn.Spec.Provider, capabilitiesOf(provider)),
 			Remediation: "copy the document from the export and commit it yourself. Proposing is an optional " +
-				"capability (ADR-0033 decision 3: absence degrades the UI, never the deploy), so this connection " +
+				"capability — its absence degrades the UI, never the deploy — so this connection " +
 				"is not broken and there is nothing on it to fix",
 		})
 	}
@@ -376,7 +375,7 @@ func proposalFailed(conn controlstore.StoredConnection, repository string, err e
 			Message: fmt.Sprintf("connection %q authenticated against %s and was refused permission to write to "+
 				"%s. Opening a pull request creates a blob, a tree, a commit and a branch, which needs "+
 				"`contents: write` — and kelson's app asks for `contents: read`, on purpose, because everything "+
-				"else it does only reads your source (ADR-0033 decision 2)", conn.Name, host, repository),
+				"else it does only reads your source", conn.Name, host, repository),
 			Remediation: fmt.Sprintf("grant it, or commit the change yourself. To grant it: open the kelson app "+
 				"at %s/settings/apps, set Permissions & events → Repository permissions → Contents to \"Read and "+
 				"write\", and accept the new permission on the installation at %s/settings/installations — GitHub "+
@@ -392,8 +391,8 @@ func proposalFailed(conn controlstore.StoredConnection, repository string, err e
 			Message: fmt.Sprintf("connection %q authenticated against %s and reports no installation covering %s: "+
 				"the repository holding a project's documents is often not the repository holding its source, and "+
 				"an installation scoped to the second cannot write to the first", conn.Name, host, repository),
-			Remediation: fmt.Sprintf("add %s to the installation at %s/settings/installations (ADR-0033 decision 2 "+
-				"step 3), or commit the exported document yourself", repository, host),
+			Remediation: fmt.Sprintf("add %s to the installation at %s/settings/installations, or commit "+
+				"the exported document yourself", repository, host),
 		})
 	case errors.Is(err, forge.ErrAuthFailed):
 		return fail(connect.CodePermissionDenied, connectionError{

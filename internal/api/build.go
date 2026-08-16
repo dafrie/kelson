@@ -403,8 +403,8 @@ func declineReport(p *model.Project) string {
 	}
 	return fmt.Sprintf("Project %s %s, so kelson's own build plane produces its images and publishing this "+
 		"report would publish over it. Set spec.build.by: %s to hand image production to your pipeline — that is "+
-		"the whole difference between the two postures, and kelson acts on a report only for the second (ADR-0034 "+
-		"decision 3).", p.Metadata.Name, how, model.BuildByCI)
+		"the whole difference between the two postures, and kelson acts on a report only for the second.",
+		p.Metadata.Name, how, model.BuildByCI)
 }
 
 // kelsonBuildsImages reports whether kelson's build plane would produce this
@@ -667,7 +667,7 @@ func deployedMessage(spec decoded, ref string, out PushOutcome, notes []string) 
 	default:
 		clauses = append(clauses, fmt.Sprintf("deployed nothing at %s: no component of project %s follows %s here — "+
 			"a component follows its source when the environment (or the component) sets autoDeploy: true and the "+
-			"source it binds is this repository at this ref (ADR-0036 decision 2)",
+			"source it binds is this repository at this ref",
 			ref, spec.project.Metadata.Name, ref))
 	}
 	return redact.Scrub(strings.Join(append(clauses, notes...), "; "))
@@ -1018,7 +1018,7 @@ func reportMessage(spec decoded, pr string, triggered, notes []string) string {
 	default:
 		clauses = append(clauses, fmt.Sprintf("published nothing for change request %s: no environment of project %s "+
 			"declares spec.previews, so this project has no change-request previews to publish. Add a previews "+
-			"block to the environment whose pull requests should become previews (ADR-0017)",
+			"block to the environment whose pull requests should become previews",
 			pr, spec.project.Metadata.Name))
 	}
 	return redact.Scrub(strings.Join(append(clauses, notes...), "; "))
@@ -1172,7 +1172,7 @@ func validateReport(msg *kelsonv1alpha1.ReportBuildRequest) error {
 				fmt.Sprintf("component %q reports %s, which is not pinned by digest", component, ref),
 				"report the reference your push resolved to — `repository@sha256:…`. A tag can be moved after "+
 					"the report, which would make the artifact kelson publishes describe something else "+
-					"entirely (#51, ADR-0010)")
+					"entirely (#51)")
 		}
 	}
 	return nil

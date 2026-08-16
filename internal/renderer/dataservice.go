@@ -222,7 +222,7 @@ func serviceManifests(
 		Message: "component " + quoted(svc.Name) + " has kind " + quoted(string(svc.Kind)) +
 			", which kelson does not render yet",
 		Remediation: "kind: postgres and kind: valkey render today. Remove the component, or install the " +
-			"engine yourself and bind to it as an ordinary workload (ADR-0005)",
+			"engine yourself and bind to it as an ordinary workload",
 	}}
 }
 
@@ -255,10 +255,9 @@ func postgresManifests(
 			Code: ErrServiceNotImplemented,
 			Message: "service " + quoted(svc.Name) + " requests preset " + quoted(string(model.PresetShared)) +
 				": the shared preset is deferred — dedicated presets (small, ha-small, ha-medium) work today",
-			Remediation: "the shared cluster was ADR-0007's cost optimization, never an ask; dedicated " +
-				"clusters per postgres component are simpler, work today including bindings, and the pod " +
-				"cost is acceptable at this stage (owner decision, issue #93, which tracks any return of " +
-				"shared). Use preset: small",
+			Remediation: "a shared cluster was only ever a cost optimization; a dedicated cluster per " +
+				"postgres component is simpler, works today including bindings, and costs an acceptable " +
+				"number of pods at this stage. Use preset: small (issue #93 tracks any return of shared)",
 		}}
 	}
 
@@ -369,8 +368,8 @@ func valkeyPresetSupported(svc *model.ResolvedDataService) error {
 			Message: "component " + quoted(svc.Name) + " requests preset " + quoted(string(model.PresetBranch)) +
 				", which is not a valkey topology",
 			Remediation: "branching bootstraps a copy of a database from a snapshot of its durable state " +
-				"(ADR-0007, issue #99), and a kelson cache has no durable state to copy — it renders with " +
-				"persistence off, and an empty cache is what starting one already gives you. " +
+				"(issue #99), and a kelson cache has no durable state to copy — it renders with persistence " +
+				"off, and an empty cache is what starting one already gives you. " +
 				"Use small, ha-small or ha-medium",
 		}}
 	}
@@ -404,8 +403,8 @@ func valkeyCapable(svc *model.ResolvedDataService, profile clusterprofile.Cluste
 		Message: "component " + quoted(svc.Name) + ": " + verdict.Message,
 		Remediation: "blocking capabilities: " + strings.Join(blocking, ", ") +
 			". Install or upgrade valkey-io/valkey-operator — kelson delegates every managed valkey " +
-			"component to it and never installs it as a side effect (ADR-0005, ADR-0015) — then re-detect " +
-			"the cluster profile. All three cache presets need the same capabilities, so no lighter one exists",
+			"component to it and never installs it as a side effect — then re-detect the cluster profile. " +
+			"All three cache presets need the same capabilities, so no lighter one exists",
 	}}
 }
 
@@ -569,7 +568,7 @@ func valkeyWithheldKeys(component string) map[string]string {
 			"(or --from-stdin password, to keep it out of your shell history), then add " +
 			"`auth: {secret: " + component + "-auth, key: password}` to the " + quoted(component) + " component. " +
 			"kelson then renders the ACL user against that Secret and this binding becomes a secretKeyRef " +
-			"against the same one (ADR-0015 amendment 2026-08-14, ADR-0018, docs/data-services.md)",
+			"against the same one",
 	}
 }
 
@@ -602,9 +601,9 @@ func supportedPreset(svc *model.ResolvedDataService, profile clusterprofile.Clus
 		Message: "service " + quoted(svc.Name) + ": " + verdict.Message,
 		Remediation: "blocking capabilities: " + strings.Join(blocking, ", ") +
 			". Upgrade the CloudNativePG operator this cluster already runs — its resources are " +
-			"cluster-scoped and a second install fights the first (ADR-0005) — then re-detect the " +
-			"cluster profile. small, ha-small and ha-medium all need the same capabilities, so no " +
-			"lighter dedicated preset exists",
+			"cluster-scoped and a second install fights the first — then re-detect the cluster profile. " +
+			"small, ha-small and ha-medium all need the same capabilities, so no lighter dedicated " +
+			"preset exists",
 	}}
 }
 

@@ -284,7 +284,7 @@ func (s *Server) probe(ctx context.Context, conn controlstore.StoredConnection) 
 			Reachable: true,
 			Message: fmt.Sprintf("the credential is present and well-formed, and provider %q has no repository "+
 				"browser — so there is no account or repository count to report. That is a capability this "+
-				"forge does not offer, not a fault (ADR-0033 decision 3)", conn.Spec.Provider),
+				"forge does not offer, not a fault", conn.Spec.Provider),
 			ReachableReason: controlstore.ReasonReachable,
 		}
 	}
@@ -495,7 +495,7 @@ func (s *Server) browse(ctx context.Context, name string) (connectionBrowse, err
 				conn.Name, conn.Spec.Provider, capabilitiesOf(provider)),
 			Remediation: fmt.Sprintf("paste the repository's URL instead — that path works for every connection, "+
 				"every forge and every auth kind, and %q still authenticates the clone that follows. Browsing is "+
-				"an optional capability (ADR-0033 decision 3: absence degrades the UI, never the deploy), so this "+
+				"an optional capability — its absence degrades the UI, never the deploy — so this "+
 				"connection is not broken and there is nothing on it to fix; a forge gains a picker when somebody "+
 				"writes that half of its adapter", conn.Name),
 		})
@@ -739,7 +739,7 @@ func connectionDocument(msg *kelsonv1alpha1.CreateConnectionRequest) (*model.Git
 	}
 	if strings.TrimSpace(msg.GetSecretRef()) == "" {
 		return nil, fmt.Errorf("api: CreateConnection needs secret_ref: the name of an existing Secret holding "+
-			"the token under key %q. This request carries the name and never the token (ADR-0009)", model.TokenKey)
+			"the token under key %q. This request carries the name and never the token", model.TokenKey)
 	}
 	owner, err := modelOwner(msg.GetOwner())
 	if err != nil {
@@ -867,7 +867,7 @@ func probeSummary(conn controlstore.StoredConnection, account string, spread boo
 			"single account to report", conn.Spec.EffectiveHost(), plural(count, "repository", "repositories"))
 	default:
 		return fmt.Sprintf("%s answered, and the credential can see no repositories. For a GitHub App that is "+
-			"an installation with nothing selected — add repositories to it (ADR-0033 decision 2 step 3)",
+			"an installation with nothing selected — add repositories to it",
 			conn.Spec.EffectiveHost())
 	}
 }

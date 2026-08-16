@@ -221,7 +221,12 @@ spec:
 	if got == nil {
 		t.Fatalf("a delivery block must be refused as %s, got:\n%v", ErrUnknownField, errs)
 	}
-	if !strings.Contains(got.Remediation, "ADR-0028") || !strings.Contains(got.Remediation, "delete") {
+	// The remediation is the whole migration and it names no design record: an
+	// author who wrote a correct thing that has since been removed needs the
+	// instruction, not the citation (#260).
+	if !strings.Contains(got.Remediation, "delete") ||
+		!strings.Contains(got.Remediation, "nothing about the deployment changes") ||
+		strings.Contains(got.Remediation, "ADR-") {
 		t.Errorf("the remediation must say the block is gone and safe to delete, got %q", got.Remediation)
 	}
 	if got.Line != 6 {

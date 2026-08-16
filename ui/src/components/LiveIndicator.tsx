@@ -10,13 +10,17 @@ import "./LiveIndicator.css";
  * server that cannot watch renders nothing at all, because "this build has no
  * event stream" is not news to anyone reading a screen that simply behaves the
  * way it always did.
+ *
+ * It says "streaming" and not "live" because "live" is a status word now
+ * (components/status.ts): a connected transport and a running revision are
+ * different claims and must not share a label on the same screen.
  */
 export function LiveIndicator({ state }: { state: WatchState }) {
   if (state === "off") return null;
   return (
     <span className="k-live" data-state={state}>
       <span className="k-live__dot" />
-      {state === "live" ? "live" : "reconnecting…"}
+      {state === "live" ? "streaming" : "reconnecting…"}
     </span>
   );
 }

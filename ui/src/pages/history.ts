@@ -73,7 +73,7 @@ export function shortHash(hash: string): string {
 
 /**
  * `committed_at` as wall clock, in the shape the deploy stream's timestamps
- * already take on screen (components/phase.ts's formatInstant): UTC, seconds,
+ * already take on screen (components/format.ts's formatInstant): UTC, seconds,
  * no fractional part.
  *
  * The field is documented as optional and is a free-form string on the wire, so

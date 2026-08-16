@@ -16,7 +16,7 @@ import { Previews } from "./Previews";
  *
  * The four cases below are the four this section exists to keep apart, and they
  * are the reason it does not simply print a list: an environment that declares
- * no previews, one whose delivery mode forbids them, one whose cluster has no
+ * no previews, one the renderer refuses, one whose cluster has no
  * flux-operator, and one with previews that are actually running.
  */
 
@@ -26,7 +26,6 @@ const CONFIGURED: Response = {
   project: "checkout",
   environment: "staging",
   namespace: "checkout-staging",
-  mode: "flux",
   settings: {
     provider: "github",
     repo: "https://github.com/acme/checkout",
@@ -60,7 +59,6 @@ describe("Previews", () => {
       project: "checkout",
       environment: "staging",
       namespace: "checkout-staging",
-      mode: "direct",
     });
 
     // Both halves, because a spec block alone gets a reader the stage-1
@@ -68,29 +66,26 @@ describe("Previews", () => {
     expect(await screen.findByText(/spawns no per-pull-request children/)).toBeTruthy();
     expect(screen.getByText(/Two halves have to be in place/)).toBeTruthy();
     expect(screen.getByText(/kelson preview publish/)).toBeTruthy();
-    // And the gate, before anyone configures anything.
-    expect(screen.getByText(/Previews need the/)).toBeTruthy();
     expect(
       screen.getByRole("link", { name: /Previews: a child environment/ }),
     ).toBeTruthy();
   });
 
-  it("shows the server's own render/previews-require-flux, code and fix intact", async () => {
+  it("shows a structured refusal the server sent, code and fix intact", async () => {
     renderPanel({
       ...CONFIGURED,
-      mode: "direct",
       errors: [
         {
-          code: "render/previews-require-flux",
+          code: "render/preview-name-too-long",
           resource: "",
           field: "",
           application: "",
           overlay: "",
           target: "",
           message:
-            'environment "staging" declares previews, which render a flux-operator ResourceSet and ResourceSetInputProvider, but its delivery mode is "direct"',
+            'previews name every child "checkout-staging-pr<change request>", and "checkout-staging" is already 47 characters',
           remediation:
-            "set delivery.mode: flux on this environment, or remove the previews block",
+            "shorten the project or environment name so that <project>-<environment> is at most 45 characters",
           docsUrl: "",
           line: 0,
           column: 0,
@@ -99,11 +94,11 @@ describe("Previews", () => {
       ],
     });
 
-    expect(await screen.findByText("render/previews-require-flux")).toBeTruthy();
-    expect(screen.getByText(/but its delivery mode is "direct"/)).toBeTruthy();
-    expect(screen.getByText(/set delivery.mode: flux/)).toBeTruthy();
-    // The configuration is still shown: a reader whose mode is wrong needs to
-    // see what they configured.
+    expect(await screen.findByText("render/preview-name-too-long")).toBeTruthy();
+    expect(screen.getByText(/is already 47 characters/)).toBeTruthy();
+    expect(screen.getByText(/shorten the project or environment name/)).toBeTruthy();
+    // The configuration is still shown: a reader whose spec was refused needs
+    // to see what they configured.
     expect(screen.getByText(/Polling https:\/\/github.com\/acme\/checkout/)).toBeTruthy();
   });
 

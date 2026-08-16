@@ -190,8 +190,8 @@ func (s *Server) revisionDiff(ctx context.Context, revision string, cur *rendere
 	}
 	if !found {
 		return nil, fmt.Errorf(
-			"api: %s/%s has no revision %q in the registry, which holds every artifact it ever published "+
-				"(ADR-0028 decision 4). `kelson history` lists them; `from` compares against documents you "+
+			"api: %s/%s has no revision %q in the registry, which holds every artifact it ever "+
+				"published. `kelson history` lists them; `from` compares against documents you "+
 				"supply and dry_run=SERVER against the live cluster",
 			project, environment, revision)
 	}

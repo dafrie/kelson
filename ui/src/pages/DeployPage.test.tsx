@@ -37,7 +37,6 @@ function transportFor(events: () => AsyncIterable<unknown>, seen?: DeployRequest
                 project: "checkout",
                 environment: "production",
                 resources: 2,
-                mode: "flux",
                 manifests: [
                   {
                     apiVersion: "v1",
@@ -68,7 +67,7 @@ async function* unhealthyDeploy() {
   yield create(DeployResponseSchema, {
     event: {
       case: "proposed",
-      value: { project: "checkout", environment: "production", resources: 2, mode: "flux" },
+      value: { project: "checkout", environment: "production", resources: 2 },
     },
   });
   yield create(DeployResponseSchema, {
@@ -119,11 +118,10 @@ function renderDeploy(
 }
 
 describe("DeployPage", () => {
-  it("previews with a render dry-run: resource count, mode and manifests", async () => {
+  it("previews with a render dry-run: resource count and manifests", async () => {
     renderDeploy(unhealthyDeploy);
 
-    expect(await screen.findByText("flux")).toBeTruthy();
-    expect(screen.getByText("Namespace/checkout-production")).toBeTruthy();
+    expect(await screen.findByText("Namespace/checkout-production")).toBeTruthy();
     expect(screen.getByText("Deployment/web")).toBeTruthy();
     // The byte-faithful YAML is there, collapsed behind its disclosure.
     expect(screen.getByText(/kind: Deployment/)).toBeTruthy();
@@ -150,9 +148,13 @@ describe("DeployPage", () => {
       expect(rows.length).toBeGreaterThanOrEqual(4);
     });
 
-    // Every transition is a row, in arrival order, with its cause.
-    expect(screen.getByText("committed", { selector: ".k-pill" })).toBeTruthy();
-    expect(screen.getByText("reconciling", { selector: ".k-pill" })).toBeTruthy();
+    // Every transition is a row, in arrival order, with its cause. The pill is
+    // the engine's answer in the shared vocabulary; the phase rides beside it
+    // as a labelled fact.
+    expect(screen.getByText("waiting", { selector: ".k-pill" })).toBeTruthy();
+    expect(screen.getByText("deploying", { selector: ".k-pill" })).toBeTruthy();
+    expect(screen.getByText(/phase Committed/)).toBeTruthy();
+    expect(screen.getByText(/phase Reconciling/)).toBeTruthy();
     expect(
       screen.getByText("flux/rolling-out: 1 of 3 replicas updated"),
     ).toBeTruthy();
@@ -212,7 +214,7 @@ describe("DeployPage", () => {
     );
 
     expect(await screen.findByText("Deployment settled")).toBeTruthy();
-    expect(screen.getByText("healthy", { selector: ".k-pill" })).toBeTruthy();
+    expect(screen.getByText("live", { selector: ".k-pill" })).toBeTruthy();
     expect(screen.queryByRole("alert")).toBeNull();
   });
 

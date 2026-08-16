@@ -121,9 +121,9 @@ spec:
 `
 )
 
-// The UI's previews form (ADR-0017 stage 3) writes this Environment: flux
-// delivery, because previews render in no other mode, and the whole `previews:`
-// block including both label lists in the flow styling the documentation shows.
+// The UI's previews form (ADR-0017 stage 3) writes this Environment: the whole
+// `previews:` block, including both label lists, in the flow styling the
+// documentation shows.
 //
 // Same fixture convention as the pairs above — these bytes are
 // PREVIEWS_ENVIRONMENT in ui/src/spec/edit.test.ts, where the TypeScript half

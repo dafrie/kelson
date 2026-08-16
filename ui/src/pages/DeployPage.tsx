@@ -16,7 +16,8 @@ import { Copyable } from "../components/Copyable";
 import { Disclosure, YamlBlock } from "../components/Disclosure";
 import { ErrorPanel } from "../components/ErrorPanel";
 import { StatusPill } from "../components/StatusPill";
-import { answerToStatus, formatInstant, phaseToStatus } from "../components/phase";
+import { formatInstant } from "../components/format";
+import { statusForAnswer, statusForPhase } from "../components/status";
 import { LoadingState } from "../components/States";
 import { DiffView } from "../diff/DiffView";
 import { decodeDiff, type Diff } from "../diff/parse";
@@ -192,8 +193,7 @@ export function DeployPage() {
               </button>
             ) : null}
             <span className="k-mono k-deploy__note">
-              mode {proposed.mode || "—"} · nothing is written until this is
-              pressed
+              nothing is written until this is pressed
             </span>
           </div>
         </section>
@@ -229,8 +229,6 @@ function Preview({
         <span>{proposed.environment || environment}</span>
         <span className="k-kv__key">resources</span>
         <span>{proposed.resources}</span>
-        <span className="k-kv__key">mode</span>
-        <span>{proposed.mode || "—"}</span>
       </div>
 
       <div className="k-manifests">
@@ -405,10 +403,10 @@ function Stream({
  *
  * Everything the rail needs is on the wire here and none of it is inferred: the
  * phase, answer, stuck flag and cause come from the last Transition (or the
- * Settled event's `final`, which is the same message), the delivery mode from
- * Proposed and the adapter that actually took the revision from Committed. The
- * furthest phase reached is read off the transition list, which is what lets a
- * rejection land on the stage it happened at instead of a default.
+ * Settled event's `final`, which is the same message), and the adapter that
+ * actually took the revision from Committed. The furthest phase reached is read
+ * off the transition list, which is what lets a rejection land on the stage it
+ * happened at instead of a default.
  */
 function railInput(live: Live): RailInput {
   const last = live.settled?.final ?? live.transitions[live.transitions.length - 1];
@@ -431,7 +429,6 @@ function railInput(live: Live): RailInput {
         }
       : undefined,
     reachedPhase: reached >= 0 ? RAIL_PHASES[reached] : undefined,
-    mode: live.proposed?.mode ?? "",
     adapter: live.committed?.adapter ?? "",
   };
 }
@@ -442,10 +439,7 @@ function EventLog({ live }: { live: Live }) {
       {live.proposed ? (
         <div className="k-stream__row">
           <span className="k-mono k-stream__label">proposed</span>
-          <span className="k-mono">
-            {live.proposed.resources} resources · mode{" "}
-            {live.proposed.mode || "—"}
-          </span>
+          <span className="k-mono">{live.proposed.resources} resources</span>
         </div>
       ) : null}
 
@@ -470,14 +464,16 @@ function EventLog({ live }: { live: Live }) {
 
 function TransitionRow({ transition }: { transition: DeployResponse_Transition }) {
   const at = formatInstant(transition.sinceUnixMs);
+  // The engine's own answer is the more specific signal — "stuck" is not a
+  // phase — so the pill reads it directly. The phase rides alongside as a
+  // labelled fact: it is what the rail above draws and what an operator
+  // correlates with Flux, and it is not a second opinion about the same thing.
+  const state = statusForAnswer(transition.answer);
   return (
     <div className="k-stream__row">
-      <StatusPill
-        status={answerToStatus(transition.answer)}
-        label={transition.phase.toLowerCase()}
-      />
+      <StatusPill status={state.tone} label={state.word} />
       <span className="k-mono k-stream__answer">
-        {transition.answer}
+        phase {transition.phase}
         {transition.stuck ? " · stuck" : ""}
       </span>
       {transition.cause ? (
@@ -501,6 +497,7 @@ function TransitionRow({ transition }: { transition: DeployResponse_Transition }
  */
 function Settled({ settled }: { settled: DeployResponse_Settled }) {
   const phase = settled.final?.phase ?? "";
+  const state = statusForPhase(phase);
   return (
     <div
       className={phase === "Healthy" ? "k-settled" : "k-settled k-settled--other"}
@@ -508,10 +505,7 @@ function Settled({ settled }: { settled: DeployResponse_Settled }) {
       data-settled={phase}
     >
       <div className="k-settled__head">
-        <StatusPill
-          status={phaseToStatus(phase)}
-          label={phase.toLowerCase() || "settled"}
-        />
+        <StatusPill status={state.tone} label={state.word} />
         <span className="k-settled__title">Deployment settled</span>
       </div>
       {settled.final?.observedRevision ? (

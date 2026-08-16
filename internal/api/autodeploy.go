@@ -544,7 +544,7 @@ func heldStill(resolved *model.Resolved, component string, repositories []string
 	source := resolved.SourceFor(component)
 	switch {
 	case source == nil:
-		return "it binds no source here, so no push moves it (ADR-0035 decision 3)"
+		return "it binds no source here, so no push moves it"
 	case !boundTo(source.Git, repositories):
 		return fmt.Sprintf("it builds from %s, and this push is about %s",
 			display(source.Git), display(strings.Join(repositories, ", ")))
@@ -553,11 +553,11 @@ func heldStill(resolved *model.Resolved, component string, repositories []string
 	case build.IsCommit(source.Ref):
 		return fmt.Sprintf("it is bound to commit %s, which names one revision forever", source.Ref)
 	case !resolved.AutoDeploys(component):
-		return "it does not track its source here — set autoDeploy on the environment or on this component (ADR-0036 decision 1)"
+		return "it does not track its source here — set autoDeploy on the environment or on this component"
 	case resolved.ImagePinned(component):
-		return "an image pin holds it, and a pinned component ignores everything (rule P3, ADR-0016). " +
+		return "an image pin holds it, and a pinned component ignores everything. " +
 			"Remove the pin to let it follow its source again, or mark it imageTracked: true to keep the image " +
-			"as a starting point tracking may advance (ADR-0036 decision 5)"
+			"as a starting point tracking may advance"
 	default:
 		// Unreachable: the five conditions above are the whole of the stale set,
 		// so a component that fails none of them is in it. Silent rather than
@@ -596,7 +596,7 @@ func severalSources(p *model.Project) string {
 	return fmt.Sprintf("project %s builds from %d repositories (%s) and kelson's build plane produces one image per "+
 		"build, so a push to one of them could only deploy by reusing the others' images from a different commit. "+
 		"Per-component image production is issue #252; until it lands, set spec.build.by: ci and report the images "+
-		"your pipeline built with `kelson ci report-build` (ADR-0036 decision 3, build/several-sources).",
+		"your pipeline built with `kelson ci report-build` (build/several-sources).",
 		p.Metadata.Name, len(repositories), strings.Join(repositories, ", "))
 }
 

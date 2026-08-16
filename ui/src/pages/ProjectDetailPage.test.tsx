@@ -97,7 +97,8 @@ describe("ProjectDetailPage", () => {
   it("shows the phase and the workload verdicts, which are different answers", async () => {
     renderDetail();
 
-    expect(await screen.findByText("healthy", { selector: ".k-pill" })).toBeTruthy();
+    expect(await screen.findByText("live", { selector: ".k-pill" })).toBeTruthy();
+    expect(screen.getByText("phase Healthy")).toBeTruthy();
     expect(screen.getByText("8f2c1ad")).toBeTruthy();
     // A Healthy phase with a crash-looping workload underneath is exactly the
     // pair the two signals exist to tell apart.
@@ -411,7 +412,7 @@ describe("ProjectDetailPage live updates", () => {
     renderAt(live, "/projects/checkout", "/projects/:project", <ProjectDetailPage />);
 
     expect(
-      await screen.findByText("reconciling", { selector: ".k-pill" }),
+      await screen.findByText("deploying", { selector: ".k-pill" }),
     ).toBeTruthy();
 
     events.push(
@@ -425,7 +426,7 @@ describe("ProjectDetailPage live updates", () => {
       }),
     );
     expect(
-      await screen.findByText("healthy", { selector: ".k-pill" }),
+      await screen.findByText("live", { selector: ".k-pill" }),
     ).toBeTruthy();
     expect(screen.getByText("9d3f0aa")).toBeTruthy();
     expect(screen.getByText("3/3 replicas ready")).toBeTruthy();
@@ -476,8 +477,8 @@ describe("ProjectDetailPage live updates", () => {
       <ProjectDetailPage />,
     );
 
-    // Compact, and honest about what it cannot know: StatusResponse carries no
-    // delivery mode, so the reconciler stage stays unnamed.
+    // Compact, and honest about what it cannot know: StatusResponse names no
+    // adapter, so the reconciler stage stays unnamed.
     await waitFor(() => {
       expect(container.querySelector(".k-rail--compact")).toBeTruthy();
     });
@@ -507,7 +508,9 @@ describe("ProjectDetailPage live updates", () => {
     expect(
       container.querySelector('[data-diagnosis="not-picked-up"]'),
     ).toBeTruthy();
-    expect(screen.getByText(/Check the delivery configuration/)).toBeTruthy();
+    expect(
+      screen.getByText(/Check this environment's configuration/),
+    ).toBeTruthy();
     // The cause named a component, so the reconciler stage can be named now.
     expect(screen.getByText("Flux (kustomize-controller)")).toBeTruthy();
 

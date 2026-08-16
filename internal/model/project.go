@@ -315,7 +315,7 @@ type Component struct {
 	//
 	// The kind decides which arm is meaningful, and the other one is refused
 	// rather than ignored (issue #141).
-	Source *ComponentSource `yaml:"source,omitempty" json:"source,omitempty" jsonschema:"description=a source name for a buildable component (ADR-0035) or the chart source of a helm component — exactly one of repository or oci (ADR-0016)"`
+	Source *ComponentSource `yaml:"source,omitempty" json:"source,omitempty" jsonschema:"description=a source name for a buildable component or the chart source of a helm component — exactly one of repository or oci"`
 
 	// Values are the chart's values, written verbatim into the HelmRelease's
 	// spec.values.

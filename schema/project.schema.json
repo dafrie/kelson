@@ -397,7 +397,7 @@
                     "type": "object"
                   }
                 ],
-                "description": "a source name for a buildable component (ADR-0035) or the chart source of a helm component — exactly one of repository or oci (ADR-0016)"
+                "description": "a source name for a buildable component or the chart source of a helm component — exactly one of repository or oci"
               },
               "values": {
                 "type": "object",

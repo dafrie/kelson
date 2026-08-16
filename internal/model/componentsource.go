@@ -79,9 +79,9 @@ const componentSourceShapePrefix = "component source: "
 // an author who wrote the wrong shape is choosing between them.
 const ComponentSourceRemediation = "a component's source: is one of two things. On a buildable component it is a " +
 	"name: the source this component builds from, declared in the Project's spec.sources (or its singular " +
-	"spec.source) or by a GitSource the instance offers — `source: app` (ADR-0035). On a kind: helm component " +
+	"spec.source) or by a GitSource the instance offers — `source: app`. On a kind: helm component " +
 	"it is a mapping naming where the chart is fetched from: {repository: <Helm repository URL>} or " +
-	"{oci: <OCI registry URL>} (ADR-0016). No kind takes both, and no kind takes a list"
+	"{oci: <OCI registry URL>}. No kind takes both, and no kind takes a list"
 
 func componentSourceShapeError(line int, what string) error {
 	return &yaml.TypeError{Errors: []string{

@@ -43,31 +43,33 @@ async function catchFromServer(detail: {
 
 describe("ErrorPanel", () => {
   it("renders the code, message and remediation from wire error details", async () => {
+    // internal/model's retired-field answer, which is what a stored spec still
+    // carrying `delivery:` now gets (ADR-0028, #234) — a real remediation
+    // rather than an invented one, kept whole by the panel.
     const err = await catchFromServer({
-      code: "delivery/unsupported",
-      message: "the direct adapter does not support rollback",
-      remediation: "switch spec.delivery.mode to flux, or redeploy the previous spec",
-      docsUrl: "https://example.invalid/rollback",
-      field: "$.spec.delivery.mode",
+      code: "schema/unknown-field",
+      message: 'unknown field "delivery" on EnvironmentSpec',
+      remediation:
+        "delete the whole `delivery:` block — kelson renders, publishes an OCI artifact and lets Flux reconcile it, so there is no mode to select and no git target to name",
+      docsUrl: "https://example.invalid/unknown-field",
+      field: "$.spec.delivery",
     });
 
-    render(<ErrorPanel title="Rollback refused" error={err} />);
+    render(<ErrorPanel title="Save refused" error={err} />);
 
-    expect(screen.getByText("delivery/unsupported")).toBeTruthy();
+    expect(screen.getByText("schema/unknown-field")).toBeTruthy();
     expect(
-      screen.getByText("the direct adapter does not support rollback"),
+      screen.getByText('unknown field "delivery" on EnvironmentSpec'),
     ).toBeTruthy();
     // The remediation is labelled "fix:", mirroring the CLI.
     expect(screen.getByText("fix:")).toBeTruthy();
     expect(
-      screen.getByText(
-        /switch spec.delivery.mode to flux, or redeploy the previous spec/,
-      ),
+      screen.getByText(/delete the whole `delivery:` block/),
     ).toBeTruthy();
     expect(
-      screen.getByRole("link", { name: "https://example.invalid/rollback" }),
+      screen.getByRole("link", { name: "https://example.invalid/unknown-field" }),
     ).toBeTruthy();
-    expect(screen.getByText("$.spec.delivery.mode")).toBeTruthy();
+    expect(screen.getByText("$.spec.delivery")).toBeTruthy();
     // The RPC code is shown too — it says which layer answered.
     expect(screen.getByText("rpc invalid_argument")).toBeTruthy();
   });

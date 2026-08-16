@@ -145,7 +145,9 @@ func TestPreviewsSecretRefStillHasToBeAName(t *testing.T) {
 	if e == nil || e.Code != ErrInvalidFormat {
 		t.Fatalf("a name that is not a DNS-1123 label must be %s, got:\n%v", ErrInvalidFormat, errs)
 	}
-	for _, want := range []string{"leave it unset", "ADR-0033"} {
+	// The two halves the author has to choose between: name a Secret, or let
+	// the git connection covering previews.repo materialize the credential.
+	for _, want := range []string{"leave it unset", "git connection covering previews.repo"} {
 		if !strings.Contains(e.Remediation, want) {
 			t.Errorf("remediation must mention %q: %s", want, e.Remediation)
 		}

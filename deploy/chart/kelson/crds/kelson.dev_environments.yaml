@@ -64,7 +64,7 @@ spec:
                 - project
               properties:
                 autoDeploy:
-                  description: follow the components' sources — a push to a bound repository re-renders and republishes this environment (ADR-0036)
+                  description: follow the components' sources — a push to a bound repository re-renders and republishes this environment
                   type: boolean
                 cluster:
                   type: string
@@ -76,7 +76,7 @@ spec:
                       - name
                     properties:
                       autoDeploy:
-                        description: workloads only; follow this component's source here — it overrides the environment's own setting (ADR-0036)
+                        description: workloads only; follow this component's source here — it overrides the environment's own setting
                         type: boolean
                       env:
                         type: object
@@ -86,7 +86,7 @@ spec:
                         description: pins this component's image in this environment only; the promotion primitive (rule P3)
                         type: string
                       imageTracked:
-                        description: workloads only; the image named here is a starting point rather than a hold — tracking may still advance it and the trigger overwrites it on the next push (ADR-0036 decision 5)
+                        description: workloads only; the image named here is a starting point rather than a hold — tracking may still advance it and the trigger overwrites it on the next push
                         type: boolean
                       name:
                         type: string
@@ -229,7 +229,7 @@ spec:
                       description: HTTP(S) URL of the source repository whose change requests become previews; not delivery.git.repo
                       type: string
                     secretRef:
-                      description: name of the Secret holding forge credentials; never a token. Omit it to have kelson materialize one from the git connection covering previews.repo (ADR-0033)
+                      description: name of the Secret holding forge credentials; never a token. Omit it to have kelson materialize one from the git connection covering previews.repo
                       type: string
                     skip:
                       type: object

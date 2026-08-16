@@ -6,7 +6,7 @@ import type { HistoryEntry } from "../gen/kelson/v1alpha1/deploy_pb";
 import { Copyable } from "../components/Copyable";
 import { ErrorPanel } from "../components/ErrorPanel";
 import { StatusPill } from "../components/StatusPill";
-import { phaseToStatus } from "../components/phase";
+import { statusForPhase } from "../components/status";
 import { EmptyState, LoadingState } from "../components/States";
 import { formatWhen, shortHash } from "./history";
 
@@ -211,6 +211,16 @@ export function HistoryPage() {
 }
 
 /**
+ * The one health claim on this screen, in the shared vocabulary: it appears on
+ * exactly one row — the revision Status reports as live — because that is the
+ * only one anything can answer for right now.
+ */
+function LivePill({ phase }: { phase: string }) {
+  const state = statusForPhase(phase);
+  return <StatusPill status={state.tone} label={state.word} />;
+}
+
+/**
  * One revision. The head line is identity — what it is and whether it is live —
  * and everything under it is what the record actually said.
  */
@@ -245,10 +255,7 @@ function Revision({
         {live ? (
           <>
             <span className="k-chip k-mono k-timeline__live">deployed now</span>
-            <StatusPill
-              status={phaseToStatus(livePhase)}
-              label={livePhase.toLowerCase() || "unknown"}
-            />
+            <LivePill phase={livePhase} />
           </>
         ) : null}
       </div>

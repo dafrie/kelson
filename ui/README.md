@@ -553,9 +553,55 @@ architecture. Three rules, and the tests pin the strings that carry them:
 The one deliberate exception is text the *server* wrote: structured errors,
 remediations and probe messages are rendered verbatim, code intact, wherever
 they land (`ErrorPanel`). A refusal is the owning Go package's sentence and this
-UI does not paraphrase it — which is why `src/dataservices/DataServices.test.tsx`
-still carries an ADR citation in a fixture: it is `internal/renderer`'s own
-remediation string, quoted.
+UI does not paraphrase it. Which means the rule has a Go half:
+`internal/renderer`'s remediations reach a reader through this panel, so they
+follow the same standard, and the fixtures quoting them here
+(`src/dataservices/DataServices.test.tsx`, `src/components/ErrorPanel.test.tsx`)
+are byte-copies of the Go strings rather than plausible-looking inventions.
+
+### One status vocabulary
+
+Every status word a reader sees comes from `src/components/status.ts`
+([#260](https://github.com/dafrie/kelson/issues/260)). Before it, the same fact
+was said three ways on three screens — `synced` on a project card,
+`Reconciling` on an environment tab, `awaiting-artifact` on a preview row —
+which are Flux's word, Kubernetes' word and a poller's word, and none of them
+answer what a developer is asking.
+
+Eight words, and the first six are the delivery state machine's own answers
+relabelled:
+
+| Word | From | Tone |
+| --- | --- | --- |
+| `live` | answer `live`, phase `Healthy`, preview `ready` | synced |
+| `deploying` | answer `progressing`, phases `Reconciling`/`Applied` | reconciling |
+| `waiting` | answer `waiting`, phases `Proposed`/`Committed`, preview `awaiting-artifact` | reconciling |
+| `stuck` | answer `stuck` | degraded |
+| `unhealthy` | answer `degraded`, phase `Degraded` | degraded |
+| `failed` | answer `rejected`, phase `Rejected`, preview `failed` | failed |
+| `suspended` | `Preview.suspended` | suspended |
+| `unknown` | anything the maps do not know | unknown |
+
+Three things follow from it:
+
+- **`StatusKind` is a tone, not a word.** `synced`, `reconciling` and the rest
+  name the six colour ramps in `tokens.css` and stay as they are, because a
+  colour does not change when the word painted in it does. `StatusPill`'s
+  `label` is therefore *required*: there is no path by which a tone name
+  reaches a screen as text.
+- **The wire's own phase survives as a labelled fact, never as the pill.**
+  `phase Reconciling` sits beside the word on the environment tab, the deploy
+  stream's rows and the preview page — it is what an operator correlates with
+  Flux — and the preview page's `artifact ready` / `applied ready` conditions
+  are unchanged.
+- **`suspended` is a seventh state and not a flavour of `waiting`.** Waiting
+  means something is expected to act; suspended means nothing is, deliberately,
+  and what is running is the last thing that reconciled. It is only ever shown
+  when the wire reported it.
+
+The transport indicator says **streaming**, not "live", for the same reason: a
+connected event stream and a running revision are different claims and must not
+share a label on one screen.
 
 ### Two themes
 

@@ -266,7 +266,7 @@ function Boundary({ name }: { name: string }) {
   const text: Record<string, string> = {
     "cert-manager":
       "cert-manager has no ClusterIssuer yet. Which ACME account or CA to trust is your decision; kelson renders a Certificate once detection reports an issuer.",
-    flux: "Flux is running and reconciling nothing until a deploy in Flux mode points it at a repository.",
+    flux: "Flux is running and reconciling nothing yet; the first deploy publishes an artifact and points it at one.",
     cnpg: "CloudNativePG is running with no databases; postgres components render against it from the next deploy.",
     "envoy-gateway":
       "Envoy Gateway has no GatewayClass and carries no traffic. Create a GatewayClass naming controller gateway.envoyproxy.io/gatewayclass-controller and a Gateway with your listeners — routes attach once detection reports the class.",

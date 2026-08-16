@@ -46,7 +46,7 @@ type EnvironmentSpec struct {
 	// than a merge: a component may set it either way under an environment that
 	// says nothing, and the resolver can tell "this level declined to decide"
 	// from "this level decided no".
-	AutoDeploy *bool `yaml:"autoDeploy,omitempty" json:"autoDeploy,omitempty" jsonschema:"default=false,description=follow the components' sources — a push to a bound repository re-renders and republishes this environment (ADR-0036)"`
+	AutoDeploy *bool `yaml:"autoDeploy,omitempty" json:"autoDeploy,omitempty" jsonschema:"default=false,description=follow the components' sources — a push to a bound repository re-renders and republishes this environment"`
 
 	// Components carry per-Component overrides, matched by name. It is a list
 	// keyed by `name:`, not a mapping of name to override: one spelling for the
@@ -127,7 +127,7 @@ type ComponentOverride struct {
 	// scope, so it needs a third value for "declined to decide", and this
 	// overrides nothing — there is no environment-wide marker for it to differ
 	// from, so absent and false are the same document.
-	ImageTracked bool `yaml:"imageTracked,omitempty" json:"imageTracked,omitempty" jsonschema:"description=workloads only; the image named here is a starting point rather than a hold — tracking may still advance it and the trigger overwrites it on the next push (ADR-0036 decision 5)"`
+	ImageTracked bool `yaml:"imageTracked,omitempty" json:"imageTracked,omitempty" jsonschema:"description=workloads only; the image named here is a starting point rather than a hold — tracking may still advance it and the trigger overwrites it on the next push"`
 
 	Replicas  *Replicas           `yaml:"replicas,omitempty" json:"replicas,omitempty"`
 	Resources *Resources          `yaml:"resources,omitempty" json:"resources,omitempty"`
@@ -144,7 +144,7 @@ type ComponentOverride struct {
 	// ours and are bound to no source (ADR-0035 decision 3), so there is no
 	// push that could move one, and setting it on either is refused with the
 	// same code as an image on a database rather than resolved into nothing.
-	AutoDeploy *bool `yaml:"autoDeploy,omitempty" json:"autoDeploy,omitempty" jsonschema:"description=workloads only; follow this component's source here — it overrides the environment's own setting (ADR-0036)"`
+	AutoDeploy *bool `yaml:"autoDeploy,omitempty" json:"autoDeploy,omitempty" jsonschema:"description=workloads only; follow this component's source here — it overrides the environment's own setting"`
 
 	// Preset overrides a data component's topology for this Environment
 	// (rule P5): `shared` in development, `ha-small` in production, from one
@@ -386,7 +386,7 @@ type Previews struct {
 	// `<project>-<environment>-previews`. The name is derived on both sides —
 	// the renderer writes it into the ResourceSetInputProvider and the
 	// controller writes the Secret — so nothing has to store it.
-	SecretRef string `yaml:"secretRef,omitempty" json:"secretRef,omitempty" jsonschema:"description=name of the Secret holding forge credentials; never a token. Omit it to have kelson materialize one from the git connection covering previews.repo (ADR-0033)"`
+	SecretRef string `yaml:"secretRef,omitempty" json:"secretRef,omitempty" jsonschema:"description=name of the Secret holding forge credentials; never a token. Omit it to have kelson materialize one from the git connection covering previews.repo"`
 
 	// Interval is how often the forge is polled for change requests. It
 	// becomes the fluxcd.controlplane.io/reconcileEvery annotation.
