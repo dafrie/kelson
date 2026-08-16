@@ -22,16 +22,17 @@ type rpc struct {
 func (r rpc) String() string { return r.service + "." + r.method }
 
 var (
-	rpcListSpecs = rpc{kelsonv1alpha1connect.SpecServiceName, "ListSpecs"}
-	rpcGetSpec   = rpc{kelsonv1alpha1connect.SpecServiceName, "GetSpec"}
-	rpcPutSpec   = rpc{kelsonv1alpha1connect.SpecServiceName, "PutSpec"}
-	rpcStatus    = rpc{kelsonv1alpha1connect.DeployServiceName, "Status"}
-	rpcHistory   = rpc{kelsonv1alpha1connect.DeployServiceName, "History"}
-	rpcDeploy    = rpc{kelsonv1alpha1connect.DeployServiceName, "Deploy"}
-	rpcRollback  = rpc{kelsonv1alpha1connect.DeployServiceName, "Rollback"}
-	rpcPromote   = rpc{kelsonv1alpha1connect.DeployServiceName, "Promote"}
-	rpcQueryLogs = rpc{kelsonv1alpha1connect.LogServiceName, "QueryLogs"}
-	rpcWatch     = rpc{kelsonv1alpha1connect.EventServiceName, "Watch"}
+	rpcListSpecs          = rpc{kelsonv1alpha1connect.SpecServiceName, "ListSpecs"}
+	rpcGetSpec            = rpc{kelsonv1alpha1connect.SpecServiceName, "GetSpec"}
+	rpcPutSpec            = rpc{kelsonv1alpha1connect.SpecServiceName, "PutSpec"}
+	rpcGetEffectiveConfig = rpc{kelsonv1alpha1connect.SpecServiceName, "GetEffectiveConfig"}
+	rpcStatus             = rpc{kelsonv1alpha1connect.DeployServiceName, "Status"}
+	rpcHistory            = rpc{kelsonv1alpha1connect.DeployServiceName, "History"}
+	rpcDeploy             = rpc{kelsonv1alpha1connect.DeployServiceName, "Deploy"}
+	rpcRollback           = rpc{kelsonv1alpha1connect.DeployServiceName, "Rollback"}
+	rpcPromote            = rpc{kelsonv1alpha1connect.DeployServiceName, "Promote"}
+	rpcQueryLogs          = rpc{kelsonv1alpha1connect.LogServiceName, "QueryLogs"}
+	rpcWatch              = rpc{kelsonv1alpha1connect.EventServiceName, "Watch"}
 
 	rpcGetProfile = rpc{kelsonv1alpha1connect.ProfileServiceName, "GetProfile"}
 
@@ -56,7 +57,7 @@ type tool struct {
 
 // surface is the whole agent-facing surface, in registration order.
 //
-// Nine tools, and the number is a design decision rather than a stopping point:
+// Ten tools, and the number is a design decision rather than a stopping point:
 // every tool added costs selection accuracy for the ones already here
 // (ADR-0008). Read-only tools come first, mutating ones after, and each says
 // which it is in its own description as well as in its annotations — a model
@@ -77,11 +78,22 @@ type tool struct {
 // set_secret rather than a tenth tool, because removing a key is what an agent
 // does about a key it wrote under the wrong name — the second half of a task,
 // not a task (secret.go's setSecretTool says the rest).
+//
+// # Why #268 added a tenth tool and not a section of diagnose_component
+//
+// "What is this running with, and why" is a real task and not a fact an agent
+// needs mid-diagnosis: diagnose_component already answers "why is it broken",
+// and a developer asking what a component's effective settings are is not
+// usually asking that — the RPC has no cluster read in it at all, and folding
+// it into a diagnosis would mean pulling it every time regardless of whether
+// the question was asked. effective_config is its own tool for the same
+// reason list_components is: the question stands on its own.
 func surface(c *clients) []tool {
 	return []tool{
 		listComponentsTool(c),
 		diagnoseComponentTool(c),
 		logsWindowTool(c),
+		effectiveConfigTool(c),
 		deployTool(c),
 		rollbackTool(c),
 		promoteTool(c),

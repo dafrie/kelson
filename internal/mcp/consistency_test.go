@@ -94,13 +94,16 @@ func TestNoToolComposesAnUnboundedStream(t *testing.T) {
 // mutates, so the answer is in the prose and not only in the annotations.
 func TestSurfaceIsSmallAndDescribed(t *testing.T) {
 	tools := surface(&clients{})
-	// Nine since #116 added set_secret. The count moved deliberately: writing a
-	// credential is a task an agent has, so it earned a tool, while *listing*
-	// secrets did not — it is something an agent needs mid-diagnosis, so it
-	// extended diagnose_component instead of arriving as a tenth tool. That
-	// is the trade this number exists to make explicit (ADR-0008).
-	if len(tools) != 9 {
-		t.Errorf("the surface has %d tools, want 9: adding one is a deliberate design change (ADR-0008), not a detail", len(tools))
+	// Ten since #268 added effective_config. The count moves deliberately:
+	// writing a credential is a task an agent has, so set_secret earned a tool
+	// (#116), while *listing* secrets did not — it is something an agent needs
+	// mid-diagnosis, so it extended diagnose_component instead of arriving as
+	// its own tool. "What is this running with, and why" is the opposite case:
+	// a question on its own, asked whether or not anything is broken, which is
+	// why it earned the tenth slot rather than a section. That is the trade
+	// this number exists to make explicit (ADR-0008).
+	if len(tools) != 10 {
+		t.Errorf("the surface has %d tools, want 10: adding one is a deliberate design change (ADR-0008), not a detail", len(tools))
 	}
 
 	seen := map[string]bool{}
