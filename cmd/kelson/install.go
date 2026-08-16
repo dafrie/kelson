@@ -311,8 +311,9 @@ func printInstallBoundary(out *printer, plan *install.Plan) {
 			out.printf("  cert-manager has no ClusterIssuer. kelson renders a Certificate only when detection\n")
 			out.printf("  reports one, because which ACME account or CA to trust is your decision.\n")
 		case "flux":
-			out.printf("  the FluxInstance sets no sync source. Flux is running and reconciling nothing until\n")
-			out.printf("  `kelson deploy --mode flux` writes to a repository you point it at.\n")
+			out.printf("  the FluxInstance sets no sync source. Flux is running and reconciling nothing yet —\n")
+			out.printf("  the kelson controller writes each environment's OCIRepository and Kustomization on its\n")
+			out.printf("  first deploy.\n")
 		case "flux-aio":
 			out.printf("  Flux is running and reconciling nothing yet — and there is nothing here to configure:\n")
 			out.printf("  the kelson controller writes each environment's OCIRepository and Kustomization on its\n")
