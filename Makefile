@@ -30,7 +30,7 @@ SETUP_ENVTEST          ?= $(GOBIN_DIR)/setup-envtest
 ENVTEST_K8S_VERSION    ?= 1.36.2
 GOBIN_DIR              ?= $(shell $(GO) env GOPATH)/bin
 
-.PHONY: all build binaries server ui ui-clean proto generate deepcopy test test-e2e envtest flux-crds lint fmt clean install release release-snapshot e2e-up e2e e2e-down kind-up kind-down
+.PHONY: all build binaries server ui ui-clean proto generate deepcopy test test-e2e envtest flux-crds flux-aio lint fmt clean install release release-snapshot e2e-up e2e e2e-down kind-up kind-down
 
 all: lint test build
 
@@ -195,3 +195,23 @@ envtest:
 # drift tests there fail in plain `go test ./...` until all three agree.
 flux-crds:
 	hack/flux-crds.sh
+
+# Renders internal/delivery/install/rendered/flux-aio.yaml — the manifests the
+# `flux-aio` catalog row applies, and the default offer on a cluster with no
+# Flux (issue #226, ADR-0030).
+#
+# The second target that needs the network, and for a sharper reason than
+# flux-crds: upstream publishes flux-aio ONLY as a timoni module, so there is no
+# install.yaml for `kelson install` to fetch and digest-verify the way it does
+# every other row. The bytes are rendered here instead — once per kelson
+# release, by a checksum-pinned timoni binary against a digest-pinned module —
+# and committed. Nothing on a user's machine or in a cluster ever invokes
+# timoni, and nothing timoni-shaped enters go.mod (ADR-0030 decision 3).
+#
+# Run this, review the output, paste the block it prints into
+# internal/delivery/install/pins.go, and commit the YAML and the pin together —
+# the drift test in that package fails in plain `go test ./...` until the two
+# agree. `.github/workflows/release.yml` runs the --check form, so a release
+# cannot ship a snapshot that disagrees with its own pins.
+flux-aio:
+	hack/flux-aio-render.sh

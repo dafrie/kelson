@@ -34,13 +34,49 @@
 // upstream release host. Without it this package refuses, names the URL it
 // could not reach, and applies nothing (see [Fetcher]).
 //
-// # Flux is installed by installing flux-operator
+// The rule has two stated exceptions, and neither is convenience. `flux-aio` is
+// published upstream only as a timoni module and `registry` (CNCF Distribution)
+// publishes no Kubernetes manifest at all, so for those two rows there is
+// nothing to pin a URL and a digest against. ADR-0030 records both: the
+// registry's objects are composed in Go and pinned by image digest
+// (registry.go), and flux-aio's are rendered at kelson release time from a
+// digest-pinned module by a checksum-pinned timoni binary, committed, and
+// verified against their own digest before they are applied (fluxaio.go,
+// hack/flux-aio-render.sh). What separates that from vendoring is that the
+// bytes are a build artifact anybody can re-derive from two pins, and CI fails
+// the release when the committed ones are not what those pins produce.
+//
+// # Two ways to install Flux, and which one is offered
+//
+// ADR-0028 makes Flux the only reconciliation path, so "a cluster with no Flux"
+// is a blocking question rather than a supported shape, and ADR-0030 answers it
+// with two rows.
+//
+// `kelson install flux-aio` applies the rendered snapshot described above:
+// every Flux controller in ONE pod, one Deployment, one ServiceAccount, sized
+// for the k3s and edge clusters that six controllers and a gigabyte of memory
+// at rest would shut out. It is the default offer on a cluster with no Flux —
+// `kelson install --all-missing` installs it and declines flux-operator by
+// name, saying which command chooses the other one.
+//
+// A cluster that already HAS Flux is adopted and nothing is installed, whatever
+// installed it: `flux bootstrap`, flux-operator, flux-aio, a vendor's
+// distribution. The ClusterProfile's `flux` finding is what matters, not its
+// provenance, which is why both rows read the same field. The single-pod shape
+// is a trade that is right for a cluster with no Flux and wrong as a migration
+// for a cluster that has some.
+//
+// # Full Flux is installed by installing flux-operator
 //
 // `kelson install flux` applies flux-operator's pinned install manifest and
 // then creates one `FluxInstance` custom resource. It does not vendor Flux's
 // own manifests and does not reimplement the install or upgrade lifecycle that
 // flux-operator already owns — the FluxInstance names the distribution version
-// and the operator does the rest (ADR-0016).
+// and the operator does the rest (ADR-0016). It stays in the catalog as an
+// explicit choice, and PR previews are the one feature that requires it:
+// `ResourceSet` and `ResourceSetInputProvider` are its CRDs and nothing else
+// kelson renders reads them (ADR-0030 decision 4), so a cluster that never
+// wants previews never installs an AGPL-3.0 component.
 //
 // LICENSE: flux-operator is AGPL-3.0 and kelson is MIT. The integration is
 // CR-only, through the unstructured dynamic client, and no Go module of theirs
