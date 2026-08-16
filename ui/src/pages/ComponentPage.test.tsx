@@ -4,6 +4,10 @@ import { Code, ConnectError, createRouterTransport } from "@connectrpc/connect";
 
 import { ErrorSchema } from "../gen/kelson/v1alpha1/common_pb";
 import { DeployService } from "../gen/kelson/v1alpha1/deploy_pb";
+import {
+  SetAtLevel,
+  SettingGroup,
+} from "../gen/kelson/v1alpha1/effectiveconfig_pb";
 import { SpecService } from "../gen/kelson/v1alpha1/spec_pb";
 import { renderAt } from "../test/render";
 import { ComponentPage } from "./ComponentPage";
@@ -56,6 +60,91 @@ spec:
 
 const ROUTE = "/projects/:project/:env/components/:component";
 
+/**
+ * The effective configuration of the same fixture, as the server answers it:
+ * the merged value plus the block that decided it. The page does not compute
+ * this — a browser-side copy of the precedence rules would drift from the one
+ * the renderer uses — so the stub states it the way `GetEffectiveConfig` does.
+ */
+const EFFECTIVE = {
+  project: "checkout",
+  environment: "production",
+  settings: [
+    {
+      name: "secrets.backend",
+      group: SettingGroup.ENVIRONMENT,
+      value: { value: { case: "literal" as const, value: "cluster" } },
+      setAt: { level: SetAtLevel.BUILT_IN },
+    },
+  ],
+  components: [
+    {
+      name: "web",
+      kind: "service",
+      settings: [
+        {
+          name: "LOG_LEVEL",
+          group: SettingGroup.ENV,
+          value: { value: { case: "literal" as const, value: "debug" } },
+          setAt: {
+            level: SetAtLevel.ENVIRONMENT_COMPONENT,
+            document: "Environment",
+            environment: "production",
+            component: "web",
+            field: "$.spec.components[0].env.LOG_LEVEL",
+          },
+        },
+        {
+          name: "image",
+          group: SettingGroup.WORKLOAD,
+          value: {
+            value: {
+              case: "literal" as const,
+              value: "ghcr.io/acme/checkout:1.4.3",
+            },
+          },
+          setAt: {
+            level: SetAtLevel.ENVIRONMENT_COMPONENT,
+            document: "Environment",
+            environment: "production",
+            component: "web",
+            field: "$.spec.components[0].image",
+          },
+        },
+      ],
+    },
+    {
+      name: "nightly",
+      kind: "cron",
+      settings: [
+        {
+          name: "replicas",
+          group: SettingGroup.WORKLOAD,
+          value: { value: { case: "literal" as const, value: "1" } },
+          setAt: { level: SetAtLevel.BUILT_IN },
+        },
+      ],
+    },
+    {
+      name: "db",
+      kind: "postgres",
+      settings: [
+        {
+          name: "preset",
+          group: SettingGroup.DATA,
+          value: { value: { case: "literal" as const, value: "small" } },
+          setAt: {
+            level: SetAtLevel.COMPONENT,
+            document: "Project",
+            component: "db",
+            field: "$.spec.components[2].preset",
+          },
+        },
+      ],
+    },
+  ],
+};
+
 function server(status: () => unknown) {
   return createRouterTransport((router) => {
     router.service(SpecService, {
@@ -72,6 +161,7 @@ function server(status: () => unknown) {
           },
         },
       }),
+      getEffectiveConfig: () => ({ config: EFFECTIVE }) as never,
     });
     router.service(DeployService, {
       status: () => status() as never,
@@ -125,6 +215,21 @@ describe("ComponentPage", () => {
       screen.getByText("the environment's, not this component's"),
     ).toBeTruthy();
     expect(screen.getByText("checkout-production")).toBeTruthy();
+  });
+
+  it("carries the effective-config table, which the server merged and this page did not", async () => {
+    open("web");
+
+    // The rows come off GetEffectiveConfig, provenance and all: the page has
+    // the two documents in hand and still does not merge them itself.
+    expect(await screen.findByText("LOG_LEVEL")).toBeTruthy();
+    expect(screen.getByText("debug")).toBeTruthy();
+    expect(
+      screen.getAllByText("set on production, for this component", {
+        selector: ".k-config__setat",
+      }).length,
+    ).toBe(2);
+    expect(screen.getByText("Configuration")).toBeTruthy();
   });
 
   it("links to the tabs and actions that act on it, itself preselected in the logs", async () => {

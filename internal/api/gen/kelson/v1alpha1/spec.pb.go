@@ -904,7 +904,7 @@ var File_kelson_v1alpha1_spec_proto protoreflect.FileDescriptor
 
 const file_kelson_v1alpha1_spec_proto_rawDesc = "" +
 	"\n" +
-	"\x1akelson/v1alpha1/spec.proto\x12\x0fkelson.v1alpha1\x1a\x1ckelson/v1alpha1/common.proto\"q\n" +
+	"\x1akelson/v1alpha1/spec.proto\x12\x0fkelson.v1alpha1\x1a\x1ckelson/v1alpha1/common.proto\x1a%kelson/v1alpha1/effectiveconfig.proto\"q\n" +
 	"\x0fGitOpsOwnership\x12\x1a\n" +
 	"\bdocument\x18\x01 \x01(\tR\bdocument\x12$\n" +
 	"\rkustomization\x18\x02 \x01(\tR\rkustomization\x12\x1c\n" +
@@ -963,14 +963,15 @@ const file_kelson_v1alpha1_spec_proto_rawDesc = "" +
 	"\vbase_branch\x18\x03 \x01(\tR\n" +
 	"baseBranch\x12\x17\n" +
 	"\adry_run\x18\x04 \x01(\bR\x06dryRun\x12.\n" +
-	"\x06errors\x18\x05 \x03(\v2\x16.kelson.v1alpha1.ErrorR\x06errors2\xae\x03\n" +
+	"\x06errors\x18\x05 \x03(\v2\x16.kelson.v1alpha1.ErrorR\x06errors2\x9d\x04\n" +
 	"\vSpecService\x12L\n" +
 	"\aPutSpec\x12\x1f.kelson.v1alpha1.PutSpecRequest\x1a .kelson.v1alpha1.PutSpecResponse\x12L\n" +
 	"\aGetSpec\x12\x1f.kelson.v1alpha1.GetSpecRequest\x1a .kelson.v1alpha1.GetSpecResponse\x12R\n" +
 	"\tListSpecs\x12!.kelson.v1alpha1.ListSpecsRequest\x1a\".kelson.v1alpha1.ListSpecsResponse\x12U\n" +
 	"\n" +
 	"DeleteSpec\x12\".kelson.v1alpha1.DeleteSpecRequest\x1a#.kelson.v1alpha1.DeleteSpecResponse\x12X\n" +
-	"\vProposeSpec\x12#.kelson.v1alpha1.ProposeSpecRequest\x1a$.kelson.v1alpha1.ProposeSpecResponseBJZHgithub.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1;kelsonv1alpha1b\x06proto3"
+	"\vProposeSpec\x12#.kelson.v1alpha1.ProposeSpecRequest\x1a$.kelson.v1alpha1.ProposeSpecResponse\x12m\n" +
+	"\x12GetEffectiveConfig\x12*.kelson.v1alpha1.GetEffectiveConfigRequest\x1a+.kelson.v1alpha1.GetEffectiveConfigResponseBJZHgithub.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1;kelsonv1alpha1b\x06proto3"
 
 var (
 	file_kelson_v1alpha1_spec_proto_rawDescOnce sync.Once
@@ -986,22 +987,24 @@ func file_kelson_v1alpha1_spec_proto_rawDescGZIP() []byte {
 
 var file_kelson_v1alpha1_spec_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_kelson_v1alpha1_spec_proto_goTypes = []any{
-	(*GitOpsOwnership)(nil),     // 0: kelson.v1alpha1.GitOpsOwnership
-	(*Spec)(nil),                // 1: kelson.v1alpha1.Spec
-	(*PutSpecRequest)(nil),      // 2: kelson.v1alpha1.PutSpecRequest
-	(*PutSpecResponse)(nil),     // 3: kelson.v1alpha1.PutSpecResponse
-	(*GetSpecRequest)(nil),      // 4: kelson.v1alpha1.GetSpecRequest
-	(*GetSpecResponse)(nil),     // 5: kelson.v1alpha1.GetSpecResponse
-	(*ListSpecsRequest)(nil),    // 6: kelson.v1alpha1.ListSpecsRequest
-	(*ListSpecsResponse)(nil),   // 7: kelson.v1alpha1.ListSpecsResponse
-	(*DeleteSpecRequest)(nil),   // 8: kelson.v1alpha1.DeleteSpecRequest
-	(*DeleteSpecResponse)(nil),  // 9: kelson.v1alpha1.DeleteSpecResponse
-	(*ProposedFile)(nil),        // 10: kelson.v1alpha1.ProposedFile
-	(*ProposeSpecRequest)(nil),  // 11: kelson.v1alpha1.ProposeSpecRequest
-	(*ProposeSpecResponse)(nil), // 12: kelson.v1alpha1.ProposeSpecResponse
-	(*SpecDocuments)(nil),       // 13: kelson.v1alpha1.SpecDocuments
-	(DryRun)(0),                 // 14: kelson.v1alpha1.DryRun
-	(*Error)(nil),               // 15: kelson.v1alpha1.Error
+	(*GitOpsOwnership)(nil),            // 0: kelson.v1alpha1.GitOpsOwnership
+	(*Spec)(nil),                       // 1: kelson.v1alpha1.Spec
+	(*PutSpecRequest)(nil),             // 2: kelson.v1alpha1.PutSpecRequest
+	(*PutSpecResponse)(nil),            // 3: kelson.v1alpha1.PutSpecResponse
+	(*GetSpecRequest)(nil),             // 4: kelson.v1alpha1.GetSpecRequest
+	(*GetSpecResponse)(nil),            // 5: kelson.v1alpha1.GetSpecResponse
+	(*ListSpecsRequest)(nil),           // 6: kelson.v1alpha1.ListSpecsRequest
+	(*ListSpecsResponse)(nil),          // 7: kelson.v1alpha1.ListSpecsResponse
+	(*DeleteSpecRequest)(nil),          // 8: kelson.v1alpha1.DeleteSpecRequest
+	(*DeleteSpecResponse)(nil),         // 9: kelson.v1alpha1.DeleteSpecResponse
+	(*ProposedFile)(nil),               // 10: kelson.v1alpha1.ProposedFile
+	(*ProposeSpecRequest)(nil),         // 11: kelson.v1alpha1.ProposeSpecRequest
+	(*ProposeSpecResponse)(nil),        // 12: kelson.v1alpha1.ProposeSpecResponse
+	(*SpecDocuments)(nil),              // 13: kelson.v1alpha1.SpecDocuments
+	(DryRun)(0),                        // 14: kelson.v1alpha1.DryRun
+	(*Error)(nil),                      // 15: kelson.v1alpha1.Error
+	(*GetEffectiveConfigRequest)(nil),  // 16: kelson.v1alpha1.GetEffectiveConfigRequest
+	(*GetEffectiveConfigResponse)(nil), // 17: kelson.v1alpha1.GetEffectiveConfigResponse
 }
 var file_kelson_v1alpha1_spec_proto_depIdxs = []int32{
 	13, // 0: kelson.v1alpha1.Spec.documents:type_name -> kelson.v1alpha1.SpecDocuments
@@ -1020,13 +1023,15 @@ var file_kelson_v1alpha1_spec_proto_depIdxs = []int32{
 	6,  // 13: kelson.v1alpha1.SpecService.ListSpecs:input_type -> kelson.v1alpha1.ListSpecsRequest
 	8,  // 14: kelson.v1alpha1.SpecService.DeleteSpec:input_type -> kelson.v1alpha1.DeleteSpecRequest
 	11, // 15: kelson.v1alpha1.SpecService.ProposeSpec:input_type -> kelson.v1alpha1.ProposeSpecRequest
-	3,  // 16: kelson.v1alpha1.SpecService.PutSpec:output_type -> kelson.v1alpha1.PutSpecResponse
-	5,  // 17: kelson.v1alpha1.SpecService.GetSpec:output_type -> kelson.v1alpha1.GetSpecResponse
-	7,  // 18: kelson.v1alpha1.SpecService.ListSpecs:output_type -> kelson.v1alpha1.ListSpecsResponse
-	9,  // 19: kelson.v1alpha1.SpecService.DeleteSpec:output_type -> kelson.v1alpha1.DeleteSpecResponse
-	12, // 20: kelson.v1alpha1.SpecService.ProposeSpec:output_type -> kelson.v1alpha1.ProposeSpecResponse
-	16, // [16:21] is the sub-list for method output_type
-	11, // [11:16] is the sub-list for method input_type
+	16, // 16: kelson.v1alpha1.SpecService.GetEffectiveConfig:input_type -> kelson.v1alpha1.GetEffectiveConfigRequest
+	3,  // 17: kelson.v1alpha1.SpecService.PutSpec:output_type -> kelson.v1alpha1.PutSpecResponse
+	5,  // 18: kelson.v1alpha1.SpecService.GetSpec:output_type -> kelson.v1alpha1.GetSpecResponse
+	7,  // 19: kelson.v1alpha1.SpecService.ListSpecs:output_type -> kelson.v1alpha1.ListSpecsResponse
+	9,  // 20: kelson.v1alpha1.SpecService.DeleteSpec:output_type -> kelson.v1alpha1.DeleteSpecResponse
+	12, // 21: kelson.v1alpha1.SpecService.ProposeSpec:output_type -> kelson.v1alpha1.ProposeSpecResponse
+	17, // 22: kelson.v1alpha1.SpecService.GetEffectiveConfig:output_type -> kelson.v1alpha1.GetEffectiveConfigResponse
+	17, // [17:23] is the sub-list for method output_type
+	11, // [11:17] is the sub-list for method input_type
 	11, // [11:11] is the sub-list for extension type_name
 	11, // [11:11] is the sub-list for extension extendee
 	0,  // [0:11] is the sub-list for field type_name
@@ -1038,6 +1043,7 @@ func file_kelson_v1alpha1_spec_proto_init() {
 		return
 	}
 	file_kelson_v1alpha1_common_proto_init()
+	file_kelson_v1alpha1_effectiveconfig_proto_init()
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

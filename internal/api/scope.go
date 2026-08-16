@@ -160,6 +160,23 @@ var rpcScopes = map[string]methodScope{
 		},
 	},
 
+	// GetEffectiveConfig is a read of the project and the environment it names.
+	// It says strictly less than GetSpec — the merged answer rather than the
+	// documents it was merged from — so it takes the ordinary read row, and it
+	// names both halves of the pair rather than only the project, because the
+	// answer is a property of the pair.
+	kelsonv1alpha1connect.SpecServiceGetEffectiveConfigProcedure: {
+		Operation: controlstore.OpRead,
+		Reach:     reachTargeted,
+		Targets: func(msg any) ([]scopeTarget, bool) {
+			req, ok := msg.(*kelsonv1alpha1.GetEffectiveConfigRequest)
+			if !ok || req.GetProject() == "" {
+				return nil, false
+			}
+			return []scopeTarget{{Project: req.GetProject(), Environment: req.GetEnvironment()}}, true
+		},
+	},
+
 	// RenderService. Rendering touches no cluster, but it reads a stored spec
 	// and returns it as manifests, so it is a read of the project it names.
 	kelsonv1alpha1connect.RenderServiceRenderProcedure: {
