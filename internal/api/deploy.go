@@ -564,6 +564,8 @@ func (s *Server) reportDelivery(ctx context.Context, res *kelsonv1alpha1.StatusR
 	res.Phase, res.Revision = st.Phase, st.Revision
 	state := deliveryState(st, false)
 	res.Cause = state.Cause.String()
+	res.ObservedRevision = state.ObservedRevision
+	res.Stale = staleRevision(st)
 	if st.Phase != "" {
 		// An environment that has delivered nothing carries no phase, and
 		// State.Answer would classify the empty phase as `waiting` — which is a
@@ -578,6 +580,46 @@ func (s *Server) reportDelivery(ctx context.Context, res *kelsonv1alpha1.StatusR
 		res.Cause = fmt.Sprintf("%s (status is at generation %d, the spec is at %d)",
 			state.Cause.String(), st.ObservedGeneration, st.Generation)
 	}
+}
+
+// staleRevision reports whether an environment is serving a spec it no longer
+// holds: what the state machine calls a stale observation, read off the one
+// observation a Status has.
+//
+// # Why a generation comparison is the honest form of the question
+//
+// The engine correlates a revision string against the revision it is waiting
+// for, and a Status has no revision it is waiting for: the desired revision is
+// `<generation>-<spec-hash-short>` (ADR-0028 decision 2) and this server knows
+// neither half of it for a spec the controller has not rendered yet — the
+// generation is allocated by the API server and the hash is computed by the
+// controller. What it does know is both sides of the *generation*: the tag's
+// own first half, and `.metadata.generation`. Comparing those answers exactly
+// the question a reader has — "am I looking at what I asked for?" — without
+// this package inventing a revision nobody published.
+//
+// # Both unknowns answer false, and that is why the wire says so
+//
+// An environment that has published nothing has no revision to be stale, and a
+// revision this server cannot read a generation out of is one it must not
+// characterise. Both come back false, which makes false mean "they agree, or
+// kelson could not compare" — the ambiguity is disclosed on the field
+// (StatusResponse.stale) rather than resolved by guessing, because the
+// alternative is reporting an environment as drifted on the strength of a tag
+// this server failed to parse.
+//
+// A revision AHEAD of the generation is not stale either. It happens while a
+// spec write is still settling, and it is the opposite complaint from the one
+// this answers.
+func staleRevision(st controlstore.EnvironmentState) bool {
+	if st.Revision == "" || st.Generation == 0 {
+		return false
+	}
+	generation, ok := revisionGeneration(st.Revision)
+	if !ok {
+		return false
+	}
+	return generation < st.Generation
 }
 
 // workloadVerdicts evaluates the observation verdict for every resource in the

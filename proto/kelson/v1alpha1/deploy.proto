@@ -115,6 +115,37 @@ message StatusResponse {
   // Deploy stream and not through a Status poll. A poll that never says stuck
   // has not ruled it out.
   string answer = 7;
+  // ObservedRevision is the revision this environment is observed to be
+  // serving: `Environment.status.revision` as the controller last wrote it,
+  // projected from the same statemachine.State field the stream's
+  // `Transition.observed_revision` carries.
+  //
+  // What a consumer may conclude: this, and not `revision`, is the revision
+  // whose manifests are in the cluster right now. On this spine the two agree
+  // — the controller records one revision per environment and it is the one
+  // serving — so the pair is a seam kept open for a source that can tell them
+  // apart, not two facts today. Whether it is the revision the *stored spec*
+  // would publish is a different question, and `stale` is the only field that
+  // answers it.
+  string observed_revision = 8;
+  // Stale means the environment is not serving the spec it holds: the revision
+  // above was published for an older generation than the Environment's
+  // `.metadata.generation` (a revision tag is `<generation>-<spec-hash-short>`,
+  // ADR-0028 decision 2, so the comparison needs no second read).
+  //
+  // What a consumer may conclude: the revision named here is not the current
+  // one, and nothing more. Stale is a statement about revisions and NOT about
+  // health — a stale environment is very often `live`, because revision 44 is
+  // up and well and simply is not revision 45 — so it is rendered beside the
+  // answer and never instead of it. A rollback pin is stale by construction
+  // and correctly so: the environment is deliberately serving an older
+  // revision, and `cause` names the pin.
+  //
+  // False is not a claim that the environment is current. It is also what
+  // kelson reports when there was nothing to compare: no revision published
+  // yet, a revision whose tag it cannot read a generation out of, or no
+  // delivery half at all. Those cases are visible in `revision` and `cause`.
+  bool stale = 9;
 }
 
 // WorkloadVerdict mirrors observation's classification (the same predicate

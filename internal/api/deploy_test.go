@@ -1433,6 +1433,12 @@ func TestStatusReportsVerdicts(t *testing.T) {
 	if got := res.Msg.GetAnswer(); got != string(statemachine.AnswerLive) {
 		t.Errorf("answer = %q, want the engine's own classification %s", got, statemachine.AnswerLive)
 	}
+	if got := res.Msg.GetObservedRevision(); got != "3-9f0a1b2c" {
+		t.Errorf("observed revision = %q, want the revision the status names", got)
+	}
+	if res.Msg.GetStale() {
+		t.Errorf("an environment serving the revision its generation asks for is not stale: %+v", res.Msg)
+	}
 	verdicts := res.Msg.GetVerdicts()
 	if len(verdicts) != 1 || verdicts[0].GetCode() != string(observation.CodeCrashLoopBackOff) {
 		t.Fatalf("verdicts = %+v, want the crash-loop verdict", verdicts)
@@ -1596,6 +1602,104 @@ func TestStatusVerdictHealthyIsNeitherStuckNorDegraded(t *testing.T) {
 	}
 }
 
+// TestStatusReportsDriftWithoutCallingItUnhealthy is the drift half: a spec
+// edited to generation 45 whose environment is still serving revision 44 reads
+// as stale AND as live, because those answer different questions. Saying the
+// second without the first was the gap; saying the first *instead* of the
+// second would be a new lie.
+func TestStatusReportsDriftWithoutCallingItUnhealthy(t *testing.T) {
+	connector, _ := connectorFor(nil)
+	st := healthyEnvironment("hello", "development", "44-1a2b3c4d")
+	// The spec moved and the controller has not reconciled it yet: the classic
+	// "healthy, but on revision 44".
+	st.Generation, st.ObservedGeneration = 45, 44
+	for i := range st.Conditions {
+		st.Conditions[i].ObservedGeneration = 44
+	}
+	c := serve(t, Options{Delivery: connector, Environments: newFakeEnvironments(st)})
+
+	res, err := c.deploy.Status(context.Background(), connect.NewRequest(&kelsonv1alpha1.StatusRequest{
+		Spec:        inlineSpec(projectDoc, map[string]string{"development": developmentDoc}),
+		Environment: "development",
+		Profile:     profileRef(),
+	}))
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if !res.Msg.GetStale() {
+		t.Errorf("revision 44 under generation 45 is stale: %+v", res.Msg)
+	}
+	if got := res.Msg.GetAnswer(); got != string(statemachine.AnswerLive) {
+		t.Errorf("answer = %q, want %s: stale is a statement about revisions, not about health",
+			got, statemachine.AnswerLive)
+	}
+	if got := res.Msg.GetObservedRevision(); got != "44-1a2b3c4d" {
+		t.Errorf("observed revision = %q, want the one actually serving", got)
+	}
+	if !strings.Contains(res.Msg.GetCause(), "generation 44") {
+		t.Errorf("cause = %q, want it to still name the generation the status is at", res.Msg.GetCause())
+	}
+}
+
+// TestStatusReportsARollbackPinAsStale: a pinned environment is deliberately
+// serving an older revision, and "deliberately" does not make it current. The
+// field says what is true and `cause` says why it is true.
+func TestStatusReportsARollbackPinAsStale(t *testing.T) {
+	connector, _ := connectorFor(nil)
+	st := healthyEnvironment("hello", "development", "40-1a2b3c4d")
+	st.Generation, st.ObservedGeneration = 45, 45
+	for i := range st.Conditions {
+		st.Conditions[i].ObservedGeneration = 45
+	}
+	st.RollbackRevision, st.RollbackGeneration = "40-1a2b3c4d", 45
+	c := serve(t, Options{Delivery: connector, Environments: newFakeEnvironments(st)})
+
+	res, err := c.deploy.Status(context.Background(), connect.NewRequest(&kelsonv1alpha1.StatusRequest{
+		Spec:        inlineSpec(projectDoc, map[string]string{"development": developmentDoc}),
+		Environment: "development",
+		Profile:     profileRef(),
+	}))
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if !res.Msg.GetStale() {
+		t.Errorf("a pinned environment is not serving the spec it holds: %+v", res.Msg)
+	}
+	if got := res.Msg.GetAnswer(); got != string(statemachine.AnswerLive) {
+		t.Errorf("answer = %q, want %s", got, statemachine.AnswerLive)
+	}
+}
+
+// TestStaleIsFalseWhenKelsonCouldNotCompare covers the honest-absence half:
+// every input the comparison cannot be made from answers false rather than
+// guessing, which is why the field's own documentation says false is not a
+// claim that the environment is current.
+func TestStaleIsFalseWhenKelsonCouldNotCompare(t *testing.T) {
+	cases := []struct {
+		name string
+		st   controlstore.EnvironmentState
+	}{
+		{"nothing published", controlstore.EnvironmentState{Generation: 9}},
+		{"no generation yet", controlstore.EnvironmentState{Revision: "3-9f0a1b2c"}},
+		{"a revision with no generation to read", controlstore.EnvironmentState{
+			Revision: "sha256:deadbeef", Generation: 9,
+		}},
+		{"a revision ahead of the generation", controlstore.EnvironmentState{
+			Revision: "9-9f0a1b2c", Generation: 3,
+		}},
+		{"the revision the generation asks for", controlstore.EnvironmentState{
+			Revision: "9-9f0a1b2c", Generation: 9,
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if staleRevision(tc.st) {
+				t.Errorf("staleRevision(%+v) = true, want false", tc.st)
+			}
+		})
+	}
+}
+
 // TestStatusWithoutADeliveryHalfReportsNoAnswer: an empty answer is a value a
 // client can branch on and a guessed `waiting` is not, which is the same rule
 // the empty phase beside it has always followed (issue #53).
@@ -1614,6 +1718,9 @@ func TestStatusWithoutADeliveryHalfReportsNoAnswer(t *testing.T) {
 	if res.Msg.GetAnswer() != "" || res.Msg.GetPhase() != "" {
 		t.Errorf("answer/phase = %q/%q, want both empty with the reason in cause",
 			res.Msg.GetAnswer(), res.Msg.GetPhase())
+	}
+	if res.Msg.GetStale() || res.Msg.GetObservedRevision() != "" {
+		t.Errorf("a status with no delivery half claims nothing about revisions: %+v", res.Msg)
 	}
 	if !strings.Contains(res.Msg.GetCause(), "delivery phase is not reported") {
 		t.Errorf("cause = %q, want it to name the missing seam", res.Msg.GetCause())
@@ -1640,6 +1747,9 @@ func TestStatusOfAnEnvironmentThatHasDeliveredNothing(t *testing.T) {
 	if res.Msg.GetAnswer() != "" {
 		t.Errorf("answer = %q, want empty: an environment that delivered nothing is not waiting on anything",
 			res.Msg.GetAnswer())
+	}
+	if res.Msg.GetStale() {
+		t.Errorf("nothing published is nothing to be stale: %+v", res.Msg)
 	}
 }
 
