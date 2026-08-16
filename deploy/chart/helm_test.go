@@ -129,7 +129,6 @@ func TestTemplateServerFlags(t *testing.T) {
 		"--set", "server.registry=ghcr.io/acme",
 		"--set", "server.pushSecret=ghcr-push",
 		"--set", "server.buildNamespace=kelson-builds",
-		"--set", "server.keep=5",
 		"--set", "server.insecureRegistries={localhost:5000,registry.internal:5000}",
 	)...)
 	container := serverContainer(t, decodeDocs(t, out))
@@ -138,7 +137,6 @@ func TestTemplateServerFlags(t *testing.T) {
 	for _, want := range []string{
 		"--listen=0.0.0.0:8420",
 		"--namespace=kelson-system",
-		"--keep=5",
 		"--registry=ghcr.io/acme",
 		"--push-secret=ghcr-push",
 		"--build-namespace=kelson-builds",

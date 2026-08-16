@@ -47,7 +47,6 @@ spec:
             # --insecure-bind below says the exposure was deliberate.
             - --listen=0.0.0.0:{{ .Values.server.port }}
             - --namespace={{ include "kelson.stateNamespace" . }}
-            - --keep={{ .Values.server.keep }}
             - --audit-retention={{ .Values.server.auditRetention }}
             {{- if .Values.auth.insecure }}
             - --insecure-bind

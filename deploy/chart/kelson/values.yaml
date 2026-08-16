@@ -77,9 +77,6 @@ server:
   # granting those ConfigMaps is created.
   namespace: ""
 
-  # -- Deployment revisions retained per environment (`--keep`).
-  keep: 20
-
   # -- Days of audit records retained (`--audit-retention`), the trail of what
   # each principal actually did (issue #78, ADR-0026). Records live in
   # ConfigMaps in the state namespace, one per UTC day, under the same RBAC the
