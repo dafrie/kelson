@@ -110,8 +110,10 @@ describe("PreviewDetailPage", () => {
     );
     expect(screen.getByText("staging")).toBeTruthy();
 
-    // Phase, commit and age, the same vocabulary the list panel uses.
-    expect(screen.getByText("ready")).toBeTruthy();
+    // Status, commit and age, the same vocabulary the list panel uses — with
+    // flux-operator's own phase kept beside the word as a labelled fact.
+    expect(screen.getByText("live", { selector: ".k-pill" })).toBeTruthy();
+    expect(screen.getByText("phase ready")).toBeTruthy();
     expect(screen.getByText("0123456789ab")).toBeTruthy();
     expect(screen.getByText("2h")).toBeTruthy();
 

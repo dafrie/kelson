@@ -97,7 +97,8 @@ describe("ProjectDetailPage", () => {
   it("shows the phase and the workload verdicts, which are different answers", async () => {
     renderDetail();
 
-    expect(await screen.findByText("healthy", { selector: ".k-pill" })).toBeTruthy();
+    expect(await screen.findByText("live", { selector: ".k-pill" })).toBeTruthy();
+    expect(screen.getByText("phase Healthy")).toBeTruthy();
     expect(screen.getByText("8f2c1ad")).toBeTruthy();
     // A Healthy phase with a crash-looping workload underneath is exactly the
     // pair the two signals exist to tell apart.
@@ -411,7 +412,7 @@ describe("ProjectDetailPage live updates", () => {
     renderAt(live, "/projects/checkout", "/projects/:project", <ProjectDetailPage />);
 
     expect(
-      await screen.findByText("reconciling", { selector: ".k-pill" }),
+      await screen.findByText("deploying", { selector: ".k-pill" }),
     ).toBeTruthy();
 
     events.push(
@@ -425,7 +426,7 @@ describe("ProjectDetailPage live updates", () => {
       }),
     );
     expect(
-      await screen.findByText("healthy", { selector: ".k-pill" }),
+      await screen.findByText("live", { selector: ".k-pill" }),
     ).toBeTruthy();
     expect(screen.getByText("9d3f0aa")).toBeTruthy();
     expect(screen.getByText("3/3 replicas ready")).toBeTruthy();

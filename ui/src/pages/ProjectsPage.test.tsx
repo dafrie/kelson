@@ -93,10 +93,10 @@ describe("ProjectsPage", () => {
   it("maps phases onto pills and shows revision, counts and cause", async () => {
     renderProjects();
 
-    const healthy = await screen.findByText("healthy", { selector: ".k-pill" });
+    const healthy = await screen.findByText("live", { selector: ".k-pill" });
     expect(healthy.dataset.status).toBe("synced");
     expect(
-      screen.getByText("degraded", { selector: ".k-pill" }).dataset.status,
+      screen.getByText("unhealthy", { selector: ".k-pill" }).dataset.status,
     ).toBe("degraded");
     expect(screen.getByText("8f2c1ad")).toBeTruthy();
     expect(screen.getByText("4/4 live")).toBeTruthy();
@@ -124,10 +124,11 @@ describe("ProjectsPage", () => {
       const counts = [...container.querySelectorAll(".k-count-group")].map(
         (el) => el.textContent,
       );
-      expect(counts).toEqual(["1 synced", "1 degraded", "1 unknown"]);
+      // Worst first: the tally is a to-do list, not an inventory.
+      expect(counts).toEqual(["1 unhealthy", "1 live", "1 unknown"]);
     });
     // The healthy card is unaffected by its neighbour's failure.
-    expect(screen.getByText("healthy", { selector: ".k-pill" })).toBeTruthy();
+    expect(screen.getByText("live", { selector: ".k-pill" })).toBeTruthy();
   });
 });
 
@@ -181,9 +182,9 @@ describe("ProjectsPage live updates", () => {
 
     // The fetched answer first, then the streamed one over the top of it.
     expect(
-      await screen.findByText("reconciling", { selector: ".k-pill" }),
+      await screen.findByText("deploying", { selector: ".k-pill" }),
     ).toBeTruthy();
-    const pill = await screen.findByText("healthy", { selector: ".k-pill" });
+    const pill = await screen.findByText("live", { selector: ".k-pill" });
     expect(pill.dataset.status).toBe("synced");
     expect(screen.getByText("9d3f0aa")).toBeTruthy();
     expect(screen.getByText("3/3 replicas ready")).toBeTruthy();
@@ -194,7 +195,7 @@ describe("ProjectsPage live updates", () => {
       const counts = [...container.querySelectorAll(".k-count-group")].map(
         (el) => el.textContent,
       );
-      expect(counts).toEqual(["1 synced"]);
+      expect(counts).toEqual(["1 live"]);
     });
   });
 
@@ -247,7 +248,7 @@ describe("ProjectsPage live updates", () => {
     renderAt(transport, "/projects", "/projects", <ProjectsPage />);
 
     expect(
-      await screen.findByText("reconciling", { selector: ".k-pill" }),
+      await screen.findByText("deploying", { selector: ".k-pill" }),
     ).toBeTruthy();
     // The second Status answer is the one the card ends up showing.
     expect(await screen.findByText("relisted")).toBeTruthy();
@@ -259,8 +260,8 @@ describe("ProjectsPage live updates", () => {
     const { transport } = liveServer(events);
     renderAt(transport, "/projects", "/projects", <ProjectsPage />);
 
-    expect(await screen.findByText("live")).toBeTruthy();
-    expect(screen.getByText("live").dataset.state).toBe("live");
+    expect(await screen.findByText("streaming")).toBeTruthy();
+    expect(screen.getByText("streaming").dataset.state).toBe("live");
   });
 
   it("says nothing at all when the server cannot watch", async () => {
@@ -287,10 +288,10 @@ describe("ProjectsPage live updates", () => {
     renderAt(transport, "/projects", "/projects", <ProjectsPage />);
 
     expect(
-      await screen.findByText("healthy", { selector: ".k-pill" }),
+      await screen.findByText("live", { selector: ".k-pill" }),
     ).toBeTruthy();
     await waitFor(() => {
-      expect(screen.queryByText("live")).toBeNull();
+      expect(screen.queryByText("streaming")).toBeNull();
       expect(screen.queryByText("reconnecting…")).toBeNull();
     });
   });
@@ -300,7 +301,7 @@ describe("ProjectsPage live updates", () => {
     const { transport } = liveServer(events);
     const { unmount } = renderAt(transport, "/projects", "/projects", <ProjectsPage />);
 
-    await screen.findByText("live");
+    await screen.findByText("streaming");
     expect(events.opened()).toBe(1);
     unmount();
     // Resolves only when the client hung up; a stream left running would time

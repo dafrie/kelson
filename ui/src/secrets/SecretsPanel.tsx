@@ -5,7 +5,7 @@ import { useRun } from "../api/stream";
 import { Copyable } from "../components/Copyable";
 import { ErrorPanel } from "../components/ErrorPanel";
 import { StatusPill } from "../components/StatusPill";
-import { formatAge } from "../components/phase";
+import { formatAge } from "../components/format";
 import type {
   SecretSummary,
   SetSecretResponse,

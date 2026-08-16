@@ -148,9 +148,13 @@ describe("DeployPage", () => {
       expect(rows.length).toBeGreaterThanOrEqual(4);
     });
 
-    // Every transition is a row, in arrival order, with its cause.
-    expect(screen.getByText("committed", { selector: ".k-pill" })).toBeTruthy();
-    expect(screen.getByText("reconciling", { selector: ".k-pill" })).toBeTruthy();
+    // Every transition is a row, in arrival order, with its cause. The pill is
+    // the engine's answer in the shared vocabulary; the phase rides beside it
+    // as a labelled fact.
+    expect(screen.getByText("waiting", { selector: ".k-pill" })).toBeTruthy();
+    expect(screen.getByText("deploying", { selector: ".k-pill" })).toBeTruthy();
+    expect(screen.getByText(/phase Committed/)).toBeTruthy();
+    expect(screen.getByText(/phase Reconciling/)).toBeTruthy();
     expect(
       screen.getByText("flux/rolling-out: 1 of 3 replicas updated"),
     ).toBeTruthy();
@@ -210,7 +214,7 @@ describe("DeployPage", () => {
     );
 
     expect(await screen.findByText("Deployment settled")).toBeTruthy();
-    expect(screen.getByText("healthy", { selector: ".k-pill" })).toBeTruthy();
+    expect(screen.getByText("live", { selector: ".k-pill" })).toBeTruthy();
     expect(screen.queryByRole("alert")).toBeNull();
   });
 

@@ -12,7 +12,7 @@ import { Disclosure, YamlBlock } from "../components/Disclosure";
 import { ErrorPanel } from "../components/ErrorPanel";
 import { LiveIndicator } from "../components/LiveIndicator";
 import { StatusPill } from "../components/StatusPill";
-import { phaseToStatus } from "../components/phase";
+import { statusForPhase, verdictTone } from "../components/status";
 import { EmptyState, LoadingState } from "../components/States";
 import { DataServices } from "../dataservices/DataServices";
 import { isDataServiceVerdict } from "../dataservices/parse";
@@ -416,10 +416,7 @@ function EnvironmentPanel({
             ) : status.loading && status.data === undefined ? (
               <StatusPill status="unknown" label="reading…" />
             ) : (
-              <StatusPill
-                status={phaseToStatus(phase ?? "")}
-                label={phase?.toLowerCase() || "unknown"}
-              />
+              <EnvironmentStatus phase={phase ?? ""} />
             )}
             <span className="k-mono">
               <LiveIndicator state={watch} />
@@ -560,6 +557,24 @@ function decodeDocument(bytes: Uint8Array | undefined): string {
   return bytes === undefined ? "" : new TextDecoder().decode(bytes);
 }
 
+/**
+ * The environment's own pill: the shared word, with the wire's phase kept as a
+ * labelled fact beside it rather than as the pill's text. The phase is what an
+ * operator correlates with Flux and it stays reachable; it is not the answer to
+ * "is my change live".
+ */
+function EnvironmentStatus({ phase }: { phase: string }) {
+  const state = statusForPhase(phase);
+  return (
+    <>
+      <StatusPill status={state.tone} label={state.word} />
+      {phase !== "" ? (
+        <span className="k-mono k-env__phase">phase {phase}</span>
+      ) : null}
+    </>
+  );
+}
+
 function Fragmented({ name, value }: { name: string; value: string }) {
   return (
     <>
@@ -628,16 +643,17 @@ function mergeVerdicts(
  * the message, and the remediation as a "fix:" line.
  */
 function Verdict({ verdict }: { verdict: VerdictRow }) {
-  const kind = verdict.healthy
-    ? "synced"
-    : verdict.degraded
-      ? "degraded"
-      : "failed";
   return (
     <li className="k-verdict">
       <div className="k-verdict__head">
         <span className="k-mono k-verdict__resource">{verdict.resource}</span>
-        <StatusPill status={kind} label={verdict.code || "unknown"} />
+        {/* The label is observation's own code, rendered verbatim like every
+            other structured code in this UI; only the colour is the shared
+            vocabulary's, so a red line here means what a red pill means. */}
+        <StatusPill
+          status={verdictTone(verdict.healthy, verdict.degraded)}
+          label={verdict.code || "unknown"}
+        />
       </div>
       {verdict.message ? (
         <p className="k-verdict__message">{verdict.message}</p>

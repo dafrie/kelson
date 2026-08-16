@@ -36,29 +36,35 @@ const preview = (fields: Record<string, unknown> = {}) =>
   });
 
 describe("previewStatus", () => {
-  it("maps each phase onto the design system's vocabulary", () => {
-    expect(previewStatus("ready", false)).toBe("synced");
-    expect(previewStatus("applying", false)).toBe("reconciling");
-    expect(previewStatus("failed", false)).toBe("failed");
+  const word = (phase: string, suspended = false) =>
+    previewStatus(phase, suspended).word;
+
+  it("maps each phase onto the one status vocabulary", () => {
+    expect(word("ready")).toBe("live");
+    expect(word("applying")).toBe("deploying");
+    expect(word("failed")).toBe("failed");
   });
 
-  it("draws a missing artifact as degraded, not failed", () => {
+  it("draws a missing artifact as waiting, not failed", () => {
     // The commonest cause is a CI step nobody added (ADR-0017 decision 8), and
     // "failed" would send a reader to the manifests instead of the workflow.
-    expect(previewStatus("awaiting-artifact", false)).toBe("degraded");
+    // The row's own sentence names the step.
+    expect(word("awaiting-artifact")).toBe("waiting");
   });
 
   it("has somewhere honest to put a phase it does not know", () => {
-    expect(previewStatus("unknown", false)).toBe("unknown");
-    expect(previewStatus("teleported", false)).toBe("unknown");
-    expect(previewStatus("", false)).toBe("unknown");
+    expect(word("unknown")).toBe("unknown");
+    expect(word("teleported")).toBe("unknown");
+    expect(word("")).toBe("unknown");
   });
 
   it("lets suspension win over the phase", () => {
     // A suspended Kustomization keeps its last conditions, so its phase
-    // describes a moment nobody is maintaining any more.
-    expect(previewStatus("ready", true)).toBe("suspended");
-    expect(previewStatus("failed", true)).toBe("suspended");
+    // describes a moment nobody is maintaining any more — which is not the
+    // same claim as "waiting", where something is expected to act.
+    expect(word("ready", true)).toBe("suspended");
+    expect(word("failed", true)).toBe("suspended");
+    expect(previewStatus("ready", true).tone).toBe("suspended");
   });
 });
 

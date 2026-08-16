@@ -9,8 +9,14 @@ import type { WatchResponse_Event } from "../gen/kelson/v1alpha1/events_pb";
 import { Copyable } from "../components/Copyable";
 import { ErrorPanel } from "../components/ErrorPanel";
 import { LiveIndicator } from "../components/LiveIndicator";
-import { StatusPill, type StatusKind } from "../components/StatusPill";
-import { phaseToStatus } from "../components/phase";
+import { StatusPill } from "../components/StatusPill";
+import {
+  statusFor,
+  statusForPhase,
+  UNKNOWN_STATUS,
+  type Status,
+  type StatusWord,
+} from "../components/status";
 import { EmptyState, LoadingState } from "../components/States";
 
 /**
@@ -62,11 +68,11 @@ export function ProjectsPage() {
     return out;
   }, [specs.data]);
 
-  // Each card reports its own resolved pill up, so the mono line above the grid
+  // Each card reports its own resolved word up, so the mono line above the grid
   // counts what is actually on screen rather than a second, guessed tally.
-  const [kinds, setKinds] = useState<Record<string, StatusKind>>({});
-  const report = useCallback((key: string, kind: StatusKind) => {
-    setKinds((prev) => (prev[key] === kind ? prev : { ...prev, [key]: kind }));
+  const [words, setWords] = useState<Record<string, StatusWord>>({});
+  const report = useCallback((key: string, word: StatusWord) => {
+    setWords((prev) => (prev[key] === word ? prev : { ...prev, [key]: word }));
   }, []);
 
   const [live, setLive] = useState<Record<string, CardLive>>({});
@@ -103,7 +109,7 @@ export function ProjectsPage() {
   // The watch opens only once every card has settled: until then the deltas
   // have nothing to be deltas of, and a transition applied before its Status
   // landed would be overwritten by the older answer.
-  const settled = pairs.length > 0 && pairs.every((p) => kinds[`${p.project}/${p.environment}`] !== undefined);
+  const settled = pairs.length > 0 && pairs.every((p) => words[`${p.project}/${p.environment}`] !== undefined);
   const watch = useWatch({
     scopes: settled ? pairs : [],
     onEvent,
@@ -132,7 +138,7 @@ export function ProjectsPage() {
         <span>
           {pairs.length} {pairs.length === 1 ? "environment" : "environments"}
         </span>
-        <Counts kinds={kinds} />
+        <Counts words={words} />
         <LiveIndicator state={watch} />
       </div>
 
@@ -175,24 +181,33 @@ export function ProjectsPage() {
   );
 }
 
-const COUNTED: { kind: StatusKind; label: string }[] = [
-  { kind: "synced", label: "synced" },
-  { kind: "reconciling", label: "reconciling" },
-  { kind: "degraded", label: "degraded" },
-  { kind: "failed", label: "failed" },
-  { kind: "unknown", label: "unknown" },
+/**
+ * Worst first, so the tally reads as a to-do list: a grid with one broken
+ * environment says "1 failed" before it says "12 live". The words and their
+ * colours are components/status.ts's; this only decides the order.
+ */
+const COUNTED: StatusWord[] = [
+  "failed",
+  "stuck",
+  "unhealthy",
+  "deploying",
+  "waiting",
+  "suspended",
+  "live",
+  "unknown",
 ];
 
-function Counts({ kinds }: { kinds: Record<string, StatusKind> }) {
-  const tally = Object.values(kinds);
+function Counts({ words }: { words: Record<string, StatusWord> }) {
+  const tally = Object.values(words);
   return (
     <>
-      {COUNTED.map(({ kind, label }) => {
-        const n = tally.filter((k) => k === kind).length;
+      {COUNTED.map((word) => {
+        const n = tally.filter((w) => w === word).length;
         if (n === 0) return null;
+        const { tone } = statusFor(word);
         return (
-          <span key={kind} className="k-count-group">
-            <span className={`k-count k-count--${kind}`}>{n}</span> {label}
+          <span key={word} className="k-count-group">
+            <span className={`k-count k-count--${tone}`}>{n}</span> {word}
           </span>
         );
       })}
@@ -209,7 +224,7 @@ function ProjectCard({
 }: {
   project: string;
   environment: string;
-  onStatus: (key: string, kind: StatusKind) => void;
+  onStatus: (key: string, word: StatusWord) => void;
   live: CardLive | undefined;
   /** Bumped on a resync: the card refetches rather than trusting a delta. */
   generation: number;
@@ -237,17 +252,15 @@ function ProjectCard({
     : status.data?.revision;
   const cause = live?.transition ? live.transition.cause : status.data?.cause;
 
-  const kind: StatusKind =
-    failure !== undefined
-      ? "unknown"
-      : phase !== undefined
-        ? phaseToStatus(phase)
-        : "unknown";
+  const state: Status =
+    failure !== undefined || phase === undefined
+      ? UNKNOWN_STATUS
+      : statusForPhase(phase);
 
   const settled = !status.loading;
   useEffect(() => {
-    if (settled) onStatus(`${project}/${environment}`, kind);
-  }, [settled, kind, project, environment, onStatus]);
+    if (settled) onStatus(`${project}/${environment}`, state.word);
+  }, [settled, state.word, project, environment, onStatus]);
 
   return (
     <div className="k-panel k-panel--interactive k-card">
@@ -271,7 +284,7 @@ function ProjectCard({
             <StatusPill status="unknown" label="status unavailable" />
           </span>
         ) : (
-          <StatusPill status={kind} label={phase?.toLowerCase() || "unknown"} />
+          <StatusPill status={state.tone} label={state.word} />
         )}
       </div>
 

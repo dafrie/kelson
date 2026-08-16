@@ -16,7 +16,8 @@ import { Copyable } from "../components/Copyable";
 import { Disclosure, YamlBlock } from "../components/Disclosure";
 import { ErrorPanel } from "../components/ErrorPanel";
 import { StatusPill } from "../components/StatusPill";
-import { answerToStatus, formatInstant, phaseToStatus } from "../components/phase";
+import { formatInstant } from "../components/format";
+import { statusForAnswer, statusForPhase } from "../components/status";
 import { LoadingState } from "../components/States";
 import { DiffView } from "../diff/DiffView";
 import { decodeDiff, type Diff } from "../diff/parse";
@@ -463,14 +464,16 @@ function EventLog({ live }: { live: Live }) {
 
 function TransitionRow({ transition }: { transition: DeployResponse_Transition }) {
   const at = formatInstant(transition.sinceUnixMs);
+  // The engine's own answer is the more specific signal — "stuck" is not a
+  // phase — so the pill reads it directly. The phase rides alongside as a
+  // labelled fact: it is what the rail above draws and what an operator
+  // correlates with Flux, and it is not a second opinion about the same thing.
+  const state = statusForAnswer(transition.answer);
   return (
     <div className="k-stream__row">
-      <StatusPill
-        status={answerToStatus(transition.answer)}
-        label={transition.phase.toLowerCase()}
-      />
+      <StatusPill status={state.tone} label={state.word} />
       <span className="k-mono k-stream__answer">
-        {transition.answer}
+        phase {transition.phase}
         {transition.stuck ? " · stuck" : ""}
       </span>
       {transition.cause ? (
@@ -494,6 +497,7 @@ function TransitionRow({ transition }: { transition: DeployResponse_Transition }
  */
 function Settled({ settled }: { settled: DeployResponse_Settled }) {
   const phase = settled.final?.phase ?? "";
+  const state = statusForPhase(phase);
   return (
     <div
       className={phase === "Healthy" ? "k-settled" : "k-settled k-settled--other"}
@@ -501,10 +505,7 @@ function Settled({ settled }: { settled: DeployResponse_Settled }) {
       data-settled={phase}
     >
       <div className="k-settled__head">
-        <StatusPill
-          status={phaseToStatus(phase)}
-          label={phase.toLowerCase() || "settled"}
-        />
+        <StatusPill status={state.tone} label={state.word} />
         <span className="k-settled__title">Deployment settled</span>
       </div>
       {settled.final?.observedRevision ? (

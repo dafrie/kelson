@@ -1,4 +1,10 @@
 import type { StatusKind } from "../components/StatusPill";
+import {
+  statusFor,
+  statusForAnswer,
+  type Status,
+  type StatusWord,
+} from "../components/status";
 
 /**
  * The deployment state machine, as something a person can read (issue #68).
@@ -119,20 +125,27 @@ export interface Diagnosis {
 
 export interface Rail {
   stages: RailStage[];
-  /** The engine's answer: waiting|progressing|live|stuck|rejected|degraded|unknown. */
+  /** The engine's answer, verbatim: waiting|progressing|live|stuck|rejected|degraded. */
   answer: string;
+  /** The same answer as the word and colour every screen shows it in. */
+  status: Status;
   headline: string;
   diagnosis: Diagnosis | undefined;
   /** Healthy or Rejected: the question is answered for this revision. */
   settled: boolean;
 }
 
+/**
+ * A stage's state as one of the shared words, so the rail is painted from the
+ * same palette policy as every pill: a done stage is green the way `live` is,
+ * a current one pulses the way `deploying` does.
+ */
 const STAGE_STATUS: Record<StageState, StatusKind> = {
-  done: "synced",
-  current: "reconciling",
-  stuck: "degraded",
-  failed: "failed",
-  pending: "unknown",
+  done: statusFor("live").tone,
+  current: statusFor("deploying").tone,
+  stuck: statusFor("stuck").tone,
+  failed: statusFor("failed").tone,
+  pending: statusFor("unknown").tone,
 };
 
 function indexOfPhase(phase: string): number {
@@ -145,11 +158,10 @@ function indexOfPhase(phase: string): number {
  * Flux is the only reconciler kelson has (ADR-0028), and `Committed.adapter` is
  * hardcoded to `"flux"` server-side (`internal/api`'s `adapterName`) — so this
  * table has one entry. It stays a table, and a name outside it is still printed
- * verbatim rather than hidden,
- * because the wire's word must never be silently discarded: an older server or
- * a value this build has not seen yet is still worth showing, just without a
- * friendly translation. Only an EMPTY mode degrades to the unnamed
- * "reconciler".
+ * verbatim rather than hidden, because the wire's word must never be silently
+ * discarded: an older server or a value this build has not seen yet is still
+ * worth showing, just without a friendly translation. Only an EMPTY name
+ * degrades to the unnamed "reconciler".
  */
 const RECONCILERS: Record<string, string> = {
   flux: "Flux (kustomize-controller)",
@@ -271,14 +283,19 @@ export function parseCause(text: string): RailCause {
   return { component, reason, message: parts.slice(at).join(": ") };
 }
 
-const HEADLINES: Record<string, string> = {
+/**
+ * One sentence per word, keyed by the word rather than by the engine's token,
+ * so the headline and the pill above it cannot drift apart.
+ */
+const HEADLINES: Record<StatusWord, string> = {
   waiting: "Committed. Waiting for a reconciler to pick it up.",
-  progressing: "In flight.",
+  deploying: "Deploying.",
   live: "Live and healthy.",
   stuck: "No progress.",
-  rejected: "Rejected before anything was applied.",
-  degraded: "Applied, but not healthy.",
-  unknown: "The delivery state could not be read.",
+  failed: "Refused before anything was applied.",
+  unhealthy: "Applied, but not healthy.",
+  suspended: "Paused. What is running is the last thing that reconciled.",
+  unknown: "This deployment's state could not be read.",
 };
 
 /** Builds the rail. Pure: same input, same rail, no clock and no routing. */
@@ -303,10 +320,13 @@ export function buildRail(input: RailInput): Rail {
     };
   });
 
+  const status = statusForAnswer(answer);
+
   return {
     stages,
     answer,
-    headline: diagnosis?.title ?? HEADLINES[answer] ?? HEADLINES.unknown ?? "",
+    status,
+    headline: diagnosis?.title ?? HEADLINES[status.word],
     diagnosis,
     settled: phase === "Healthy" || phase === "Rejected",
   };

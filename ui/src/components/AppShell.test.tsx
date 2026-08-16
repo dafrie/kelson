@@ -79,15 +79,19 @@ describe("ThemeToggle in the shell", () => {
 });
 
 describe("StatusPill", () => {
-  it("carries its status as a data attribute and a modifier class", () => {
-    render(<StatusPill status="reconciling" />);
-    const pill = screen.getByText("reconciling");
+  it("carries its tone as a data attribute and a modifier class", () => {
+    render(<StatusPill status="reconciling" label="deploying" />);
+    const pill = screen.getByText("deploying");
     expect(pill.dataset["status"]).toBe("reconciling");
     expect(pill.className).toContain("k-pill--reconciling");
   });
 
-  it("takes an override label", () => {
+  it("prints the label and never the tone", () => {
+    // The tone names are Flux's and Kubernetes' — the words a reader sees come
+    // from components/status.ts, so `label` is required and there is no path by
+    // which "reconciling" reaches a screen as text.
     render(<StatusPill status="unknown" label="no status yet" />);
     expect(screen.getByText("no status yet")).toBeTruthy();
+    expect(screen.queryByText("unknown")).toBeNull();
   });
 });

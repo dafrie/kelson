@@ -3,6 +3,7 @@ import { useMemo } from "react";
 import { useAsync, useClients } from "../api/data";
 import { ErrorPanel } from "../components/ErrorPanel";
 import { StatusPill } from "../components/StatusPill";
+import { verdictTone } from "../components/status";
 import type { Error as WireError } from "../gen/kelson/v1alpha1/common_pb";
 import { CapabilityPanel } from "./CapabilityPanel";
 import {
@@ -222,7 +223,7 @@ function DataServiceRow({
           <span className="k-soon">Deferred</span>
         ) : verdict !== undefined ? (
           <StatusPill
-            status={verdict.healthy ? "synced" : verdict.degraded ? "degraded" : "failed"}
+            status={verdictTone(verdict.healthy, verdict.degraded)}
             label={verdict.code || "unknown"}
           />
         ) : null}

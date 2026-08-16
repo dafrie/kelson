@@ -4,7 +4,7 @@ import { useAsync, useClients } from "../api/data";
 import { Copyable } from "../components/Copyable";
 import { ErrorPanel } from "../components/ErrorPanel";
 import { StatusPill } from "../components/StatusPill";
-import { formatAge } from "../components/phase";
+import { formatAge } from "../components/format";
 import type {
   ListPreviewsResponse,
   Preview,
@@ -213,6 +213,23 @@ function Configured({
   );
 }
 
+/**
+ * A preview's word, with flux-operator's own phase kept beside it as a labelled
+ * fact. The word answers "is this change request up"; the phase is what to
+ * quote at the operator when it is not.
+ */
+export function PreviewPill({ preview }: { preview: Preview }) {
+  const state = previewStatus(preview.phase, preview.suspended);
+  return (
+    <>
+      <StatusPill status={state.tone} label={state.word} />
+      {preview.phase !== "" ? (
+        <span className="k-mono k-previews__muted">phase {preview.phase}</span>
+      ) : null}
+    </>
+  );
+}
+
 function PreviewRow({
   preview,
   settings,
@@ -255,10 +272,7 @@ function PreviewRow({
         >
           details →
         </Link>
-        <StatusPill
-          status={previewStatus(preview.phase, preview.suspended)}
-          label={preview.suspended ? "suspended" : preview.phase || "unknown"}
-        />
+        <PreviewPill preview={preview} />
         {/* The full commit is what the tag is, so the abbreviation is a label
             over the whole value rather than a value of its own. */}
         {preview.sha ? (

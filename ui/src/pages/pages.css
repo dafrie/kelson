@@ -353,6 +353,13 @@
   gap: 10px;
 }
 
+/* The wire's phase beside the word: a labelled fact, sized so it reads as one
+   rather than as a second status claim. */
+.k-env__phase {
+  font-size: 11.5px;
+  color: var(--kelson-muted-2);
+}
+
 .k-env__verdicts {
   display: flex;
   flex-direction: column;
