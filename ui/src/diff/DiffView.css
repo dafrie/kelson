@@ -7,15 +7,15 @@
 .k-diff__blocked {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 18px 20px;
+  gap: 6px;
+  padding: 12px 14px;
   background: var(--kelson-failed-fill);
   border: 1px solid var(--kelson-failed-border);
-  border-radius: 6px;
+  border-radius: var(--kelson-radius-panel);
 }
 
 .k-diff__blocked-title {
-  font-size: 15px;
+  font-size: var(--kelson-size-body);
   font-weight: 500;
   color: var(--kelson-failed);
 }
@@ -24,10 +24,10 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 16px 20px;
+  padding: 12px 14px;
   background: var(--kelson-degraded-fill);
   border: 1px solid var(--kelson-degraded-border);
-  border-radius: 6px;
+  border-radius: var(--kelson-radius-panel);
 }
 
 .k-diff__summary {
@@ -46,12 +46,15 @@
   list-style: none;
 }
 
+/* One changed resource. The left edge is the only coloured thing: added,
+   removed and modified are the diff's own three states and they read down the
+   margin without painting the row. */
 .k-diff__resource {
-  padding: 14px 18px;
+  padding: 10px 12px;
   background: var(--kelson-panel);
-  border: 1px solid var(--kelson-border);
+  border: 1px solid var(--kelson-hairline);
   border-left-width: 3px;
-  border-radius: 6px;
+  border-radius: var(--kelson-radius-panel);
 }
 
 .k-diff__resource--added {
@@ -75,7 +78,7 @@
 
 .k-diff__glyph {
   font-family: var(--kelson-font-mono);
-  font-size: 13px;
+  font-size: var(--kelson-size-body);
   font-weight: 500;
   width: 10px;
 }
@@ -95,15 +98,18 @@
   color: var(--kelson-degraded);
 }
 
+/* Kind/namespace/name — the cluster's own address for the object. */
 .k-diff__resource-name {
+  font-family: var(--kelson-font-mono);
   color: var(--kelson-text);
-  font-size: 13px;
+  font-size: var(--kelson-size-fact);
 }
 
 .k-diff__resource-ns,
 .k-diff__op {
-  font-size: 12px;
-  color: var(--kelson-muted-2);
+  font-family: var(--kelson-font-mono);
+  font-size: var(--kelson-size-micro);
+  color: var(--kelson-muted);
 }
 
 .k-diff__fields {
@@ -115,12 +121,14 @@
   list-style: none;
 }
 
+/* A field path and its two values are all machine output. */
 .k-diff__field {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  font-size: 12px;
-  line-height: 1.7;
+  font-family: var(--kelson-font-mono);
+  font-size: var(--kelson-size-fact);
+  line-height: 1.65;
 }
 
 .k-diff__field-path {
@@ -147,17 +155,17 @@
 }
 
 .k-diff__field-origin {
-  color: var(--kelson-muted-deep);
+  color: var(--kelson-muted);
 }
 
 .k-diff__finding {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 14px 18px;
+  padding: 10px 12px;
   background: var(--kelson-panel);
-  border: 1px solid var(--kelson-border);
-  border-radius: 6px;
+  border: 1px solid var(--kelson-hairline);
+  border-radius: var(--kelson-radius-panel);
 }
 
 .k-diff__finding--blocking {
@@ -174,13 +182,23 @@
 
 .k-diff__finding-message {
   margin: 0;
-  font-size: 13.5px;
+  font-size: var(--kelson-size-body);
   color: var(--kelson-text);
 }
 
+/* Where the finding is: a resource, a field path, a spec path. Machine. */
 .k-diff__finding-where {
   font-family: var(--kelson-font-mono);
-  font-size: 12px;
-  color: var(--kelson-muted-2);
+  font-size: var(--kelson-size-fact);
+  color: var(--kelson-muted);
+  overflow-wrap: anywhere;
+}
+
+/* What the finding *says* — a sentence, from the engine or from kelson. Same
+   place on the row, same weight, sans, because it is words (#260). */
+.k-diff__finding-note {
+  margin: 0;
+  font-size: var(--kelson-size-fact);
+  color: var(--kelson-muted);
   overflow-wrap: anywhere;
 }

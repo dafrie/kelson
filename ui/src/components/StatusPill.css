@@ -1,12 +1,34 @@
+/*
+ * The status badge (#260, "The Console").
+ *
+ * Three loudness tiers, and which tier a tone is in *is* the design:
+ *
+ *   quiet   live · suspended · unknown   no fill, hairline ring, neutral ink,
+ *                                        and the tone kept in the 5px dot
+ *   working reconciling                  no fill, a ring in its own tone, the
+ *                                        word in its tone, the dot pulsing
+ *   loud    degraded · failed            fill, ring and word all in the tone
+ *
+ * A screen where everything is live therefore has no saturated colour on it
+ * larger than a dot, and the first thing that goes wrong is the only coloured
+ * object in view. That is the whole of "quiet when healthy" in one file.
+ *
+ * The badge is compact by Coolify's rule — "status uses compact badges rather
+ * than large colored chips" — and mono, because its text is either the state
+ * machine's word or a structured code and those must not look different.
+ */
+
 .k-pill {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 9px;
-  border: 1px solid transparent;
-  border-radius: 3px;
+  gap: 5px;
+  padding: 1px 7px;
+  border: 1px solid var(--kelson-hairline);
+  border-radius: var(--kelson-radius-control);
   font-family: var(--kelson-font-mono);
-  font-size: 11.5px;
+  font-size: var(--kelson-size-micro);
+  line-height: 1.5;
+  color: var(--kelson-text-2);
   white-space: nowrap;
 }
 
@@ -18,15 +40,33 @@
   flex: none;
 }
 
-.k-pill--synced {
-  color: var(--kelson-synced);
-  background: var(--kelson-synced-fill);
-  border-color: var(--kelson-synced-border);
+/* ------------------------------------------------------------------- quiet */
+
+/* Healthy recedes: the word is ordinary text and the only green left on the
+   screen is five pixels across. */
+.k-pill--synced .k-pill__dot {
+  background: var(--kelson-synced);
 }
 
+.k-pill--suspended .k-pill__dot {
+  background: var(--kelson-suspended);
+}
+
+.k-pill--unknown {
+  color: var(--kelson-muted);
+}
+
+.k-pill--unknown .k-pill__dot {
+  background: var(--kelson-muted-2);
+}
+
+/* ----------------------------------------------------------------- working */
+
+/* In flight, which is neither good news nor bad: its own tone, but no fill —
+   during a deploy every row is in this state and a page of filled blue badges
+   would be as loud as a page of failures. */
 .k-pill--reconciling {
   color: var(--kelson-reconciling);
-  background: var(--kelson-reconciling-fill);
   border-color: var(--kelson-reconciling-border);
 }
 
@@ -35,6 +75,10 @@
   animation: kelson-pulse 1.4s ease-in-out infinite;
 }
 
+/* -------------------------------------------------------------------- loud */
+
+/* The two states a reader has to do something about are the two that still
+   paint. They are meant to be the loudest thing on any screen. */
 .k-pill--degraded {
   color: var(--kelson-degraded);
   background: var(--kelson-degraded-fill);
@@ -45,18 +89,6 @@
   color: var(--kelson-failed);
   background: var(--kelson-failed-fill);
   border-color: var(--kelson-failed-border);
-}
-
-.k-pill--suspended {
-  color: var(--kelson-suspended);
-  background: var(--kelson-suspended-fill);
-  border-color: var(--kelson-suspended-border);
-}
-
-.k-pill--unknown {
-  color: var(--kelson-muted-2);
-  background: var(--kelson-inset);
-  border-color: var(--kelson-inset-border);
 }
 
 @media (prefers-reduced-motion: reduce) {
