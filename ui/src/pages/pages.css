@@ -660,6 +660,13 @@
   color: var(--kelson-muted);
 }
 
+/* The column head's Kubernetes-detail line, under the revision and indented
+   with it (#260). Present only when the display preference is on; the facts
+   inside it are `.k-kfacts`, which owns their type and spacing. */
+.k-matrix__detail {
+  padding-left: 6px;
+}
+
 .k-matrix__row {
   padding: 6px 12px 6px 0;
   border-bottom: 1px solid var(--kelson-hairline);

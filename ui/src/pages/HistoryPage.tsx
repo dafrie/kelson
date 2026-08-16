@@ -14,6 +14,9 @@ import {
   type Drift,
 } from "../components/status";
 import { EmptyState, LoadingState } from "../components/States";
+import { Detail, KubeFact } from "../expert/Detail";
+import { revisionParts } from "../expert/facts";
+import { Evidence, Why } from "../expert/Why";
 import { ComparePanel } from "../diff/ComparePanel";
 import { useEnvironment } from "./EnvironmentPage";
 import {
@@ -447,6 +450,23 @@ function Stop({
           {live ? (
             <>
               <span className="k-chip k-history__marker">deployed now</span>
+              {/* "Deployed now" is a claim about one stop out of a list of
+                  records, and it rests entirely on a second call: the caret says
+                  which one and what it answered. */}
+              <Why statement="deployed now">
+                <Evidence
+                  rows={[
+                    { name: "this revision", value: entry.revision },
+                    {
+                      name: "generation",
+                      value: revisionParts(entry.revision)?.generation ?? "",
+                    },
+                    { name: "answer", value: liveAnswer },
+                    { name: "phase", value: livePhase },
+                  ]}
+                  note="The status call reports this revision as the one serving. Every other row carries a recorded outcome instead, frozen when it stopped being current."
+                />
+              </Why>
               <LivePill phase={livePhase} answer={liveAnswer} />
               {/* The stop's own revision id is the mono value this qualifies,
                   one element to the left of it, so the mark says only why it
@@ -474,6 +494,14 @@ function Stop({
         ) : (
           <div className="k-history__meta">
             {when !== "" ? <span className="k-mono">{when}</span> : null}
+            {/* The generation half of the tag above, named. A reader comparing
+                this list against the cluster is comparing generations. */}
+            <Detail>
+              <KubeFact
+                name="generation"
+                value={revisionParts(entry.revision)?.generation ?? ""}
+              />
+            </Detail>
             {/* The recorded outcome is prefixed rather than shown as a pill, so
               it cannot be mistaken for the live one above it: it says how that
               deployment ended, not how it is. */}

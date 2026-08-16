@@ -983,6 +983,95 @@ revision in it. A "promote this column into that one" entry there would need one
 thing that does not exist yet — `PromotePage` reads no `?from=` and picks its
 source on screen — so the whole of it is a query parameter, a preselected radio
 and one link per adjacent column pair. No RPC, no proto, no second promote flow.
+### Kubernetes detail, the display preference that adds facts
+
+The second half of the Console's bargain
+([#260](https://github.com/dafrie/kelson/issues/260)). The default screens
+answer a developer's question — is my change live, is it moving, is something
+wrong — and deliberately keep Kubernetes out of the line they answer it in. The
+operator who needs the generation, the namespace and the object names was
+therefore reading a screen that had those facts in hand and would not print
+them. **Kubernetes detail** is the one control that changes that, and it is a
+*display preference* in exactly the sense the theme is one: one localStorage key
+(`kelson-detail`, absent means off, which is the default), one quiet control in
+the header beside the theme, nothing sent to the server, no mode of operation.
+`src/expert/` is all of it — `preference.ts` (the store), `DetailToggle.tsx`
+(the control), `Detail.tsx` (`<Detail>` and `<KubeFact>`), `Why.tsx` (the caret
+and its evidence grid) and `facts.ts` (the two parsers).
+
+Six rules, and the first two are tested rather than described:
+
+- **It gates information, never actions.** Every button, link and flow is on
+  screen in both states. `src/pages/expert.test.tsx` asserts the component
+  page's action bar is *byte-identical* markup with the preference on and off,
+  and that the environment's link set is unchanged — so a screenshot from one
+  reader is actionable by another and nobody is missing a control because of a
+  display setting.
+- **It never hides a could-not-check state or a structured code.** "Not read",
+  "status unavailable", the `env` basis mark, "no reading for this component"
+  and every `ErrorPanel` code are the states a reader most needs, and the
+  honest-absence rule that produced them has no loudness setting. The same test
+  file pins the unreachable-cluster case in both modes. Detail may *add* to such
+  a state — it does, with a caret saying why the word is `unknown` — and may not
+  subtract from it.
+- **Off is exactly what shipped.** Nothing moves, nothing is re-worded, and no
+  normal-mode screen gained a row. The tests assert `.k-why` and `.k-kfact` are
+  absent from the overview, the history tab and the matrix when it is off.
+- **Expert mode surfaces; it does not compute.** Every value it prints is
+  something a response already said. The two derivations are string parsers in
+  `facts.ts` and both are strict: `revisionParts` reads `<generation>-<hash8>`
+  (the tag [ADR-0028](../docs/adr/0028-delivery-spine.md) decision 2 defines,
+  which is why `stale` needs no second read) and `resourceParts` splits a
+  verdict's `Kind/namespace/name`. A shape they do not recognise yields nothing
+  and the screen draws nothing — a wrong generation number on a dense screen is
+  worse than an absent one. **The resource kinds a component *would* render are
+  deliberately not shown**: that mapping lives in `internal/renderer` and the
+  browser would be quoting it from memory, so an object is named only where the
+  cluster actually reported one.
+- **The why-caret belongs to one statement.** Where the UI makes a
+  plain-language claim — a status word, `stuck`, "older than the spec",
+  "deployed now" — expert mode attaches a 14px caret that expands the fields
+  that claim was computed from, verbatim, with one sentence saying which rule
+  applied. It is absent in normal mode and **collapsed by default in expert
+  mode**: the preference says the evidence should be *available*, not that
+  fifteen panels should be open at once. A field the wire did not answer is
+  dropped from the grid rather than rendered blank, because a key with nothing
+  beside it reads as an empty string that was actually sent.
+- **Kubernetes vocabulary is allowed here and only here.** The copy rule above
+  keeps `generation`, `namespace` and `kind` out of the default line; this is
+  the line the reader asked for them on.
+
+Where it landed, and what each surface gained:
+
+| Surface | Facts | Carets |
+| --- | --- | --- |
+| Environment Overview | the revision tag's `generation` and `spec hash`; each verdict's `kind` / `namespace` / `name` | the status word (answer vs. phase), the drift note, a `stuck` verdict |
+| Component page | the same two revision halves; the verdict's three parts | the page's word (its own probe, or its environment's, or unread) |
+| Project matrix | per column: `generation` and the resolved `namespace` | **none** — see below |
+| History tab | each row's `generation` | "deployed now" |
+
+**What was deliberately not reached**, so the next slice starts from the truth:
+
+- **No caret anywhere in the matrix.** A cell is a `<Link>` and a `<details>`
+  cannot live inside an anchor; a column header sits inside
+  `.k-matrix__scroll`, whose `overflow-x` clips a positioned panel on both axes.
+  The environment's Overview is one press away and carries the same evidence
+  with room to draw it. The column heads still gain their two facts.
+- **Untouched surfaces:** the deploy / promote / rollback actions, the logs tab,
+  the previews section and the preview detail page, the cluster and connections
+  screens, the editor, and home. `Preview` in particular carries Flux object
+  names worth surfacing — its `namespace` is documented as also being the name
+  of the OCIRepository and the Kustomization, and `PreviewLifecycle` carries the
+  ResourceSetInputProvider / ResourceSet pair's name and both Ready conditions
+  with their reasons — which is the obvious next application.
+- **Wire gaps hit.** Three facts wanted and not available: `StatusResponse` has
+  a `detail` map documented for adapter counts (`resources` / `live` /
+  `degraded`) that `internal/api` never fills, so there is nothing to print;
+  `stale` is a boolean and the *spec's* current generation is on no message, so
+  "45 vs 47" cannot be shown, only "45, and behind"; and no response carries the
+  Flux `Kustomization` / `OCIRepository` names for a normal environment the way
+  `Preview` does for a preview, so an environment's own Flux objects cannot be
+  named without inventing them from the model's conventions.
 
 ### Two themes
 

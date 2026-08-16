@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { AppShell } from "./AppShell";
 import { StatusPill } from "./StatusPill";
 import { THEME_STORAGE_KEY } from "../theme";
+import { DETAIL_STORAGE_KEY, setDetail } from "../expert/preference";
 
 function renderShell(at: string) {
   return render(
@@ -75,6 +76,32 @@ describe("ThemeToggle in the shell", () => {
     act(() => toggle.click());
     expect(toggle.dataset["choice"]).toBe("system");
     expect(window.localStorage.getItem(THEME_STORAGE_KEY)).toBeNull();
+  });
+});
+
+describe("DetailToggle in the shell", () => {
+  afterEach(() => {
+    act(() => setDetail(false));
+    window.localStorage.clear();
+  });
+
+  it("sits beside the theme, because both are display preferences", () => {
+    renderShell("/projects");
+    const detail = screen.getByRole("button", { name: /^Kubernetes detail:/ });
+    const theme = screen.getByRole("button", { name: /^Theme:/ });
+    expect(detail.parentElement).toBe(theme.parentElement);
+    expect(detail.parentElement?.className).toBe("k-header__right");
+  });
+
+  it("opens off and persists on", () => {
+    renderShell("/projects");
+    const toggle = screen.getByRole("button", { name: /^Kubernetes detail:/ });
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    expect(window.localStorage.getItem(DETAIL_STORAGE_KEY)).toBeNull();
+
+    act(() => toggle.click());
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    expect(window.localStorage.getItem(DETAIL_STORAGE_KEY)).toBe("on");
   });
 });
 
