@@ -18,37 +18,75 @@ import {
   type StatusWord,
 } from "../components/status";
 import { EmptyState, LoadingState } from "../components/States";
+import {
+  componentsFromVerdicts,
+  mergeVerdicts,
+  needsAttention,
+  readCell,
+  type EnvironmentRead,
+  type LiveVerdict,
+} from "./matrix";
 
 /**
- * The project list: one card per (project, environment).
+ * Home: every component in every environment, grouped by project (#260).
  *
- * A project is not a deployable thing — an environment is (docs/model.md: the
- * Environment carries the namespace and the cluster). So the
- * grid is keyed by the pair, which is also what the mockup's cards are shaped
- * for: a name, a status, and mono metadata underneath.
+ * The unit here used to be the (project, environment) pair — one card per pair,
+ * summarising four components into two numbers. But the thing that deploys, and
+ * therefore the thing that breaks, is a *component in an environment*
+ * (docs/model.md §6), and a home screen whose rows are not that unit makes a
+ * reader open a project to find out which of its components is the unhappy one.
  *
- * ListSpecs gives the pairs; each card then asks DeployService.Status for its
- * own. The calls are per-card and independent on purpose. Status renders the
- * spec and talks to a cluster, so it is the slow, failure-prone call of the
- * two, and one environment whose adapter is unreachable must not hold up — or
- * blank out — the other five. A card whose Status failed says exactly that and
- * carries the server's reason; it never shows green it did not earn.
+ * Two rules shape what is on screen:
  *
- * # One stream for the whole grid
+ * - **Quiet when healthy.** The attention band at the top is *absent* when
+ *   nothing needs attention — not empty with a reassuring sentence. What is in
+ *   it is `matrix.ts`'s list, which deliberately excludes work in flight: a
+ *   band that fills up during every deploy is a band people stop reading.
+ * - **No more calls than before.** It is still one `ListSpecs` and one
+ *   `DeployService.Status` per (project, environment) — the rows come out of
+ *   the verdicts that response already carries, one per rendered Deployment.
+ *   `ListSpecs` omits the stored documents, so the alternative was a `GetSpec`
+ *   per project for a list this page can read for free.
  *
- * Once every card has an answer, the page opens a single EventService.Watch
- * covering all of them (#76) and applies what changes in place. One stream, not
- * one per card: the scopes are a request field precisely so a grid costs one
- * subscription. A Resync means the server could not honour the resume point, so
- * the grid relists — every card refetches and the live overlay is dropped,
+ * The floor that buys is honest but real: observation probes Deployments, so a
+ * `cron`, a chart and a database contribute no row, and a server started
+ * without an observation client contributes none at all. An environment in that
+ * position says it has no per-component readings and keeps its own status —
+ * which is the answer the previous version of this page gave for everything.
+ *
+ * # One stream for the whole page
+ *
+ * Once every environment has an answer the page opens a single
+ * `EventService.Watch` covering all of them (#76) and applies what changes in
+ * place: a transition moves the environment's word, a health change moves one
+ * row. A Resync means the server could not honour the resume point, so the page
+ * relists — every environment refetches and the live overlay is dropped,
  * because a stale overlay would outlive the answer it was a delta of.
  */
 
-/** What the stream has said about one card since its Status was read. */
-interface CardLive {
+/** What the stream has said about one environment since its Status was read. */
+interface EnvironmentLive {
   transition?: { phase: string; revision: string; cause: string };
-  /** An unhealthy workload, as one line. Cleared when it recovers. */
-  health?: string;
+  verdicts: Record<string, LiveVerdict>;
+}
+
+const NO_EVENTS: EnvironmentLive = { verdicts: {} };
+
+/** One line the attention band can raise: a component, or an environment. */
+interface AttentionRow {
+  project: string;
+  environment: string;
+  /** Empty for a row that is about the environment itself. */
+  component: string;
+  status: Status;
+  detail: string;
+  href: string;
+}
+
+/** What one environment reported up, for the band and the tally. */
+interface Report {
+  word: StatusWord;
+  attention: AttentionRow[];
 }
 
 export function ProjectsPage() {
@@ -68,32 +106,50 @@ export function ProjectsPage() {
     return out;
   }, [specs.data]);
 
-  // Each card reports its own resolved word up, so the mono line above the grid
-  // counts what is actually on screen rather than a second, guessed tally.
-  const [words, setWords] = useState<Record<string, StatusWord>>({});
-  const report = useCallback((key: string, word: StatusWord) => {
-    setWords((prev) => (prev[key] === word ? prev : { ...prev, [key]: word }));
+  // Each environment reports its own resolved state up, so the band and the
+  // mono line above the grid describe what is actually on screen rather than a
+  // second, guessed tally.
+  const [reports, setReports] = useState<
+    Record<string, { signature: string; report: Report }>
+  >({});
+  // The signature is what makes the report idempotent: the child recomputes its
+  // rows on every render and an unconditional set would loop.
+  const report = useCallback((key: string, signature: string, value: Report) => {
+    setReports((prev) =>
+      prev[key]?.signature === signature
+        ? prev
+        : { ...prev, [key]: { signature, report: value } },
+    );
   }, []);
 
-  const [live, setLive] = useState<Record<string, CardLive>>({});
+  const [live, setLive] = useState<Record<string, EnvironmentLive>>({});
   const [generation, setGeneration] = useState(0);
 
   const onEvent = useCallback((event: WatchResponse_Event) => {
     const key = `${event.project}/${event.environment}`;
     const payload = event.payload;
     setLive((prev) => {
+      const current = prev[key] ?? NO_EVENTS;
       if (payload.case === "statusTransition") {
         const { phase, revision, cause } = payload.value;
-        return { ...prev, [key]: { ...prev[key], transition: { phase, revision, cause } } };
+        return { ...prev, [key]: { ...current, transition: { phase, revision, cause } } };
       }
       if (payload.case === "healthChange") {
         const v = payload.value;
-        const next: CardLive = { ...prev[key] };
-        // A workload that recovered leaves no note behind: the line said what
-        // was wrong, and nothing is now.
-        if (v.healthy) delete next.health;
-        else next.health = `${v.resource}: ${v.message || v.code}`;
-        return { ...prev, [key]: next };
+        return {
+          ...prev,
+          [key]: {
+            ...current,
+            verdicts: {
+              ...current.verdicts,
+              [v.resource]: {
+                code: v.code,
+                healthy: v.healthy,
+                message: v.message,
+              },
+            },
+          },
+        };
       }
       return prev;
     });
@@ -106,17 +162,29 @@ export function ProjectsPage() {
     reloadSpecs();
   }, [reloadSpecs]);
 
-  // The watch opens only once every card has settled: until then the deltas
-  // have nothing to be deltas of, and a transition applied before its Status
-  // landed would be overwritten by the older answer.
-  const settled = pairs.length > 0 && pairs.every((p) => words[`${p.project}/${p.environment}`] !== undefined);
-  const watch = useWatch({
-    scopes: settled ? pairs : [],
-    onEvent,
-    onResync,
-  });
+  // The watch opens only once every environment has settled: until then the
+  // deltas have nothing to be deltas of, and a transition applied before its
+  // Status landed would be overwritten by the older answer.
+  const settled =
+    pairs.length > 0 &&
+    pairs.every((p) => reports[`${p.project}/${p.environment}`] !== undefined);
+  const watch = useWatch({ scopes: settled ? pairs : [], onEvent, onResync });
 
-  const projects = specs.data?.specs.length ?? 0;
+  const projects = specs.data?.specs ?? [];
+  const attention = useMemo(
+    () =>
+      pairs.flatMap(
+        (p) => reports[`${p.project}/${p.environment}`]?.report.attention ?? [],
+      ),
+    [pairs, reports],
+  );
+  const words = useMemo(() => {
+    const out: Record<string, StatusWord> = {};
+    for (const [key, value] of Object.entries(reports)) {
+      out[key] = value.report.word;
+    }
+    return out;
+  }, [reports]);
 
   return (
     <>
@@ -132,7 +200,7 @@ export function ProjectsPage() {
 
       <div className="k-page-sub">
         <span>
-          {projects} {projects === 1 ? "project" : "projects"}
+          {projects.length} {projects.length === 1 ? "project" : "projects"}
         </span>
         <span>·</span>
         <span>
@@ -150,41 +218,95 @@ export function ProjectsPage() {
         <ErrorPanel title="Cannot list projects" error={specs.error} />
       ) : null}
 
-      {specs.data !== undefined && projects === 0 ? (
+      {specs.data !== undefined && projects.length === 0 ? (
         <EmptyState title="No projects yet">
           Create one with “New project” above, or with `kelson spec put`.
         </EmptyState>
       ) : null}
 
-      {projects > 0 && pairs.length === 0 ? (
+      {projects.length > 0 && pairs.length === 0 ? (
         <EmptyState title="No environments yet">
           No stored project declares one, so there is nothing to deploy. Add one
           on a project's edit screen.
         </EmptyState>
       ) : null}
 
-      {pairs.length > 0 ? (
-        <div className="k-grid">
-          {pairs.map((pair) => (
-            <ProjectCard
-              key={`${pair.project}/${pair.environment}`}
-              project={pair.project}
-              environment={pair.environment}
-              onStatus={report}
-              live={live[`${pair.project}/${pair.environment}`]}
-              generation={generation}
-            />
-          ))}
-        </div>
-      ) : null}
+      <Attention rows={attention} />
+
+      {projects.map((spec) =>
+        spec.environments.length === 0 ? null : (
+          <section className="k-section" key={spec.project}>
+            <div className="k-env__head">
+              <div className="k-eyebrow">
+                <Link
+                  className="k-card__name"
+                  to={`/projects/${encodeURIComponent(spec.project)}`}
+                >
+                  {spec.project}
+                </Link>
+              </div>
+            </div>
+            <div className="k-section__body k-envs">
+              {spec.environments.map((environment) => (
+                <EnvironmentBlock
+                  key={`${spec.project}/${environment}`}
+                  project={spec.project}
+                  environment={environment}
+                  onRead={report}
+                  live={live[`${spec.project}/${environment}`]}
+                  generation={generation}
+                />
+              ))}
+            </div>
+          </section>
+        ),
+      )}
     </>
   );
 }
 
 /**
- * Worst first, so the tally reads as a to-do list: a grid with one broken
+ * The band, which is absent when there is nothing in it.
+ *
+ * An empty band with "everything is fine" written in it is a thing a reader
+ * has to check every time; nothing at all is a thing they can see from across
+ * the room.
+ */
+function Attention({ rows }: { rows: AttentionRow[] }) {
+  if (rows.length === 0) return null;
+  return (
+    <section className="k-attention" aria-label="Needs attention">
+      <div className="k-eyebrow">Needs attention ({rows.length})</div>
+      <ul className="k-attention__list">
+        {rows.map((row) => (
+          <li
+            key={`${row.project}/${row.environment}/${row.component}`}
+            className="k-attention__row"
+          >
+            <Link className="k-mono k-attention__what" to={row.href}>
+              {row.component === ""
+                ? `${row.project} · ${row.environment}`
+                : `${row.project} · ${row.environment} · ${row.component}`}
+            </Link>
+            <StatusPill status={row.status.tone} label={row.status.word} />
+            {row.detail ? (
+              <span className="k-attention__why">{row.detail}</span>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/**
+ * Worst first, so the tally reads as a to-do list: a page with one broken
  * environment says "1 failed" before it says "12 live". The words and their
  * colours are components/status.ts's; this only decides the order.
+ *
+ * It counts environments and not rows, because an environment is the one unit
+ * that always exists: a build with no observation client has no rows to count
+ * and the tally must not silently become a different measurement.
  */
 const COUNTED: StatusWord[] = [
   "failed",
@@ -215,18 +337,27 @@ function Counts({ words }: { words: Record<string, StatusWord> }) {
   );
 }
 
-function ProjectCard({
+/**
+ * One environment of one project: its own Status call, its own row list.
+ *
+ * The call is per environment and independent on purpose. Status renders a spec
+ * and talks to a cluster, so it is the slow, failure-prone call on this page,
+ * and one unreachable cluster must not hold up — or blank out — the others. An
+ * environment whose Status failed says exactly that and carries the server's
+ * reason; it never shows green it did not earn.
+ */
+function EnvironmentBlock({
   project,
   environment,
-  onStatus,
+  onRead,
   live,
   generation,
 }: {
   project: string;
   environment: string;
-  onStatus: (key: string, word: StatusWord) => void;
-  live: CardLive | undefined;
-  /** Bumped on a resync: the card refetches rather than trusting a delta. */
+  onRead: (key: string, signature: string, report: Report) => void;
+  live: EnvironmentLive | undefined;
+  /** Bumped on a resync: the environment refetches rather than trusting a delta. */
   generation: number;
 }) {
   const clients = useClients();
@@ -245,89 +376,172 @@ function ProjectCard({
   const failure: Failure | undefined =
     status.error === undefined ? undefined : toFailure(status.error);
   // A transition is a whole replacement for the three fields it carries: the
-  // fetched revision and cause described the phase the card has just left.
-  const phase = live?.transition?.phase ?? status.data?.phase;
+  // fetched revision and cause described the phase this environment has just
+  // left.
+  const phase = live?.transition?.phase ?? status.data?.phase ?? "";
   const revision = live?.transition
     ? live.transition.revision
-    : status.data?.revision;
-  const cause = live?.transition ? live.transition.cause : status.data?.cause;
+    : (status.data?.revision ?? "");
+  const cause = live?.transition
+    ? live.transition.cause
+    : (status.data?.cause ?? "");
+
+  const verdicts = useMemo(
+    () => mergeVerdicts(status.data?.verdicts, live?.verdicts ?? {}),
+    [status.data, live?.verdicts],
+  );
+  const read = useMemo<EnvironmentRead>(
+    () => ({
+      environment,
+      phase,
+      revision,
+      cause,
+      namespace: status.data?.namespace ?? "",
+      verdicts,
+      read: failure === undefined && status.data !== undefined,
+    }),
+    [environment, phase, revision, cause, status.data, verdicts, failure],
+  );
 
   const state: Status =
-    failure !== undefined || phase === undefined
-      ? UNKNOWN_STATUS
-      : statusForPhase(phase);
+    failure !== undefined || !read.read ? UNKNOWN_STATUS : statusForPhase(phase);
+  const rows = useMemo(
+    () =>
+      componentsFromVerdicts(read, project).map((found) => ({
+        component: found.component,
+        cell: readCell(read, found.verdict),
+      })),
+    [read, project],
+  );
 
+  const base = `/projects/${encodeURIComponent(project)}/${encodeURIComponent(environment)}`;
   const settled = !status.loading;
   useEffect(() => {
-    if (settled) onStatus(`${project}/${environment}`, state.word);
-  }, [settled, state.word, project, environment, onStatus]);
+    if (!settled) return;
+    const attention: AttentionRow[] = [];
+    for (const row of rows) {
+      if (!needsAttention(row.cell.status.word)) continue;
+      attention.push({
+        project,
+        environment,
+        component: row.component,
+        status: row.cell.status,
+        detail: row.cell.detail,
+        href: `${base}/components/${encodeURIComponent(row.component)}`,
+      });
+    }
+    // An environment nobody could read, or one whose own word is unhappy while
+    // no component owned up to it, is raised as itself: the band must never be
+    // quiet because the bad news had nowhere to sit.
+    if (
+      attention.length === 0 &&
+      needsAttention(failure !== undefined ? "unknown" : state.word)
+    ) {
+      attention.push({
+        project,
+        environment,
+        component: "",
+        status: failure !== undefined ? UNKNOWN_STATUS : state,
+        detail: failure !== undefined ? reasonOf(failure) : cause,
+        href: `/projects/${encodeURIComponent(project)}`,
+      });
+    }
+    const value: Report = { word: state.word, attention };
+    const signature = JSON.stringify([
+      state.word,
+      attention.map((a) => [a.component, a.status.word, a.detail]),
+    ]);
+    onRead(`${project}/${environment}`, signature, value);
+  }, [
+    settled,
+    rows,
+    state,
+    failure,
+    cause,
+    project,
+    environment,
+    base,
+    onRead,
+  ]);
 
   return (
-    <div className="k-panel k-panel--interactive k-card">
-      <div className="k-card__head">
-        <div className="k-card__ident">
-          <Link
-            to={`/projects/${encodeURIComponent(project)}`}
-            className="k-card__name"
-          >
-            {project}
-          </Link>
-          <span className="k-chip k-mono">{environment}</span>
-        </div>
+    <div className="k-envblock">
+      <div className="k-envblock__head">
+        <span className="k-chip k-mono">{environment}</span>
         {status.loading && status.data === undefined && failure === undefined ? (
           <StatusPill status="unknown" label="reading…" />
         ) : failure !== undefined ? (
           // The reason is the server's own, kept verbatim on the tooltip: an
           // unreachable cluster and a rejected spec are different problems and
-          // the card must not blur them into one grey pill with no story.
-          <span title={statusReason(failure)}>
+          // the row must not blur them into one grey pill with no story.
+          <span title={reasonOf(failure)}>
             <StatusPill status="unknown" label="status unavailable" />
           </span>
         ) : (
           <StatusPill status={state.tone} label={state.word} />
         )}
+        <span className="k-mono k-envblock__meta">
+          <EnvironmentMeta
+            status={status.data}
+            failure={failure}
+            revision={revision}
+            cause={cause}
+          />
+        </span>
       </div>
 
-      <div className="k-mono k-card__meta">
-        <CardMeta
-          status={status.data}
-          failure={failure}
-          revision={revision}
-          cause={cause}
-          health={live?.health}
-        />
-      </div>
+      {failure !== undefined ? null : rows.length === 0 ? (
+        <p className="k-mono k-env__note">
+          {status.loading && status.data === undefined
+            ? "reading…"
+            : "no per-component readings here"}
+        </p>
+      ) : (
+        <ul className="k-rows">
+          {rows.map((row) => (
+            <li className="k-row" key={row.component}>
+              <Link
+                className="k-mono k-row__name"
+                to={`${base}/components/${encodeURIComponent(row.component)}`}
+              >
+                {row.component}
+              </Link>
+              <StatusPill
+                status={row.cell.status.tone}
+                label={row.cell.status.word}
+              />
+              <span className="k-mono k-row__fact">
+                {row.cell.code}
+                {row.cell.detail ? ` · ${row.cell.detail}` : ""}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
 
-function CardMeta({
+function EnvironmentMeta({
   status,
   failure,
   revision,
   cause,
-  health,
 }: {
   status: StatusResponse | undefined;
   failure: Failure | undefined;
-  revision: string | undefined;
-  cause: string | undefined;
-  health: string | undefined;
+  revision: string;
+  cause: string;
 }) {
   if (failure !== undefined) {
-    return (
-      <>
-        <span className="k-card__reason">{statusReason(failure)}</span>
-        <span>no revision, no counts — nothing was read</span>
-      </>
-    );
+    return <span className="k-card__reason">{reasonOf(failure)}</span>;
   }
-  if (status === undefined) return <span>—</span>;
+  if (status === undefined) return null;
 
-  // The adapters put resources/live/degraded here (internal/delivery/direct);
-  // a mode that reports none simply has no counts line. The counts are the
-  // fetched ones: no event type carries them, and inventing them from a
-  // transition would be a number nobody measured.
+  // The adapters put resources/live/degraded here; a mode that reports none
+  // simply has no counts line. The counts are the fetched ones: no event type
+  // carries them, and inventing them from a transition would be a number nobody
+  // measured.
   const live = status.detail["live"];
   const degraded = status.detail["degraded"];
   const resources = status.detail["resources"];
@@ -342,21 +556,18 @@ function CardMeta({
 
   return (
     <>
-      <span>
-        {revision ? (
-          <Copyable value={revision} className="k-card__rev" />
-        ) : (
-          <span className="k-card__rev">no revision recorded</span>
-        )}
-      </span>
+      {revision ? (
+        <Copyable value={revision} className="k-card__rev" />
+      ) : (
+        <span className="k-card__rev">no revision recorded</span>
+      )}
       {counts.length > 0 ? <span>{counts.join(" · ")}</span> : null}
       {cause ? <span className="k-card__reason">{cause}</span> : null}
-      {health ? <span className="k-card__reason">{health}</span> : null}
     </>
   );
 }
 
-function statusReason(failure: Failure): string {
+function reasonOf(failure: Failure): string {
   const first = failure.wire[0];
   if (first) {
     return `${first.code}: ${first.message}`;

@@ -65,25 +65,78 @@ any future embedding, from having to know authentication exists.
 Milestone M6 ([#7](https://github.com/dafrie/kelson/issues/7)). Every flow is
 addressed by a project **and** an environment, because that pair is what the
 API's mutating RPCs take — a `SpecRef` plus an environment name — so a link into
-a deploy or a log tail is a link that keeps working.
+a deploy or a log tail is a link that keeps working. One screen adds a third
+segment and no new RPC: a component's page is that same pair plus a name, read
+out of what `GetSpec` and `Status` already answer.
 
 | Route | What it does | RPCs |
 | --- | --- | --- |
-| `/projects` | One card per (project, environment): phase pill, revision, cause, live/degraded counts | `ListSpecs`, then one `DeployService.Status` per card |
+| `/projects` | Every component in every environment, grouped by project, under a "needs attention" band that is absent when nothing does. Each environment keeps its own revision, counts and cause; each component row is a link to its page | `ListSpecs`, then one `DeployService.Status` per (project, environment) |
 | `/projects/new` | Create a project and its first component: three fields, a rendered preview, then the store | `PutSpec` at `RENDER`, then with an idempotency key |
-| `/projects/:project` | The project's components with their kinds, then environment tabs with status, workload verdicts, data services, the environment's PR previews and Secrets, and the stored documents; buttons into the four flows | `GetSpec`, `Status`, `GetProfile`, `ListPreviews`, `ListSecrets`, `Render` (deferred presets only), `SetSecret`/`DeleteSecret` on use |
+| `/projects/:project` | The component × environment matrix, then the environment in view whole: status, workload verdicts, data services, its PR previews and Secrets, the stored documents, and the six flows | `GetSpec`, one `Status` per environment, `GetProfile`, `ListPreviews`, `ListSecrets`, `Render` (deferred presets only), `SetSecret`/`DeleteSecret` on use |
+| `/projects/:project/:env/components/:component` | One component in one environment: its shape, the image its documents resolve to and the scope that set it, the source it builds from, the environment's revision and namespace, its own workload verdict — and links into the flows, with itself preselected in the logs | `GetSpec`, `Status` |
 | `/projects/:project/edit` | Edit the stored spec: a form tab and a raw YAML tab, a diff before saving, an optimistic-concurrency save. The form reaches `spec.previews` (ADR-0017; the retired `delivery:` stanza is gone per ADR-0028), and appends a component to `spec.components` (`?add=component` opens on it) | `GetSpec`, `PutSpec` at `RENDER` then for real, `Diff` |
 | `/projects/:project/edit`, git-owned | The same screen when `GetSpec` reports a Flux Kustomization owns these documents (#248): `GitOpsBanner` names the owner and the `autoDeploy` collision, Save is replaced by `ExportPanel` (the documents, copyable and downloadable, no server call) and `ProposePanel` (the same bytes as a pull request through a connection that can open one) — `src/pages/GitOpsPanel.tsx` | `GetSpec`, `Diff`, `ProposeSpec`, `ListConnections` |
 | `/projects/:project/:env/deploy` | Preview (render dry-run) then a confirm that streams the deployment live | `Deploy` at `RENDER`, then at `NONE`; optional `Diff` at `SERVER` |
 | `/projects/:project/:env/diff` | Two tabs: the live cluster's own dry-run verdict, or today's render against a recorded revision. `?from=<revision>` opens the second one preselected | `Diff` at `SERVER`, or with `from_revision`; `History` for the picker |
 | `/projects/:project/:env/history` | The recorded revisions, newest first: what each was, when, the spec hash, the recorded author (unattributed today, #74), and a phase pill on the live one. Links out to diff and rollback | `History`, `Status` |
-| `/projects/:project/:env/logs` | Bounded Query, and a live tail that pauses, filters, reconnects and saves. `?component=<name>` opens on one component — the link the project page's component list carries | `QueryLogs`, `FollowLogs` |
+| `/projects/:project/:env/logs` | Bounded Query, and a live tail that pauses, filters, reconnects and saves. `?component=<name>` opens on one component — the link a component's own page carries | `QueryLogs`, `FollowLogs` |
 | `/projects/:project/:env/previews/:pr` | One change request's preview: phase, hosts, the pinned commit and applied revision, the two Ready conditions, when it appeared — everything `Preview` reports and nothing it doesn't. `:pr` is the change-request number, the identifier a human types (ADR-0017); there is no `GetPreview`, so the page reads the same `ListPreviews` the project page's Previews section does and picks out the matching row, honestly reporting when none matches. The route a commit status and a PR comment link to (ADR-0017 stage 3, #248) | `ListPreviews` |
 | `/projects/:project/:env/promote` | The environment in the path is the **target**: pick a source, read the plan and the diff it produces, then write the pins. It never deploys | `GetSpec`, `Promote` at `RENDER` then `NONE` |
 | `/projects/:project/:env/rollback` | Revision picker, irreversibility preview, then the apply. `?to=<revision>` preselects and previews a target, never applies it | `History`, `Rollback` at `RENDER` then `NONE` |
 | `/cluster` | Server build, the node inventory (count, readiness, CPU/memory usage where metrics.k8s.io answers), the platform-component checklist with its install flow, and the detected ClusterProfile | `/healthz`, `GetProfile`, `GetNodes`, `ListComponents`, `PlanInstall`, `Install` |
 | `/connections` | The forges this instance can pull from: provider, host, account, owner, health and the reported repository count per connection, a live probe and a delete that names the projects it breaks, plus the token-connection form | `ListConnections`, `CreateConnection`, `TestConnection`, `DeleteConnection` |
 | `/setup` | The onboarding screen: the same component checklist framed for a first run — what is present, what is missing, an install flow per missing row, and where to go next | `ListComponents`, `PlanInstall`, `Install` |
+
+## The component × environment matrix
+
+The project page and the home page draw the same object
+([#260](https://github.com/dafrie/kelson/issues/260)): a **component in an
+environment**. The component is what deploys — components carry their own
+spec-hash and an unchanged one produces no rollout (docs/model.md §6) — and the
+environment is what gives it a namespace, an image pin and a phase. Neither
+alone has a status, so the thing with one is the pair. The project page draws
+every pair at once, components down and environments across; home draws the same
+rows grouped by project. `src/pages/matrix.ts` is the shared logic and is tested
+as logic.
+
+Five things it is deliberate about:
+
+- **A cell says which answer it is standing on.** `Status` reports per-component
+  health only for what observation probes, which is Deployments
+  (`internal/api`'s `observeWorkloads`). A `cron`, a chart and a database have
+  no reading of their own, so their cells show the *environment's* word with a
+  small `env` mark and a legend under the table. Borrowing silently would be the
+  quiet lie the status vocabulary exists to prevent.
+- **A component overrules its environment downward, never upward.** A degraded
+  workload inside a Healthy environment reads `unhealthy`; a healthy workload
+  inside a reconciling environment reads `deploying`, because the delivery
+  answer is the wider claim. A verdict that is neither healthy nor degraded is a
+  wait state and is `deploying` — observation's `Stuck` does not survive the
+  wire projection, so "gave up waiting" and "still starting" are one word here
+  and the code beside it is what tells them apart.
+- **The revision is the environment's and the image is the component's.** One
+  publish carries every component (ADR-0028), so the revision is stated once per
+  column; the image differs per cell and is rule P3's winner across the three
+  documents — *configuration*, not an observation, and labelled with the scope
+  that set it on the component's own page.
+- **Home costs what it always cost.** `ListSpecs` omits the stored documents, so
+  a per-project component list would have meant a `GetSpec` per project. The
+  rows come out of the verdicts each `Status` already carries instead. The floor
+  that buys is real and stated on screen: an environment reporting no
+  per-component verdicts says "no per-component readings here" and keeps its own
+  status, which is what the whole page used to show.
+- **The attention band is absent when it is empty.** It carries `unhealthy`,
+  `stuck`, `failed` and `unknown` — not `deploying` or `waiting`, because a band
+  that fills up during every deploy is a band people stop reading, and not
+  `suspended`, because nothing is trying on purpose. `unknown` is in it: "we
+  could not tell" is exactly the state somebody has to go and look at.
+
+The project page issues one `Status` per environment — one per column — and the
+panel below the matrix reuses its column's answer rather than calling again for
+an environment that is on screen twice. The six flows are unchanged and still
+addressed by (project, environment); the matrix links into them and consolidating
+them is a separate change.
 
 The connections screen ([ADR-0033](../docs/adr/0033-git-connections.md),
 [#248](https://github.com/dafrie/kelson/issues/248)) holds the one entry point
@@ -319,7 +372,8 @@ and Flux's helm-controller, without which a rendered `HelmRelease` installs
 nothing ([ADR-0016](../docs/adr/0016-delivery-flows-v0.md)).
 
 Three parsers (`parse.ts` for the spec's data components, `capability.ts` for
-the profile, `src/spec/components.ts` for the project page's component list) sit
+the profile, `src/spec/components.ts` for the matrix's rows — their kinds, their
+images, and the source each binds to) sit
 on `miniyaml.ts`, which reads block mappings, block sequences and one-line flow
 mappings and nothing else. They are separate from `src/spec/edit.ts`'s parser on
 purpose: that one feeds a form whose honesty rests on a byte-identical rebuild,
@@ -594,6 +648,10 @@ Three things follow from it:
   stream's rows and the preview page — it is what an operator correlates with
   Flux — and the preview page's `artifact ready` / `applied ready` conditions
   are unchanged.
+- **A workload verdict reaches the vocabulary through `statusForVerdict`.**
+  Healthy keeps the environment's word, degraded is `unhealthy`, and anything
+  else is `deploying` — the three cases the matrix's cells need, decided in the
+  module rather than on each screen.
 - **`suspended` is a seventh state and not a flavour of `waiting`.** Waiting
   means something is expected to act; suspended means nothing is, deliberately,
   and what is running is the last thing that reconciled. It is only ever shown
