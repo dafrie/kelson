@@ -25,7 +25,7 @@ wrong, open an issue — it is far cheaper to reverse a decision now than after 
 | [0018](0018-secret-references.md) | The secret reference schema — `{secret, key}` in an env value (refines 0009) | Accepted |
 | [0019](0019-release-command-hook.md) | The release command hook — a component field, direct mode only, no new phase | Accepted (gate lifted, d3/d4 mechanism superseded by 0037) |
 | [0020](0020-external-secrets.md) | The `externalSecrets` backend — an ExternalSecret per referenced Secret (refines 0018) | Accepted |
-| [0021](0021-installing-missing-components.md) | Installing missing platform components — pinned upstream manifests, per-object provenance | Accepted (extended by 0030) |
+| [0021](0021-installing-missing-components.md) | Installing missing platform components — pinned upstream manifests, per-object provenance | Accepted (extended by 0030; revised in place 2026-08-16: the delivery substrate auto-installs) |
 | [0022](0022-sops-age.md) | The `sops` backend — encrypt on write, decrypt in-cluster, kelson holds no key (refines 0018) | Accepted (transport amended by 0028) |
 | [0023](0023-explain-structured-causes.md) | `explain` — structured causes with confidence, evidence and revision provenance | Accepted |
 | [0024](0024-agent-identities.md) | Agent identities — scoped, expiring credentials that are principals (refines 0013 §3) | Accepted |
@@ -34,7 +34,7 @@ wrong, open an issue — it is far cheaper to reverse a decision now than after 
 | [0027](0027-crd-native-control-plane.md) | CRD-native control plane — `Project` and `Environment` are custom resources (supersedes 0013 §1) | Accepted |
 | [0028](0028-delivery-spine.md) | The delivery spine — render, push an OCI artifact, let Flux reconcile | Accepted |
 | [0029](0029-renderer-stays-go.md) | The renderer stays pure Go; CUE and timoni rejected as the rendering engine | Accepted |
-| [0030](0030-flux-aio-install.md) | Install substrate — flux-aio, pre-rendered at release time and pinned | Accepted |
+| [0030](0030-flux-aio-install.md) | Install substrate — flux-aio, pre-rendered at release time and pinned | Accepted (revised in place 2026-08-16: installed with kelson, not offered) |
 | [0031](0031-single-cluster-single-tenant.md) | One cluster, one tenant — for now, and recorded as such | Accepted |
 | [0032](0032-finish-the-component-rename.md) | Finish the component rename — the label, the selector and the MCP tools (amends 0014, 0008) | Accepted |
 | [0033](0033-git-connections.md) | Git connections — the forge credentials kelson holds, and how they are scoped (amends 0009) | Accepted |
@@ -49,6 +49,10 @@ reaches. ADR-0032 is not part of it: it landed on main in parallel and finishes 
 
 *Process note (2026-08-12):* ADR-0003 and ADR-0005 were revised in place before the immutability rule
 below hardened; their in-place revisions stand as recorded. From ADR-0012 on, changes supersede.
+
+*Process note (2026-08-16):* ADR-0021 and ADR-0030 were revised in place on the owner's explicit
+direction (the delivery substrate auto-installs with kelson; "offer" became "ensure"). Each revision is
+marked inline where it lands, with the original wording quoted, so the record still shows what changed.
 
 ## Format
 

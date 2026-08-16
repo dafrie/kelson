@@ -50,6 +50,7 @@ RELEASE="kelson"
 
 CONTROLLER_IMAGE="kelson-controller"
 CONTROLLER_TAG="e2e"
+SERVER_IMAGE="kelson-server"
 
 # The cluster-internal registry endpoint. It is install.RegistryEndpoint
 # (internal/delivery/install/registry.go) spelled in bash; the Go suite reads
@@ -147,28 +148,48 @@ docker build -q -t "${CONTROLLER_IMAGE}:${CONTROLLER_TAG}" "$CTX" >/dev/null ||
 "$KIND" load docker-image "${CONTROLLER_IMAGE}:${CONTROLLER_TAG}" --name "$CLUSTER_NAME" ||
 	die "kind load of ${CONTROLLER_IMAGE}:${CONTROLLER_TAG} failed"
 
+# The server image too, same pattern with the server's own Dockerfile. It used
+# to be skipped (replicaCount=0) on the argument that the server is not what
+# this harness proves — and then three chart-vs-server skews in one day (a flag
+# the binary had dropped, two missing RBAC verbs) shipped green because the one
+# pod that would have failed was never scheduled anywhere CI could see. The
+# server runs here now, and the smoke in test/e2e exercises its write and watch
+# paths against the rendered Role.
+SERVER_CTX="$(mktemp -d)"
+trap 'rm -rf "$CTX" "$SERVER_CTX"' EXIT
+(cd "$E2E_ROOT" && CGO_ENABLED=0 GOOS=linux GOARCH="$("$GO" env GOARCH)" "$GO" build \
+	-ldflags "-s -w -X github.com/dafrie/kelson/internal/version.Version=${VERSION} -X github.com/dafrie/kelson/internal/version.Commit=${COMMIT}" \
+	-o "$SERVER_CTX/kelson-server" ./cmd/kelson-server) ||
+	die "go build ./cmd/kelson-server failed"
+cp "$E2E_ROOT/Dockerfile" "$SERVER_CTX/Dockerfile"
+docker build -q -t "${SERVER_IMAGE}:${CONTROLLER_TAG}" "$SERVER_CTX" >/dev/null ||
+	die "docker build of ${SERVER_IMAGE}:${CONTROLLER_TAG} failed"
+"$KIND" load docker-image "${SERVER_IMAGE}:${CONTROLLER_TAG}" --name "$CLUSTER_NAME" ||
+	die "kind load of ${SERVER_IMAGE}:${CONTROLLER_TAG} failed"
+
 log "== stage: install the chart =="
 # Values worth explaining, since each one is a deliberate deviation from what an
 # operator would type:
 #
 #   auth.insecure=true  the chart refuses to render without an auth decision,
 #                       and this cluster is a throwaway kind cluster.
-#   replicaCount=0      kelson-server is not what this harness proves and its
-#                       image is not built here; scheduling a pod that would sit
-#                       in ImagePullBackOff would be noise in every diagnostic
-#                       dump. The Deployment still renders, so the chart is
-#                       still exercised.
-#   image.pullPolicy=Never   the controller image came from `kind load`, not
-#                       from a registry, so a pull would fail.
+#   replicaCount=1      the server pod runs here, from the image loaded above.
+#                       It used to be 0, and every chart-vs-server skew (a
+#                       dropped flag, a missing RBAC verb) shipped green
+#                       because of it; the rollout wait below and the smoke in
+#                       test/e2e are what catch that class now.
+#   image.pullPolicy=Never   both images came from `kind load`, not from a
+#                       registry, so a pull would fail.
 #   controller.registry / insecureRegistries   the in-cluster registry, plain
 #                       HTTP, named as insecure exactly once — kelson never
 #                       downgrades a push it was not told about.
 helm upgrade --install "$RELEASE" "$E2E_ROOT/deploy/chart/kelson" \
 	--namespace "$NAMESPACE" --create-namespace \
 	--set auth.insecure=true \
+	--set image.repository="$SERVER_IMAGE" \
 	--set image.tag="$CONTROLLER_TAG" \
 	--set image.pullPolicy=Never \
-	--set replicaCount=0 \
+	--set replicaCount=1 \
 	--set controller.enabled=true \
 	--set controller.image.repository="$CONTROLLER_IMAGE" \
 	--set controller.registry="$REGISTRY_ENDPOINT" \
@@ -185,6 +206,13 @@ kubectl -n "$NAMESPACE" rollout restart "deploy/${RELEASE}-controller" >/dev/nul
 	die "could not restart the controller deployment"
 kubectl -n "$NAMESPACE" rollout status "deploy/${RELEASE}-controller" --timeout=300s ||
 	die "kelson-controller never became available"
+
+# The server, same nudge and the wait that catches a crash-looping pod — a
+# chart arg the binary refuses is exactly a rollout that never completes.
+kubectl -n "$NAMESPACE" rollout restart "deploy/${RELEASE}" >/dev/null ||
+	die "could not restart the server deployment"
+kubectl -n "$NAMESPACE" rollout status "deploy/${RELEASE}" --timeout=300s ||
+	die "kelson-server never became available — its logs are the first read: kubectl -n ${NAMESPACE} logs deploy/${RELEASE}"
 
 elapsed=$(($(date +%s) - start_ts))
 log "the delivery spine is provisioned in ${elapsed}s"

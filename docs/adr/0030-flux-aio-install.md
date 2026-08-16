@@ -3,7 +3,12 @@
 - **Status:** Accepted (Amended 2026-08-14: `kelson install` may also offer a `registry` catalog entry —
   an in-cluster OCI registry for a cluster that has none, applying this ADR's "kelson-authored, not
   fetched" exception a second time, for a second reason: CNCF Distribution publishes no install manifest
-  at all, not even as a timoni module. See the amendment below.)
+  at all, not even as a timoni module. See the amendment below.
+
+  Revised in place 2026-08-16, on the owner's direction: decision 1's "offers" became "installs with
+  kelson's own install" — the substrate is ensured automatically at chart-install time, with an
+  off-switch, and adoption-on-presence unchanged. ADR-0021's offer-only posture still governs every
+  optional component.)
 - **Date:** 2026-08-14
 
 > Extends [ADR-0021](0021-installing-missing-components.md)'s catalog with an entry whose bytes kelson
@@ -35,17 +40,24 @@ The obstacle is distribution. flux-aio is published upstream **only as a timoni 
 
 ## Decision
 
-### 1. On a cluster without Flux, `kelson install` offers flux-aio
+### 1. On a cluster without Flux, installing kelson installs flux-aio
 
-Detection is unchanged and the doctrine is unchanged: [ADR-0003](0003-install-model.md) says never
-install what is already there, and `kelson install` **offers, never assumes**. A cluster with Flux
-present is adopted and nothing is installed, whether that Flux came from flux-operator, from
-`flux bootstrap`, from flux-aio or from a vendor's distribution — the `ClusterProfile`'s `flux` finding
-is what matters, not its provenance.
+*(Revised in place 2026-08-16, on the owner's direction. As originally accepted this decision read
+"`kelson install` **offers** flux-aio" — and the lived result was a project created in the UI sitting
+silently unreconciled on a cluster that had never been offered anything. A PaaS that does not deliver
+is not a PaaS; the substrate is not an optional component.)*
 
-flux-aio is the default *offer* for a cluster with no Flux at all. Full Flux via flux-operator remains
-available as an explicit choice for anyone who wants the flux-operator lifecycle, and remains required
-for PR previews (decision 4).
+Detection is unchanged: [ADR-0003](0003-install-model.md) says never install what is already there. A
+cluster with Flux present is adopted and nothing is installed, whether that Flux came from
+flux-operator, from `flux bootstrap`, from flux-aio or from a vendor's distribution — the
+`ClusterProfile`'s `flux` finding is what matters, not its provenance.
+
+A cluster with no Flux at all gets the substrate **with kelson's own install**: the chart runs a
+one-shot ensure step (detection first, adoption on presence) that installs flux-aio — or full Flux via
+flux-operator while the flux-aio snapshot is absent — with an explicit off-switch for operators who
+want the old behaviour. `kelson install flux-aio` / `kelson install flux` remain as the CLI's explicit
+path, and flux-operator remains required for PR previews (decision 4). The offer-only posture survives
+for every *optional* component (ADR-0021); the delivery substrate stopped being one.
 
 ### 2. flux-aio is rendered at kelson release time, in CI, by the pinned timoni binary
 

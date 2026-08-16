@@ -19,6 +19,9 @@ spec:
     metadata:
       labels:
         {{- include "kelson.labels" . | nindent 8 }}
+        # The Service selects on this; the pod template label is mutable where
+        # the Deployment's matchLabels are not, so upgrades roll cleanly.
+        app.kubernetes.io/component: server
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
