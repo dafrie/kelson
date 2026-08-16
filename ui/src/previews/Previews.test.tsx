@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest";
-import { screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it } from "vitest";
+import { cleanup, screen } from "@testing-library/react";
 import { createRouterTransport } from "@connectrpc/connect";
 import type { MessageInitShape } from "@bufbuild/protobuf";
 
+import { setDetail } from "../expert/preference";
 import {
   PreviewService,
   type ListPreviewsResponseSchema,
@@ -52,6 +53,8 @@ function renderPanel(response: Response) {
     <Previews project="checkout" environment="staging" />,
   );
 }
+
+beforeEach(() => setDetail(false));
 
 describe("Previews", () => {
   it("explains how previews come to exist when the environment declares none", async () => {
@@ -230,5 +233,154 @@ describe("Previews", () => {
     for (const button of screen.queryAllByRole("button")) {
       expect(button.className).toContain("k-copy");
     }
+  });
+});
+
+/**
+ * Kubernetes detail on the previews section (#268 item 3, following #260).
+ * `Preview.namespace` is documented as also naming the OCIRepository and the
+ * Kustomization it is read from, and `PreviewLifecycle.name` is documented as
+ * the one name the ResourceSetInputProvider and the ResourceSet share.
+ */
+const WITH_PREVIEWS: Response = {
+  ...CONFIGURED,
+  lifecycle: {
+    name: "checkout-staging-previews",
+    served: true,
+    present: true,
+    providerReady: "True",
+    providerReason: "",
+    providerMessage: "",
+    setReady: "False",
+    setReason: "ResourceSetProvisioning",
+    setMessage: "waiting for the input provider's first poll",
+  },
+  previews: [
+    {
+      id: "412",
+      namespace: "checkout-staging-pr412",
+      sha: "0123456789abcdef0123456789abcdef01234567",
+      phase: "ready",
+      reason: "",
+      message: "",
+      artifactReady: "True",
+      appliedReady: "True",
+      revision: "sha256:beef",
+      suspended: false,
+      hosts: ["web-pr412.staging.acme.run"],
+      createdAt: "2026-08-14T09:00:00Z",
+      ageSeconds: 7200n,
+    },
+  ],
+};
+
+describe("Kubernetes detail on the previews section", () => {
+  it("adds no facts and no carets when the preference is off", async () => {
+    renderPanel(WITH_PREVIEWS);
+    await screen.findByText("Previews (1)");
+
+    expect(document.querySelector(".k-why")).toBeNull();
+    expect(document.querySelector(".k-kfact")).toBeNull();
+    expect(screen.queryByText("OCIRepository")).toBeNull();
+    expect(screen.queryByText("ResourceSet")).toBeNull();
+    // The namespace itself is on screen, as it always was.
+    expect(screen.getByText("checkout-staging-pr412")).toBeTruthy();
+  });
+
+  it("names the OCIRepository and Kustomization a preview's namespace also is", async () => {
+    setDetail(true);
+    renderPanel(WITH_PREVIEWS);
+    await screen.findByText("Previews (1)");
+
+    expect(screen.getByText("OCIRepository")).toBeTruthy();
+    expect(screen.getByText("Kustomization")).toBeTruthy();
+    // Both facts carry the same wire value, because the proto documents one
+    // namespace naming both objects — nothing here invents a second string.
+    expect(
+      screen.getAllByText("checkout-staging-pr412").length,
+    ).toBeGreaterThan(1);
+  });
+
+  it("names the ResourceSetInputProvider and ResourceSet, and attaches evidence to the lifecycle sentence", async () => {
+    setDetail(true);
+    renderPanel(WITH_PREVIEWS);
+    await screen.findByText("Previews (1)");
+
+    expect(screen.getByText("ResourceSetInputProvider")).toBeTruthy();
+    expect(screen.getByText("ResourceSet")).toBeTruthy();
+    expect(
+      screen.getAllByText("checkout-staging-previews").length,
+    ).toBeGreaterThan(1);
+
+    // The lifecycle sentence names the ResourceSet's own Ready condition
+    // (setReady is False here); the caret shows both conditions' reasons,
+    // verbatim.
+    const lifecycleText = "The preview environments are not ready: ResourceSetProvisioning: waiting for the input provider's first poll";
+    expect(screen.getByLabelText(`Evidence for “${lifecycleText}”`)).toBeTruthy();
+    expect(screen.getByText("set reason")).toBeTruthy();
+    expect(screen.getByText("ResourceSetProvisioning")).toBeTruthy();
+    expect(screen.getByText("provider ready")).toBeTruthy();
+  });
+
+  it("attaches evidence to a preview's status word showing both Ready conditions verbatim", async () => {
+    setDetail(true);
+    renderPanel(WITH_PREVIEWS);
+    await screen.findByText("Previews (1)");
+
+    expect(screen.getByLabelText("Evidence for “live”")).toBeTruthy();
+    expect(screen.getByText("artifact ready")).toBeTruthy();
+    expect(screen.getByText("applied ready")).toBeTruthy();
+    expect(screen.getAllByText("True").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("keeps the could-not-check lifecycle state visible in both modes", async () => {
+    const notServed: Response = {
+      ...CONFIGURED,
+      lifecycle: {
+        name: "checkout-staging-previews",
+        served: false,
+        present: false,
+        providerReady: "",
+        providerReason: "",
+        providerMessage: "",
+        setReady: "",
+        setReason: "",
+        setMessage: "",
+      },
+    };
+
+    renderPanel(notServed);
+    expect(await screen.findByText(/flux-operator is not installed/)).toBeTruthy();
+    cleanup();
+
+    setDetail(true);
+    renderPanel(notServed);
+    expect(await screen.findByText(/flux-operator is not installed/)).toBeTruthy();
+  });
+
+  it("renders the same action links whether the preference is on or off", async () => {
+    renderPanel(WITH_PREVIEWS);
+    await screen.findByText("Previews (1)");
+    const normal = screen
+      .getAllByRole("link")
+      .map((a) => `${a.textContent} → ${a.getAttribute("href")}`)
+      .sort();
+    cleanup();
+
+    setDetail(true);
+    renderPanel(WITH_PREVIEWS);
+    await screen.findByText("Previews (1)");
+    const expert = screen
+      .getAllByRole("link")
+      .map((a) => `${a.textContent} → ${a.getAttribute("href")}`)
+      .sort();
+
+    expect(expert).toEqual(normal);
+    expect(normal).toContain(
+      "pr412 → https://github.com/acme/checkout/pull/412",
+    );
+    expect(normal).toContain(
+      "details → → /projects/checkout/staging/previews/412",
+    );
   });
 });

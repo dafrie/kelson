@@ -15,7 +15,7 @@ import {
   sinceLabel,
   TICKER_LIMIT,
   type TickerEntry,
-} from "./ticker";
+} from "./ring";
 
 /**
  * The ticker's logic (#260), tested as functions rather than through a DOM —

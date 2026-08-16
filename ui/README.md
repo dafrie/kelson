@@ -197,6 +197,27 @@ Five things the table is deliberate about:
   variable is named by its author and `resources.requests.cpu` by the model, so
   a project is free to declare a variable called `image` and it is a different
   row from the workload setting. The wire says which group each row is in.
+- **What a value replaced is drawn under it, struck through**
+  ([#268](https://github.com/dafrie/kelson/issues/268)). `EffectiveSetting`
+  carries the losing values with the blocks that held them, outermost first —
+  the order the merge applied the scopes in — and each becomes one quiet line:
+  `was debug · set on the component, overridden for production`. The sentence
+  names *both* blocks, because "set on the component" is only half an answer
+  when the reader is looking at something else. Three things follow. A shadow
+  line appears only where there is a shadow, so a table where nothing is
+  overridden is exactly the height it was, and it is collapsed onto the winner —
+  no name of its own, no rule of its own, one hairline under the whole block —
+  so the eye reads one setting rather than two rows. **The unset case is the one
+  it exists for**: overriding a variable to `""` for an environment makes the
+  winner a value that says nothing about itself, and the shadow is the only
+  thing on the row that can say what was unset. And a shadowed reference is
+  still a reference — the same `envValueText`, the same `{ secret: …, key: … }`,
+  no value on either line. Blocks that the model replaces whole shadow the same
+  way it attributes them: `replicas` is one row and shadows as one, a replaced
+  `resources:` block reports what the displaced block held at each row's own
+  field, and a quantity the winning block does not set has no row to hang a
+  shadow on — the table does not invent one, because a row whose winner does not
+  exist is a setting kelson never merged.
 
 The JSONPath into the document — `$.spec.components[0].env.LOG_LEVEL`, the same
 spelling a structured error's `field` uses — rides on the row's `title` rather
@@ -1104,6 +1125,7 @@ Where it landed, and what each surface gained:
 | Component page | the same two revision halves; the verdict's three parts | the page's word (its own probe, or its environment's, or unread) |
 | Project matrix | per column: `generation` and the resolved `namespace` | **none** — see below |
 | History tab | each row's `generation` | "deployed now" |
+| Previews section, preview detail page | a preview's `namespace` named again as the OCIRepository and the Kustomization it also is; `PreviewLifecycle.name` named as the ResourceSetInputProvider and the ResourceSet | a preview's status word (`Preview.phase` / `.suspended`, with `artifactReady` / `appliedReady` / `reason` / `message` as evidence); the lifecycle sentence (`providerReady` / `providerReason` and `setReady` / `setReason` as evidence) |
 
 **What was deliberately not reached**, so the next slice starts from the truth:
 
@@ -1113,20 +1135,30 @@ Where it landed, and what each surface gained:
   The environment's Overview is one press away and carries the same evidence
   with room to draw it. The column heads still gain their two facts.
 - **Untouched surfaces:** the deploy / promote / rollback actions, the logs tab,
-  the previews section and the preview detail page, the cluster and connections
-  screens, the editor, and home. `Preview` in particular carries Flux object
-  names worth surfacing — its `namespace` is documented as also being the name
-  of the OCIRepository and the Kustomization, and `PreviewLifecycle` carries the
-  ResourceSetInputProvider / ResourceSet pair's name and both Ready conditions
-  with their reasons — which is the obvious next application.
-- **Wire gaps hit.** Three facts wanted and not available: `StatusResponse` has
+  the cluster and connections screens, the editor, and home. The previews
+  section and the preview detail page came off this list (#268 item 3):
+  `Preview.namespace` is named again as the OCIRepository and the Kustomization
+  it also is, `PreviewLifecycle.name` is named as the ResourceSetInputProvider
+  and the ResourceSet, and both are wrapped in the shared `LifecycleStatus`
+  component (`src/previews/Previews.tsx`) so the environment's Previews section
+  and the preview detail page's not-found state carry the same facts rather
+  than two copies of the markup. `PreviewPill`'s why-caret shows a preview's two
+  Ready conditions and its `reason` / `message`, and `LifecycleStatus`'s shows
+  the provider and set conditions' reasons — the fields the lifecycle sentence
+  is actually derived from (`lifecycleLine`).
+- **Wire gaps hit.** Two facts wanted and not available: `StatusResponse` has
   a `detail` map documented for adapter counts (`resources` / `live` /
   `degraded`) that `internal/api` never fills, so there is nothing to print;
-  `stale` is a boolean and the *spec's* current generation is on no message, so
-  "45 vs 47" cannot be shown, only "45, and behind"; and no response carries the
-  Flux `Kustomization` / `OCIRepository` names for a normal environment the way
-  `Preview` does for a preview, so an environment's own Flux objects cannot be
-  named without inventing them from the model's conventions.
+  and `stale` is a boolean and the *spec's* current generation is on no
+  message, so "45 vs 47" cannot be shown, only "45, and behind". No response
+  still carries the Flux `Kustomization` / `OCIRepository` names for a *normal*
+  environment the way `Preview` does for a preview, so an environment's own
+  Flux objects still cannot be named without inventing them from the model's
+  conventions — that gap is now closed only on the previews surfaces, where the
+  wire actually names the objects. `Preview` itself carries no per-condition
+  reason for `artifactReady` / `appliedReady` — only one `reason` / `message`
+  pair for the whole phase — so the why-caret shows the pair rather than a
+  reason per condition.
 
 ### Two themes
 

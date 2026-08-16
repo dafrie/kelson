@@ -1,9 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it } from "vitest";
+import { cleanup, screen } from "@testing-library/react";
 import { Code, ConnectError, createRouterTransport } from "@connectrpc/connect";
 import type { Transport } from "@connectrpc/connect";
 import type { MessageInitShape } from "@bufbuild/protobuf";
 
+import { setDetail } from "../expert/preference";
 import {
   PreviewService,
   type ListPreviewsResponseSchema,
@@ -98,6 +99,8 @@ function renderDetail(pr: string, response: Response, path?: string) {
     <PreviewDetailPage />,
   );
 }
+
+beforeEach(() => setDetail(false));
 
 describe("PreviewDetailPage", () => {
   it("shows what ListPreviews reports for the pr the route names, and nothing it doesn't", async () => {
@@ -270,5 +273,109 @@ describe("PreviewDetailPage", () => {
     expect(
       await screen.findByText(/No preview pr412 is currently reported for production/),
     ).toBeTruthy();
+  });
+});
+
+/**
+ * Kubernetes detail on the preview detail page (#268 item 3, following #260).
+ */
+describe("Kubernetes detail on the preview detail page", () => {
+  it("adds no facts and no carets when the preference is off", async () => {
+    renderDetail("412", { ...CONFIGURED, previews: PREVIEWS });
+    await screen.findByText("Preview pr412");
+
+    expect(document.querySelector(".k-why")).toBeNull();
+    expect(document.querySelector(".k-kfact")).toBeNull();
+    expect(screen.queryByText("OCIRepository")).toBeNull();
+  });
+
+  it("names the OCIRepository and Kustomization the preview's namespace also is", async () => {
+    setDetail(true);
+    renderDetail("412", { ...CONFIGURED, previews: PREVIEWS });
+    await screen.findByText("Preview pr412");
+
+    expect(screen.getByText("OCIRepository")).toBeTruthy();
+    expect(screen.getByText("Kustomization")).toBeTruthy();
+    expect(
+      screen.getAllByText("checkout-staging-pr412").length,
+    ).toBeGreaterThan(1);
+  });
+
+  it("attaches evidence to the preview's status word showing both Ready conditions verbatim", async () => {
+    setDetail(true);
+    renderDetail("412", { ...CONFIGURED, previews: PREVIEWS });
+    await screen.findByText("Preview pr412");
+
+    expect(screen.getByLabelText("Evidence for “live”")).toBeTruthy();
+    // The page already shows its own "artifact ready" / "applied ready" row,
+    // so the evidence adds a second occurrence of each label rather than a
+    // first one.
+    expect(screen.getAllByText("artifact ready").length).toBeGreaterThan(1);
+    expect(screen.getAllByText("applied ready").length).toBeGreaterThan(1);
+  });
+
+  it("names the ResourceSetInputProvider and ResourceSet on the not-found lifecycle line", async () => {
+    setDetail(true);
+    renderDetail("999", { ...CONFIGURED, previews: PREVIEWS });
+    await screen.findByText(/No preview pr999 is currently reported/);
+
+    expect(screen.getByText("ResourceSetInputProvider")).toBeTruthy();
+    expect(screen.getByText("ResourceSet")).toBeTruthy();
+    expect(
+      screen.getAllByText("checkout-staging-previews").length,
+    ).toBeGreaterThan(1);
+  });
+
+  it("keeps the structured error code visible in both modes", async () => {
+    const withError = {
+      ...CONFIGURED,
+      errors: [
+        {
+          code: "render/preview-name-too-long",
+          resource: "",
+          field: "",
+          application: "",
+          overlay: "",
+          target: "",
+          message: "too long",
+          remediation: "shorten it",
+          docsUrl: "",
+          line: 0,
+          column: 0,
+          cause: "",
+        },
+      ],
+    };
+
+    renderDetail("412", withError);
+    expect(await screen.findByText("render/preview-name-too-long")).toBeTruthy();
+    cleanup();
+
+    setDetail(true);
+    renderDetail("412", withError);
+    expect(await screen.findByText("render/preview-name-too-long")).toBeTruthy();
+  });
+
+  it("renders the same action links whether the preference is on or off", async () => {
+    renderDetail("412", { ...CONFIGURED, previews: PREVIEWS });
+    await screen.findByText("Preview pr412");
+    const normal = screen
+      .getAllByRole("link")
+      .map((a) => `${a.textContent} → ${a.getAttribute("href")}`)
+      .sort();
+    cleanup();
+
+    setDetail(true);
+    renderDetail("412", { ...CONFIGURED, previews: PREVIEWS });
+    await screen.findByText("Preview pr412");
+    const expert = screen
+      .getAllByRole("link")
+      .map((a) => `${a.textContent} → ${a.getAttribute("href")}`)
+      .sort();
+
+    expect(expert).toEqual(normal);
+    expect(normal).toContain(
+      "View pull request → https://github.com/acme/checkout/pull/412",
+    );
   });
 });

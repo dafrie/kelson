@@ -5,9 +5,12 @@ import { Copyable } from "../components/Copyable";
 import { ErrorPanel } from "../components/ErrorPanel";
 import { StatusPill } from "../components/StatusPill";
 import { formatAge } from "../components/format";
+import { Detail, KubeFact } from "../expert/Detail";
+import { Evidence, Why } from "../expert/Why";
 import type {
   ListPreviewsResponse,
   Preview,
+  PreviewLifecycle,
   PreviewSettings,
 } from "../gen/kelson/v1alpha1/preview_pb";
 import {
@@ -165,7 +168,6 @@ function Configured({
   project: string;
   environment: string;
 }) {
-  const lifecycle = lifecycleLine(response?.lifecycle);
   const gated = (response?.errors.length ?? 0) > 0;
 
   return (
@@ -183,10 +185,7 @@ function Configured({
       {/* Behind a closed gate there is no cluster state to describe, and the
           error panel above has already said why. */}
       {gated ? null : (
-        <div className="k-previews__lifecycle">
-          <StatusPill status={lifecycle.status} label="lifecycle" />
-          <span className="k-previews__lifecycle-text">{lifecycle.text}</span>
-        </div>
+        <LifecycleStatus lifecycle={response?.lifecycle} />
       )}
 
       {!gated && previews.length === 0 && response?.lifecycle?.present === true ? (
@@ -214,6 +213,61 @@ function Configured({
 }
 
 /**
+ * The lifecycle pair's word, shared by the environment's Previews section and
+ * the preview detail page's not-found state (both used to duplicate this
+ * markup). `PreviewLifecycle.name` is documented as the one name the
+ * ResourceSetInputProvider and the ResourceSet share, and expert mode names
+ * both objects with it rather than inventing two different strings for one
+ * wire value. The why-caret attaches to the lifecycle sentence and shows the
+ * two Ready conditions — provider and set — verbatim, which is the pair the
+ * sentence is actually derived from (`lifecycleLine`).
+ */
+export function LifecycleStatus({
+  lifecycle,
+}: {
+  lifecycle: PreviewLifecycle | undefined;
+}) {
+  const line = lifecycleLine(lifecycle);
+  return (
+    <div className="k-previews__lifecycle">
+      <StatusPill status={line.status} label="lifecycle" />
+      <span className="k-previews__lifecycle-text">{line.text}</span>
+      {lifecycle !== undefined ? (
+        <Detail>
+          <span className="k-kfacts">
+            <KubeFact name="ResourceSetInputProvider" value={lifecycle.name} />
+            <KubeFact name="ResourceSet" value={lifecycle.name} />
+          </span>
+        </Detail>
+      ) : null}
+      {lifecycle !== undefined ? (
+        <Why statement={line.text}>
+          <Evidence
+            rows={[
+              { name: "provider ready", value: lifecycle.providerReady },
+              { name: "provider reason", value: lifecycle.providerReason },
+              {
+                name: "provider message",
+                value: lifecycle.providerMessage,
+                prose: true,
+              },
+              { name: "set ready", value: lifecycle.setReady },
+              { name: "set reason", value: lifecycle.setReason },
+              {
+                name: "set message",
+                value: lifecycle.setMessage,
+                prose: true,
+              },
+            ]}
+            note="The forge poller's Ready condition is checked first; the ResourceSet's own Ready condition — what it produces — is what the sentence falls through to once the poller is up."
+          />
+        </Why>
+      ) : null}
+    </div>
+  );
+}
+
+/**
  * A preview's word, with flux-operator's own phase kept beside it as a labelled
  * fact. The word answers "is this change request up"; the phase is what to
  * quote at the operator when it is not.
@@ -228,6 +282,27 @@ export function PreviewPill({ preview }: { preview: Preview }) {
           phase <span className="k-mono">{preview.phase}</span>
         </span>
       ) : null}
+      {/* The word is computed from phase and suspended (`previewStatus`); the
+          two Ready conditions behind the phase are what a reader actually
+          wants when they ask why, so the caret shows them verbatim rather
+          than repeating the phase the pill already carries. */}
+      <Why statement={state.word}>
+        <Evidence
+          rows={[
+            { name: "phase", value: preview.phase },
+            { name: "suspended", value: String(preview.suspended) },
+            { name: "artifact ready", value: preview.artifactReady },
+            { name: "applied ready", value: preview.appliedReady },
+            { name: "reason", value: preview.reason },
+            { name: "message", value: preview.message, prose: true },
+          ]}
+          note={
+            preview.suspended
+              ? "Suspended overrides the phase entirely: what is running is the last thing that reconciled, not this change request's head."
+              : "The word is flux-operator's phase, translated. The two Ready conditions are what that phase is standing on."
+          }
+        />
+      </Why>
     </>
   );
 }
@@ -294,6 +369,16 @@ function PreviewRow({
 
       <div className="k-previews__namespace">
         <Copyable value={preview.namespace} />
+        {/* The proto documents this one string as also naming the
+            OCIRepository and the Kustomization it reads from — an object is
+            named only where the response actually named it, and here it
+            names three at once. */}
+        <Detail>
+          <span className="k-kfacts">
+            <KubeFact name="OCIRepository" value={preview.namespace} />
+            <KubeFact name="Kustomization" value={preview.namespace} />
+          </span>
+        </Detail>
       </div>
 
       <p className="k-previews__headline">{previewHeadline(preview)}</p>

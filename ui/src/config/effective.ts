@@ -3,6 +3,7 @@ import type {
   EffectiveSetting,
   EffectiveValue,
   SetAt,
+  ShadowedValue,
 } from "../gen/kelson/v1alpha1/effectiveconfig_pb";
 import {
   SetAtLevel,
@@ -28,7 +29,28 @@ import {
  * off the wire exactly as the server sent it. A copy of the merge here would
  * drift from internal/model, silently, in the direction that makes a
  * provenance claim wrong — which is the whole reason the RPC exists.
+ *
+ * That now includes what each winner *replaced* (#268). The server's walk
+ * records the losing values with the blocks that held them, outermost first,
+ * and this module turns each into a second sentence — so the question a reader
+ * actually arrives with, "the project says info, why is this trace", is
+ * answered on the row rather than by opening two files.
  */
+
+/**
+ * One value the winner replaced, as a line to draw under it.
+ *
+ * It is a value plus a sentence, exactly like the row it hangs off — but the
+ * sentence names two blocks rather than one, because "set on the component" is
+ * only half the answer when the reader is looking at something else.
+ */
+export interface ShadowRow {
+  value: EnvValue;
+  /** "set on the component, overridden for production". */
+  setAt: string;
+  /** The path into the document that holds the replaced value. */
+  where: string;
+}
 
 /** One row: a name, the value it resolves to, and where that was set. */
 export interface ConfigRow {
@@ -40,6 +62,12 @@ export interface ConfigRow {
   where: string;
   /** True when nothing in either document says it. */
   builtIn: boolean;
+  /**
+   * What this value replaced, outermost first — the wire's own order, which is
+   * the order the merge applied the scopes in. Empty for most rows, which is
+   * what keeps the table the height it was.
+   */
+  shadows: ShadowRow[];
 }
 
 /** One labelled block of rows. */
@@ -100,6 +128,50 @@ export function setAtSentence(at: SetAt | undefined): string {
   }
 }
 
+/**
+ * The second half of a shadow's sentence: which block took the value away.
+ *
+ * It is said from the *winner's* side — "overridden for production" — because
+ * the shadow line's first half already names where the lost value was written,
+ * and the reader's question is where it went. A winner this build cannot read,
+ * and a built-in winner, get the bare word: kelson's own default has no block
+ * to name, and the row above it already says whose default it is.
+ */
+function overriddenBy(at: SetAt | undefined): string {
+  const named = at?.environment ?? "";
+  const environment = named === "" ? "this environment" : named;
+  switch (at?.level) {
+    case SetAtLevel.PROJECT:
+      return "overridden on the project";
+    case SetAtLevel.COMPONENT:
+      return "overridden on the component";
+    case SetAtLevel.ENVIRONMENT:
+    case SetAtLevel.ENVIRONMENT_COMPONENT:
+      return `overridden for ${environment}`;
+    default:
+      return "overridden";
+  }
+}
+
+/**
+ * One shadowed value's whole sentence: where it was written, and where it was
+ * taken away — "set on the component, overridden for production".
+ */
+export function shadowSentence(
+  shadow: SetAt | undefined,
+  winner: SetAt | undefined,
+): string {
+  return `${setAtSentence(shadow)}, ${overriddenBy(winner)}`;
+}
+
+function shadowOf(shadow: ShadowedValue, winner: SetAt | undefined): ShadowRow {
+  return {
+    value: valueOf(shadow.value),
+    setAt: shadowSentence(shadow.setAt, winner),
+    where: shadow.setAt?.field ?? "",
+  };
+}
+
 function rowOf(setting: EffectiveSetting): ConfigRow {
   return {
     name: setting.name,
@@ -107,6 +179,9 @@ function rowOf(setting: EffectiveSetting): ConfigRow {
     setAt: setAtSentence(setting.setAt),
     where: setting.setAt?.field ?? "",
     builtIn: setting.setAt?.level === SetAtLevel.BUILT_IN,
+    // The wire's order is kept as it arrives: it is the order the merge applied
+    // the scopes in, and sorting it here would be an opinion about precedence.
+    shadows: (setting.shadowed ?? []).map((s) => shadowOf(s, setting.setAt)),
   };
 }
 

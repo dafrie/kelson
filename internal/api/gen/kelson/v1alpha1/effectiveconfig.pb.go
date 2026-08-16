@@ -488,23 +488,95 @@ func (*EffectiveValue_Secret) isEffectiveValue_Value() {}
 
 func (*EffectiveValue_Binding) isEffectiveValue_Value() {}
 
-// EffectiveSetting is one setting, its value, and the block that set it.
+// ShadowedValue is one value the winner replaced: what a losing block held,
+// and which block it was.
+//
+// The value is an EffectiveValue for the same reason the winner's is: a
+// shadowed `{secret, key}` is still a reference and there is no value behind it
+// to flatten it into. A client renders it as the reference it is.
+type ShadowedValue struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Value         *EffectiveValue        `protobuf:"bytes,1,opt,name=value,proto3" json:"value,omitempty"`
+	SetAt         *SetAt                 `protobuf:"bytes,2,opt,name=set_at,json=setAt,proto3" json:"set_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ShadowedValue) Reset() {
+	*x = ShadowedValue{}
+	mi := &file_kelson_v1alpha1_effectiveconfig_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ShadowedValue) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ShadowedValue) ProtoMessage() {}
+
+func (x *ShadowedValue) ProtoReflect() protoreflect.Message {
+	mi := &file_kelson_v1alpha1_effectiveconfig_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ShadowedValue.ProtoReflect.Descriptor instead.
+func (*ShadowedValue) Descriptor() ([]byte, []int) {
+	return file_kelson_v1alpha1_effectiveconfig_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *ShadowedValue) GetValue() *EffectiveValue {
+	if x != nil {
+		return x.Value
+	}
+	return nil
+}
+
+func (x *ShadowedValue) GetSetAt() *SetAt {
+	if x != nil {
+		return x.SetAt
+	}
+	return nil
+}
+
+// EffectiveSetting is one setting, its value, the block that set it, and the
+// values that block replaced.
 type EffectiveSetting struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// The variable's name for an env setting, the model's own field name
 	// otherwise: "image", "command", "replicas", "resources.requests.cpu",
 	// "domains", "autoDeploy", "preset", "policy.agents", "secrets.backend".
-	Name          string          `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	Group         SettingGroup    `protobuf:"varint,2,opt,name=group,proto3,enum=kelson.v1alpha1.SettingGroup" json:"group,omitempty"`
-	Value         *EffectiveValue `protobuf:"bytes,3,opt,name=value,proto3" json:"value,omitempty"`
-	SetAt         *SetAt          `protobuf:"bytes,4,opt,name=set_at,json=setAt,proto3" json:"set_at,omitempty"`
+	Name  string          `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Group SettingGroup    `protobuf:"varint,2,opt,name=group,proto3,enum=kelson.v1alpha1.SettingGroup" json:"group,omitempty"`
+	Value *EffectiveValue `protobuf:"bytes,3,opt,name=value,proto3" json:"value,omitempty"`
+	SetAt *SetAt          `protobuf:"bytes,4,opt,name=set_at,json=setAt,proto3" json:"set_at,omitempty"`
+	// What this setting's winner replaced, **outermost first** — the Project's
+	// value before the component's, the component's before the environment's.
+	//
+	// That is the order the merge applies the scopes in, so the list plus the
+	// winning value reads as the whole chain in one direction and a client draws
+	// it without sorting. The order is part of the contract and does not change.
+	//
+	// Only a block that actually wrote a value at that field appears. A scope
+	// that said nothing about the setting is a silence, not a loser, and an entry
+	// for it would claim a merge that did not happen. The winner is never in its
+	// own list, and an unshadowed setting carries none at all — which is most of
+	// them.
+	Shadowed      []*ShadowedValue `protobuf:"bytes,5,rep,name=shadowed,proto3" json:"shadowed,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *EffectiveSetting) Reset() {
 	*x = EffectiveSetting{}
-	mi := &file_kelson_v1alpha1_effectiveconfig_proto_msgTypes[4]
+	mi := &file_kelson_v1alpha1_effectiveconfig_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -516,7 +588,7 @@ func (x *EffectiveSetting) String() string {
 func (*EffectiveSetting) ProtoMessage() {}
 
 func (x *EffectiveSetting) ProtoReflect() protoreflect.Message {
-	mi := &file_kelson_v1alpha1_effectiveconfig_proto_msgTypes[4]
+	mi := &file_kelson_v1alpha1_effectiveconfig_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -529,7 +601,7 @@ func (x *EffectiveSetting) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EffectiveSetting.ProtoReflect.Descriptor instead.
 func (*EffectiveSetting) Descriptor() ([]byte, []int) {
-	return file_kelson_v1alpha1_effectiveconfig_proto_rawDescGZIP(), []int{4}
+	return file_kelson_v1alpha1_effectiveconfig_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *EffectiveSetting) GetName() string {
@@ -560,6 +632,13 @@ func (x *EffectiveSetting) GetSetAt() *SetAt {
 	return nil
 }
 
+func (x *EffectiveSetting) GetShadowed() []*ShadowedValue {
+	if x != nil {
+		return x.Shadowed
+	}
+	return nil
+}
+
 // EffectiveComponent is one component's effective configuration.
 type EffectiveComponent struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -580,7 +659,7 @@ type EffectiveComponent struct {
 
 func (x *EffectiveComponent) Reset() {
 	*x = EffectiveComponent{}
-	mi := &file_kelson_v1alpha1_effectiveconfig_proto_msgTypes[5]
+	mi := &file_kelson_v1alpha1_effectiveconfig_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -592,7 +671,7 @@ func (x *EffectiveComponent) String() string {
 func (*EffectiveComponent) ProtoMessage() {}
 
 func (x *EffectiveComponent) ProtoReflect() protoreflect.Message {
-	mi := &file_kelson_v1alpha1_effectiveconfig_proto_msgTypes[5]
+	mi := &file_kelson_v1alpha1_effectiveconfig_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -605,7 +684,7 @@ func (x *EffectiveComponent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EffectiveComponent.ProtoReflect.Descriptor instead.
 func (*EffectiveComponent) Descriptor() ([]byte, []int) {
-	return file_kelson_v1alpha1_effectiveconfig_proto_rawDescGZIP(), []int{5}
+	return file_kelson_v1alpha1_effectiveconfig_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *EffectiveComponent) GetName() string {
@@ -644,7 +723,7 @@ type EffectiveConfig struct {
 
 func (x *EffectiveConfig) Reset() {
 	*x = EffectiveConfig{}
-	mi := &file_kelson_v1alpha1_effectiveconfig_proto_msgTypes[6]
+	mi := &file_kelson_v1alpha1_effectiveconfig_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -656,7 +735,7 @@ func (x *EffectiveConfig) String() string {
 func (*EffectiveConfig) ProtoMessage() {}
 
 func (x *EffectiveConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_kelson_v1alpha1_effectiveconfig_proto_msgTypes[6]
+	mi := &file_kelson_v1alpha1_effectiveconfig_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -669,7 +748,7 @@ func (x *EffectiveConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EffectiveConfig.ProtoReflect.Descriptor instead.
 func (*EffectiveConfig) Descriptor() ([]byte, []int) {
-	return file_kelson_v1alpha1_effectiveconfig_proto_rawDescGZIP(), []int{6}
+	return file_kelson_v1alpha1_effectiveconfig_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *EffectiveConfig) GetProject() string {
@@ -715,7 +794,7 @@ type GetEffectiveConfigRequest struct {
 
 func (x *GetEffectiveConfigRequest) Reset() {
 	*x = GetEffectiveConfigRequest{}
-	mi := &file_kelson_v1alpha1_effectiveconfig_proto_msgTypes[7]
+	mi := &file_kelson_v1alpha1_effectiveconfig_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -727,7 +806,7 @@ func (x *GetEffectiveConfigRequest) String() string {
 func (*GetEffectiveConfigRequest) ProtoMessage() {}
 
 func (x *GetEffectiveConfigRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_kelson_v1alpha1_effectiveconfig_proto_msgTypes[7]
+	mi := &file_kelson_v1alpha1_effectiveconfig_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -740,7 +819,7 @@ func (x *GetEffectiveConfigRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetEffectiveConfigRequest.ProtoReflect.Descriptor instead.
 func (*GetEffectiveConfigRequest) Descriptor() ([]byte, []int) {
-	return file_kelson_v1alpha1_effectiveconfig_proto_rawDescGZIP(), []int{7}
+	return file_kelson_v1alpha1_effectiveconfig_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *GetEffectiveConfigRequest) GetProject() string {
@@ -777,7 +856,7 @@ type GetEffectiveConfigResponse struct {
 
 func (x *GetEffectiveConfigResponse) Reset() {
 	*x = GetEffectiveConfigResponse{}
-	mi := &file_kelson_v1alpha1_effectiveconfig_proto_msgTypes[8]
+	mi := &file_kelson_v1alpha1_effectiveconfig_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -789,7 +868,7 @@ func (x *GetEffectiveConfigResponse) String() string {
 func (*GetEffectiveConfigResponse) ProtoMessage() {}
 
 func (x *GetEffectiveConfigResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_kelson_v1alpha1_effectiveconfig_proto_msgTypes[8]
+	mi := &file_kelson_v1alpha1_effectiveconfig_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -802,7 +881,7 @@ func (x *GetEffectiveConfigResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetEffectiveConfigResponse.ProtoReflect.Descriptor instead.
 func (*GetEffectiveConfigResponse) Descriptor() ([]byte, []int) {
-	return file_kelson_v1alpha1_effectiveconfig_proto_rawDescGZIP(), []int{8}
+	return file_kelson_v1alpha1_effectiveconfig_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *GetEffectiveConfigResponse) GetConfig() *EffectiveConfig {
@@ -840,12 +919,16 @@ const file_kelson_v1alpha1_effectiveconfig_proto_rawDesc = "" +
 	"\aliteral\x18\x01 \x01(\tH\x00R\aliteral\x12=\n" +
 	"\x06secret\x18\x02 \x01(\v2#.kelson.v1alpha1.SecretKeyReferenceH\x00R\x06secret\x12D\n" +
 	"\abinding\x18\x03 \x01(\v2(.kelson.v1alpha1.ServiceBindingReferenceH\x00R\abindingB\a\n" +
-	"\x05value\"\xc1\x01\n" +
+	"\x05value\"u\n" +
+	"\rShadowedValue\x125\n" +
+	"\x05value\x18\x01 \x01(\v2\x1f.kelson.v1alpha1.EffectiveValueR\x05value\x12-\n" +
+	"\x06set_at\x18\x02 \x01(\v2\x16.kelson.v1alpha1.SetAtR\x05setAt\"\xfd\x01\n" +
 	"\x10EffectiveSetting\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x123\n" +
 	"\x05group\x18\x02 \x01(\x0e2\x1d.kelson.v1alpha1.SettingGroupR\x05group\x125\n" +
 	"\x05value\x18\x03 \x01(\v2\x1f.kelson.v1alpha1.EffectiveValueR\x05value\x12-\n" +
-	"\x06set_at\x18\x04 \x01(\v2\x16.kelson.v1alpha1.SetAtR\x05setAt\"{\n" +
+	"\x06set_at\x18\x04 \x01(\v2\x16.kelson.v1alpha1.SetAtR\x05setAt\x12:\n" +
+	"\bshadowed\x18\x05 \x03(\v2\x1e.kelson.v1alpha1.ShadowedValueR\bshadowed\"{\n" +
 	"\x12EffectiveComponent\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12=\n" +
@@ -892,7 +975,7 @@ func file_kelson_v1alpha1_effectiveconfig_proto_rawDescGZIP() []byte {
 }
 
 var file_kelson_v1alpha1_effectiveconfig_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_kelson_v1alpha1_effectiveconfig_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_kelson_v1alpha1_effectiveconfig_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
 var file_kelson_v1alpha1_effectiveconfig_proto_goTypes = []any{
 	(SetAtLevel)(0),                    // 0: kelson.v1alpha1.SetAtLevel
 	(SettingGroup)(0),                  // 1: kelson.v1alpha1.SettingGroup
@@ -900,30 +983,34 @@ var file_kelson_v1alpha1_effectiveconfig_proto_goTypes = []any{
 	(*SecretKeyReference)(nil),         // 3: kelson.v1alpha1.SecretKeyReference
 	(*ServiceBindingReference)(nil),    // 4: kelson.v1alpha1.ServiceBindingReference
 	(*EffectiveValue)(nil),             // 5: kelson.v1alpha1.EffectiveValue
-	(*EffectiveSetting)(nil),           // 6: kelson.v1alpha1.EffectiveSetting
-	(*EffectiveComponent)(nil),         // 7: kelson.v1alpha1.EffectiveComponent
-	(*EffectiveConfig)(nil),            // 8: kelson.v1alpha1.EffectiveConfig
-	(*GetEffectiveConfigRequest)(nil),  // 9: kelson.v1alpha1.GetEffectiveConfigRequest
-	(*GetEffectiveConfigResponse)(nil), // 10: kelson.v1alpha1.GetEffectiveConfigResponse
-	(*Error)(nil),                      // 11: kelson.v1alpha1.Error
+	(*ShadowedValue)(nil),              // 6: kelson.v1alpha1.ShadowedValue
+	(*EffectiveSetting)(nil),           // 7: kelson.v1alpha1.EffectiveSetting
+	(*EffectiveComponent)(nil),         // 8: kelson.v1alpha1.EffectiveComponent
+	(*EffectiveConfig)(nil),            // 9: kelson.v1alpha1.EffectiveConfig
+	(*GetEffectiveConfigRequest)(nil),  // 10: kelson.v1alpha1.GetEffectiveConfigRequest
+	(*GetEffectiveConfigResponse)(nil), // 11: kelson.v1alpha1.GetEffectiveConfigResponse
+	(*Error)(nil),                      // 12: kelson.v1alpha1.Error
 }
 var file_kelson_v1alpha1_effectiveconfig_proto_depIdxs = []int32{
 	0,  // 0: kelson.v1alpha1.SetAt.level:type_name -> kelson.v1alpha1.SetAtLevel
 	3,  // 1: kelson.v1alpha1.EffectiveValue.secret:type_name -> kelson.v1alpha1.SecretKeyReference
 	4,  // 2: kelson.v1alpha1.EffectiveValue.binding:type_name -> kelson.v1alpha1.ServiceBindingReference
-	1,  // 3: kelson.v1alpha1.EffectiveSetting.group:type_name -> kelson.v1alpha1.SettingGroup
-	5,  // 4: kelson.v1alpha1.EffectiveSetting.value:type_name -> kelson.v1alpha1.EffectiveValue
-	2,  // 5: kelson.v1alpha1.EffectiveSetting.set_at:type_name -> kelson.v1alpha1.SetAt
-	6,  // 6: kelson.v1alpha1.EffectiveComponent.settings:type_name -> kelson.v1alpha1.EffectiveSetting
-	6,  // 7: kelson.v1alpha1.EffectiveConfig.settings:type_name -> kelson.v1alpha1.EffectiveSetting
-	7,  // 8: kelson.v1alpha1.EffectiveConfig.components:type_name -> kelson.v1alpha1.EffectiveComponent
-	8,  // 9: kelson.v1alpha1.GetEffectiveConfigResponse.config:type_name -> kelson.v1alpha1.EffectiveConfig
-	11, // 10: kelson.v1alpha1.GetEffectiveConfigResponse.errors:type_name -> kelson.v1alpha1.Error
-	11, // [11:11] is the sub-list for method output_type
-	11, // [11:11] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	5,  // 3: kelson.v1alpha1.ShadowedValue.value:type_name -> kelson.v1alpha1.EffectiveValue
+	2,  // 4: kelson.v1alpha1.ShadowedValue.set_at:type_name -> kelson.v1alpha1.SetAt
+	1,  // 5: kelson.v1alpha1.EffectiveSetting.group:type_name -> kelson.v1alpha1.SettingGroup
+	5,  // 6: kelson.v1alpha1.EffectiveSetting.value:type_name -> kelson.v1alpha1.EffectiveValue
+	2,  // 7: kelson.v1alpha1.EffectiveSetting.set_at:type_name -> kelson.v1alpha1.SetAt
+	6,  // 8: kelson.v1alpha1.EffectiveSetting.shadowed:type_name -> kelson.v1alpha1.ShadowedValue
+	7,  // 9: kelson.v1alpha1.EffectiveComponent.settings:type_name -> kelson.v1alpha1.EffectiveSetting
+	7,  // 10: kelson.v1alpha1.EffectiveConfig.settings:type_name -> kelson.v1alpha1.EffectiveSetting
+	8,  // 11: kelson.v1alpha1.EffectiveConfig.components:type_name -> kelson.v1alpha1.EffectiveComponent
+	9,  // 12: kelson.v1alpha1.GetEffectiveConfigResponse.config:type_name -> kelson.v1alpha1.EffectiveConfig
+	12, // 13: kelson.v1alpha1.GetEffectiveConfigResponse.errors:type_name -> kelson.v1alpha1.Error
+	14, // [14:14] is the sub-list for method output_type
+	14, // [14:14] is the sub-list for method input_type
+	14, // [14:14] is the sub-list for extension type_name
+	14, // [14:14] is the sub-list for extension extendee
+	0,  // [0:14] is the sub-list for field type_name
 }
 
 func init() { file_kelson_v1alpha1_effectiveconfig_proto_init() }
@@ -943,7 +1030,7 @@ func file_kelson_v1alpha1_effectiveconfig_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_kelson_v1alpha1_effectiveconfig_proto_rawDesc), len(file_kelson_v1alpha1_effectiveconfig_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   9,
+			NumMessages:   10,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

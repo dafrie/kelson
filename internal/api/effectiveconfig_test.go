@@ -228,6 +228,57 @@ func TestGetEffectiveConfigCarriesReferencesNotValues(t *testing.T) {
 	}
 }
 
+// TestGetEffectiveConfigCarriesTheShadowedChain: the fixture writes LOG_LEVEL
+// at all three scopes, so the winner reaches the wire with the two values it
+// replaced, outermost first, each carrying the block it was written in (#268).
+func TestGetEffectiveConfigCarriesTheShadowedChain(t *testing.T) {
+	c := storedEffectiveSpec(t)
+	got, err := c.spec.GetEffectiveConfig(context.Background(), connect.NewRequest(&kelsonv1alpha1.GetEffectiveConfigRequest{
+		Project: "checkout", Environment: "production", Component: "web",
+	}))
+	if err != nil {
+		t.Fatalf("GetEffectiveConfig: %v", err)
+	}
+	web := got.Msg.GetConfig().GetComponents()[0]
+
+	logLevel := settingOf(t, web.GetSettings(), kelsonv1alpha1.SettingGroup_SETTING_GROUP_ENV, "LOG_LEVEL")
+	shadowed := logLevel.GetShadowed()
+	if len(shadowed) != 2 {
+		t.Fatalf("LOG_LEVEL carries %d shadowed values, want the project's and the component's", len(shadowed))
+	}
+	if v, at := shadowed[0].GetValue().GetLiteral(), shadowed[0].GetSetAt(); v != "info" ||
+		at.GetLevel() != kelsonv1alpha1.SetAtLevel_SET_AT_LEVEL_PROJECT || at.GetField() != "$.spec.env.LOG_LEVEL" {
+		t.Errorf("the outermost shadow is %q at %+v, want the project's info", v, at)
+	}
+	if v, at := shadowed[1].GetValue().GetLiteral(), shadowed[1].GetSetAt(); v != "debug" ||
+		at.GetLevel() != kelsonv1alpha1.SetAtLevel_SET_AT_LEVEL_COMPONENT || at.GetField() != "$.spec.components[1].env.LOG_LEVEL" {
+		t.Errorf("the inner shadow is %q at %+v, want the component's debug", v, at)
+	}
+
+	// A key one document names has no chain behind it, and neither does a row
+	// nobody overrode.
+	region := settingOf(t, web.GetSettings(), kelsonv1alpha1.SettingGroup_SETTING_GROUP_ENV, "REGION")
+	if len(region.GetShadowed()) != 0 {
+		t.Errorf("REGION carries %d shadowed values; only the project names it", len(region.GetShadowed()))
+	}
+
+	// A shadowed reference stays a reference: there is no value behind a
+	// `{secret, key}` in either half of the chain.
+	stripe := settingOf(t, web.GetSettings(), kelsonv1alpha1.SettingGroup_SETTING_GROUP_ENV, "STRIPE_KEY")
+	if len(stripe.GetShadowed()) != 0 {
+		t.Fatalf("STRIPE_KEY carries %d shadowed values; only the component names it", len(stripe.GetShadowed()))
+	}
+
+	// P3: the environment's pin displaced the project's image.
+	image := settingOf(t, web.GetSettings(), kelsonv1alpha1.SettingGroup_SETTING_GROUP_WORKLOAD, model.SettingImage)
+	if len(image.GetShadowed()) != 1 {
+		t.Fatalf("the image carries %d shadowed values, want the project's", len(image.GetShadowed()))
+	}
+	if v := image.GetShadowed()[0].GetValue().GetLiteral(); v != "ghcr.io/acme/checkout:1" {
+		t.Errorf("the shadowed image = %q, want the project's", v)
+	}
+}
+
 // TestGetEffectiveConfigRefusesAComponentTheProjectDoesNotDeclare: an empty
 // table would be indistinguishable from a chart's, which is legitimately empty,
 // so a filter that names nothing is the caller's argument being wrong.

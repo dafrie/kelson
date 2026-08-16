@@ -3,8 +3,8 @@ import { useMemo } from "react";
 import { useAsync, useClients } from "../api/data";
 import { ErrorPanel } from "../components/ErrorPanel";
 import { LoadingState } from "../components/States";
-import { envValueText } from "../spec/documents";
-import { configGroups, type ConfigRow } from "./effective";
+import { envValueText, type EnvValue } from "../spec/documents";
+import { configGroups, type ConfigRow, type ShadowRow } from "./effective";
 import "./config.css";
 
 /**
@@ -25,6 +25,12 @@ import "./config.css";
  * - **A built-in default recedes.** It is the row nobody wrote, so it is dimmed
  *   and its "set at" says whose default it is. The rows a reader is looking for
  *   are the ones a file put there.
+ * - **A replaced value is drawn under the one that replaced it, struck
+ *   through.** Only where there is one: a row nothing overrode is the row it
+ *   always was, so a table where nothing is overridden is exactly the height it
+ *   was before (#268). The shadow line carries no name of its own and no rule
+ *   of its own — it is collapsed onto the winner as part of the same block, so
+ *   the eye reads one setting rather than two rows.
  * - **Nothing is loud until it breaks.** The table is hairlines and mono
  *   values; the only coloured object it can produce is `ErrorPanel`, when the
  *   call fails or the stored spec no longer resolves.
@@ -113,7 +119,8 @@ export function EffectiveConfigTable({
 }
 
 /**
- * One row: the setting's name, its value, and the block that set it.
+ * One row: the setting's name, its value, and the block that set it — followed
+ * by a line per value it replaced.
  *
  * The name is mono because it is written in a document rather than chosen for
  * this screen — an environment variable is the author's own string and
@@ -122,25 +129,66 @@ export function EffectiveConfigTable({
  * reader who wants the exact line, and never takes space in the table.
  */
 function Row({ row }: { row: ConfigRow }) {
-  const value = row.value;
+  const classes = [
+    row.builtIn ? "k-config__row--default" : "",
+    row.shadows.length > 0 ? "k-config__row--shadowed" : "",
+  ]
+    .filter((c) => c !== "")
+    .join(" ");
   return (
-    <tr className={row.builtIn ? "k-config__row--default" : undefined}>
-      <td className="k-mono k-config__name">{row.name}</td>
+    <>
+      <tr className={classes === "" ? undefined : classes}>
+        <td className="k-mono k-config__name">{row.name}</td>
+        <td className="k-mono k-config__value">
+          <Value value={row.value} />
+        </td>
+        <td className="k-config__setat" title={row.where || undefined}>
+          {row.setAt}
+        </td>
+      </tr>
+      {row.shadows.map((shadow, i) => (
+        <ShadowLine
+          key={shadow.where === "" ? `${row.name}:${i}` : shadow.where}
+          shadow={shadow}
+          last={i === row.shadows.length - 1}
+        />
+      ))}
+    </>
+  );
+}
+
+/**
+ * A value this row's winner replaced: what it was, struck through, and the two
+ * blocks the sentence names.
+ *
+ * It carries no name — it is the same setting as the row above it — and it says
+ * "was" so the strikethrough is not the only thing telling a reader that this
+ * is not what runs. The value is rendered by exactly the same rules as a
+ * winner's: a reference is still a reference and an empty string is still named
+ * rather than left blank, because a shadow is a value somebody wrote too.
+ */
+function ShadowLine({ shadow, last }: { shadow: ShadowRow; last: boolean }) {
+  return (
+    <tr className={last ? "k-config__shadow k-config__shadow--last" : "k-config__shadow"}>
+      <td />
       <td className="k-mono k-config__value">
-        {value.kind !== "plain" ? (
-          envValueText(value)
-        ) : value.value === "" ? (
-          // An empty string is a value somebody set — docs/model.md's way of
-          // unsetting a project variable for one environment — so it is shown
-          // as one rather than as an absence.
-          <span className="k-config__empty">empty</span>
-        ) : (
-          value.value
-        )}
+        <span className="k-config__was">was</span>{" "}
+        <s className="k-config__shadow-value">
+          <Value value={shadow.value} />
+        </s>
       </td>
-      <td className="k-config__setat" title={row.where || undefined}>
-        {row.setAt}
+      <td className="k-config__setat" title={shadow.where || undefined}>
+        {shadow.setAt}
       </td>
     </tr>
   );
+}
+
+function Value({ value }: { value: EnvValue }) {
+  if (value.kind !== "plain") return <>{envValueText(value)}</>;
+  // An empty string is a value somebody set — docs/model.md's way of unsetting
+  // a project variable for one environment — so it is shown as one rather than
+  // as an absence.
+  if (value.value === "") return <span className="k-config__empty">empty</span>;
+  return <>{value.value}</>;
 }

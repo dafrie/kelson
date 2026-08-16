@@ -72,3 +72,44 @@
   font-family: var(--kelson-font);
   color: var(--kelson-muted);
 }
+
+/* A replaced value collapses onto the value that replaced it (#268): the winner
+   drops its own rule, the shadow lines sit tight underneath with no rule of
+   their own, and the last one carries the hairline for the whole block. So a
+   setting with a chain behind it reads as one object, and a table where nothing
+   is overridden is untouched — there is no line to draw. */
+.k-config__row--shadowed td {
+  border-bottom: none;
+}
+
+.k-config__shadow td {
+  padding-top: 0;
+  padding-bottom: 1px;
+  border-bottom: none;
+}
+
+.k-config__shadow--last td {
+  padding-bottom: 5px;
+  border-bottom: 1px solid var(--kelson-hairline);
+}
+
+/* Quiet, and struck: what a shadow says is that this is *not* what runs, so it
+   recedes the way a built-in default does and never competes with the row above
+   it. Nothing here is coloured — the whole table's only coloured object is the
+   error panel. */
+.k-config__shadow .k-config__value,
+.k-config__shadow .k-config__setat {
+  color: var(--kelson-muted);
+}
+
+.k-config__shadow-value {
+  text-decoration-color: var(--kelson-line);
+}
+
+/* "was" is a word rather than a value, so it is sans and small — and it is what
+   states the fact the strikethrough only implies. */
+.k-config__was {
+  font-family: var(--kelson-font);
+  font-size: var(--kelson-size-micro);
+  color: var(--kelson-muted);
+}
