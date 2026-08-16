@@ -553,9 +553,11 @@ architecture. Three rules, and the tests pin the strings that carry them:
 The one deliberate exception is text the *server* wrote: structured errors,
 remediations and probe messages are rendered verbatim, code intact, wherever
 they land (`ErrorPanel`). A refusal is the owning Go package's sentence and this
-UI does not paraphrase it — which is why `src/dataservices/DataServices.test.tsx`
-still carries an ADR citation in a fixture: it is `internal/renderer`'s own
-remediation string, quoted.
+UI does not paraphrase it. Which means the rule has a Go half:
+`internal/renderer`'s remediations reach a reader through this panel, so they
+follow the same standard, and the fixtures quoting them here
+(`src/dataservices/DataServices.test.tsx`, `src/components/ErrorPanel.test.tsx`)
+are byte-copies of the Go strings rather than plausible-looking inventions.
 
 ### One status vocabulary
 

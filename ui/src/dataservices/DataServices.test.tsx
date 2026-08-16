@@ -59,7 +59,7 @@ const SHARED_REFUSAL = {
   message:
     'service "db" requests preset "shared": the shared preset is deferred — dedicated presets (small, ha-small, ha-medium) work today',
   remediation:
-    "the shared cluster was ADR-0007's cost optimization, never an ask (owner decision, issue #93). Use preset: small",
+    "a shared cluster was only ever a cost optimization; a dedicated cluster per postgres component is simpler, works today including bindings, and costs an acceptable number of pods at this stage. Use preset: small (issue #93 tracks any return of shared)",
 };
 
 function transportFor(errors: (typeof SHARED_REFUSAL)[] = []) {

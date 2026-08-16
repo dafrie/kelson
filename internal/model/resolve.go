@@ -483,7 +483,7 @@ func sourceNotInScope(p *Project, index int, c Component, local, globals []strin
 		Message: fmt.Sprintf("component %q builds from source %q, which neither project %q nor this instance declares",
 			c.Name, c.SourceName(), p.Metadata.Name),
 		Remediation: fmt.Sprintf("declare it under spec.sources, or bind to one that is in scope. "+
-			"This project declares: %s. This instance offers: %s (ADR-0035 decision 3)",
+			"This project declares: %s. This instance offers: %s",
 			nameList(local), nameList(globals)),
 		DocsURL: docsURL(ErrUnknownSource),
 	}

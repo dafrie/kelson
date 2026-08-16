@@ -242,7 +242,7 @@ func TestAnUnmarkedPinIsNeverOverwritten(t *testing.T) {
 	}))
 
 	const reason = "environment staging did not move worker: an image pin holds it, and a pinned component " +
-		"ignores everything (rule P3, ADR-0016)"
+		"ignores everything."
 	if !strings.Contains(res.GetMessage(), reason) {
 		t.Errorf("the pinned reason is not the one a person's pin has always got\n  want: %s\n  got:  %s",
 			reason, res.GetMessage())

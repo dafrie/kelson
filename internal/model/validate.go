@@ -277,9 +277,9 @@ func refExample(name string) string {
 // would name once it existed. kubectl stays named rather than being dropped: an
 // author reading this may be on a machine with kubectl and no kelson, and the
 // two commands write the same object.
-const secretRemediation = "the spec carries references, never values (ADR-0009). Write the variable as a reference: " +
+const secretRemediation = "the spec carries references, never values. Write the variable as a reference: " +
 	"{secret: <secret name>, key: <key>}, which kelson renders as a valueFrom.secretKeyRef against a Secret in the " +
-	"environment's namespace and never reads (ADR-0018). Write that Secret with " +
+	"environment's namespace and never reads. Write that Secret with " +
 	"`kelson secret set <secret name> --project <project> --env <environment> <key>=<value>` " +
 	"(use --from-stdin <key> or --from-file <key>=<path> to keep the value out of your shell history), or with " +
 	"`kubectl -n <namespace> create secret generic <secret name> --from-literal=<key>=…`. " +
@@ -621,7 +621,7 @@ func (v *validator) ageRecipients(field string, recipients []string) {
 			"secrets.backend sops encrypts to age recipients and none are listed",
 			"generate a key with `age-keygen -o age.key`, keep the AGE-SECRET-KEY line out of Git, and list "+
 				"the public half here: secrets: { backend: sops, ageRecipients: [age1…] }. The private half goes "+
-				"into a Kubernetes Secret the Kustomization decrypts with — kelson never holds it (ADR-0022)")
+				"into a Kubernetes Secret the Kustomization decrypts with — kelson never holds it")
 		return
 	}
 	seen := map[string]bool{}
@@ -723,8 +723,8 @@ func (v *validator) previews(field string, p *Previews) {
 			fmt.Sprintf("%q is not a DNS-1123 label, so it cannot name a Secret", p.SecretRef),
 			"set secretRef to the name of a Secret holding forge credentials — flux-operator reads "+
 				"username/password, or the githubApp* keys, and the spec carries the name and never the "+
-				"token (ADR-0009) — or leave it unset and kelson materializes the credential from the git "+
-				"connection covering previews.repo (ADR-0033 decision 4)")
+				"token — or leave it unset and kelson materializes the credential from the git "+
+				"connection covering previews.repo")
 	}
 
 	if p.Interval != "" {
@@ -739,7 +739,7 @@ func (v *validator) previews(field string, p *Previews) {
 			v.err(ErrOutOfRange, field+".filter.limit",
 				fmt.Sprintf("limit %d is outside 1..%d", *f.Limit, previewMaxLimit),
 				fmt.Sprintf("set limit between 1 and %d, or remove it for kelson's default of %d "+
-					"(deliberately below flux-operator's own 100 — the ceiling is a cost control, ADR-0017)",
+					"(deliberately below flux-operator's own 100 — the ceiling is a cost control)",
 					previewMaxLimit, PreviewDefaultLimit))
 		}
 	}
@@ -752,7 +752,7 @@ func (v *validator) previews(field string, p *Previews) {
 			"previews.artifacts.repository is required when previews is set",
 			"set artifacts.repository to the oci:// repository the per-pull-request manifests are published to, "+
 				"e.g. oci://ghcr.io/acme/checkout-previews. The tag is the pull request's head commit and kelson "+
-				"chooses it (ADR-0017)")
+				"chooses it")
 	} else {
 		v.remoteURL(field+".artifacts.repository", p.Artifacts.Repository, []string{"oci"},
 			"use an oci:// repository URL without a tag, e.g. oci://ghcr.io/acme/checkout-previews")
@@ -767,7 +767,7 @@ func (v *validator) previews(field string, p *Previews) {
 			v.err(ErrInvalidFormat, field+".artifacts.repository",
 				fmt.Sprintf("%q carries a tag or a digest", p.Artifacts.Repository),
 				"drop the tag: each preview is pulled at its pull request's head commit SHA, so a tag here would "+
-					"either be ignored or pin every preview to the same manifests (ADR-0017)")
+					"either be ignored or pin every preview to the same manifests")
 		}
 	}
 	if p.Artifacts.SecretRef != "" {
@@ -923,7 +923,7 @@ func (v *validator) componentSourceName(field string, c Component, kind Componen
 			c.Name, len(sources.names), DefaultSourceName),
 		fmt.Sprintf("set source: to one of: %s — or rename one of them to %s, which is what a component "+
 			"that names no source builds from. kelson refuses to pick for you: the order of a list is not "+
-			"a decision (ADR-0035)", strings.Join(sources.names, ", "), DefaultSourceName))
+			"a decision", strings.Join(sources.names, ", "), DefaultSourceName))
 }
 
 // componentKind resolves a component's kind and reports the ways a written
@@ -996,13 +996,13 @@ func (v *validator) dataComponent(field string, c Component, kind ComponentKind)
 	default:
 		v.err(ErrInvalidEnum, field+".preset",
 			fmt.Sprintf("unknown preset %q", c.Preset),
-			"valid presets: shared, small, ha-small, ha-medium, branch (docs/data-services.md, ADR-0007)")
+			"valid presets: shared, small, ha-small, ha-medium, branch (docs/data-services.md)")
 	}
 	for _, set := range workloadOnlyFields(c) {
 		v.err(ErrMutuallyExclusive, field+"."+set,
 			fmt.Sprintf("component %q has kind %q, which renders a managed data service, but sets %s", c.Name, kind, set),
 			"remove "+set+"; a data component's whole configuration is its preset, because its topology belongs to the "+
-				"operator (ADR-0005). Bind a workload to it with {from: {service: "+c.Name+", key: uri}}")
+				"operator. Bind a workload to it with {from: {service: "+c.Name+", key: uri}}")
 	}
 	v.dataAuth(field, c, kind)
 	v.chartOnlyFields(field, c, kind)
@@ -1028,7 +1028,7 @@ func (v *validator) dataAuth(field string, c Component, kind ComponentKind) {
 			"remove auth; CloudNativePG's initdb bootstrap generates the application user and its password and "+
 				"publishes them as <cluster>-app, so a Secret you write would be a second credential the database "+
 				"never accepts. Bind {from: {service: "+c.Name+", key: password}} and kelson points the "+
-				"secretKeyRef at the one the operator made (ADR-0015 amendment, docs/data-services.md)")
+				"secretKeyRef at the one the operator made (docs/data-services.md)")
 		return
 	}
 	v.secretRef(field+".auth", c.Auth)
@@ -1054,7 +1054,7 @@ func (v *validator) chartComponent(field string, c Component, kind ComponentKind
 			"set chartVersion to an exact version, e.g. chartVersion: 4.11.3. kelson refuses an unpinned chart "+
 				"rather than resolving one at apply time: the same document would install different manifests on "+
 				"different days, and the diff — which only ever shows the HelmRelease — would report no change "+
-				"at all (ADR-0016)")
+				"at all")
 	}
 	v.chartSource(field, c)
 	v.chartValues(field+".values", c.Values)
@@ -1065,7 +1065,7 @@ func (v *validator) chartComponent(field string, c Component, kind ComponentKind
 		v.err(ErrMutuallyExclusive, field+"."+set,
 			fmt.Sprintf("component %q has kind %q, which delegates a chart to helm-controller, but sets %s", c.Name, kind, set),
 			"remove "+set+"; what a chart runs is the chart's business, configured through values and valuesFrom. "+
-				"kelson writes the HelmRelease and never templates the chart (ADR-0005, ADR-0016)")
+				"kelson writes the HelmRelease and never templates the chart")
 	}
 	if c.Preset != "" {
 		v.err(ErrMutuallyExclusive, field+".preset",
@@ -1091,7 +1091,7 @@ func (v *validator) workloadAuth(field string, c Component, kind ComponentKind) 
 			c.Name, kind),
 		"remove auth. To read a credential from a Secret here, write it where it is used — "+
 			"env: {MY_VAR: {secret: "+refExample(c.Auth.Name)+", key: "+refKeyExample(c.Auth.Key)+"}}, which renders "+
-			"as a valueFrom.secretKeyRef (ADR-0018). auth belongs on a kind: valkey component, where it names the "+
+			"as a valueFrom.secretKeyRef. auth belongs on a kind: valkey component, where it names the "+
 			"Secret the cache's own password is read from")
 }
 
@@ -1122,8 +1122,8 @@ func (v *validator) chartSource(field string, c Component) {
 				c.Name, ComponentHelm, c.SourceName()),
 			"a helm component is not built from a repository — it installs a published chart. Write where "+
 				"the chart is fetched from instead: source: {repository: <Helm repository URL>} or "+
-				"source: {oci: <OCI registry URL>} (ADR-0016). A source name binds a component kelson "+
-				"builds (ADR-0035)")
+				"source: {oci: <OCI registry URL>}. A source name binds a component kelson "+
+				"builds")
 		return
 	}
 	repo, oci := c.Source.Chart.Repository, c.Source.Chart.OCI
@@ -1241,7 +1241,7 @@ func (v *validator) chartOnlyFields(field string, c Component, kind ComponentKin
 			fmt.Sprintf("component %q has kind %q, which runs an operator's image rather than one kelson builds",
 				c.Name, kind),
 			"remove source; a data component has no build, so a repository to build it from names nothing. "+
-				"Bind a workload to it with {from: {service: "+c.Name+", key: uri}} (ADR-0005, ADR-0035)")
+				"Bind a workload to it with {from: {service: "+c.Name+", key: uri}}")
 	}
 	if len(c.Values) > 0 {
 		set = append(set, "values")
@@ -1252,7 +1252,7 @@ func (v *validator) chartOnlyFields(field string, c Component, kind ComponentKin
 	for _, f := range set {
 		v.err(ErrMutuallyExclusive, field+"."+f,
 			fmt.Sprintf("component %q has kind %q, and %s configures a Helm chart", c.Name, kind, f),
-			"remove "+f+", or set kind: helm — a chart field on any other kind attaches to nothing (ADR-0016)")
+			"remove "+f+", or set kind: helm — a chart field on any other kind attaches to nothing")
 	}
 }
 
@@ -1352,7 +1352,7 @@ func (v *validator) workloadComponent(
 		if kind != ComponentAgent {
 			v.err(ErrMutuallyExclusive, field+".tools",
 				fmt.Sprintf("component %q has kind %q, and tools is the capability policy of an agent", c.Name, kind),
-				"remove tools, or set kind: agent — a tool allow-list on anything else attaches to nothing (ADR-0014)")
+				"remove tools, or set kind: agent — a tool allow-list on anything else attaches to nothing")
 		} else {
 			v.tools(field+".tools", c.Tools)
 			v.gate("$.spec.components[].tools", field+".tools")
@@ -1464,7 +1464,7 @@ func (v *validator) projectSources(s *ProjectSpec) sourceScope {
 			"the Project declares both spec.source and spec.sources, which are one list written two ways",
 			"keep spec.sources and move the singular block into it as an entry named "+DefaultSourceName+
 				" — `sources: [{name: "+DefaultSourceName+", git: <url>, ref: <ref>}, …]` — or delete "+
-				"spec.sources and keep the shorthand (ADR-0035 decision 1)")
+				"spec.sources and keep the shorthand")
 	}
 
 	if src := s.Source; src != nil {
@@ -1474,7 +1474,7 @@ func (v *validator) projectSources(s *ProjectSpec) sourceScope {
 					src.Name, DefaultSourceName),
 				"remove name; the shorthand declares exactly one source called "+DefaultSourceName+
 					". To choose the name, write the list instead: sources: [{name: "+src.Name+
-					", git: <url>}] (ADR-0035 decision 1)")
+					", git: <url>}]")
 		}
 		v.source("$.spec.source", *src, false)
 	}
@@ -1556,7 +1556,7 @@ func validateProject(p *Project, v *validator) {
 				v.err(ErrInvalidEnum, "$.spec.build.by",
 					fmt.Sprintf("unknown build owner %q", s.Build.By),
 					"valid values: "+BuildByKelson+", "+BuildByCI+
-						" — kelson builds the image itself and ci reports one its pipeline built (ADR-0034)")
+						" — kelson builds the image itself and ci reports one its pipeline built")
 			}
 			// No gate any more: `BuildService.ReportBuild` reads this field
 			// (ADR-0034 decision 3, internal/api/build.go). `ci` is what makes
@@ -1672,7 +1672,7 @@ func validateGitConnection(g *GitConnection, v *validator) {
 			fmt.Sprintf("unknown git provider %q", s.Provider),
 			"valid providers: "+gitProviderNames()+
 				". The enum grows one value per adapter, so a provider kelson has not written an "+
-				"adapter for is spelled generic and gets private clones and nothing else (ADR-0033)")
+				"adapter for is spelled generic and gets private clones and nothing else")
 	}
 
 	v.connectionHost("$.spec.host", s)
@@ -1696,7 +1696,7 @@ func validateGitSource(g *GitSource, v *validator) {
 		v.err(ErrMissingRequired, "$.spec.git",
 			"a GitSource names the repository it offers",
 			"set spec.git to the repository URL. A source is where code is read from; the credential it "+
-				"is read with is a GitConnection, and it is spec.connection (ADR-0033, ADR-0035)")
+				"is read with is a GitConnection, and it is spec.connection")
 	}
 	if s.Connection != "" {
 		// Whether the connection *exists* is cluster state, and validation
@@ -1721,7 +1721,7 @@ func (v *validator) connectionHost(field string, s *GitConnectionSpec) {
 		v.remoteURL(field, s.Host, []string{"https", "http"},
 			"use the forge's base URL over HTTP(S) — the host the API and the clones are reached at, "+
 				"e.g. https://github.com or https://git.acme.internal. Everything here is HTTPS: an SSH "+
-				"remote is a different credential class and is not this field (ADR-0033)")
+				"remote is a different credential class and is not this field")
 	case s.Provider == GitProviderGitHub:
 		// DefaultGitHubHost is what an omitted host means here, and it is the
 		// common case: one connection to github.com, zero configuration.
@@ -1748,7 +1748,7 @@ func (v *validator) connectionAuth(field string, s *GitConnectionSpec) {
 	case app == nil && token == nil:
 		v.err(ErrMissingRequired, field,
 			"a GitConnection carries no credential reference",
-			"set exactly one of auth.githubApp (the per-instance GitHub App of ADR-0033 decision 2) or "+
+			"set exactly one of auth.githubApp (this instance's own GitHub App) or "+
 				"auth.token (a token held in a Secret). A connection that authenticates with neither "+
 				"can reach nothing a public clone could not")
 		return
@@ -1775,7 +1775,7 @@ func (v *validator) connectionAuth(field string, s *GitConnectionSpec) {
 				GitProviderGitHub, s.Provider),
 			fmt.Sprintf("set provider to %s if this really is a GitHub App, or authenticate with "+
 				"auth.token instead — the app-manifest flow and installation tokens are GitHub's and "+
-				"no other adapter can mint one (ADR-0033)", GitProviderGitHub))
+				"no other adapter can mint one", GitProviderGitHub))
 	}
 	if app.AppID < 1 {
 		v.err(ErrOutOfRange, field+".githubApp.appID",
@@ -1803,7 +1803,7 @@ func (v *validator) connectionSecretRef(field, name, what string) {
 		v.err(ErrMissingRequired, field,
 			"a credential reference needs the name of a Secret",
 			"set "+trimRoot(field)+" to the name of a Secret in kelson's namespace holding "+what+
-				". The spec carries the name and never the value (ADR-0009)")
+				". The spec carries the name and never the value")
 		return
 	}
 	v.name(field, name, "secret")
@@ -1914,7 +1914,7 @@ func (v *validator) chartOverrideShape(field string, ov ComponentOverride, kind 
 			fmt.Sprintf("component %q has kind %q, which delegates a chart to helm-controller, but the override sets %s", ov.Name, kind, f),
 			"remove "+f+"; a helm component has no per-environment overrides in v0 — the chart version and its "+
 				"values live on the Project component, and an environment that needs different values needs its "+
-				"own component (ADR-0016)")
+				"own component")
 	}
 	if len(set) == 0 {
 		v.err(ErrMissingRequired, field,

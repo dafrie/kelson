@@ -333,10 +333,10 @@ func walkUnknown(n *yaml.Node, t reflect.Type, path, resource string, pos positi
 // the reader's afternoon.
 var retiredFields = map[string]string{
 	"$.spec.delivery": "delete the whole `delivery:` block — kelson renders, publishes an OCI artifact and lets " +
-		"Flux reconcile it, so there is no mode to select and no git target to name (ADR-0028). Nothing " +
+		"Flux reconcile it, so there is no mode to select and no git target to name. Nothing " +
 		"replaces it and nothing about the deployment changes when it goes",
 	"$.spec.defaults.deliveryMode": "delete `deliveryMode` — there is one delivery path and it is Flux, so a " +
-		"project-level default has nothing left to choose between (ADR-0028)",
+		"project-level default has nothing left to choose between",
 }
 
 func walkStructNode(n *yaml.Node, t reflect.Type, path, resource string, pos positions, errs *Errors) {

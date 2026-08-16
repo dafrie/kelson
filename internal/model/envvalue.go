@@ -88,9 +88,9 @@ const envValueShapePrefix = "environment value: "
 // this variable — and an author who got it wrong is choosing between them.
 const EnvValueRemediation = "an environment value is one of three things: a plain string for non-secret configuration " +
 	"(LOG_LEVEL: info); a secret reference {secret: <secret name>, key: <key>}, which renders as a " +
-	"valueFrom.secretKeyRef against a Secret in the environment's namespace that kelson never reads " +
-	"(ADR-0018); or a data-service binding {from: {service: <component>, key: <well-known key>}}, which " +
-	"renders as a secretKeyRef against the credentials the component's operator generates (ADR-0009). " +
+	"valueFrom.secretKeyRef against a Secret in the environment's namespace that kelson never reads; " +
+	"or a data-service binding {from: {service: <component>, key: <well-known key>}}, which " +
+	"renders as a secretKeyRef against the credentials the component's operator generates. " +
 	"A secret value itself is never written in the spec"
 
 func envValueShapeError(line int, what string) error {

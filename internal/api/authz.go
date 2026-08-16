@@ -273,7 +273,7 @@ func (a *authorizer) admit(ctx context.Context, p Principal, procedure string) (
 			Message:  "issuing agent identities and reading the audit trail are reserved to a human principal",
 			Remediation: "run `kelson agent create|list|revoke` or `kelson audit` with a kube context, or call the service with the " +
 				"server password; an agent that could mint an agent could mint one wider than itself, and an agent that could read " +
-				"the audit trail could plan around it (ADR-0024 §5, ADR-0026 §5)",
+				"the audit trail could plan around it",
 		})
 	case !agent.Scope.Allows(row.Operation):
 		return methodScope{}, a.refuse(ctx, p, procedure, "out-of-scope", denied, authzError{
