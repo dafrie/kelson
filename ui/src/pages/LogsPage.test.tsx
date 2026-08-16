@@ -14,8 +14,9 @@ import {
 } from "../gen/kelson/v1alpha1/logs_pb";
 import { DeployService } from "../gen/kelson/v1alpha1/deploy_pb";
 import { SpecService } from "../gen/kelson/v1alpha1/spec_pb";
-import { renderAt } from "../test/render";
-import { componentNames, LogsPage } from "./LogsPage";
+import { renderRoutes } from "../test/render";
+import { environmentRoutes } from "../test/routes";
+import { componentNames } from "./LogsPage";
 
 const PROJECT_YAML = `apiVersion: kelson.dev/v1alpha1
 kind: Project
@@ -157,11 +158,17 @@ function droppingTransport() {
   return { transport, queries };
 }
 
+/**
+ * The Logs tab, mounted the way the app mounts it (#260): inside the
+ * environment's layout, which is where the stored documents behind the
+ * component picker now come from. The path is the one it always had, so every
+ * assertion below is about the same screen reached by the same link.
+ */
 function renderLogs(
   t: Transport = transport,
   path = "/projects/checkout/production/logs",
 ) {
-  return renderAt(t, path, "/projects/:project/:env/logs", <LogsPage />);
+  return renderRoutes(t, path, environmentRoutes());
 }
 
 describe("componentNames", () => {

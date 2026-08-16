@@ -1,5 +1,4 @@
 import { useMemo, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
 
 import { useAsync, useClients } from "../api/data";
 import { DryRun } from "../gen/kelson/v1alpha1/common_pb";
@@ -7,88 +6,105 @@ import type { HistoryEntry } from "../gen/kelson/v1alpha1/deploy_pb";
 import type { DiffResponse } from "../gen/kelson/v1alpha1/render_pb";
 import { ErrorPanel } from "../components/ErrorPanel";
 import { EmptyState, LoadingState } from "../components/States";
-import { DiffView } from "../diff/DiffView";
-import { decodeDiff, type Diff } from "../diff/parse";
+import { DiffView } from "./DiffView";
+import { decodeDiff, type Diff } from "./parse";
 import type { Async } from "../api/data";
 
 /**
  * What would change, against either of the two things there are to change from.
  *
- * RenderService.Diff offers both and they answer different questions. SERVER is
- * the live cluster's own dry-run verdict — the same preview `kelson diff`
- * produces at L2 — and it is what a deploy would actually meet. `from_revision`
- * (#162, #247) is the rendered-level comparison: today's render against the
- * manifests a recorded revision actually rendered, pulled back out of the
- * registry as the immutable artifact that revision published. That is the
- * stored-spec answer to the CLI's `--from`, which this screen could not offer
- * before: the store keeps the current documents, not the previous ones, so the
- * only prior state the server can name is what it recorded when it deployed.
+ * This was a screen of its own until #260's flow consolidation. It is a panel
+ * now, opened where a comparison is actually wanted — from a revision in the
+ * history, or from the history tab's own "against the cluster" control — because
+ * a diff answers a question the reader already has in front of them and is not
+ * somewhere they set out to go. The deploy action renders the same server-side
+ * comparison as step one of its own flow, and the editor renders one before a
+ * save; none of the three needed a destination to link to.
+ *
+ * RenderService.Diff offers both modes and they answer different questions.
+ * SERVER is the live cluster's own dry-run verdict — the same preview
+ * `kelson diff` produces at L2 — and it is what a deploy would actually meet.
+ * `from_revision` (#162, #247) is the rendered-level comparison: today's render
+ * against the manifests a recorded revision actually rendered, pulled back out
+ * of the registry as the immutable artifact that revision published. That is the
+ * stored-spec answer to the CLI's `--from`, which this comparison could not
+ * offer before: the store keeps the current documents, not the previous ones, so
+ * the only prior state the server can name is what it recorded when it deployed.
  *
  * Neither mode falls back to the other. internal/api/render.go is explicit that
  * a silently downgraded preview gives a CI gate a clean answer it did not earn,
  * so an unreachable cluster and an unreadable history each show up as the error
  * they are.
  */
-export function DiffPage() {
-  const { project = "", env = "" } = useParams();
-  // `?from=<revision>` is how the history screen (#67) arrives: it names a
-  // recorded revision, which is only meaningful in the rendered mode, so the
-  // parameter selects that tab as well as the revision. Without it the screen
-  // opens where it always did, on the live cluster's verdict.
-  const [params] = useSearchParams();
-  const from = params.get("from") ?? "";
+export function ComparePanel({
+  project,
+  env,
+  /**
+   * A recorded revision named by the caller — a history row, or the `?from=`
+   * the retired diff route carried. It is only meaningful in the rendered mode,
+   * so naming one selects that mode as well as the revision.
+   */
+  from = "",
+  onClose,
+}: {
+  project: string;
+  env: string;
+  from?: string;
+  /** Absent when the panel has no way back — it is then simply always open. */
+  onClose?: () => void;
+}) {
   const [mode, setMode] = useState<"server" | "revision">(
     from === "" ? "server" : "revision",
   );
 
   return (
-    <>
-      <div className="k-page-head">
-        <h1>Diff</h1>
-      </div>
-      <div className="k-page-sub">
-        <Link to={`/projects/${encodeURIComponent(project)}`}>← {project}</Link>
-        <span>·</span>
-        <span className="k-chip k-mono">{env}</span>
-        <span>·</span>
-        <span>
+    <section className="k-section k-compare">
+      <div className="k-env__head">
+        <div className="k-eyebrow">
           {mode === "server"
-            ? "server dry-run, against the live cluster"
-            : "rendered, against a deployed revision"}
-        </span>
+            ? "Compare · against the live cluster"
+            : "Compare · against a deployed revision"}
+        </div>
+        {onClose === undefined ? null : (
+          <button type="button" className="k-button" onClick={onClose}>
+            Close
+          </button>
+        )}
       </div>
 
-      <nav className="k-tabs" aria-label="Compare against">
-        <button
-          type="button"
-          className={mode === "server" ? "k-tab k-tab--active" : "k-tab"}
-          aria-current={mode === "server" ? "true" : undefined}
-          onClick={() => setMode("server")}
-        >
-          Against live cluster
-        </button>
-        <button
-          type="button"
-          className={mode === "revision" ? "k-tab k-tab--active" : "k-tab"}
-          aria-current={mode === "revision" ? "true" : undefined}
-          onClick={() => setMode("revision")}
-        >
-          Against deployed revision
-        </button>
-      </nav>
+      <div className="k-section__body">
+        <nav className="k-tabs" aria-label="Compare against">
+          <button
+            type="button"
+            className={mode === "server" ? "k-tab k-tab--active" : "k-tab"}
+            aria-current={mode === "server" ? "true" : undefined}
+            onClick={() => setMode("server")}
+          >
+            Against live cluster
+          </button>
+          <button
+            type="button"
+            className={mode === "revision" ? "k-tab k-tab--active" : "k-tab"}
+            aria-current={mode === "revision" ? "true" : undefined}
+            onClick={() => setMode("revision")}
+          >
+            Against deployed revision
+          </button>
+        </nav>
 
-      <p className="k-note">
-        {mode === "server"
-          ? "What a deploy would change, asked of the cluster itself. Needs a reachable cluster."
-          : "Today's render against what that revision actually deployed — the recorded manifests, not a re-render of the old spec."}
-      </p>
+        <p className="k-note">
+          {mode === "server"
+            ? "What a deploy would change, asked of the cluster itself. Needs a reachable cluster."
+            : "Today's render against what that revision actually deployed — the recorded manifests, not a re-render of the old spec."}
+        </p>
 
-      {mode === "server" ? (
-        <ServerDiff project={project} env={env} />
-      ) : (
-        <RevisionDiff project={project} env={env} initial={from} />
-      )}
-    </>
+        {mode === "server" ? (
+          <ServerDiff project={project} env={env} />
+        ) : (
+          <RevisionDiff project={project} env={env} initial={from} />
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -117,7 +133,7 @@ function RevisionDiff({
 }: {
   project: string;
   env: string;
-  /** A revision named in the URL, preselected. Empty means none. */
+  /** A revision named by the caller, preselected. Empty means none. */
   initial: string;
 }) {
   const clients = useClients();

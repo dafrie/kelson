@@ -1,11 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import { Code, ConnectError, createRouterTransport } from "@connectrpc/connect";
 
 import { DeployService } from "../gen/kelson/v1alpha1/deploy_pb";
-import { PreviewService } from "../gen/kelson/v1alpha1/preview_pb";
 import { ProfileService } from "../gen/kelson/v1alpha1/profile_pb";
-import { SecretService } from "../gen/kelson/v1alpha1/secret_pb";
 import { SpecService } from "../gen/kelson/v1alpha1/spec_pb";
 import { renderAt } from "../test/render";
 import { healthEvent, transitionEvent, watchStub } from "../test/watch";
@@ -26,35 +24,6 @@ const transport = createRouterTransport((router) => {
           environments: { production: new TextEncoder().encode(ENV_YAML) },
         },
       },
-    }),
-  });
-
-  // The environment's Secrets panel (#116) reads this as soon as the page
-  // opens, so the stub answers it rather than leaving a failed list between the
-  // assertions below.
-  router.service(SecretService, {
-    listSecrets: () => ({
-      namespace: "checkout-production",
-      secrets: [
-        {
-          name: "checkout-db",
-          namespace: "checkout-production",
-          keys: ["url"],
-          ageSeconds: 3600n,
-        },
-      ],
-    }),
-  });
-
-  // The previews section (ADR-0017) reads this per environment, like the
-  // Secrets panel above. This project declares none, which is the ordinary
-  // answer and the one that draws the empty state.
-  router.service(PreviewService, {
-    listPreviews: (req) => ({
-      project: "checkout",
-      environment: req.environment,
-      namespace: `checkout-${req.environment}`,
-      mode: "direct",
     }),
   });
 
@@ -106,22 +75,14 @@ async function settled() {
   });
 }
 
+/**
+ * The project page after the flow consolidation (#260): the matrix, and the
+ * documents it is drawn from. The environment's own panel — status, verdicts,
+ * data services, previews, Secrets — moved to the environment's route and is
+ * tested there (`EnvironmentOverview.test.tsx`); what stays here is the grid
+ * and the way into it.
+ */
 describe("ProjectDetailPage", () => {
-  it("shows the phase and the workload verdicts, which are different answers", async () => {
-    renderDetail();
-
-    expect(
-      await screen.findByText("phase Healthy"),
-    ).toBeTruthy();
-    expect(screen.getAllByText("live", { selector: ".k-pill" }).length).toBeGreaterThan(0);
-    expect(screen.getByText("8f2c1ad")).toBeTruthy();
-    // A Healthy phase with a crash-looping workload underneath is exactly the
-    // pair the two signals exist to tell apart.
-    expect(screen.getAllByText("crash-loop-back-off").length).toBeGreaterThan(0);
-    expect(screen.getByText("web is restarting repeatedly (7 restarts)")).toBeTruthy();
-    expect(screen.getByText("fix:")).toBeTruthy();
-  });
-
   it("renders the stored documents byte-faithfully", async () => {
     renderDetail();
 
@@ -132,83 +93,6 @@ describe("ProjectDetailPage", () => {
     expect(
       screen.getByRole("link", { name: "Edit configuration" }).getAttribute("href"),
     ).toBe("/projects/checkout/edit");
-  });
-
-  it("lists the environment's kelson-managed Secrets beside it (#116)", async () => {
-    renderDetail();
-
-    // Per environment, because a Secret's lifecycle is the environment's: the
-    // panel addresses the namespace this tab names, not the project's.
-    expect(await screen.findByText("Secrets (1)")).toBeTruthy();
-    expect(screen.getByText("checkout-db")).toBeTruthy();
-    expect(screen.getByText("url")).toBeTruthy();
-    expect(
-      screen.getByRole("button", { name: "Write the Secret" }),
-    ).toBeTruthy();
-  });
-
-  it("links each environment to its release history (#67)", async () => {
-    renderDetail();
-
-    expect(
-      (await screen.findByRole("link", { name: "History" })).getAttribute("href"),
-    ).toBe("/projects/checkout/production/history");
-  });
-
-  it("offers promotion into the environment on screen, named from its side (#11)", async () => {
-    renderDetail();
-
-    // The label is the target's perspective: this environment is where the
-    // pins land, and the source is picked on the promote screen.
-    expect(
-      (
-        await screen.findByRole("link", {
-          name: "Promote into this environment",
-        })
-      ).getAttribute("href"),
-    ).toBe("/projects/checkout/production/promote");
-  });
-
-  it("disables promotion when the project declares nowhere to promote from", async () => {
-    const alone = createRouterTransport((router) => {
-      router.service(SpecService, {
-        getSpec: () => ({
-          spec: { project: "checkout", version: "7", environments: ["production"] },
-        }),
-      });
-      router.service(DeployService, {
-        status: () => ({ phase: "Healthy", revision: "8f2c1ad", verdicts: [] }),
-      });
-    });
-    renderAt(alone, "/projects/checkout", "/projects/:project", <ProjectDetailPage />);
-
-    const promote = await screen.findByRole("button", {
-      name: "Promote into this environment",
-    });
-    expect((promote as HTMLButtonElement).disabled).toBe(true);
-    expect(promote.getAttribute("title")).toContain(
-      "declares no other environment to promote from",
-    );
-  });
-
-  it("keeps rollback offered when Status fails, like every other action", async () => {
-    // Status.Unimplemented now means only that this server has no workload
-    // observation client (internal/api's Status, R2 #225) — it says nothing
-    // about whether the Environment store Rollback needs is configured, so
-    // this page must not read it as "rollback cannot work". Rollback's own
-    // screen has the real precondition and its own honest error if it fails.
-    renderDetail();
-
-    // The tab, not the matrix column header: the column button's accessible
-    // name carries its status word too.
-    fireEvent.click(await screen.findByRole("button", { name: "staging" }));
-
-    const rollback = await screen.findByRole("link", { name: "Rollback" });
-    expect(rollback.getAttribute("href")).toBe(
-      "/projects/checkout/staging/rollback",
-    );
-    // Deploy stays available too: a render dry-run needs no cluster at all.
-    expect(screen.getByRole("link", { name: "Deploy" })).toBeTruthy();
   });
 });
 
@@ -389,7 +273,7 @@ spec:
     expect(db?.querySelector(".k-cell__fact")?.textContent).toBe("small");
   });
 
-  it("reads one Status per environment and reuses it for the panel below", async () => {
+  it("reads exactly one Status per environment — one per column", async () => {
     const calls: string[] = [];
     const counted = createRouterTransport((router) => {
       router.service(SpecService, {
@@ -418,8 +302,9 @@ spec:
     await waitFor(() => {
       expect(calls.length).toBe(2);
     });
-    // One per column, and the panel below the matrix is the column already
-    // read rather than a second call for an environment on screen twice.
+    // One per column and no more. The environment's own panel used to sit
+    // below the grid and read the column it was already showing; it is a route
+    // of its own now, so this page's calls are the columns' and nothing else.
     expect([...calls].sort()).toEqual(["production", "staging"]);
   });
 
@@ -469,6 +354,24 @@ spec:
     );
     expect(cell?.getAttribute("data-basis")).toBe("unread");
     expect(cell?.querySelector(".k-cell__fact")?.textContent).toBe("not read");
+  });
+
+  it("makes each column the way into that environment", async () => {
+    const { container } = renderMulti();
+
+    // The column header used to be a button that opened a panel below the grid.
+    // The environment has a route now, so the header is a link and where a
+    // reader ends up is in the address bar: from there the Overview, the logs,
+    // the history and the three actions are all one strip away.
+    await settled();
+    expect(
+      [...container.querySelectorAll("thead .k-matrix__env")].map((a) =>
+        a.getAttribute("href"),
+      ),
+    ).toEqual(["/projects/checkout/production", "/projects/checkout/staging"]);
+    // And no flow hangs off this page any more: they are the environment's.
+    expect(screen.queryByRole("link", { name: "Deploy" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "History" })).toBeNull();
   });
 
   it("offers adding a component, and sends it to the editor that writes the spec", async () => {
@@ -550,23 +453,6 @@ spec:
     });
   });
 
-  it("gives a database its own section and keeps it out of the workload list", async () => {
-    renderAt(withData, "/projects/checkout", "/projects/:project", <ProjectDetailPage />);
-
-    expect(await screen.findByText("Data services (1)")).toBeTruthy();
-    expect(screen.getByText("1 instance")).toBeTruthy();
-    // The spec is readable before the status is; the health arrives with it.
-    expect(await screen.findByText("3/3 instances ready")).toBeTruthy();
-    // The Cluster verdict belongs to the data section; the workload count is
-    // the Deployment alone.
-    expect(screen.getByText("Workloads (1)")).toBeTruthy();
-    expect(
-      screen.getByText(
-        "Fast branching unavailable — your storage class (local-path) has no snapshot driver.",
-      ),
-    ).toBeTruthy();
-  });
-
   it("reads a data component's cell from the verdict about its own resource", async () => {
     const { container } = renderAt(
       withData,
@@ -589,7 +475,17 @@ spec:
 });
 
 describe("ProjectDetailPage live updates", () => {
-  it("updates the status block and the verdict the event names (#76)", async () => {
+  const WEB_PROJECT = `kind: Project
+metadata:
+  name: checkout
+
+spec:
+  components:
+    - name: web
+      port: 8080
+`;
+
+  it("moves the column a transition names, and the cell under it (#76)", async () => {
     const events = watchStub([]);
     const live = createRouterTransport((router) => {
       router.service(SpecService, {
@@ -598,6 +494,10 @@ describe("ProjectDetailPage live updates", () => {
             project: "checkout",
             version: "7",
             environments: ["production"],
+            documents: {
+              project: new TextEncoder().encode(WEB_PROJECT),
+              environments: {},
+            },
           },
         }),
       });
@@ -620,7 +520,16 @@ describe("ProjectDetailPage live updates", () => {
       });
       events.install(router);
     });
-    renderAt(live, "/projects/checkout", "/projects/:project", <ProjectDetailPage />);
+    const { container } = renderAt(
+      live,
+      "/projects/checkout",
+      "/projects/:project",
+      <ProjectDetailPage />,
+    );
+    const web = () =>
+      container.querySelector(
+        '[href="/projects/checkout/production/components/web"]',
+      );
 
     expect(
       await screen.findAllByText("deploying", { selector: ".k-pill" }),
@@ -636,12 +545,13 @@ describe("ProjectDetailPage live updates", () => {
         cause: "3/3 replicas ready",
       }),
     );
-    expect(
-      await screen.findAllByText("live", { selector: ".k-pill" }),
-    ).toBeTruthy();
-    expect(screen.getByText("9d3f0aa")).toBeTruthy();
-    expect(screen.getByText("3/3 replicas ready")).toBeTruthy();
 
+    // The transition carries the revision, and the revision is the column's
+    // fact: it is stated once, in the header, for every cell beneath it.
+    expect(await screen.findByText("9d3f0aa")).toBeTruthy();
+
+    // A health change is the *cell's* fact, and it overrules the column
+    // downward: production stays Healthy, and web does not.
     events.push(
       healthEvent({
         project: "checkout",
@@ -652,96 +562,16 @@ describe("ProjectDetailPage live updates", () => {
         message: "web is restarting repeatedly (7 restarts)",
       }),
     );
-    expect(await screen.findByText("crash-loop-back-off")).toBeTruthy();
-    expect(
-      screen.getByText("web is restarting repeatedly (7 restarts)"),
-    ).toBeTruthy();
-    // The remediation belonged to the code that was replaced, so it goes with
-    // it rather than staying on screen pointing at the wrong problem.
-    await waitFor(() => {
-      expect(screen.queryByText("fix:")).toBeNull();
-    });
-  });
 
-  /**
-   * The rail on this screen is fed by Status plus the stream's deltas, so it
-   * has to move when the stream says something moved — and it has to keep the
-   * two failures it can be in apart while doing it (#68).
-   */
-  it("moves the compact rail as the stream reports transitions", async () => {
-    const events = watchStub([]);
-    const live = createRouterTransport((router) => {
-      router.service(SpecService, {
-        getSpec: () => ({
-          spec: { project: "checkout", version: "7", environments: ["production"] },
-        }),
-      });
-      router.service(DeployService, {
-        status: () => ({ phase: "Committed", revision: "8f2c1ad", verdicts: [] }),
-      });
-      events.install(router);
+    await waitFor(() => {
+      expect(web()?.querySelector(".k-pill")?.textContent).toBe("unhealthy");
     });
-    const { container } = renderAt(
-      live,
-      "/projects/checkout",
-      "/projects/:project",
-      <ProjectDetailPage />,
+    // The code, verbatim, is what a cell in trouble shows instead of its image.
+    expect(web()?.querySelector(".k-cell__fact")?.textContent).toBe(
+      "crash-loop-back-off",
     );
-
-    // Compact, and honest about what it cannot know: StatusResponse names no
-    // adapter, so the reconciler stage stays unnamed.
-    await waitFor(() => {
-      expect(container.querySelector(".k-rail--compact")).toBeTruthy();
-    });
-    const stageState = (phase: string) =>
-      container.querySelector(`[data-phase="${phase}"]`)?.getAttribute("data-state");
-    expect(stageState("Committed")).toBe("current");
-    expect(screen.getByText(/not reported/)).toBeTruthy();
-    expect(container.querySelector("[data-diagnosis]")).toBeNull();
-
-    // The engine's own stuck reason arrives inside the flattened cause string:
-    // the rail must read it as stuck-in-Committed, not as a generic failure.
-    events.push(
-      transitionEvent({
-        project: "checkout",
-        environment: "production",
-        phase: "Committed",
-        previousPhase: "Committed",
-        revision: "8f2c1ad",
-        cause:
-          "flux: NotPickedUp: revision 8f2c1ad was committed but flux has not picked it up within 5m",
-      }),
-    );
-
-    await waitFor(() => {
-      expect(stageState("Committed")).toBe("stuck");
-    });
     expect(
-      container.querySelector('[data-diagnosis="not-picked-up"]'),
-    ).toBeTruthy();
-    expect(
-      screen.getByText(/Check this environment's configuration/),
-    ).toBeTruthy();
-    // The cause named a component, so the reconciler stage can be named now.
-    expect(screen.getByText("Flux (kustomize-controller)")).toBeTruthy();
-
-    // A rejection is a different failure and gets a different answer.
-    events.push(
-      transitionEvent({
-        project: "checkout",
-        environment: "production",
-        phase: "Rejected",
-        previousPhase: "Committed",
-        revision: "8f2c1ad",
-        cause: "flux: BuildFailed: kustomize build failed: missing deployment.yaml",
-      }),
-    );
-
-    await waitFor(() => {
-      expect(container.querySelector('[data-diagnosis="rejected"]')).toBeTruthy();
-    });
-    expect(screen.getByText(/Fix the manifest/)).toBeTruthy();
-    expect(stageState("Committed")).toBe("failed");
-    expect(stageState("Applied")).toBe("pending");
+      [...container.querySelectorAll("thead .k-matrix__env")][0]?.textContent,
+    ).toBe("productionlive");
   });
 });

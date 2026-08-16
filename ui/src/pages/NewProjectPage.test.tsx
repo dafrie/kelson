@@ -371,7 +371,7 @@ describe("NewProjectPage", () => {
 
     expect(
       screen.getByRole("link", { name: "Deploy now" }).getAttribute("href"),
-    ).toBe("/projects/hello/development/deploy");
+    ).toBe("/projects/hello/development/actions/deploy");
     expect(
       screen.getByRole("link", { name: "View project" }).getAttribute("href"),
     ).toBe("/projects/hello");
@@ -610,7 +610,7 @@ describe("NewProjectPage · from a Git repository", () => {
     // …and the deploy carries the pinned reference as the image override.
     expect(
       screen.getByRole("link", { name: "Deploy this image" }).getAttribute("href"),
-    ).toBe(`/projects/hello/development/deploy?image=${encodeURIComponent(BUILT)}`);
+    ).toBe(`/projects/hello/development/actions/deploy?image=${encodeURIComponent(BUILT)}`);
   });
 
   it("renders a failed build as the structured refusal it is", async () => {

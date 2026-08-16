@@ -998,7 +998,9 @@ function Preview({
 
 function Stored({ created }: { created: Created }) {
   const base = `/projects/${encodeURIComponent(created.project)}`;
-  const deploy = `${base}/${encodeURIComponent(created.environment)}/deploy`;
+  // Deploying is an action of the environment (#260), so the link is to the
+  // action and not to a flow route of its own.
+  const deploy = `${base}/${encodeURIComponent(created.environment)}/actions/deploy`;
   return (
     <>
       <div className="k-page-head">

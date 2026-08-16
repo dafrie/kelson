@@ -1,4 +1,4 @@
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 
 import { useAsync, useClients } from "../api/data";
 import { toFailure } from "../api/errors";
@@ -8,6 +8,7 @@ import { ErrorPanel } from "../components/ErrorPanel";
 import { StatusPill } from "../components/StatusPill";
 import { statusForPhase } from "../components/status";
 import { EmptyState, LoadingState } from "../components/States";
+import { ComparePanel } from "../diff/ComparePanel";
 import { formatWhen, shortHash } from "./history";
 
 /**
@@ -51,28 +52,35 @@ import { formatWhen, shortHash } from "./history";
  *     absent timestamp beside "unattributed" and let a reader take the blanks
  *     for a deployment that had none.
  *
- * # The two actions are links, not copies
+ * # A tab, a panel and one link
  *
- * Diff and rollback already have screens that do those jobs properly — one with
- * both comparison modes and its own error handling, the other with the
- * irreversibility preview that must never be skipped. This screen sends the
- * revision to them as a query parameter and stays out of the way, so there is
- * one rollback flow in the UI and not two.
+ * This is the History tab of the environment (#260) rather than a screen of its
+ * own, so the environment's name, its other views and its actions are the
+ * layout's above — what is left here is the record.
  *
- * Promotion is linked the same way and deliberately *not* per revision: it pins
- * this environment to what another environment's latest revision runs, so the
- * revision it reads is never one picked from this list. A "promote this
- * revision" button would be a promise the RPC does not make.
+ * The comparison a row offers is a **panel**, not a link to a diff screen: it
+ * opens under `?from=<revision>` on this same page, because comparing a revision
+ * to what the spec says now is a question about a row a reader is already
+ * looking at. `?compare=1` opens the same panel on its other mode, the live
+ * cluster's dry-run verdict, which is what the retired `/diff` route showed when
+ * it was given no revision.
  *
- * Note what "diff" means here, because the honest version is narrower than it
- * sounds: `RenderService.Diff` compares the *current* spec against the manifests
- * a recorded revision actually rendered (`from_revision`). Revision A against
- * revision B is not a call the server offers, and `HistoryEntry` carries no
- * rendered manifests to do it client-side either, so the action is named for
+ * Rollback stays a link, and stays whole: its irreversibility preview must
+ * never be skipped, so there is one rollback flow in the UI and not two. The row
+ * sends its revision to it as `?to=`.
+ *
+ * Note what the comparison means here, because the honest version is narrower
+ * than it sounds: `RenderService.Diff` compares the *current* spec against the
+ * manifests a recorded revision actually rendered (`from_revision`). Revision A
+ * against revision B is not a call the server offers, and `HistoryEntry` carries
+ * no rendered manifests to do it client-side either, so the action is named for
  * what it does — compare against what is deployed now.
  */
 export function HistoryPage() {
   const { project = "", env = "" } = useParams();
+  const [params, setParams] = useSearchParams();
+  const from = params.get("from") ?? "";
+  const comparing = from !== "" || params.get("compare") === "1";
   const clients = useClients();
 
   const history = useAsync(
@@ -114,33 +122,46 @@ export function HistoryPage() {
   const statusLoading = status.loading && status.data === undefined;
   const base = `/projects/${encodeURIComponent(project)}/${encodeURIComponent(env)}`;
 
+  const compare = (next: URLSearchParams) => setParams(next, { replace: true });
+
   return (
     <>
-      <div className="k-page-head">
-        <h1>History</h1>
-      </div>
-      <div className="k-page-sub">
-        <Link to={`/projects/${encodeURIComponent(project)}`}>← {project}</Link>
-        <span>·</span>
-        <span className="k-chip k-mono">{env}</span>
-        <span>·</span>
-        <span>newest first</span>
+      {/* The comparison against the live cluster is not about any one row, so it
+          is offered once, above them. It is the mode the retired diff route
+          opened on, and the reason that route no longer needs to exist. */}
+      <div className="k-actions k-history__actions">
+        {comparing ? null : (
+          <button
+            type="button"
+            className="k-button"
+            onClick={() => {
+              const next = new URLSearchParams(params);
+              next.set("compare", "1");
+              compare(next);
+            }}
+          >
+            Diff against the cluster
+          </button>
+        )}
+        <span className="k-mono k-deploy__note">newest first</span>
       </div>
 
-      {/* Promotion is the one action here that is not about a revision in this
-          list, so it is offered once, above it, rather than on every row: it
-          reads whatever the *source* environment's latest revision runs, and a
-          per-row button would suggest a reader could promote the revision they
-          clicked. */}
-      <div className="k-actions k-history__actions">
-        <Link className="k-button" to={`${base}/promote`}>
-          Promote into this environment
-        </Link>
-        <span className="k-mono k-deploy__note">
-          pins {env} to the images another environment runs — it writes the spec
-          and deploys nothing
-        </span>
-      </div>
+      {comparing ? (
+        <ComparePanel
+          // Keyed by the revision so that choosing a different row's comparison
+          // starts the panel on it rather than leaving the first one selected.
+          key={from}
+          project={project}
+          env={env}
+          from={from}
+          onClose={() => {
+            const next = new URLSearchParams(params);
+            next.delete("from");
+            next.delete("compare");
+            compare(next);
+          }}
+        />
+      ) : null}
 
       {history.loading && history.data === undefined ? (
         <LoadingState what="the recorded revisions" />
@@ -325,17 +346,20 @@ function Revision({
         </div>
       ) : null}
 
+      {/* Both actions stay links even though one of them opens a panel on this
+          same page: the comparison a reader is looking at is worth a URL, and
+          `?from=` is the URL the retired diff route redirects into. */}
       <div className="k-timeline__actions">
         <Link
           className="k-button"
-          to={`${base}/diff?from=${encodeURIComponent(entry.revision)}`}
+          to={`${base}/history?from=${encodeURIComponent(entry.revision)}`}
         >
           Diff against current
         </Link>
         {newest ? null : (
           <Link
             className="k-button"
-            to={`${base}/rollback?to=${encodeURIComponent(entry.revision)}`}
+            to={`${base}/actions/rollback?to=${encodeURIComponent(entry.revision)}`}
           >
             Roll back to this
           </Link>

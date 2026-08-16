@@ -191,9 +191,17 @@ export function PromotePage() {
         <h1>Promote into {env}</h1>
       </div>
       <div className="k-page-sub">
-        <Link to={`/projects/${encodeURIComponent(project)}`}>← {project}</Link>
+        {/* Back to the environment, not to the project: an action is entered
+            from the environment it acts on and finishes by returning to it
+            (#260). The project stays one hop further out, through the
+            environment's own breadcrumb. */}
+        <Link
+          to={`/projects/${encodeURIComponent(project)}/${encodeURIComponent(env)}`}
+        >
+          ← {env}
+        </Link>
         <span>·</span>
-        <span className="k-chip k-mono">{env}</span>
+        <span>{project}</span>
         <span>·</span>
         <span>the target: where the pins are written</span>
       </div>
@@ -587,9 +595,17 @@ function Pinned({
         <h1>Promote into {env}</h1>
       </div>
       <div className="k-page-sub">
-        <Link to={`/projects/${encodeURIComponent(project)}`}>← {project}</Link>
+        {/* Back to the environment, not to the project: an action is entered
+            from the environment it acts on and finishes by returning to it
+            (#260). The project stays one hop further out, through the
+            environment's own breadcrumb. */}
+        <Link
+          to={`/projects/${encodeURIComponent(project)}/${encodeURIComponent(env)}`}
+        >
+          ← {env}
+        </Link>
         <span>·</span>
-        <span className="k-chip k-mono">{env}</span>
+        <span>{project}</span>
       </div>
 
       <div className="k-settled" role="status">
@@ -629,15 +645,21 @@ function Pinned({
           ))}
         </ul>
 
+        {/* Where a finished promotion can go: on to the deploy that makes the
+            new pins run, into the comparison that shows what they would change,
+            or back to the environment it was entered from (#260). */}
         <div className="k-actions">
-          <Link className="k-button k-button--primary" to={`${base}/deploy`}>
+          <Link
+            className="k-button k-button--primary"
+            to={`${base}/actions/deploy`}
+          >
             Next: deploy {env}
           </Link>
-          <Link className="k-button" to={`${base}/diff`}>
+          <Link className="k-button" to={`${base}/history?compare=1`}>
             Diff first
           </Link>
-          <Link className="k-button" to={`/projects/${encodeURIComponent(project)}`}>
-            Back to {project}
+          <Link className="k-button" to={base}>
+            Back to {env}
           </Link>
         </div>
       </div>

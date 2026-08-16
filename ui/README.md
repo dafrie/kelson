@@ -65,25 +65,32 @@ any future embedding, from having to know authentication exists.
 Milestone M6 ([#7](https://github.com/dafrie/kelson/issues/7)). Every flow is
 addressed by a project **and** an environment, because that pair is what the
 API's mutating RPCs take — a `SpecRef` plus an environment name — so a link into
-a deploy or a log tail is a link that keeps working. One screen adds a third
+a deploy or a log tail is a link that keeps working. Two screens add a third
 segment and no new RPC: a component's page is that same pair plus a name, read
-out of what `GetSpec` and `Status` already answer.
+out of what `GetSpec` and `Status` already answer, and an action is that pair
+plus what is being done to it.
+
+The pair is now a **screen** and not only an address
+([#260](https://github.com/dafrie/kelson/issues/260)): `/projects/:project/:env`
+is a layout with two tabs — Overview and the two views that used to be routes of
+their own — and a bar of three actions. See "Flow consolidation" below for what
+moved where, and for the redirects that keep the old paths working.
 
 | Route | What it does | RPCs |
 | --- | --- | --- |
 | `/projects` | Every component in every environment, grouped by project, under a "needs attention" band that is absent when nothing does. Each environment keeps its own revision, counts and cause; each component row is a link to its page | `ListSpecs`, then one `DeployService.Status` per (project, environment) |
 | `/projects/new` | Create a project and its first component: three fields, a rendered preview, then the store | `PutSpec` at `RENDER`, then with an idempotency key |
-| `/projects/:project` | The component × environment matrix, then the environment in view whole: status, workload verdicts, data services, its PR previews and Secrets, the stored documents, and the six flows | `GetSpec`, one `Status` per environment, `GetProfile`, `ListPreviews`, `ListSecrets`, `Render` (deferred presets only), `SetSecret`/`DeleteSecret` on use |
-| `/projects/:project/:env/components/:component` | One component in one environment: its shape, the image its documents resolve to and the scope that set it, the source it builds from, the environment's revision and namespace, its own workload verdict — and links into the flows, with itself preselected in the logs | `GetSpec`, `Status` |
+| `/projects/:project` | The component × environment matrix and the stored documents. A column header is the link into that environment | `GetSpec`, one `Status` per environment |
+| `/projects/:project/:env` | **Overview**, the environment whole: status, workload verdicts, data services, its PR previews and Secrets. The index tab of the layout that carries Logs, History and the three actions | `GetSpec` (the layout's), `Status`, `Watch`, `GetProfile`, `ListPreviews`, `ListSecrets`, `Render` (deferred presets only), `SetSecret`/`DeleteSecret` on use |
+| `/projects/:project/:env/components/:component` | One component in one environment: its shape, the image its documents resolve to and the scope that set it, the source it builds from, the environment's revision and namespace, its own workload verdict — and links into its environment's tabs and actions, with itself preselected in the logs | `GetSpec`, `Status` |
 | `/projects/:project/edit` | Edit the stored spec: a form tab and a raw YAML tab, a diff before saving, an optimistic-concurrency save. The form reaches `spec.previews` (ADR-0017; the retired `delivery:` stanza is gone per ADR-0028), and appends a component to `spec.components` (`?add=component` opens on it) | `GetSpec`, `PutSpec` at `RENDER` then for real, `Diff` |
 | `/projects/:project/edit`, git-owned | The same screen when `GetSpec` reports a Flux Kustomization owns these documents (#248): `GitOpsBanner` names the owner and the `autoDeploy` collision, Save is replaced by `ExportPanel` (the documents, copyable and downloadable, no server call) and `ProposePanel` (the same bytes as a pull request through a connection that can open one) — `src/pages/GitOpsPanel.tsx` | `GetSpec`, `Diff`, `ProposeSpec`, `ListConnections` |
-| `/projects/:project/:env/deploy` | Preview (render dry-run) then a confirm that streams the deployment live | `Deploy` at `RENDER`, then at `NONE`; optional `Diff` at `SERVER` |
-| `/projects/:project/:env/diff` | Two tabs: the live cluster's own dry-run verdict, or today's render against a recorded revision. `?from=<revision>` opens the second one preselected | `Diff` at `SERVER`, or with `from_revision`; `History` for the picker |
-| `/projects/:project/:env/history` | The recorded revisions, newest first: what each was, when, the spec hash, the recorded author (unattributed today, #74), and a phase pill on the live one. Links out to diff and rollback | `History`, `Status` |
-| `/projects/:project/:env/logs` | Bounded Query, and a live tail that pauses, filters, reconnects and saves. `?component=<name>` opens on one component — the link a component's own page carries | `QueryLogs`, `FollowLogs` |
-| `/projects/:project/:env/previews/:pr` | One change request's preview: phase, hosts, the pinned commit and applied revision, the two Ready conditions, when it appeared — everything `Preview` reports and nothing it doesn't. `:pr` is the change-request number, the identifier a human types (ADR-0017); there is no `GetPreview`, so the page reads the same `ListPreviews` the project page's Previews section does and picks out the matching row, honestly reporting when none matches. The route a commit status and a PR comment link to (ADR-0017 stage 3, #248) | `ListPreviews` |
-| `/projects/:project/:env/promote` | The environment in the path is the **target**: pick a source, read the plan and the diff it produces, then write the pins. It never deploys | `GetSpec`, `Promote` at `RENDER` then `NONE` |
-| `/projects/:project/:env/rollback` | Revision picker, irreversibility preview, then the apply. `?to=<revision>` preselects and previews a target, never applies it | `History`, `Rollback` at `RENDER` then `NONE` |
+| `/projects/:project/:env/actions/deploy` | **Action.** Preview (render dry-run) then a confirm that streams the deployment live. Its step one is the server-side comparison, which is why there is no diff screen | `Deploy` at `RENDER`, then at `NONE`; optional `Diff` at `SERVER` |
+| `/projects/:project/:env/actions/promote` | **Action.** The environment in the path is the **target**: pick a source, read the plan and the diff it produces, then write the pins. It never deploys | `GetSpec`, `Promote` at `RENDER` then `NONE` |
+| `/projects/:project/:env/actions/rollback` | **Action.** Revision picker, irreversibility preview, then the apply. `?to=<revision>` preselects and previews a target, never applies it | `History`, `Rollback` at `RENDER` then `NONE` |
+| `/projects/:project/:env/history` | **Tab.** The recorded revisions, newest first: what each was, when, the spec hash, the recorded author (unattributed today, #74), and a phase pill on the live one. `?from=<revision>` opens the comparison against that revision in place; `?compare=1` opens it against the live cluster | `History`, `Status`, then `Diff` when the comparison is open |
+| `/projects/:project/:env/logs` | **Tab.** Bounded Query, and a live tail that pauses, filters, reconnects and saves. `?component=<name>` opens on one component — the link a component's own page carries | `QueryLogs`, `FollowLogs`, `Status` for the namespace |
+| `/projects/:project/:env/previews/:pr` | One change request's preview: phase, hosts, the pinned commit and applied revision, the two Ready conditions, when it appeared — everything `Preview` reports and nothing it doesn't. `:pr` is the change-request number, the identifier a human types (ADR-0017); there is no `GetPreview`, so the page reads the same `ListPreviews` the environment Overview's Previews section does and picks out the matching row, honestly reporting when none matches. The route a commit status and a PR comment link to (ADR-0017 stage 3, #248) | `ListPreviews` |
 | `/cluster` | Server build, the node inventory (count, readiness, CPU/memory usage where metrics.k8s.io answers), the platform-component checklist with its install flow, and the detected ClusterProfile | `/healthz`, `GetProfile`, `GetNodes`, `ListComponents`, `PlanInstall`, `Install` |
 | `/connections` | The forges this instance can pull from: provider, host, account, owner, health and the reported repository count per connection, a live probe and a delete that names the projects it breaks, plus the token-connection form | `ListConnections`, `CreateConnection`, `TestConnection`, `DeleteConnection` |
 | `/setup` | The onboarding screen: the same component checklist framed for a first run — what is present, what is missing, an install flow per missing row, and where to go next | `ListComponents`, `PlanInstall`, `Install` |
@@ -132,11 +139,54 @@ Five things it is deliberate about:
   `suspended`, because nothing is trying on purpose. `unknown` is in it: "we
   could not tell" is exactly the state somebody has to go and look at.
 
-The project page issues one `Status` per environment — one per column — and the
-panel below the matrix reuses its column's answer rather than calling again for
-an environment that is on screen twice. The six flows are unchanged and still
-addressed by (project, environment); the matrix links into them and consolidating
-them is a separate change.
+The project page issues one `Status` per environment — one per column — and that
+is now all it issues. The environment's own panel used to sit below the grid,
+selected by a strip of buttons, and reused the column it was already showing;
+it is the Overview tab of the environment's route instead, so the environment a
+reader is looking at is in the URL and the panel reads its own single `Status`.
+A column header is the link into it.
+
+## Flow consolidation
+
+Six flows used to hang off `(project, environment)` as sibling routes —
+`deploy`, `diff`, `history`, `logs`, `rollback`, `promote` — and a reader had to
+know which of the six answered the question they had. They were never six
+siblings ([#260](https://github.com/dafrie/kelson/issues/260)), so they are no
+longer routed as six:
+
+| Was | Is | Why |
+| --- | --- | --- |
+| `/…/:env/logs` | **Tab**, same path | A view of the environment. Two views are siblings; a view and an action are not. |
+| `/…/:env/history` | **Tab**, same path | The same. |
+| `/…/:env/deploy` | **Action**, `/…/:env/actions/deploy` | Something done *to* the environment: entered from its bar, finished by returning to it. |
+| `/…/:env/promote` | **Action**, `/…/:env/actions/promote` | The same. The environment in the path is still the target. |
+| `/…/:env/rollback` | **Action**, `/…/:env/actions/rollback` | The same. A history row carries its revision in `?to=`. |
+| `/…/:env/diff` | **Panel**, no route | Not a place. It is step one of the deploy, the editor's guard before a save, and what `?from=<revision>` opens on the History tab. |
+
+`src/pages/flows.ts` holds the mapping as a pure function and
+`src/pages/FlowRedirect.tsx` mounts it, so all four moved paths still resolve and
+every query parameter travels with them: `?component=`, `?to=`, `?image=`, and
+`?from=`, which becomes the History tab's open comparison. A `/diff` with no
+revision becomes `?compare=1`, the mode that screen opened on. This is what keeps
+the promise above — a link into a deploy is a link that keeps working — for the
+URLs already sitting in commit statuses, pull-request comments and the docs.
+`internal/api`'s auto-deploy commit status points at
+`projects/:project/:env/history`, which is one of the two that did not move.
+
+Three things it is deliberate about:
+
+- **The tabs' paths did not change.** A consolidation that renamed every URL
+  would have been a consolidation that broke every link. Logs and History became
+  tabs by being mounted under a layout, not by being moved.
+- **The layout reads the spec; the tabs read the cluster.** `EnvironmentPage`
+  issues one `GetSpec` — it is what says this environment exists and what its
+  siblings are, which is what the promote action needs — and hands the stored
+  documents down. Every cluster-touching call still belongs to the tab that
+  wants it: the logs tab opens no `Status` for a rail it does not draw, and
+  Overview reads the one `Status` the panel always read.
+- **A tab is a link, an action is a link, and the log screen's two modes are
+  buttons.** They look the same and they are not the same: the first two are
+  routes worth pasting, the third is one screen with a switch on it.
 
 The connections screen ([ADR-0033](../docs/adr/0033-git-connections.md),
 [#248](https://github.com/dafrie/kelson/issues/248)) holds the one entry point
@@ -189,8 +239,9 @@ The same absence rules out an A-against-B revision diff: `RenderService.Diff`
 compares the *current* spec against one recorded revision (`from_revision`) and
 offers no A-vs-B call, and `HistoryEntry` carries no rendered manifests to do it
 client-side either. So the per-revision action is named for what it does —
-compare against what is deployed now — and links to the diff screen rather than
-growing a second copy of it. Rollback is linked the same way, because the
+compare against what is deployed now — and opens the shared comparison panel
+(`src/diff/ComparePanel.tsx`) in place, under `?from=<revision>`, rather than
+growing a second copy of it. Rollback stays a link out to its action, because the
 irreversibility preview must not be duplicated into a screen that might skip it.
 
 ## Promotion, which never deploys
@@ -200,16 +251,15 @@ The promote screen ([#11](https://github.com/dafrie/kelson/issues/11),
 environment it writes **into**. That is the direction a reader arrives with: they
 are looking at production and want what staging is running, so the screen is
 named from production's side — "promote into this environment" — and the source
-is the thing it asks for. Both entry points say it that way, on the project
-detail page next to the environment's other actions and once above the history
-timeline.
+is the thing it asks for. It says it that way on the one bar that offers it: the
+environment's action bar, beside Deploy and Rollback, on every one of its tabs.
 
 What it refuses to do, in the order a reader meets the refusals:
 
 - **It never deploys.** Promoting is editing one field (docs/model.md's
   Promotion section: the pin *is* the promotion), so a successful promotion
   leaves the target running exactly what it was running a moment earlier, with a
-  new pin in the store. The success state says so and offers the deploy screen
+  new pin in the store. The success state says so and offers the deploy action
   as the next, separate act; it does not deploy on the reader's behalf, because
   that would merge the two acts ADR-0016 keeps apart.
 - **It never plans and writes in one click.** Picking a source runs
@@ -315,7 +365,7 @@ arbitrary number of pods collide, and a colour alone would then be a lie.
 
 ## Data services
 
-`src/dataservices/` is the project detail page's third section
+`src/dataservices/` is a section of the environment's Overview tab
 ([#107](https://github.com/dafrie/kelson/issues/107)): a `kind: postgres`
 component is not a workload, so it is not listed among them. Four rules shape
 it, and each is there because the alternative would mislead:
@@ -618,7 +668,7 @@ are byte-copies of the Go strings rather than plausible-looking inventions.
 Every status word a reader sees comes from `src/components/status.ts`
 ([#260](https://github.com/dafrie/kelson/issues/260)). Before it, the same fact
 was said three ways on three screens — `synced` on a project card,
-`Reconciling` on an environment tab, `awaiting-artifact` on a preview row —
+`Reconciling` on an environment panel, `awaiting-artifact` on a preview row —
 which are Flux's word, Kubernetes' word and a poller's word, and none of them
 answer what a developer is asking.
 
@@ -644,7 +694,7 @@ Three things follow from it:
   `label` is therefore *required*: there is no path by which a tone name
   reaches a screen as text.
 - **The wire's own phase survives as a labelled fact, never as the pill.**
-  `phase Reconciling` sits beside the word on the environment tab, the deploy
+  `phase Reconciling` sits beside the word on the environment's Overview, the deploy
   stream's rows and the preview page — it is what an operator correlates with
   Flux — and the preview page's `artifact ready` / `applied ready` conditions
   are unchanged.

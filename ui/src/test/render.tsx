@@ -29,9 +29,24 @@ export function renderAt(
   element: ReactNode,
   also: RouteObject[] = [],
 ) {
-  const router = createMemoryRouter([{ path: routePath, element }, ...also], {
-    initialEntries: [path],
-  });
+  return renderRoutes(transport, path, [{ path: routePath, element }, ...also]);
+}
+
+/**
+ * The same, given a route table rather than one route.
+ *
+ * The environment's screens are a layout with tabs under it (#260), so a test
+ * of one of them has to mount the layout too: the tab reads what the layout
+ * fetched, and "the tab strip marks the right tab" is a claim about the pair.
+ * A test that needs a redirect to *land* passes the destination in the same
+ * table, which is also how a navigation assertion gets somewhere to arrive.
+ */
+export function renderRoutes(
+  transport: Transport,
+  path: string,
+  routes: RouteObject[],
+) {
+  const router = createMemoryRouter(routes, { initialEntries: [path] });
   return {
     router,
     ...render(

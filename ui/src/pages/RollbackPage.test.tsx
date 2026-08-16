@@ -104,8 +104,8 @@ const transport = createRouterTransport((router) => {
 function renderRollback() {
   return renderAt(
     transport,
-    "/projects/checkout/production/rollback",
-    "/projects/:project/:env/rollback",
+    "/projects/checkout/production/actions/rollback",
+    "/projects/:project/:env/actions/rollback",
     <RollbackPage />,
   );
 }
@@ -114,8 +114,8 @@ function renderRollback() {
 function renderRollbackTo(revision: string) {
   return renderAt(
     transport,
-    `/projects/checkout/production/rollback?to=${revision}`,
-    "/projects/:project/:env/rollback",
+    `/projects/checkout/production/actions/rollback?to=${revision}`,
+    "/projects/:project/:env/actions/rollback",
     <RollbackPage />,
   );
 }
@@ -324,8 +324,8 @@ describe("RollbackPage's beyond-window target", () => {
   it("offers a registry-only revision and shows its notice as a note, not a risk", async () => {
     renderAt(
       beyondWindowTransport,
-      "/projects/checkout/production/rollback",
-      "/projects/:project/:env/rollback",
+      "/projects/checkout/production/actions/rollback",
+      "/projects/:project/:env/actions/rollback",
       <RollbackPage />,
     );
 
@@ -348,8 +348,8 @@ describe("RollbackPage's preview-unavailable finding", () => {
   it("reads as an informational note, not a change this rollback cannot revert", async () => {
     renderAt(
       unavailableTransport,
-      "/projects/checkout/production/rollback",
-      "/projects/:project/:env/rollback",
+      "/projects/checkout/production/actions/rollback",
+      "/projects/:project/:env/actions/rollback",
       <RollbackPage />,
     );
 

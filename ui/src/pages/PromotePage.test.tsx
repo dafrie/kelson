@@ -173,8 +173,8 @@ function renderPromote(options: Options = {}) {
   const { promotes, transport } = stub(options);
   const view = renderAt(
     transport,
-    "/projects/checkout/production/promote",
-    "/projects/:project/:env/promote",
+    "/projects/checkout/production/actions/promote",
+    "/projects/:project/:env/actions/promote",
     <PromotePage />,
   );
   return { promotes, ...view };
@@ -298,7 +298,7 @@ describe("PromotePage", () => {
       screen
         .getByRole("link", { name: "Next: deploy production" })
         .getAttribute("href"),
-    ).toBe("/projects/checkout/production/deploy");
+    ).toBe("/projects/checkout/production/actions/deploy");
   });
 
   it("renders a structured refusal through the shared error panel and offers no confirm", async () => {
@@ -392,8 +392,8 @@ describe("PromotePage", () => {
 
     renderAt(
       unchangedOnly,
-      "/projects/checkout/production/promote",
-      "/projects/:project/:env/promote",
+      "/projects/checkout/production/actions/promote",
+      "/projects/:project/:env/actions/promote",
       <PromotePage />,
     );
     fireEvent.click(await screen.findByDisplayValue("staging"));
@@ -417,8 +417,8 @@ describe("PromotePage", () => {
 
     renderAt(
       alone,
-      "/projects/checkout/production/promote",
-      "/projects/:project/:env/promote",
+      "/projects/checkout/production/actions/promote",
+      "/projects/:project/:env/actions/promote",
       <PromotePage />,
     );
 

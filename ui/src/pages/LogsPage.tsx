@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 
 import { useAsync, useClients } from "../api/data";
 import { isAbort } from "../api/errors";
@@ -24,11 +24,18 @@ import { logFileName, saveText, stamp, toText } from "../logs/text";
 import type { LogLine } from "../gen/kelson/v1alpha1/logs_pb";
 import { ErrorPanel } from "../components/ErrorPanel";
 import { LiveIndicator } from "../components/LiveIndicator";
+import { useEnvironment } from "./EnvironmentPage";
 import "./LogsPage.css";
 
 /**
  * Logs for one environment, in the engine's two shapes: a bounded Query and an
  * unbounded Follow (proto/kelson/v1alpha1/logs.proto).
+ *
+ * This is the Logs tab of the environment (#260), which is what it always was
+ * in everything but placement: the path is unchanged, so every link that ever
+ * pointed at a log tail still lands here, and the environment's name, its other
+ * views and its actions are now the layout's above rather than a breadcrumb of
+ * this screen's own.
  *
  * LogSelector wants a namespace and a component. The namespace is the server's
  * answer: StatusResponse carries the resolved one (#161), so the input prefills
@@ -55,10 +62,11 @@ export function LogsPage() {
   const [params] = useSearchParams();
   const clients = useClients();
 
-  const spec = useAsync(
-    (signal) => clients.spec.getSpec({ project }, { signal }),
-    [clients, project],
-  );
+  // The stored documents come from the environment layout this tab sits in
+  // (#260) rather than from a second `GetSpec`: the component list is the only
+  // thing this screen wants out of them, and the layout has already read the
+  // project to know that this environment exists.
+  const { documents } = useEnvironment();
 
   // Status is read for one field: the resolved namespace. Its error is
   // deliberately not surfaced — a server with no delivery plane cannot answer
@@ -74,9 +82,9 @@ export function LogsPage() {
   );
 
   const components = useMemo(() => {
-    const doc = spec.data?.spec?.documents?.project;
+    const doc = documents?.project;
     return doc ? componentNames(new TextDecoder().decode(doc)) : [];
-  }, [spec.data]);
+  }, [documents]);
 
   const fallbackNamespace = `${project}-${env}`;
   const [namespace, setNamespace] = useState(fallbackNamespace);
@@ -107,15 +115,6 @@ export function LogsPage() {
 
   return (
     <>
-      <div className="k-page-head">
-        <h1>Logs</h1>
-      </div>
-      <div className="k-page-sub">
-        <Link to={`/projects/${encodeURIComponent(project)}`}>← {project}</Link>
-        <span>·</span>
-        <span className="k-chip k-mono">{env}</span>
-      </div>
-
       <div className="k-panel k-logs__selector">
         <label className="k-field">
           <span className="k-eyebrow">Namespace</span>
@@ -154,9 +153,10 @@ export function LogsPage() {
         </label>
       </div>
 
-      {spec.error !== undefined ? (
-        <ErrorPanel title="Cannot read the spec" error={spec.error} />
-      ) : null}
+      {/* The spec's failure is reported once, by the layout that asked for it
+          (#260). Here it costs the picker its list and nothing else, which the
+          note above already says — a second copy of the same panel would make
+          one failure look like two. */}
 
       <nav className="k-tabs" aria-label="Log mode">
         <button

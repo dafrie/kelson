@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { Code, ConnectError, createRouterTransport } from "@connectrpc/connect";
 import type { Transport } from "@connectrpc/connect";
 
@@ -235,15 +235,53 @@ describe("HistoryPage", () => {
     expect(unattributed[0]?.getAttribute("title")).toContain("#74");
   });
 
-  it("links each revision to the diff against what is deployed now", async () => {
+  it("links each revision to the comparison against what is deployed now", async () => {
     renderHistory();
 
+    // The comparison is a panel of this tab now (#260) and not a screen of its
+    // own, but it is still a URL: `?from=` on this same path is what the
+    // retired diff route redirects into, so a link out of a pull request and a
+    // press on this row land on the same thing.
     const item = await row("2-1a2b3c4d");
     expect(
       within(item)
         .getByRole("link", { name: "Diff against current" })
         .getAttribute("href"),
-    ).toBe("/projects/checkout/production/diff?from=2-1a2b3c4d");
+    ).toBe("/projects/checkout/production/history?from=2-1a2b3c4d");
+  });
+
+  it("opens the comparison in place when a revision is named", async () => {
+    renderAt(
+      transportFor({}),
+      "/projects/checkout/production/history?from=3-9f0a1b2c",
+      "/projects/:project/:env/history",
+      <HistoryPage />,
+    );
+
+    // The panel opens on the mode the revision belongs to, and the record it
+    // was opened from is still on screen underneath it.
+    expect(
+      (
+        await screen.findByRole("button", { name: "Against deployed revision" })
+      ).getAttribute("aria-current"),
+    ).toBe("true");
+    expect(screen.getByText("Revisions (3)")).toBeTruthy();
+  });
+
+  it("offers the comparison against the cluster once, above the list", async () => {
+    const { router } = renderHistory();
+
+    // The mode that is about no particular revision: it is offered once, above
+    // the rows, which is what the bare diff route used to be.
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Diff against the cluster" }),
+    );
+    await waitFor(() =>
+      expect(router.state.location.search).toBe("?compare=1"),
+    );
+    expect(
+      screen.getByRole("button", { name: "Against live cluster" }),
+    ).toBeTruthy();
   });
 
   it("links a rollback that carries the revision, except for the newest", async () => {
@@ -254,7 +292,7 @@ describe("HistoryPage", () => {
       within(older)
         .getByRole("link", { name: "Roll back to this" })
         .getAttribute("href"),
-    ).toBe("/projects/checkout/production/rollback?to=3-9f0a1b2c");
+    ).toBe("/projects/checkout/production/actions/rollback?to=3-9f0a1b2c");
 
     // Restoring the newest revision is not a rollback, and the rollback screen
     // disables that target, so the link is not offered at all.
@@ -264,26 +302,23 @@ describe("HistoryPage", () => {
     ).toBeNull();
   });
 
-  it("offers promotion once, above the list, and not per revision (#11)", async () => {
+  it("offers no promotion of its own: it is an action of the environment (#11)", async () => {
     renderHistory();
 
-    const promote = await screen.findByRole("link", {
-      name: "Promote into this environment",
-    });
-    expect(promote.getAttribute("href")).toBe(
-      "/projects/checkout/production/promote",
-    );
-    // It reads the *source* environment's latest revision, so no row offers it:
-    // a per-revision button would promise a promotion the RPC does not make.
+    // Promotion reads the *source* environment's latest revision, so no row
+    // could offer it without promising a promotion the RPC does not make. It
+    // moved to the environment's action bar (#260), where it is offered once
+    // for the environment rather than once per view of it.
+    await screen.findByText("Revisions (3)");
+    expect(
+      screen.queryByRole("link", { name: "Promote into this environment" }),
+    ).toBeNull();
     const newest = await row("4-b2c3d4e5");
     expect(
       within(newest).queryByRole("link", {
         name: "Promote into this environment",
       }),
     ).toBeNull();
-    expect(
-      screen.getByText(/it writes the spec and deploys nothing/),
-    ).toBeTruthy();
   });
 
   it("says what the record does not carry", async () => {
