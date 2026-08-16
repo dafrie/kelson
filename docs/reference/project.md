@@ -58,7 +58,7 @@ This reference is **generated** from the committed JSON Schema [`schema/project.
 | `replicas` | object | no |  |  |
 | `resources` | object | no |  |  |
 | `schedule` | string | no |  | five-field cron expression |
-| `source` | one of: string max length 63, pattern `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`, object {oci, repository} | no |  | a source name for a buildable component (ADR-0035) or the chart source of a helm component — exactly one of repository or oci (ADR-0016) |
+| `source` | one of: string max length 63, pattern `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`, object {oci, repository} | no |  | a source name for a buildable component or the chart source of a helm component — exactly one of repository or oci |
 | `tools` | array of string | no |  | agent components only; refused until issue #75 |
 | `values` | object | no |  | helm components only; chart values rendered verbatim into the HelmRelease — plain configuration only and never secret material (put that in valuesFrom) |
 | `valuesFrom` | array of object | no |  | helm components only; Secrets and ConfigMaps merged into the chart values by helm-controller |
