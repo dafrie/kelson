@@ -134,8 +134,8 @@ function ClassCapability({ sc }: { sc: StorageClassCapability }) {
     <div className="k-cap__class">
       <div className="k-cap__head">
         <StatusPill status={capabilityStatus(sc.capability)} label={sc.capability} />
-        <span className="k-mono k-cap__name">
-          {sc.name}
+        <span className="k-cap__name">
+          <span className="k-mono">{sc.name}</span>
           {sc.isDefault ? " · cluster default" : ""}
         </span>
       </div>

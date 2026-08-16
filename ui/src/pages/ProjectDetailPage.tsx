@@ -205,15 +205,17 @@ export function ProjectDetailPage() {
       <div className="k-page-sub">
         <Link to="/projects">← all projects</Link>
         <span>·</span>
-        <span>version {spec.data?.spec?.version || "—"}</span>
+        <span>
+          version <span className="k-mono">{spec.data?.spec?.version || "—"}</span>
+        </span>
         <span>·</span>
         <span>
-          {components.length}{" "}
+          <span className="k-mono">{components.length}</span>{" "}
           {components.length === 1 ? "component" : "components"}
         </span>
         <span>·</span>
         <span>
-          {environments.length}{" "}
+          <span className="k-mono">{environments.length}</span>{" "}
           {environments.length === 1 ? "environment" : "environments"}
         </span>
         <LiveIndicator state={watch} />
@@ -410,12 +412,12 @@ function Matrix({
                   {components.map((component, row) => (
                     <tr key={component.name}>
                       <th scope="row" className="k-matrix__row">
-                        <span className="k-mono k-matrix__name">
+                        <span className="k-matrix__name">
                           {component.name}
                         </span>
                         <span className="k-chip k-mono">{component.kind}</span>
                         {isKnownKind(component.kind) ? null : (
-                          <span className="k-mono k-component__fact">
+                          <span className="k-component__fact">
                             a kind this build does not know
                           </span>
                         )}
@@ -443,7 +445,7 @@ function Matrix({
               </table>
             </div>
             {borrowed ? (
-              <p className="k-mono k-matrix__legend">
+              <p className="k-matrix__legend">
                 env — the environment's own status: nothing reports on this
                 component separately
               </p>
@@ -471,7 +473,7 @@ function ColumnHead({ project, column }: { project: string; column: Column }) {
         className="k-matrix__env"
         to={environmentPath(project, column.environment)}
       >
-        <span className="k-mono">{column.environment}</span>
+        <span>{column.environment}</span>
         {column.failure !== undefined ? (
           <span title={reasonOf(column.failure)}>
             <StatusPill status="unknown" label="status unavailable" />
@@ -528,7 +530,7 @@ function MatrixCell({
       <span className="k-cell__word">
         <StatusPill status={cell.status.tone} label={cell.status.word} />
         {cell.basis === "environment" ? (
-          <span className="k-mono k-cell__basis">env</span>
+          <span className="k-cell__basis">env</span>
         ) : null}
       </span>
       <span className="k-mono k-cell__fact">{fact}</span>

@@ -155,7 +155,7 @@ export function DeployPage() {
           <span className="k-mono">
             <Copyable value={image} />
           </span>
-          <span className="k-mono k-deploy__note">
+          <span className="k-deploy__note">
             this deploy renders with the image above instead of the spec's — it
             is what the build produced
           </span>
@@ -200,7 +200,7 @@ export function DeployPage() {
                 Stop watching
               </button>
             ) : null}
-            <span className="k-mono k-deploy__note">
+            <span className="k-deploy__note">
               nothing is written until this is pressed
             </span>
           </div>
@@ -326,7 +326,7 @@ function ServerDiff({
           >
             {run.running ? "Asking the cluster…" : "Run server dry-run diff"}
           </button>
-          <span className="k-mono k-deploy__note">
+          <span className="k-deploy__note">
             asks the cluster what this deploy would change
           </span>
         </div>

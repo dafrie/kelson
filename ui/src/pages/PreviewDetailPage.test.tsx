@@ -113,7 +113,14 @@ describe("PreviewDetailPage", () => {
     // Status, commit and age, the same vocabulary the list panel uses — with
     // flux-operator's own phase kept beside the word as a labelled fact.
     expect(screen.getByText("live", { selector: ".k-pill" })).toBeTruthy();
-    expect(screen.getByText("phase ready")).toBeTruthy();
+    // "phase" is a label and `ready` is the value flux-operator reported, so
+    // the two are separate elements now (#260).
+    expect(
+      screen.getByText(
+        (_, el) =>
+          el?.className === "k-previews__muted" && el.textContent === "phase ready",
+      ),
+    ).toBeTruthy();
     expect(screen.getByText("0123456789ab")).toBeTruthy();
     expect(screen.getByText("2h")).toBeTruthy();
 

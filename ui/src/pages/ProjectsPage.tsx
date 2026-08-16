@@ -200,11 +200,13 @@ export function ProjectsPage() {
 
       <div className="k-page-sub">
         <span>
-          {projects.length} {projects.length === 1 ? "project" : "projects"}
+          <span className="k-mono">{projects.length}</span>{" "}
+          {projects.length === 1 ? "project" : "projects"}
         </span>
         <span>·</span>
         <span>
-          {pairs.length} {pairs.length === 1 ? "environment" : "environments"}
+          <span className="k-mono">{pairs.length}</span>{" "}
+          {pairs.length === 1 ? "environment" : "environments"}
         </span>
         <Counts words={words} />
         <LiveIndicator state={watch} />
@@ -236,15 +238,15 @@ export function ProjectsPage() {
       {projects.map((spec) =>
         spec.environments.length === 0 ? null : (
           <section className="k-section" key={spec.project}>
+            {/* The project's name is a heading, not an eyebrow: it used to be a
+                link inside `.k-eyebrow`, which set it uppercase and letterspaced
+                a name somebody chose. Names are words (#260). */}
             <div className="k-env__head">
-              <div className="k-eyebrow">
-                <Link
-                  className="k-card__name"
-                  to={`/projects/${encodeURIComponent(spec.project)}`}
-                >
+              <h2 className="k-card__name">
+                <Link to={`/projects/${encodeURIComponent(spec.project)}`}>
                   {spec.project}
                 </Link>
-              </div>
+              </h2>
             </div>
             <div className="k-section__body k-envs">
               {spec.environments.map((environment) => (
@@ -283,7 +285,7 @@ function Attention({ rows }: { rows: AttentionRow[] }) {
             key={`${row.project}/${row.environment}/${row.component}`}
             className="k-attention__row"
           >
-            <Link className="k-mono k-attention__what" to={row.href}>
+            <Link className="k-attention__what" to={row.href}>
               {row.component === ""
                 ? `${row.project} · ${row.environment}`
                 : `${row.project} · ${row.environment} · ${row.component}`}
@@ -467,7 +469,7 @@ function EnvironmentBlock({
   return (
     <div className="k-envblock">
       <div className="k-envblock__head">
-        <span className="k-chip k-mono">{environment}</span>
+        <span className="k-chip">{environment}</span>
         {status.loading && status.data === undefined && failure === undefined ? (
           <StatusPill status="unknown" label="reading…" />
         ) : failure !== undefined ? (
@@ -480,7 +482,7 @@ function EnvironmentBlock({
         ) : (
           <StatusPill status={state.tone} label={state.word} />
         )}
-        <span className="k-mono k-envblock__meta">
+        <span className="k-envblock__meta">
           <EnvironmentMeta
             status={status.data}
             failure={failure}
@@ -491,7 +493,7 @@ function EnvironmentBlock({
       </div>
 
       {failure !== undefined ? null : rows.length === 0 ? (
-        <p className="k-mono k-env__note">
+        <p className="k-env__note">
           {status.loading && status.data === undefined
             ? "reading…"
             : "no per-component readings here"}
@@ -501,7 +503,7 @@ function EnvironmentBlock({
           {rows.map((row) => (
             <li className="k-row" key={row.component}>
               <Link
-                className="k-mono k-row__name"
+                className="k-row__name"
                 to={`${base}/components/${encodeURIComponent(row.component)}`}
               >
                 {row.component}
@@ -510,8 +512,8 @@ function EnvironmentBlock({
                 status={row.cell.status.tone}
                 label={row.cell.status.word}
               />
-              <span className="k-mono k-row__fact">
-                {row.cell.code}
+              <span className="k-row__fact">
+                <span className="k-mono">{row.cell.code}</span>
                 {row.cell.detail ? ` · ${row.cell.detail}` : ""}
               </span>
             </li>
@@ -561,7 +563,9 @@ function EnvironmentMeta({
       ) : (
         <span className="k-card__rev">no revision recorded</span>
       )}
-      {counts.length > 0 ? <span>{counts.join(" · ")}</span> : null}
+      {counts.length > 0 ? (
+        <span className="k-mono">{counts.join(" · ")}</span>
+      ) : null}
       {cause ? <span className="k-card__reason">{cause}</span> : null}
     </>
   );

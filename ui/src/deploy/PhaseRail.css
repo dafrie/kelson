@@ -26,12 +26,12 @@
 .k-rail__stage {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 4px;
   position: relative;
-  padding: 12px 14px 12px 16px;
+  padding: 8px 10px 8px 14px;
   background: var(--kelson-panel);
   border: 1px solid var(--kelson-hairline);
-  border-radius: 5px;
+  border-radius: var(--kelson-radius-panel);
   min-width: 0;
 }
 
@@ -46,31 +46,38 @@
   border-top: 1px solid var(--kelson-border);
 }
 
+/* The marker is where a stage keeps its colour: the box itself stays neutral
+   until the news is bad, so a deploy running normally is a row of grey boxes
+   with one blue edge moving along it. */
 .k-rail__marker {
   position: absolute;
   left: 0;
   top: 0;
   bottom: 0;
   width: 3px;
-  border-radius: 5px 0 0 5px;
+  border-radius: var(--kelson-radius-panel) 0 0 var(--kelson-radius-panel);
   background: var(--kelson-inset-border);
 }
 
 .k-rail__phase {
-  font-size: 13.5px;
+  font-size: var(--kelson-size-body);
   font-weight: 500;
   color: var(--kelson-text);
   overflow-wrap: anywhere;
 }
 
 .k-rail__actor {
-  font-size: 11px;
-  color: var(--kelson-muted-2);
+  font-family: var(--kelson-font-mono);
+  font-size: var(--kelson-size-micro);
+  color: var(--kelson-muted);
   overflow-wrap: anywhere;
 }
 
+/* "We could not tell who did this" is information, and #260 says information of
+   that kind is never hidden — so it is the same step as every other fact on the
+   rail, and only the italic marks it as an absence. */
 .k-rail__actor--unknown {
-  color: var(--kelson-muted-deep);
+  color: var(--kelson-muted);
   font-style: italic;
 }
 
@@ -78,7 +85,7 @@
   font-size: 10.5px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--kelson-muted-deep);
+  color: var(--kelson-muted);
 }
 
 .k-rail__stage--done .k-rail__marker {
@@ -89,9 +96,10 @@
   color: var(--kelson-synced);
 }
 
+/* In flight: a ring in its own tone and no fill. Every deploy passes through
+   this state, so it must not look like an incident. */
 .k-rail__stage--current {
   border-color: var(--kelson-reconciling-border);
-  background: var(--kelson-reconciling-fill);
 }
 
 .k-rail__stage--current .k-rail__marker {
@@ -141,7 +149,7 @@
 
 .k-rail__headline {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--kelson-size-body);
   color: var(--kelson-text-2);
 }
 
@@ -150,9 +158,9 @@
   flex-direction: column;
   align-items: flex-start;
   gap: 8px;
-  padding: 16px 18px;
-  border-radius: 6px;
-  border: 1px solid var(--kelson-border);
+  padding: 12px 14px;
+  border-radius: var(--kelson-radius-panel);
+  border: 1px solid var(--kelson-hairline);
   background: var(--kelson-panel);
 }
 
@@ -175,7 +183,7 @@
 }
 
 .k-rail__diagnosis-title {
-  font-size: 15px;
+  font-size: var(--kelson-size-body);
   font-weight: 500;
   color: var(--kelson-text);
 }
@@ -190,29 +198,30 @@
 }
 
 .k-rail__diagnosis-where {
-  font-size: 11px;
-  color: var(--kelson-muted-deep);
+  font-family: var(--kelson-font-mono);
+  font-size: var(--kelson-size-micro);
+  color: var(--kelson-muted);
 }
 
 .k-rail__diagnosis-detail {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--kelson-size-body);
   color: var(--kelson-text-2);
   overflow-wrap: anywhere;
 }
 
 .k-rail__next {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--kelson-size-body);
   color: var(--kelson-text);
 }
 
+/* A label, so sans — the eyebrow treatment, inline. */
 .k-rail__next-label {
-  font-family: var(--kelson-font-mono);
   font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--kelson-muted-2);
+  letter-spacing: 0.1em;
+  color: var(--kelson-muted);
 }
 
 .k-rail__action {
@@ -230,7 +239,7 @@
 }
 
 .k-rail--compact .k-rail__stage {
-  padding: 8px 10px 8px 12px;
+  padding: 6px 8px 6px 12px;
   gap: 2px;
 }
 
@@ -240,7 +249,7 @@
 }
 
 .k-rail--compact .k-rail__phase {
-  font-size: 12px;
+  font-size: var(--kelson-size-fact);
 }
 
 .k-rail--compact .k-rail__actor {
@@ -253,7 +262,7 @@
 }
 
 .k-rail--compact .k-rail__diagnosis-title {
-  font-size: 13.5px;
+  font-size: var(--kelson-size-body);
 }
 
 /* The five-across grid stops being readable well before a phone: below this the

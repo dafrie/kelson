@@ -1,11 +1,16 @@
 /* The watch-stream indicator: a dot and one mono word, muted enough to read as
-   status rather than as content. */
+   status rather than as content. Mono for the same reason the status pill is:
+   the word is a machine state (`streaming`, `reconnecting`), not a label — and
+   it carries its own face rather than borrowing a `.k-mono` wrapper from the
+   line it sits in. */
 .k-live {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   white-space: nowrap;
-  color: var(--kelson-muted-2);
+  font-family: var(--kelson-font-mono);
+  font-size: var(--kelson-size-micro);
+  color: var(--kelson-muted);
 }
 
 .k-live__dot {
@@ -16,8 +21,10 @@
   flex: none;
 }
 
-.k-live[data-state="live"] {
-  color: var(--kelson-synced);
+/* A connected stream is the ordinary case, so the word stays grey and only the
+   dot is green — the same bargain the live status pill makes. */
+.k-live[data-state="live"] .k-live__dot {
+  background: var(--kelson-synced);
 }
 
 /* The same pulse the reconciling pill uses, for the same reason: something is

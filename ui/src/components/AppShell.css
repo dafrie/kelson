@@ -27,14 +27,18 @@
 
 .k-nav {
   display: flex;
-  gap: 22px;
-  font-size: 14px;
+  gap: 20px;
+  font-size: var(--kelson-size-body);
 }
 
+/* Nav items are words, and on a monochrome page the active one is marked by
+   weight and a rule rather than by a hue. They are structural links, so they
+   carry no underline until hover. */
 .k-nav__item {
   color: var(--kelson-text-3);
   padding-bottom: 2px;
   border-bottom: 2px solid transparent;
+  text-decoration: none;
 }
 
 .k-nav__item:hover {
@@ -44,6 +48,7 @@
 .k-nav__item--active,
 .k-nav__item--active:hover {
   color: var(--kelson-text);
+  font-weight: 500;
   border-bottom-color: var(--kelson-accent);
 }
 
@@ -55,7 +60,8 @@
 }
 
 .k-header__docs {
-  font-size: 13.5px;
+  font-size: var(--kelson-size-body);
+  text-decoration: none;
   color: var(--kelson-text-3);
 }
 
@@ -90,7 +96,7 @@
 /* Shown only in system mode: the icon says what is on screen, this says the
    machine is choosing it. */
 .k-theme__auto {
-  font-family: var(--kelson-font-mono);
+  font-family: var(--kelson-font);
   font-size: 9.5px;
   font-weight: 500;
   letter-spacing: 0.08em;
@@ -125,8 +131,7 @@
 }
 
 .k-user__name {
-  font-family: var(--kelson-font-mono);
-  font-size: 12.5px;
+  font-size: var(--kelson-size-fact);
   color: var(--kelson-text-3);
   max-width: 14ch;
   overflow: hidden;
@@ -138,8 +143,8 @@
   padding: 4px 5px;
   background: none;
   border: none;
-  font-family: var(--kelson-font-mono);
-  font-size: 11.5px;
+  font-family: var(--kelson-font);
+  font-size: var(--kelson-size-micro);
   letter-spacing: 0.04em;
   color: var(--kelson-muted-2);
   cursor: pointer;
@@ -158,22 +163,38 @@
 .k-main {
   max-width: var(--kelson-content-max);
   margin: 0 auto;
-  padding: 36px 32px 72px;
+  padding: 24px 32px 64px;
 }
 
 .k-page-head {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
+/* The line under the title: counts, the version, the way back. It is sans now,
+   because most of it is words — the numbers and the version inside it carry
+   .k-mono themselves, which is the type rule doing its job at the smallest
+   scale it has. */
 .k-page-sub {
   display: flex;
-  gap: 22px;
-  margin-bottom: 28px;
-  font-family: var(--kelson-font-mono);
-  font-size: 12.5px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 20px;
+  font-size: var(--kelson-size-fact);
   color: var(--kelson-muted);
+}
+
+.k-page-sub a {
+  color: var(--kelson-text-2);
+  text-decoration: none;
+}
+
+.k-page-sub a:hover {
+  color: var(--kelson-text);
+  text-decoration: underline;
+  text-decoration-color: currentColor;
 }

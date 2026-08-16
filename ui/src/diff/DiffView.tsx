@@ -38,7 +38,7 @@ export function DiffView({
       {blocked ? (
         <div className="k-diff__blocked" role="alert">
           <span className="k-diff__blocked-title">Blocked</span>
-          <span className="k-mono">
+          <span>
             this preview would not apply — an enforcing policy rejected it, or a
             resource could not be validated and its prerequisite is absent
           </span>
@@ -48,25 +48,25 @@ export function DiffView({
       {diff.degraded ? (
         <div className="k-diff__degraded">
           <span className="k-eyebrow">Best effort</span>
-          <span className="k-mono">
+          <span>
             the live cluster was unavailable, so this fell back to a rendered
             diff{diff.degradedReason ? `: ${diff.degradedReason}` : ""}
           </span>
         </div>
       ) : null}
 
-      <div className="k-mono k-diff__summary">
+      <div className="k-diff__summary">
         <span>{diff.level} diff</span>
         <span>·</span>
         <span>
           {diff.project}/{diff.environment}
         </span>
         <span>·</span>
-        <span>{summaryLine(diff)}</span>
+        <span className="k-mono">{summaryLine(diff)}</span>
       </div>
 
       {diff.resources.length === 0 ? (
-        <div className="k-panel k-panel--dim k-mono">
+        <div className="k-panel k-panel--dim">
           no differences — the cluster already matches this spec
         </div>
       ) : (
@@ -127,7 +127,7 @@ export function DiffView({
               >
                 <div className="k-diff__finding-head">
                   <code className="k-mono">{u.resource}</code>
-                  <span className="k-mono k-diff__finding-where">
+                  <span className="k-diff__finding-note">
                     {u.inBatch
                       ? "prerequisite is created by this same batch"
                       : "prerequisite is absent — the apply would fail too"}
@@ -137,7 +137,7 @@ export function DiffView({
                   <p className="k-diff__finding-message">requires {u.requires}</p>
                 ) : null}
                 {u.message ? (
-                  <p className="k-mono k-diff__finding-where">{u.message}</p>
+                  <p className="k-diff__finding-note">{u.message}</p>
                 ) : null}
               </li>
             ))}

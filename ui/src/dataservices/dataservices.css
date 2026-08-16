@@ -22,24 +22,27 @@
 .k-data__list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 0;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
+/* A database is a row on the environment's surface, not a card. */
 .k-data__item {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 14px 16px;
-  background: var(--kelson-panel-dim);
-  border: 1px solid var(--kelson-hairline);
-  border-radius: 5px;
+  gap: 6px;
+  padding: 8px 0;
+  border-top: 1px solid var(--kelson-hairline);
+}
+
+.k-data__item:first-child {
+  border-top: none;
 }
 
 .k-data__item--soon {
-  border-style: dashed;
+  border-top-style: dashed;
 }
 
 .k-data__head {
@@ -50,13 +53,13 @@
 }
 
 .k-data__name {
-  font-size: 14px;
+  font-size: var(--kelson-size-body);
   font-weight: 500;
   color: var(--kelson-text);
 }
 
 .k-data__source {
-  color: var(--kelson-muted-2);
+  color: var(--kelson-muted);
 }
 
 /* The preset, spelled out. A flat list of facts, one per line, because each is
@@ -68,7 +71,7 @@
   margin: 0;
   padding: 0;
   list-style: none;
-  font-size: 13px;
+  font-size: var(--kelson-size-fact);
   color: var(--kelson-text-2);
 }
 
@@ -81,7 +84,7 @@
   content: "·";
   position: absolute;
   left: 4px;
-  color: var(--kelson-muted-deep);
+  color: var(--kelson-muted);
 }
 
 .k-data__cluster,
@@ -92,7 +95,7 @@
 .k-data__note {
   margin: 0;
   font-family: var(--kelson-font-mono);
-  font-size: 12.5px;
+  font-size: var(--kelson-size-fact);
   max-width: 78ch;
 }
 
@@ -100,7 +103,7 @@
 .k-data__health {
   margin: 0;
   max-width: 78ch;
-  font-size: 13.5px;
+  font-size: var(--kelson-size-body);
   color: var(--kelson-text-2);
 }
 
@@ -110,21 +113,13 @@
 
 .k-data__issue {
   align-self: flex-start;
-  color: var(--kelson-accent);
-  text-decoration: none;
-}
-
-.k-data__issue:hover {
-  color: var(--kelson-accent-hover);
-  text-decoration: underline;
 }
 
 .k-soon {
-  padding: 3px 8px;
+  padding: 1px 7px;
   background: var(--kelson-inset);
   border: 1px solid var(--kelson-inset-border);
-  border-radius: 3px;
-  font-family: var(--kelson-font-mono);
+  border-radius: var(--kelson-radius-control);
   font-size: 11px;
   letter-spacing: 0.06em;
   color: var(--kelson-muted-2);
@@ -137,10 +132,10 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 16px;
+  padding: 12px 14px;
   background: var(--kelson-panel-dim);
   border: 1px solid var(--kelson-hairline);
-  border-radius: 5px;
+  border-radius: var(--kelson-radius-panel);
 }
 
 .k-cap__class {
@@ -163,7 +158,7 @@
 .k-cap__headline {
   margin: 0;
   max-width: 78ch;
-  font-size: 14px;
+  font-size: var(--kelson-size-body);
   color: var(--kelson-text);
 }
 
@@ -171,7 +166,7 @@
 .k-cap__operator {
   margin: 0;
   max-width: 78ch;
-  font-size: 13.5px;
+  font-size: var(--kelson-size-body);
   color: var(--kelson-text-2);
 }
 
@@ -182,14 +177,13 @@
 .k-cap__why {
   margin: 0;
   max-width: 78ch;
-  font-size: 13px;
+  font-size: var(--kelson-size-body);
   color: var(--kelson-text-2);
 }
 
 .k-cap__why-label {
-  font-family: var(--kelson-font-mono);
-  font-size: 12px;
-  color: var(--kelson-accent);
+  font-weight: 500;
+  color: var(--kelson-text);
 }
 
 .k-cap__gaps {
@@ -199,10 +193,8 @@
 .k-cap__foot {
   margin: 0;
   max-width: 78ch;
-  font-size: 13px;
+  font-size: var(--kelson-size-fact);
   color: var(--kelson-muted);
 }
 
-.k-cap__foot a {
-  color: var(--kelson-accent);
-}
+

@@ -240,7 +240,7 @@ export function SecretsPanel({
           >
             {set.running ? "Writing…" : "Write the Secret"}
           </button>
-          <span className="k-mono k-deploy__note">
+          <span className="k-deploy__note">
             values are write-only, and nothing reads one back through kelson ·
             a write merges, so keys not named here are kept
           </span>

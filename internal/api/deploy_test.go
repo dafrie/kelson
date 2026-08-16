@@ -1430,12 +1430,24 @@ func TestStatusReportsVerdicts(t *testing.T) {
 		t.Errorf("phase/revision = %q/%q, want them read from Environment.status",
 			res.Msg.GetPhase(), res.Msg.GetRevision())
 	}
+	if got := res.Msg.GetAnswer(); got != string(statemachine.AnswerLive) {
+		t.Errorf("answer = %q, want the engine's own classification %s", got, statemachine.AnswerLive)
+	}
+	if got := res.Msg.GetObservedRevision(); got != "3-9f0a1b2c" {
+		t.Errorf("observed revision = %q, want the revision the status names", got)
+	}
+	if res.Msg.GetStale() {
+		t.Errorf("an environment serving the revision its generation asks for is not stale: %+v", res.Msg)
+	}
 	verdicts := res.Msg.GetVerdicts()
 	if len(verdicts) != 1 || verdicts[0].GetCode() != string(observation.CodeCrashLoopBackOff) {
 		t.Fatalf("verdicts = %+v, want the crash-loop verdict", verdicts)
 	}
 	if !verdicts[0].GetDegraded() {
 		t.Errorf("verdict = %+v, want degraded", verdicts[0])
+	}
+	if verdicts[0].GetStuck() {
+		t.Errorf("a crash loop is a failure and not a wait: %+v", verdicts[0])
 	}
 	// The namespace the target resolved to, so a client addressing this
 	// environment's workloads reads it rather than reconstructing it (#161).
@@ -1504,5 +1516,267 @@ func TestStatusVerdictsWithoutASyncEvaluator(t *testing.T) {
 	}
 	if len(verdicts) != 1 || verdicts[0].GetResource() != "Deployment/hello-development/web" {
 		t.Fatalf("verdicts = %+v, want the Deployment alone", verdicts)
+	}
+}
+
+// statusSet is the one rendered Deployment the verdict projection tests
+// evaluate against.
+func statusSet() delivery.ManifestSet {
+	return delivery.ManifestSet{Manifests: []delivery.Manifest{
+		{Kind: "Deployment", Name: "web", Namespace: "hello-development"},
+	}}
+}
+
+// TestStatusVerdictCarriesStuck is the wire half of issue #53's split, in the
+// direction that used to be lost: observation says a workload gave up waiting,
+// and the wire says so too.
+//
+// Stuck in, stuck out. And it must not arrive as either of the two answers it
+// used to be collapsed into: not degraded, because the code is a wait code and
+// nothing has failed, and not healthy.
+func TestStatusVerdictCarriesStuck(t *testing.T) {
+	health := fakeEvaluator{"web": {
+		Healthy:     false,
+		Stuck:       true,
+		Code:        observation.CodeProgressing,
+		Resource:    "Deployment/hello-development/web",
+		Reason:      "0 of 1 replicas updated",
+		Remediation: "check the rollout",
+	}}
+	verdicts, err := workloadVerdicts(context.Background(), &Plane{Health: health}, statusSet(), "hello-development")
+	if err != nil {
+		t.Fatalf("workloadVerdicts: %v", err)
+	}
+	if len(verdicts) != 1 {
+		t.Fatalf("verdicts = %+v, want the Deployment's", verdicts)
+	}
+	v := verdicts[0]
+	if !v.GetStuck() {
+		t.Errorf("verdict = %+v, want stuck: the probe gave up waiting and the wire has a field for it now", v)
+	}
+	if v.GetDegraded() {
+		t.Errorf("verdict = %+v: stuck is not a failure — degraded excludes it on purpose", v)
+	}
+	if v.GetHealthy() {
+		t.Errorf("verdict = %+v, want unhealthy", v)
+	}
+}
+
+// TestStatusVerdictProgressingIsNotStuck is the other direction, and it is the
+// one the field exists for: a rollout still in flight has all three flags
+// false. Before `stuck` existed this shape and the one above were identical on
+// the wire, so every client had to call both "deploying".
+func TestStatusVerdictProgressingIsNotStuck(t *testing.T) {
+	health := fakeEvaluator{"web": {
+		Healthy:  false,
+		Code:     observation.CodeProgressing,
+		Resource: "Deployment/hello-development/web",
+		Reason:   "1 of 2 replicas updated",
+	}}
+	verdicts, err := workloadVerdicts(context.Background(), &Plane{Health: health}, statusSet(), "hello-development")
+	if err != nil {
+		t.Fatalf("workloadVerdicts: %v", err)
+	}
+	if len(verdicts) != 1 {
+		t.Fatalf("verdicts = %+v, want the Deployment's", verdicts)
+	}
+	v := verdicts[0]
+	if v.GetStuck() || v.GetDegraded() || v.GetHealthy() {
+		t.Errorf("verdict = %+v, want all three false: a rollout in flight is none of them", v)
+	}
+}
+
+// TestStatusVerdictHealthyIsNeitherStuckNorDegraded pins the fourth cell of the
+// same table, so a future edit cannot make `stuck` a synonym for "not healthy".
+func TestStatusVerdictHealthyIsNeitherStuckNorDegraded(t *testing.T) {
+	verdicts, err := workloadVerdicts(context.Background(), &Plane{Health: fakeEvaluator{}}, statusSet(), "hello-development")
+	if err != nil {
+		t.Fatalf("workloadVerdicts: %v", err)
+	}
+	if len(verdicts) != 1 {
+		t.Fatalf("verdicts = %+v, want the Deployment's", verdicts)
+	}
+	v := verdicts[0]
+	if !v.GetHealthy() || v.GetStuck() || v.GetDegraded() {
+		t.Errorf("verdict = %+v, want healthy alone", v)
+	}
+}
+
+// TestStatusReportsDriftWithoutCallingItUnhealthy is the drift half: a spec
+// edited to generation 45 whose environment is still serving revision 44 reads
+// as stale AND as live, because those answer different questions. Saying the
+// second without the first was the gap; saying the first *instead* of the
+// second would be a new lie.
+func TestStatusReportsDriftWithoutCallingItUnhealthy(t *testing.T) {
+	connector, _ := connectorFor(nil)
+	st := healthyEnvironment("hello", "development", "44-1a2b3c4d")
+	// The spec moved and the controller has not reconciled it yet: the classic
+	// "healthy, but on revision 44".
+	st.Generation, st.ObservedGeneration = 45, 44
+	for i := range st.Conditions {
+		st.Conditions[i].ObservedGeneration = 44
+	}
+	c := serve(t, Options{Delivery: connector, Environments: newFakeEnvironments(st)})
+
+	res, err := c.deploy.Status(context.Background(), connect.NewRequest(&kelsonv1alpha1.StatusRequest{
+		Spec:        inlineSpec(projectDoc, map[string]string{"development": developmentDoc}),
+		Environment: "development",
+		Profile:     profileRef(),
+	}))
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if !res.Msg.GetStale() {
+		t.Errorf("revision 44 under generation 45 is stale: %+v", res.Msg)
+	}
+	if got := res.Msg.GetAnswer(); got != string(statemachine.AnswerLive) {
+		t.Errorf("answer = %q, want %s: stale is a statement about revisions, not about health",
+			got, statemachine.AnswerLive)
+	}
+	if got := res.Msg.GetObservedRevision(); got != "44-1a2b3c4d" {
+		t.Errorf("observed revision = %q, want the one actually serving", got)
+	}
+	if !strings.Contains(res.Msg.GetCause(), "generation 44") {
+		t.Errorf("cause = %q, want it to still name the generation the status is at", res.Msg.GetCause())
+	}
+}
+
+// TestStatusReportsARollbackPinAsStale: a pinned environment is deliberately
+// serving an older revision, and "deliberately" does not make it current. The
+// field says what is true and `cause` says why it is true.
+func TestStatusReportsARollbackPinAsStale(t *testing.T) {
+	connector, _ := connectorFor(nil)
+	st := healthyEnvironment("hello", "development", "40-1a2b3c4d")
+	st.Generation, st.ObservedGeneration = 45, 45
+	for i := range st.Conditions {
+		st.Conditions[i].ObservedGeneration = 45
+	}
+	st.RollbackRevision, st.RollbackGeneration = "40-1a2b3c4d", 45
+	c := serve(t, Options{Delivery: connector, Environments: newFakeEnvironments(st)})
+
+	res, err := c.deploy.Status(context.Background(), connect.NewRequest(&kelsonv1alpha1.StatusRequest{
+		Spec:        inlineSpec(projectDoc, map[string]string{"development": developmentDoc}),
+		Environment: "development",
+		Profile:     profileRef(),
+	}))
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if !res.Msg.GetStale() {
+		t.Errorf("a pinned environment is not serving the spec it holds: %+v", res.Msg)
+	}
+	if got := res.Msg.GetAnswer(); got != string(statemachine.AnswerLive) {
+		t.Errorf("answer = %q, want %s", got, statemachine.AnswerLive)
+	}
+}
+
+// TestStaleIsFalseWhenKelsonCouldNotCompare covers the honest-absence half:
+// every input the comparison cannot be made from answers false rather than
+// guessing, which is why the field's own documentation says false is not a
+// claim that the environment is current.
+func TestStaleIsFalseWhenKelsonCouldNotCompare(t *testing.T) {
+	cases := []struct {
+		name string
+		st   controlstore.EnvironmentState
+	}{
+		{"nothing published", controlstore.EnvironmentState{Generation: 9}},
+		{"no generation yet", controlstore.EnvironmentState{Revision: "3-9f0a1b2c"}},
+		{"a revision with no generation to read", controlstore.EnvironmentState{
+			Revision: "sha256:deadbeef", Generation: 9,
+		}},
+		{"a revision ahead of the generation", controlstore.EnvironmentState{
+			Revision: "9-9f0a1b2c", Generation: 3,
+		}},
+		{"the revision the generation asks for", controlstore.EnvironmentState{
+			Revision: "9-9f0a1b2c", Generation: 9,
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if staleRevision(tc.st) {
+				t.Errorf("staleRevision(%+v) = true, want false", tc.st)
+			}
+		})
+	}
+}
+
+// TestStatusWithoutADeliveryHalfReportsNoAnswer: an empty answer is a value a
+// client can branch on and a guessed `waiting` is not, which is the same rule
+// the empty phase beside it has always followed (issue #53).
+func TestStatusWithoutADeliveryHalfReportsNoAnswer(t *testing.T) {
+	connector, _ := connectorFor(nil)
+	c := serve(t, Options{Delivery: connector})
+
+	res, err := c.deploy.Status(context.Background(), connect.NewRequest(&kelsonv1alpha1.StatusRequest{
+		Spec:        inlineSpec(projectDoc, map[string]string{"development": developmentDoc}),
+		Environment: "development",
+		Profile:     profileRef(),
+	}))
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if res.Msg.GetAnswer() != "" || res.Msg.GetPhase() != "" {
+		t.Errorf("answer/phase = %q/%q, want both empty with the reason in cause",
+			res.Msg.GetAnswer(), res.Msg.GetPhase())
+	}
+	if res.Msg.GetStale() || res.Msg.GetObservedRevision() != "" {
+		t.Errorf("a status with no delivery half claims nothing about revisions: %+v", res.Msg)
+	}
+	if !strings.Contains(res.Msg.GetCause(), "delivery phase is not reported") {
+		t.Errorf("cause = %q, want it to name the missing seam", res.Msg.GetCause())
+	}
+}
+
+// TestStatusOfAnEnvironmentThatHasDeliveredNothing: the phase is empty because
+// nothing has been delivered, and State.Answer would classify that empty phase
+// as `waiting` — a claim about a revision in flight that nobody made.
+func TestStatusOfAnEnvironmentThatHasDeliveredNothing(t *testing.T) {
+	connector, _ := connectorFor(nil)
+	c := serve(t, Options{Delivery: connector, Environments: newFakeEnvironments(controlstore.EnvironmentState{
+		Project: "hello", Environment: "development", Generation: 1,
+	})})
+
+	res, err := c.deploy.Status(context.Background(), connect.NewRequest(&kelsonv1alpha1.StatusRequest{
+		Spec:        inlineSpec(projectDoc, map[string]string{"development": developmentDoc}),
+		Environment: "development",
+		Profile:     profileRef(),
+	}))
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if res.Msg.GetAnswer() != "" {
+		t.Errorf("answer = %q, want empty: an environment that delivered nothing is not waiting on anything",
+			res.Msg.GetAnswer())
+	}
+	if res.Msg.GetStale() {
+		t.Errorf("nothing published is nothing to be stale: %+v", res.Msg)
+	}
+}
+
+// TestStatusAnswerMatchesTheStreamsForTheSameStatus is the 1:1 rule stated as a
+// test: a poller and a watcher looking at one `Environment.status` must read
+// one verdict. Two projections of the same state that could disagree is exactly
+// what deriving the answer client-side reintroduces.
+func TestStatusAnswerMatchesTheStreamsForTheSameStatus(t *testing.T) {
+	var states []controlstore.EnvironmentState
+	for _, phase := range []delivery.Phase{
+		delivery.PhaseHealthy, delivery.PhaseDegraded, delivery.PhaseReconciling,
+		delivery.PhaseCommitted, delivery.PhaseRejected,
+	} {
+		st := healthyEnvironment("hello", "development", "3-9f0a1b2c")
+		st.Phase = string(phase)
+		states = append(states, st)
+	}
+
+	for _, st := range states {
+		t.Run(st.Phase, func(t *testing.T) {
+			state := deliveryState(st, false)
+			res := &kelsonv1alpha1.StatusResponse{}
+			(&Server{environments: newFakeEnvironments(st)}).reportDelivery(context.Background(), res,
+				Target{Project: st.Project, Environment: st.Environment})
+			if got, want := res.GetAnswer(), wireTransition(state).GetAnswer(); got != want {
+				t.Errorf("Status answer = %q, stream answer = %q: one status, one verdict", got, want)
+			}
+		})
 	}
 }

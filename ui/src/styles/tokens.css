@@ -46,7 +46,29 @@
  * src/styles/tokens.test.ts parses this file and fails if blocks 2 and 3 stop
  * defining exactly the same names, or if a colour appears in block 1. A token
  * added to the dark palette without a light value is a bug the build catches,
- * not one a screenshot catches later.
+ * not one a screenshot catches later. The same test computes WCAG contrast on
+ * the pairs this design depends on and pins each one; the numbers there are the
+ * design decision written down, not a lint.
+ *
+ * THE CONSOLE (#260)
+ *
+ * The identity, in one sentence: **the chrome is monochrome, the six status
+ * ramps are the only saturated colour on any screen, and mono type means the
+ * machine produced this exact string.** Three consequences live in this file:
+ *
+ *   - `--kelson-accent` is a *neutral*. It used to be the mark's green, which
+ *     put the same hue on a link and on a healthy environment; a reader cannot
+ *     learn that green means "live" while green also means "clickable". So the
+ *     accent is the ink, and interaction is carried by an underline
+ *     (`--kelson-line`) that goes to full contrast on hover. `--kelson-green`
+ *     is untouched: it is the mark's colour and the mark is not chrome.
+ *   - A status tone is only ever *text* when the state is one a reader must act
+ *     on. Live, suspended and unknown say their word in neutral ink and keep
+ *     their tone in a 5px dot — quiet when healthy, and the reason the dark
+ *     `--kelson-suspended` step never has to clear AA as text.
+ *   - There is no elevation. Both themes separate surfaces with a hairline;
+ *     the light theme's whisper of a shadow is gone with the card gallery it
+ *     belonged to.
  */
 
 :root {
@@ -55,6 +77,29 @@
      may run in an air-gapped cluster must not do. */
   --kelson-font: "Space Grotesk", Helvetica, Arial, sans-serif;
   --kelson-font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* The density calibration, from Coolify's published DESIGN.md by way of
+     docs/research/ux-overhaul.md §2.3: 13–14px body, 32px controls, hairline
+     rings rather than fills. Sizes are named by role rather than by number so a
+     screen asks for "a fact" and not for "11.5px".
+
+       -body    prose, labels, row names
+       -fact    a secondary value: metas, kv values, cell facts
+       -micro   pills, chips, eyebrows, table headers */
+  --kelson-size-body: 13.5px;
+  --kelson-size-fact: 12.5px;
+  --kelson-size-micro: 11.5px;
+
+  /* Controls. 32px is the row height every button, input, select and chip
+     lands on; a 28px variant exists for controls that sit inside a dense row
+     (a pod filter, a table's inline action). */
+  --kelson-control-h: 32px;
+  --kelson-control-h-sm: 26px;
+
+  /* Corners. Two steps, and Coolify's nesting rule (outer = inner + inset)
+     decides which: a panel is -panel, everything inside it is -control. */
+  --kelson-radius-control: 4px;
+  --kelson-radius-panel: 6px;
 
   /* Layout */
   --kelson-header-height: 56px;
@@ -90,26 +135,39 @@
   --kelson-muted-deep: #4d5763;
   --kelson-code: #cdd8e3;
 
-  /* Brand.
+  /* Brand, and interaction.
 
      --kelson-green is the mark's colour and is theme-independent: #0FA36B is
      what the SVGs in docs/design/assets ship, and a logo does not change hue
-     because the page went white. --kelson-accent is the same brand read as
-     *text* — links, the `fix:` label, primary buttons — and that one must move,
-     because #0FA36B on white is 3.2:1 and fails AA for body text. On light it
-     becomes the darkest step of the ramp in website/src/css/custom.css. */
-  --kelson-green: #0fa36b;
-  --kelson-accent: #0fa36b;
-  --kelson-accent-hover: #3ed49b;
+     because the page went white.
 
-  /* Status */
+     --kelson-accent is *interaction* — links, the `fix:` label, the primary
+     button, the focus ring. It used to be the mark's green, and that is the one
+     thing the Console cannot have: green is what "live" is painted in, and a
+     hue that means both "healthy" and "press me" teaches a reader nothing. So
+     the accent is the page's own ink, and what separates a link from a heading
+     is the line under it. */
+  --kelson-green: #0fa36b;
+  --kelson-accent: #e6ebf0;
+  --kelson-accent-hover: #ffffff;
+
+  /* The underline under a link: quiet enough to sit under a paragraph without
+     striping it, loud enough to see. Hover replaces it with currentColor. */
+  --kelson-line: #3a4854;
+
+  /* Status. The only saturated colour in the system, and the ramps are
+     unchanged — what changed is how much of a screen they are allowed to
+     cover (see StatusPill.css). */
   --kelson-synced: #0fa36b;
   --kelson-reconciling: #4ea3ff;
   --kelson-degraded: #e0a944;
   --kelson-failed: #e2543a;
   --kelson-suspended: #6f7b89;
 
-  /* Status pill fills and borders */
+  /* Status pill fills and borders. Only the two states a reader must act on —
+     degraded and failed — still paint a fill; the rest of the ramp's fills
+     survive for the panels that report an outcome (a rejected deploy, a
+     blocking finding) rather than for the badges. */
   --kelson-synced-fill: #0f2620;
   --kelson-synced-border: #164436;
   --kelson-reconciling-fill: #101d2a;
@@ -141,11 +199,6 @@
   --kelson-pod-6: #43c8d4;
   --kelson-pod-7: #e88bc0;
   --kelson-pod-8: #9db4c4;
-
-  /* Elevation. Dark separates surfaces with borders and needs no shadow; the
-     token exists so the light theme can add a whisper of one without any
-     component learning about themes. */
-  --kelson-shadow: none;
 }
 
 /* ------------------------------------------------------------------ light */
@@ -179,12 +232,16 @@
   --kelson-muted-deep: #727c86;
   --kelson-code: #2c343c;
 
-  /* Brand. The mark keeps #0FA36B; brand-as-text drops to the ramp's darkest
-     step (5.96:1 on panel, 5.45:1 on page) and hovers darker still, which is
-     the dark theme's "hover moves away from the surface" read on a light one. */
+  /* Brand, and interaction. The mark keeps #0FA36B — it is theme-independent,
+     and on paper it is the one place the green is still allowed to be brand
+     rather than status. Interaction is this theme's ink, reflected from the
+     dark block: heading black, hovering to true black, with the line under a
+     link doing the work the colour used to do. */
   --kelson-green: #0fa36b;
-  --kelson-accent: #0b724b;
-  --kelson-accent-hover: #005735;
+  --kelson-accent: #1a2026;
+  --kelson-accent-hover: #000000;
+
+  --kelson-line: #c3c9d1;
 
   /* Status. Same hues as dark, dropped in lightness until each clears AA both
      on its pill fill and on a panel: synced 5.39, reconciling 5.41,
@@ -223,9 +280,4 @@
   --kelson-pod-6: #05687a;
   --kelson-pod-7: #a5286f;
   --kelson-pod-8: #4a5560;
-
-  /* One hairline of elevation on cards, because a white panel on near-white
-     paper needs more than a 1px border to read as raised. Deliberately almost
-     invisible: this is a calm mono-accented console, not a card gallery. */
-  --kelson-shadow: 0 1px 2px rgba(16, 24, 32, 0.05);
 }

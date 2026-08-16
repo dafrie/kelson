@@ -2,6 +2,28 @@
  * Base element styles and the shared primitives (eyebrow, panel, status pill,
  * states). Component-specific rules live next to their components; anything
  * two screens will both want lives here.
+ *
+ * THE TYPE RULE (#260, "The Console")
+ *
+ * Two faces, one rule: **mono means the machine produced this exact string.**
+ * Revisions, digests, image references, namespaces, hosts, pod and resource
+ * names, refs, structured codes, kinds, presets, phases, byte counts and the
+ * numbers in a status line are `.k-mono`. Everything a person wrote or reads as
+ * words — project, component and environment names, headings, labels, buttons,
+ * tabs, eyebrows, prose, and the server's own sentences (messages, causes,
+ * remediations) — is the UI sans.
+ *
+ * Two consequences that look like exceptions and are not:
+ *
+ *   - The **eyebrow is sans** now. It is a label, and a mono label spends the
+ *     one signal the system has on decoration.
+ *   - The **status pill is mono**, because its text is never a label: it is
+ *     either the state machine's computed word or a structured code rendered
+ *     verbatim, and those two must not look like different kinds of thing.
+ *
+ * `.k-mono` therefore sets the face and the size and *not* the colour: a value
+ * inside a sentence should read at the sentence's own ink, and a value that
+ * should recede is dimmed by the row it sits in.
  */
 
 *,
@@ -20,20 +42,32 @@ body {
   background: var(--kelson-page);
   color: var(--kelson-text);
   font-family: var(--kelson-font);
-  font-size: 14px;
-  line-height: 1.55;
+  font-size: var(--kelson-size-body);
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
 
+/* A link is the ink with a line under it. The colour used to carry it and the
+   colour was the mark's green, which is also what "live" is painted in; the
+   line is what took that job over, and it is the only thing that changes on
+   hover. Structural links — a row, a cell, a card, a tab — take the line off
+   again and put it back on hover, because a table of underlined identifiers is
+   a striped table. */
 a {
   color: var(--kelson-accent);
-  text-decoration: none;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-decoration-color: var(--kelson-line);
+  text-underline-offset: 0.18em;
 }
 
 a:hover {
   color: var(--kelson-accent-hover);
+  text-decoration-color: currentColor;
 }
 
+/* Headings are small: a console's page title states the address, it does not
+   announce it. 20/15/13.5 against a 13.5px body is the whole scale. */
 h1,
 h2,
 h3 {
@@ -44,15 +78,15 @@ h3 {
 }
 
 h1 {
-  font-size: 26px;
+  font-size: 20px;
 }
 
 h2 {
-  font-size: 18px;
+  font-size: 15px;
 }
 
 h3 {
-  font-size: 15px;
+  font-size: var(--kelson-size-body);
   font-weight: 500;
   letter-spacing: -0.01em;
 }
@@ -78,36 +112,38 @@ pre {
 
 /* --------------------------------------------------------------- primitives */
 
-/* Uppercase mono eyebrow: section labels, table headers, metadata captions. */
+/* Uppercase eyebrow: section labels, table headers, metadata captions. Sans,
+   because it is a label and mono is reserved for values. */
 .k-eyebrow {
-  font-family: var(--kelson-font-mono);
+  font-family: var(--kelson-font);
   font-size: 11px;
   font-weight: 500;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--kelson-muted-2);
-}
-
-.k-mono {
-  font-family: var(--kelson-font-mono);
-  font-size: 12.5px;
   color: var(--kelson-muted);
 }
 
-/* The card surface every list item and detail block sits on. */
+/* "The machine produced this string." Face and size only — see the file's
+   header for why the colour is left to the row. */
+.k-mono {
+  font-family: var(--kelson-font-mono);
+  font-size: var(--kelson-size-fact);
+}
+
+/* The surface every list item and detail block sits on. A hairline and a flat
+   fill: there is no elevation in this system, in either theme. */
 .k-panel {
-  padding: 22px 24px;
+  padding: 16px 18px;
   background: var(--kelson-panel);
   border: 1px solid var(--kelson-border);
-  border-radius: 6px;
-  /* `none` under dark, a hairline under light — see --kelson-shadow. */
-  box-shadow: var(--kelson-shadow);
+  border-radius: var(--kelson-radius-panel);
 }
 
 a.k-panel,
 .k-panel--interactive {
   display: block;
   color: inherit;
+  text-decoration: none;
   transition: border-color 120ms ease;
 }
 
@@ -128,24 +164,26 @@ a.k-panel:hover,
 .k-state {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 28px 24px;
+  gap: 8px;
+  padding: 18px 18px;
   background: var(--kelson-panel-dim);
-  border: 1px solid var(--kelson-border);
-  border-radius: 6px;
+  border: 1px solid var(--kelson-hairline);
+  border-radius: var(--kelson-radius-panel);
   color: var(--kelson-text-2);
 }
 
 .k-state__title {
-  font-size: 15px;
+  font-size: var(--kelson-size-body);
   font-weight: 500;
   color: var(--kelson-text);
 }
 
+/* The detail is the server's own text or a path — mono, and the one thing in
+   the block worth reading twice. */
 .k-state__detail {
   font-family: var(--kelson-font-mono);
-  font-size: 12.5px;
-  line-height: 1.7;
+  font-size: var(--kelson-size-fact);
+  line-height: 1.65;
   color: var(--kelson-muted);
   margin: 0;
   white-space: pre-wrap;

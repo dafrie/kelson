@@ -93,6 +93,59 @@ message StatusResponse {
   // model's `<project>-<environment>` default and get a spec.namespace override
   // wrong (#161).
   string namespace = 6;
+  // Answer is statemachine.State.Answer for this environment:
+  // waiting|progressing|live|stuck|rejected|degraded, the same vocabulary
+  // `DeployResponse.Transition.answer` carries. The engine owns what a state
+  // means (issue #37), and this field is what lets a client that polls read
+  // the same verdict as one that watches.
+  //
+  // It is reported rather than left to be derived from `phase`, because the
+  // phase cannot express all six: `stuck` is not a phase — a deployment that
+  // gave up waiting is wedged in whatever phase it reached, and Committed is
+  // the diagnosis rather than the answer — so a client deriving from the phase
+  // alone must call it `waiting` and say nothing is wrong. Re-deriving it
+  // client-side is also a second opinion, free to disagree with the CLI's.
+  //
+  // Empty means the delivery half is not reported at all and `cause` says why.
+  // It never means "fine".
+  //
+  // One limit, so a client does not read more into the absence than is there:
+  // `stuck` is a timeout verdict and only a watcher holds a budget that can
+  // expire, so today it reaches a client through `Transition.answer` on a
+  // Deploy stream and not through a Status poll. A poll that never says stuck
+  // has not ruled it out.
+  string answer = 7;
+  // ObservedRevision is the revision this environment is observed to be
+  // serving: `Environment.status.revision` as the controller last wrote it,
+  // projected from the same statemachine.State field the stream's
+  // `Transition.observed_revision` carries.
+  //
+  // What a consumer may conclude: this, and not `revision`, is the revision
+  // whose manifests are in the cluster right now. On this spine the two agree
+  // — the controller records one revision per environment and it is the one
+  // serving — so the pair is a seam kept open for a source that can tell them
+  // apart, not two facts today. Whether it is the revision the *stored spec*
+  // would publish is a different question, and `stale` is the only field that
+  // answers it.
+  string observed_revision = 8;
+  // Stale means the environment is not serving the spec it holds: the revision
+  // above was published for an older generation than the Environment's
+  // `.metadata.generation` (a revision tag is `<generation>-<spec-hash-short>`,
+  // ADR-0028 decision 2, so the comparison needs no second read).
+  //
+  // What a consumer may conclude: the revision named here is not the current
+  // one, and nothing more. Stale is a statement about revisions and NOT about
+  // health — a stale environment is very often `live`, because revision 44 is
+  // up and well and simply is not revision 45 — so it is rendered beside the
+  // answer and never instead of it. A rollback pin is stale by construction
+  // and correctly so: the environment is deliberately serving an older
+  // revision, and `cause` names the pin.
+  //
+  // False is not a claim that the environment is current. It is also what
+  // kelson reports when there was nothing to compare: no revision published
+  // yet, a revision whose tag it cannot read a generation out of, or no
+  // delivery half at all. Those cases are visible in `revision` and `cause`.
+  bool stale = 9;
 }
 
 // WorkloadVerdict mirrors observation's classification (the same predicate
@@ -104,6 +157,18 @@ message WorkloadVerdict {
   bool degraded = 4;
   string message = 5;
   string remediation = 6;
+  // Stuck means the probe gave up waiting on this workload: it made no
+  // progress before its budget expired and it was not failing
+  // (internal/observation's Tracker). It is deliberately NOT a failure —
+  // `code` stays a wait code such as `workload/progressing` — which is why
+  // `degraded` excludes it rather than covering it.
+  //
+  // What a consumer may conclude: the four states are healthy, stuck, degraded
+  // and none-of-them, in that order of precedence, and they are exclusive. A
+  // verdict with all three false is a rollout still in flight; before this
+  // field existed that was indistinguishable from one that had given up, and
+  // both had to be called "deploying".
+  bool stuck = 7;
 }
 
 message RollbackRequest {
