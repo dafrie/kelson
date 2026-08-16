@@ -828,3 +828,54 @@ func TestServerRoleCanCreateTheFirstProject(t *testing.T) {
 			mustYAML(t, serverRules))
 	}
 }
+
+// TestServiceSelectsOnlyTheServer pins the selector the e2e server smoke found
+// missing on its first run: the bare selector labels are carried by the
+// controller's pods too, so a Service matching only name+instance sends a
+// share of every connection to a pod with no API port. The component label on
+// both sides is what keeps the Service's endpoints the server's alone.
+func TestServiceSelectsOnlyTheServer(t *testing.T) {
+	docs := decodeDocs(t, helmTemplate(t, append(authValues, "--set", "controller.enabled=true")...))
+
+	var selector map[string]any
+	var serverPodLabels, controllerPodLabels map[string]any
+	for _, doc := range docs {
+		switch {
+		case doc["kind"] == "Service" && nameOf(doc) == "kelson":
+			spec, _ := doc["spec"].(map[string]any)
+			selector, _ = spec["selector"].(map[string]any)
+		case doc["kind"] == "Deployment":
+			spec, _ := doc["spec"].(map[string]any)
+			tmpl, _ := spec["template"].(map[string]any)
+			meta, _ := tmpl["metadata"].(map[string]any)
+			labels, _ := meta["labels"].(map[string]any)
+			if nameOf(doc) == "kelson" {
+				serverPodLabels = labels
+			} else if nameOf(doc) == "kelson-controller" {
+				controllerPodLabels = labels
+			}
+		}
+	}
+	if selector == nil {
+		t.Fatal("no kelson Service selector was rendered")
+	}
+	if serverPodLabels == nil || controllerPodLabels == nil {
+		t.Fatal("expected both the server and controller Deployments to render")
+	}
+
+	matches := func(labels map[string]any) bool {
+		for k, v := range selector {
+			if labels[k] != v {
+				return false
+			}
+		}
+		return true
+	}
+	if !matches(serverPodLabels) {
+		t.Errorf("the Service selector %v does not match the server pod labels %v", selector, serverPodLabels)
+	}
+	if matches(controllerPodLabels) {
+		t.Errorf("the Service selector %v matches the controller pod labels %v — a share of every "+
+			"connection would reach a pod with no API port", selector, controllerPodLabels)
+	}
+}
