@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import { Code, ConnectError, createRouterTransport } from "@connectrpc/connect";
 
 import { ErrorSchema } from "../gen/kelson/v1alpha1/common_pb";
@@ -16,9 +16,13 @@ import {
 import { ProjectsPage } from "./ProjectsPage";
 
 /**
- * The list's contract: one card per (project, environment), each carrying the
- * status its own Status call returned — and a card whose call failed says so
- * instead of borrowing a neighbour's green.
+ * Home's contract (#260): the unit is a component in an environment, grouped by
+ * project, and the rows come out of the verdicts the same one Status per
+ * (project, environment) already carried.
+ *
+ * Three environments, deliberately different: one that reports per-component
+ * verdicts, one that reports none (a build with no observation client — the
+ * floor this page degrades to), and one whose cluster cannot be reached at all.
  */
 const transport = createRouterTransport((router) => {
   router.service(SpecService, {
@@ -36,7 +40,26 @@ const transport = createRouterTransport((router) => {
         return {
           phase: "Healthy",
           revision: "8f2c1ad",
+          namespace: "checkout-production",
           detail: { resources: "4", live: "4", degraded: "0" },
+          verdicts: [
+            {
+              resource: "Deployment/checkout-production/web",
+              code: "healthy",
+              healthy: true,
+              degraded: false,
+              message: "Deployment/checkout-production/web healthy",
+              remediation: "",
+            },
+            {
+              resource: "Deployment/checkout-production/worker",
+              code: "crash-loop-back-off",
+              healthy: false,
+              degraded: true,
+              message: "worker is restarting repeatedly (7 restarts)",
+              remediation: "kelson logs worker --at-termination",
+            },
+          ],
         };
       }
       if (req.environment === "staging") {
@@ -71,16 +94,25 @@ function renderProjects() {
   return renderAt(transport, "/projects", "/projects", <ProjectsPage />);
 }
 
+/** The block one environment's rows live in, found by its chip. */
+function environmentBlock(name: string): HTMLElement {
+  const chip = screen.getByText(name, { selector: ".k-chip" });
+  const block = chip.closest(".k-envblock");
+  if (block === null) throw new Error(`no block for ${name}`);
+  return block as HTMLElement;
+}
+
 describe("ProjectsPage", () => {
-  it("renders one card per project and environment", async () => {
+  it("groups environments under their project and names each one", async () => {
     renderProjects();
 
     expect(await screen.findByText("production")).toBeTruthy();
     expect(screen.getByText("staging")).toBeTruthy();
     expect(screen.getByText("dev")).toBeTruthy();
-    // The project name links to its detail screen, twice for checkout.
+    // One heading per project now, not one card per pair: the environments sit
+    // under the name rather than repeating it.
     const links = screen.getAllByRole("link", { name: "checkout" });
-    expect(links).toHaveLength(2);
+    expect(links).toHaveLength(1);
     expect(links[0]?.getAttribute("href")).toBe("/projects/checkout");
     expect(screen.getByText("2 projects")).toBeTruthy();
     expect(screen.getByText("3 environments")).toBeTruthy();
@@ -90,18 +122,61 @@ describe("ProjectsPage", () => {
     ).toBe("/projects/new");
   });
 
-  it("maps phases onto pills and shows revision, counts and cause", async () => {
+  it("lists one row per component, out of the verdicts Status already carried", async () => {
     renderProjects();
 
-    const healthy = await screen.findByText("live", { selector: ".k-pill" });
-    expect(healthy.dataset.status).toBe("synced");
+    await screen.findByRole("link", { name: "web" });
+    const production = environmentBlock("production");
+    const rows = [...production.querySelectorAll(".k-row")];
+    expect(rows.map((r) => r.querySelector(".k-row__name")?.textContent)).toEqual([
+      "web",
+      "worker",
+    ]);
+    // Each row is addressable: the component in that environment, which is the
+    // page the row is a summary of.
     expect(
-      screen.getByText("unhealthy", { selector: ".k-pill" }).dataset.status,
-    ).toBe("degraded");
-    expect(screen.getByText("8f2c1ad")).toBeTruthy();
-    expect(screen.getByText("4/4 live")).toBeTruthy();
-    expect(screen.getByText("2/3 live · 1 degraded")).toBeTruthy();
-    expect(screen.getByText("web: 1 of 3 replicas are not ready")).toBeTruthy();
+      within(production).getByRole("link", { name: "web" }).getAttribute("href"),
+    ).toBe("/projects/checkout/production/components/web");
+    // The component's own word, not its environment's: production is Healthy
+    // and one of its components is not.
+    expect(
+      rows[1]?.querySelector(".k-pill")?.textContent,
+    ).toBe("unhealthy");
+    expect(rows[0]?.querySelector(".k-pill")?.textContent).toBe("live");
+  });
+
+  it("says so when an environment reports nothing per component", async () => {
+    renderProjects();
+
+    await waitFor(() =>
+      within(environmentBlock("staging")).getByText(
+        "no per-component readings here",
+      ),
+    );
+    const staging = environmentBlock("staging");
+    // The honest floor: no verdicts means no rows, and the absence is stated
+    // rather than filled with the environment's word repeated per component.
+    expect(staging.querySelectorAll(".k-row")).toHaveLength(0);
+    expect(
+      within(staging).getByText("no per-component readings here"),
+    ).toBeTruthy();
+  });
+
+  it("keeps the environment's own facts on the environment", async () => {
+    renderProjects();
+
+    await screen.findByText("8f2c1ad");
+    const production = environmentBlock("production");
+    expect(within(production).getByText("8f2c1ad")).toBeTruthy();
+    expect(within(production).getByText("4/4 live")).toBeTruthy();
+    const staging = environmentBlock("staging");
+    expect(within(staging).getByText("2/3 live · 1 degraded")).toBeTruthy();
+    expect(
+      within(staging).getByText("web: 1 of 3 replicas are not ready"),
+    ).toBeTruthy();
+    expect(
+      within(staging).getByText("unhealthy", { selector: ".k-pill" }),
+    ).toBeTruthy();
   });
 
   it("degrades a failing status to an honest pill with the server's reason", async () => {
@@ -109,17 +184,19 @@ describe("ProjectsPage", () => {
 
     const pill = await screen.findByText("status unavailable");
     expect(pill.dataset.status).toBe("unknown");
-    // The reason is the structured error, on the tooltip and in the card body.
+    // The reason is the structured error, on the tooltip and in the block.
     expect(pill.parentElement?.getAttribute("title")).toBe(
       "delivery/unavailable: the cluster could not be reached",
     );
     expect(
-      screen.getByText("delivery/unavailable: the cluster could not be reached"),
-    ).toBeTruthy();
+      screen.getAllByText(
+        "delivery/unavailable: the cluster could not be reached",
+      ).length,
+    ).toBeGreaterThan(0);
 
-    // The tally above the grid counts what is on screen, converging as each
-    // card's own Status call settles — one of each, and no green claimed for
-    // the environment nothing could be read for.
+    // The tally above the page counts environments — the one unit that exists
+    // whether or not anything reports per component — converging as each Status
+    // call settles, and claiming no green for the one nothing could be read for.
     await waitFor(() => {
       const counts = [...container.querySelectorAll(".k-count-group")].map(
         (el) => el.textContent,
@@ -127,14 +204,121 @@ describe("ProjectsPage", () => {
       // Worst first: the tally is a to-do list, not an inventory.
       expect(counts).toEqual(["1 unhealthy", "1 live", "1 unknown"]);
     });
-    // The healthy card is unaffected by its neighbour's failure.
-    expect(screen.getByText("live", { selector: ".k-pill" })).toBeTruthy();
+    // The healthy environment is unaffected by its neighbour's failure: its own
+    // word and its healthy component's are both there.
+    expect(
+      within(environmentBlock("production")).getAllByText("live", {
+        selector: ".k-pill",
+      }),
+    ).toHaveLength(2);
+  });
+});
+
+describe("ProjectsPage attention band", () => {
+  it("raises what needs attention, once, above everything else", async () => {
+    renderProjects();
+
+    const band = await screen.findByLabelText("Needs attention");
+    const rows = [...band.querySelectorAll(".k-attention__row")].map(
+      (row) => row.querySelector(".k-attention__what")?.textContent,
+    );
+    // The crash-looping component by name, and the environment nothing could be
+    // read for as itself. The healthy component and the environment whose
+    // trouble a component already owns are not repeated here.
+    expect(rows).toEqual([
+      "checkout · production · worker",
+      "checkout · staging",
+      "hello · dev",
+    ]);
+    expect(
+      within(band).getByText("worker is restarting repeatedly (7 restarts)"),
+    ).toBeTruthy();
+    expect(
+      within(band)
+        .getByRole("link", { name: "checkout · production · worker" })
+        .getAttribute("href"),
+    ).toBe("/projects/checkout/production/components/worker");
+  });
+
+  it("is absent — not empty — when everything is live", async () => {
+    const healthy = createRouterTransport((router) => {
+      router.service(SpecService, {
+        listSpecs: () => ({
+          specs: [
+            { project: "checkout", version: "7", environments: ["production"] },
+          ],
+        }),
+      });
+      router.service(DeployService, {
+        status: () => ({
+          phase: "Healthy",
+          revision: "8f2c1ad",
+          namespace: "checkout-production",
+          verdicts: [
+            {
+              resource: "Deployment/checkout-production/web",
+              code: "healthy",
+              healthy: true,
+              degraded: false,
+              message: "Deployment/checkout-production/web healthy",
+              remediation: "",
+            },
+          ],
+        }),
+      });
+    });
+    renderAt(healthy, "/projects", "/projects", <ProjectsPage />);
+
+    expect(await screen.findByText("web")).toBeTruthy();
+    // Quiet when healthy: no band, and no sentence reassuring anybody either.
+    await waitFor(() => {
+      expect(screen.queryByLabelText("Needs attention")).toBeNull();
+    });
+    expect(screen.queryByText(/Needs attention/)).toBeNull();
+  });
+
+  it("keeps work in flight out of the band", async () => {
+    const deploying = createRouterTransport((router) => {
+      router.service(SpecService, {
+        listSpecs: () => ({
+          specs: [
+            { project: "checkout", version: "7", environments: ["production"] },
+          ],
+        }),
+      });
+      router.service(DeployService, {
+        status: () => ({
+          phase: "Reconciling",
+          revision: "8f2c1ad",
+          namespace: "checkout-production",
+          verdicts: [
+            {
+              resource: "Deployment/checkout-production/web",
+              code: "progressing",
+              healthy: false,
+              degraded: false,
+              message: "web is rolling out",
+              remediation: "wait for the rollout to finish",
+            },
+          ],
+        }),
+      });
+    });
+    renderAt(deploying, "/projects", "/projects", <ProjectsPage />);
+
+    // A rollout is not a problem: a band that fills up during every deploy is
+    // a band people stop reading.
+    expect(
+      await screen.findAllByText("deploying", { selector: ".k-pill" }),
+    ).toHaveLength(2);
+    await waitFor(() => {
+      expect(screen.queryByLabelText("Needs attention")).toBeNull();
+    });
   });
 });
 
 /**
- * The live half (#76): one watch stream for the whole grid, applied to the
- * cards in place.
+ * The live half (#76): one watch stream for the whole page, applied in place.
  *
  * Each test builds its own server so the scripted events and the Status answers
  * belong together. The status counter is what proves a resync *relisted* rather
@@ -156,7 +340,18 @@ function liveServer(events: ReturnType<typeof watchStub>) {
         return {
           phase: statusCalls > 1 ? "Healthy" : "Reconciling",
           revision: statusCalls > 1 ? "relisted" : "8f2c1ad",
+          namespace: "checkout-production",
           detail: { resources: "4", live: "4", degraded: "0" },
+          verdicts: [
+            {
+              resource: "Deployment/checkout-production/web",
+              code: "healthy",
+              healthy: true,
+              degraded: false,
+              message: "Deployment/checkout-production/web healthy",
+              remediation: "",
+            },
+          ],
         };
       },
     });
@@ -166,7 +361,7 @@ function liveServer(events: ReturnType<typeof watchStub>) {
 }
 
 describe("ProjectsPage live updates", () => {
-  it("applies a status transition to the matching card in place", async () => {
+  it("applies a status transition to the environment it names, in place", async () => {
     const events = watchStub([
       transitionEvent({
         project: "checkout",
@@ -180,17 +375,18 @@ describe("ProjectsPage live updates", () => {
     const { transport, statusCalls } = liveServer(events);
     const { container } = renderAt(transport, "/projects", "/projects", <ProjectsPage />);
 
-    // The fetched answer first, then the streamed one over the top of it.
+    // The fetched answer first, then the streamed one over the top of it — on
+    // the environment and on the component row that borrows its word.
     expect(
-      await screen.findByText("deploying", { selector: ".k-pill" }),
+      await screen.findAllByText("deploying", { selector: ".k-pill" }),
     ).toBeTruthy();
-    const pill = await screen.findByText("live", { selector: ".k-pill" });
-    expect(pill.dataset.status).toBe("synced");
+    const pills = await screen.findAllByText("live", { selector: ".k-pill" });
+    expect(pills).toHaveLength(2);
     expect(screen.getByText("9d3f0aa")).toBeTruthy();
     expect(screen.getByText("3/3 replicas ready")).toBeTruthy();
-    // In place: the card was updated, not refetched.
+    // In place: the environment was updated, not refetched.
     expect(statusCalls()).toBe(1);
-    // And the tally above the grid follows the card it counts.
+    // And the tally follows what it counts.
     await waitFor(() => {
       const counts = [...container.querySelectorAll(".k-count-group")].map(
         (el) => el.textContent,
@@ -199,7 +395,7 @@ describe("ProjectsPage live updates", () => {
     });
   });
 
-  it("shows an unhealthy workload from a health change, and clears it on recovery", async () => {
+  it("moves the component's own row on a health change, and clears it on recovery", async () => {
     const events = watchStub([
       healthEvent({
         project: "checkout",
@@ -213,11 +409,14 @@ describe("ProjectsPage live updates", () => {
     const { transport } = liveServer(events);
     renderAt(transport, "/projects", "/projects", <ProjectsPage />);
 
+    // The row the event names, and the band it now belongs in.
+    const band = await screen.findByLabelText("Needs attention");
     expect(
-      await screen.findByText(
-        "Deployment/checkout-production/web: web is restarting repeatedly (7 restarts)",
-      ),
+      within(band).getByRole("link", { name: "checkout · production · web" }),
     ).toBeTruthy();
+    expect(
+      screen.getAllByText(/web is restarting repeatedly \(7 restarts\)/).length,
+    ).toBeGreaterThan(0);
 
     events.push(
       healthEvent({
@@ -230,13 +429,10 @@ describe("ProjectsPage live updates", () => {
         cursor: "nonce.3",
       }),
     );
-    // The recovery leaves no note behind: nothing is wrong now.
+    // The recovery leaves no note behind: nothing is wrong now, so the band
+    // goes away entirely rather than emptying out.
     await waitFor(() => {
-      expect(
-        screen.queryByText(
-          "Deployment/checkout-production/web: web is restarting repeatedly (7 restarts)",
-        ),
-      ).toBeNull();
+      expect(screen.queryByLabelText("Needs attention")).toBeNull();
     });
   });
 
@@ -248,9 +444,9 @@ describe("ProjectsPage live updates", () => {
     renderAt(transport, "/projects", "/projects", <ProjectsPage />);
 
     expect(
-      await screen.findByText("deploying", { selector: ".k-pill" }),
+      await screen.findAllByText("deploying", { selector: ".k-pill" }),
     ).toBeTruthy();
-    // The second Status answer is the one the card ends up showing.
+    // The second Status answer is the one the page ends up showing.
     expect(await screen.findByText("relisted")).toBeTruthy();
     expect(statusCalls()).toBeGreaterThan(1);
   });
