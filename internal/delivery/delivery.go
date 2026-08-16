@@ -37,7 +37,48 @@ type Manifest struct {
 	Name       string
 	Namespace  string
 	YAML       []byte
+
+	// Stage is which delivery stage this resource belongs to. It mirrors
+	// renderer.Stage for the same reason the four fields above mirror the
+	// renderer's identity: the publisher has to lay a set out by stage, and it
+	// must not import the renderer to learn how.
+	Stage Stage
 }
+
+// Stage is a rendered resource's position relative to a release hook
+// (issue #227, ADR-0019 decision 2), mirroring renderer.Stage.
+//
+// The renderer decides which stage a resource is in — it is the only thing that
+// knows what a migration depends on — and the delivery plane decides what to do
+// about it: two directories in the artifact, and two Flux Kustomizations with a
+// `dependsOn` between them (internal/artifact, internal/controller). That is the
+// division ADR-0029 draws: the renderer emits manifests, the controller owns the
+// Kustomization topology.
+//
+// The three values partition into two overlapping sets, not three:
+//
+//	release stage  = StagePrerequisite + StageRelease
+//	workload stage = StagePrerequisite + StageWorkload
+type Stage uint8
+
+const (
+	// StageWorkload is the default and the whole set when nothing declares a
+	// release hook.
+	StageWorkload Stage = iota
+	// StagePrerequisite is applied by both stages: what the release Job needs
+	// in order to run at all.
+	StagePrerequisite
+	// StageRelease is the release stage alone — the hook Jobs, which must never
+	// reach the Kustomization that applies the workloads.
+	StageRelease
+)
+
+// ReleaseStageDir is the directory inside a published artifact that holds the
+// release stage. It is the one spelling: the publisher writes it
+// (internal/artifact's ManifestFiles), the controller's release Kustomization
+// points `spec.path` at it, and the preview template the renderer writes names
+// the same directory (internal/renderer/previews.go).
+const ReleaseStageDir = "release"
 
 // ManifestSet is a rendered set with its identity: the output for one
 // deployment, plus the provenance that makes status readback and history

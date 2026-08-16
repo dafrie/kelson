@@ -18,6 +18,10 @@ import (
 // of the Job whose pod names it (release.go). An agent renders as a worker with
 // that identity and nothing else: its tool policy is refused at validation
 // until #75, so nothing agent-specific can reach this function.
+//
+// Everything this function emits stays [StageWorkload], which is the default:
+// these are exactly the resources that must not roll until the release hook has
+// succeeded.
 func componentManifests(
 	resolved *model.Resolved,
 	c *model.ResolvedComponent,
@@ -40,7 +44,14 @@ func componentManifests(
 		specHash:    hash,
 	}
 
-	out := []Manifest{serviceAccount(prov)}
+	// The ServiceAccount of a component with a release hook has already been
+	// emitted, ahead of the Job whose pod names it (release.go). It is moved,
+	// never duplicated: two ServiceAccount documents of the same name in one set
+	// would be one resource applied twice and pruned once.
+	var out []Manifest
+	if c.Release == nil {
+		out = append(out, serviceAccount(prov))
+	}
 	if c.Kind == model.ComponentService {
 		out = append(out, service(c, prov))
 	}

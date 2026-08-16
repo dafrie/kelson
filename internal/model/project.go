@@ -350,12 +350,12 @@ type Component struct {
 	// it for the reason they refuse every workload field — what they run is
 	// their operator's business (ADR-0005).
 	//
-	// It is validated and then refused (schema/not-implemented) until the
-	// two-Kustomization `dependsOn` split gives Flux the barrier the deleted
-	// direct adapter used to provide (ADR-0028 decision 8, issue #227). Order
-	// in a rendered set is not a wait, so rendering the Job anyway would run
-	// the migration beside the rollout instead of before it.
-	Release *Release `yaml:"release,omitempty" json:"release,omitempty" jsonschema:"description=command run to completion before this revision's workloads roll; refused until issue #227"`
+	// The ordering guarantee is Flux's: the hook renders a Job into a stage of
+	// its own, and the Kustomization that applies the workloads `dependsOn` the
+	// one that applies the Job and waits for it to complete (issue #227,
+	// internal/renderer/release.go). A failed migration therefore blocks the
+	// rollout instead of running beside it.
+	Release *Release `yaml:"release,omitempty" json:"release,omitempty" jsonschema:"description=command run to completion before this revision's workloads roll"`
 
 	// Tools is the tool subset an agent component may call — the per-agent
 	// capability policy ADR-0014 records as mandatory practice for this

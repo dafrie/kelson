@@ -84,8 +84,25 @@ const annReconcileEvery = "fluxcd.controlplane.io/reconcileEvery"
 const previewInterval = "10m"
 
 // previewArtifactPath is the directory inside the artifact the Kustomization
-// builds. kelson's rendered output is a flat manifest set at the artifact root.
+// builds. kelson's rendered output is a flat manifest set at the artifact root
+// — or, when the set carries a release hook, a root that lists only the
+// workload stage in a generated kustomization.yaml (internal/artifact).
 const previewArtifactPath = "./"
+
+// previewReleasePath is where the release stage lands inside an artifact.
+//
+// The authority for the directory name is [delivery.ReleaseStageDir], which is
+// what the publisher writes and what the controller's own Kustomization points
+// at; this package may not import the delivery plane, so the string is repeated
+// here and TestPreviewReleasePathMatchesTheArtifactLayout
+// (internal/controller/release_test.go) is what keeps the two from drifting.
+const previewReleasePath = "./release"
+
+// releasePreviewName is the release Kustomization of one preview. The suffix is
+// the same one the environment's own pair uses (internal/controller's
+// ReleaseObjectName), for the reason every other name in this file is shared:
+// an operator should not have to learn two spellings of the same idea.
+func releasePreviewName(child string) string { return child + "-release" }
 
 // previewProviderType maps kelson's forge enum onto flux-operator's provider
 // types. The enum is two wide on purpose (ADR-0017): the operator also speaks
@@ -255,6 +272,44 @@ func previewResourcesTemplate(resolved *model.Resolved, previews *model.Resolved
 		b.WriteString("  secretRef:\n")
 		b.WriteString("    name: " + previews.Artifacts.SecretRef + "\n")
 	}
+	// The release stage, when the project declares one. A preview's artifact is
+	// rendered by this same renderer, so it carries the same `release/`
+	// directory the environment's does, and a preview that applied it in one
+	// pass would run the migration beside the rollout — the exact failure the
+	// split exists to prevent, reintroduced by the one Kustomization kelson
+	// writes as text. This is what closes the gap ADR-0019 left open and #104's
+	// second acceptance criterion asked for: previews run migrations, and they
+	// run them the same way production does, because it is one renderer and one
+	// publisher (ADR-0028 decision 2).
+	//
+	// prune is false here for the reason it is false on the environment's own
+	// release Kustomization (internal/controller/fluxobjects.go): the Job's name
+	// is its idempotency key, and a pruned Job is a migration that runs again.
+	// Nothing is lost by not pruning — a preview's whole namespace goes when the
+	// change request closes, which is the lifecycle flux-operator owns.
+	release := releasePreviewName(child)
+	if hasReleaseHook(resolved) {
+		b.WriteString("---\n")
+		b.WriteString("apiVersion: " + kustomizationAPIVersion + "\n")
+		b.WriteString("kind: Kustomization\n")
+		b.WriteString("metadata:\n")
+		b.WriteString("  name: " + release + "\n")
+		b.WriteString("  namespace: " + ns + "\n")
+		b.WriteString("spec:\n")
+		b.WriteString("  interval: " + previewInterval + "\n")
+		b.WriteString("  prune: false\n")
+		b.WriteString("  wait: true\n")
+		b.WriteString("  timeout: " + releaseStageTimeout(resolved) + "\n")
+		b.WriteString("  targetNamespace: " + child + "\n")
+		b.WriteString("  sourceRef:\n")
+		b.WriteString("    kind: OCIRepository\n")
+		b.WriteString("    name: " + child + "\n")
+		b.WriteString("  path: " + previewReleasePath + "\n")
+		if resolved.Environment.Secrets.Backend == model.SecretsSOPS {
+			b.WriteString(SOPSDecryptionBlock(resolved.Environment.Secrets.AgeKeySecret, "  "))
+		}
+	}
+
 	b.WriteString("---\n")
 	b.WriteString("apiVersion: " + kustomizationAPIVersion + "\n")
 	b.WriteString("kind: Kustomization\n")
@@ -269,6 +324,15 @@ func previewResourcesTemplate(resolved *model.Resolved, previews *model.Resolved
 	// to remember.
 	b.WriteString("  prune: true\n")
 	b.WriteString("  wait: true\n")
+	if hasReleaseHook(resolved) {
+		// The barrier. kustomize-controller does not begin applying this
+		// Kustomization until the one named here reports Ready, and the release
+		// stage reports Ready only once its Job has completed — so a failed
+		// migration leaves this Kustomization on its previous revision instead of
+		// rolling a workload against a database that was never migrated.
+		b.WriteString("  dependsOn:\n")
+		b.WriteString("    - name: " + release + "\n")
+	}
 	// targetNamespace is a boundary, not a convenience. The artifact is already
 	// rendered for this namespace, so it is normally redundant — it is written
 	// so that the blast radius of a mis-published artifact is a property of the
@@ -281,13 +345,33 @@ func previewResourcesTemplate(resolved *model.Resolved, previews *model.Resolved
 	// Under the sops backend a preview's artifact carries the same encrypted
 	// Secrets the parent environment's path does, so its Kustomization needs
 	// the same decryption block or every preview pod fails at start against a
-	// Secret nothing decrypted (ADR-0022). This is the only Kustomization
-	// kelson writes, and it is written through the same function that states
-	// the requirement to the operator, so the two cannot drift.
+	// Secret nothing decrypted (ADR-0022). It is written through the same
+	// function that states the requirement to the operator, so the two cannot
+	// drift.
 	if resolved.Environment.Secrets.Backend == model.SecretsSOPS {
 		b.WriteString(SOPSDecryptionBlock(resolved.Environment.Secrets.AgeKeySecret, "  "))
 	}
 	return b.String()
+}
+
+// hasReleaseHook reports whether any component declares one. It reads the
+// resolved spec rather than the rendered set because the preview template is
+// built beside the manifests rather than from them.
+func hasReleaseHook(resolved *model.Resolved) bool {
+	for i := range resolved.Components {
+		if resolved.Components[i].Release != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// releaseStageTimeout is how long a preview's release Kustomization may wait for
+// its Job, as a Go duration string. See [ReleaseTimeoutSeconds] for why the
+// Kustomization needs one at all; the extra minute covers the apply and the
+// scheduling that precede the command itself.
+func releaseStageTimeout(resolved *model.Resolved) string {
+	return strconv.Itoa(ReleaseTimeoutSeconds(resolved)+60) + "s"
 }
 
 // blockNode emits a string as a YAML literal block scalar. The default style

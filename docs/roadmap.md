@@ -31,7 +31,9 @@ with one spine — render, push an immutable OCI artifact, let Flux reconcile;
 | **R3 · Install path** ([#226](https://github.com/dafrie/kelson/issues/226)) | the flux-aio catalog row and its release-time render, kelson's own CRDs as a catalog entry, chart and RBAC for the controller, previews re-verified against the shared publisher | a cluster with nothing gets a working kelson in one install path |
 
 Follow-ups, deliberately out of the three phases:
-[#227](https://github.com/dafrie/kelson/issues/227) Flux-native release hooks ·
+[#227](https://github.com/dafrie/kelson/issues/227) Flux-native release hooks **(landed)** — two
+`Kustomization`s over one `OCIRepository`, the workload one `dependsOn` a release one that health-gates
+on the hook Job; previews inherit it through the shared publisher ·
 [#228](https://github.com/dafrie/kelson/issues/228) `ExternalArtifact` for registry-less clusters ·
 [#229](https://github.com/dafrie/kelson/issues/229) admission webhook ·
 [#230](https://github.com/dafrie/kelson/issues/230) `kind: timoni` ·
@@ -189,6 +191,9 @@ a proven substrate.
 
 **Branching still pulls the release-command hook forward.** Migrations matter for any app with a
 database, so #104 stayed in M9 (v0.1) rather than waiting for M9b or day-2 operations in M14. The hook
-shipped, and [ADR-0028](adr/0028-delivery-spine.md) then took its implementation away with the mode it
-depended on: `release:` is a validated refusal until the two-`Kustomization` `dependsOn` split is built
-([#227](https://github.com/dafrie/kelson/issues/227)). That is a regression, recorded as one.
+shipped, [ADR-0028](adr/0028-delivery-spine.md) took its implementation away with the mode it depended
+on — `release:` spent one release as a validated refusal — and
+[#227](https://github.com/dafrie/kelson/issues/227) has since given it back on Flux's own terms: two
+`Kustomization`s with a `dependsOn`, the first health-gated on the Job. The regression is closed, and
+it closed *better* than it opened: previews run migrations now, which is the acceptance criterion #104
+had open from the start.

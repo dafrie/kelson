@@ -1381,17 +1381,17 @@ func (v *validator) workloadComponent(
 // release validates a component's release-command hook (issue #104): the kinds
 // it applies to, the command it must name, and the timeout's grammar.
 //
-// The hook is *gated* (ADR-0028 decision 8): the plane that waited for the Job
-// is deleted, so the field renders nothing and the gate table refuses it by
-// name. The shape checks below still run, for the reason [validator.tools]
-// gives — the gate is about what kelson implements, not about what the author
-// wrote, and an author who fixes the shape should not meet a second problem in
-// it the day #227 lands.
+// What is *not* checked here is anything about delivery. The hook spent one
+// release in the gate table, because ADR-0028 deleted the plane that held an
+// apply open between the Job and the Deployments; issue #227 gave it a barrier
+// that is Flux's own — two Kustomizations with a `dependsOn`, the first
+// health-gated on the Job — so the row is gone and a document that declares a
+// release hook renders one. There is no mode to be refused against: a document
+// that validates renders, everywhere, always (ADR-0028 decision 8).
 func (v *validator) release(field string, c Component, kind ComponentKind) {
 	if c.Release == nil {
 		return
 	}
-	v.gate("$.spec.components[].release", field+".release")
 	if kind == ComponentCron {
 		v.err(ErrMutuallyExclusive, field+".release",
 			fmt.Sprintf("component %q has kind %q, and a release command runs once per deploy", c.Name, kind),

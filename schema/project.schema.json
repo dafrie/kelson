@@ -442,7 +442,7 @@
                 "required": [
                   "command"
                 ],
-                "description": "command run to completion before this revision's workloads roll; refused until issue #227"
+                "description": "command run to completion before this revision's workloads roll"
               },
               "tools": {
                 "items": {

@@ -97,21 +97,6 @@ var notImplementedFields = []notImplemented{
 		TrackedBy: "milestone M11 · Teams, RBAC & multi-tenancy",
 	},
 	{
-		Kind: KindProject,
-		Path: "$.spec.components[].release",
-		What: "release-command hooks",
-		// This row arrives from the *renderer* rather than from a milestone that
-		// has not started (ADR-0028 decision 8). A release hook rendered a Job
-		// ahead of the workloads and the direct adapter waited for it; that
-		// adapter is deleted, and order alone does not wait — a Job applied
-		// before a Deployment says nothing about the Job having finished
-		// (issue #89). Rendering it anyway would run migrations *beside* the
-		// rollout instead of before it, which is the quiet half-success this
-		// table exists to prevent, so the field is validated and refused until
-		// the two-Kustomization dependsOn split gives Flux the barrier.
-		TrackedBy: "issue #227 (the Flux-native replacement for #104's direct-mode Job)",
-	},
-	{
 		Kind:      KindEnvironment,
 		Path:      "$.spec.cluster",
 		What:      "multi-cluster targeting",
@@ -123,6 +108,17 @@ var notImplementedFields = []notImplemented{
 		What:      "human deployer lists",
 		TrackedBy: "milestone M11 · Teams, RBAC & multi-tenancy",
 	},
+	// `$.spec.components[].release` is gone, and it is the clearest case yet of a
+	// row that was about a missing *mechanism* rather than a missing feature
+	// (issue #227). The field validated and resolved throughout; what it lacked
+	// was somewhere for the barrier to live once ADR-0028 deleted the plane that
+	// held an apply open between two resources. It has one now — two Flux
+	// Kustomizations with a `dependsOn`, the first health-gated on the hook Job —
+	// so the row went and the two paths beneath it moved onto renderedFields.
+	// Nothing about the field's shape, its precedence or its resolution changed
+	// in the process, which is exactly what this table promises when it says a
+	// gate is validation-level only.
+	//
 	// The two `autoDeploy` rows are gone (ADR-0036 decision 3, issue #248). They
 	// were here while the flag resolved and nothing read the answer; the trigger
 	// paths read it now — internal/api's ReportBuild with a ref and no PR, and

@@ -118,11 +118,11 @@ Every leaf of the spec is a component, and the kind is derived where the shape s
 This is close to today's shape, not identical to it. The `kind: postgres` component and its `from:` binding
 render since [#89](https://github.com/dafrie/kelson/issues/89); what a field cannot honour it refuses by
 name rather than accepting and rendering nothing ([#141](https://github.com/dafrie/kelson/issues/141)) —
-`tools:` on a `kind: agent` component (M7, [#75](https://github.com/dafrie/kelson/issues/75)),
-`policy.deployers` (tenancy, [#231](https://github.com/dafrie/kelson/issues/231)) and, since
-[ADR-0028](adr/0028-delivery-spine.md), `components[].release` pending its Flux-native design
-([#227](https://github.com/dafrie/kelson/issues/227)). See [the model reference](model.md) for the
-current table.
+`tools:` on a `kind: agent` component (M7, [#75](https://github.com/dafrie/kelson/issues/75)) and
+`policy.deployers` (tenancy, [#231](https://github.com/dafrie/kelson/issues/231)). `components[].release`
+was on that list for one release and is not any more: it renders a Job again, behind a `dependsOn`
+between two `Kustomization`s ([#227](https://github.com/dafrie/kelson/issues/227)). See
+[the model reference](model.md) for the current table.
 
 Environments carry what differs between deployments — namespace, domain suffix, replica and resource
 overrides, secrets backend, policy. Projects stay environment-agnostic; environments stay
@@ -502,7 +502,6 @@ these exist, and each has an issue rather than a stub in the schema.
 | Admission webhook for the CRDs | Costs a serving certificate, a `CABundle` to rotate and a failure mode where broken kelson rejects unrelated applies. Generated CEL rules on the CRD schema are what make deferring it tolerable | [#229](https://github.com/dafrie/kelson/issues/229) |
 | `kind: timoni` | Reserved, mirroring `kind: helm`. Timoni is a packaging layer *below* kelson's authoring layer, and there is no GA in-cluster timoni controller to delegate to ([ADR-0029](adr/0029-renderer-stays-go.md)) | [#230](https://github.com/dafrie/kelson/issues/230) |
 | `ExternalArtifact` (Flux ≥2.7) | The registry-less path. An addition to the spine, not a replacement — and an unused second publishing path is a second publishing path to test | [#228](https://github.com/dafrie/kelson/issues/228) |
-| Flux-native release hooks | Two `Kustomization`s with `dependsOn`. Possible only now that kelson owns the Kustomization; `components[].release` is a validated refusal until it is built | [#227](https://github.com/dafrie/kelson/issues/227) |
 
 ## What we deliberately do not build
 

@@ -10,6 +10,7 @@ import (
 	"github.com/dafrie/kelson/internal/artifact"
 	"github.com/dafrie/kelson/internal/build/registry"
 	"github.com/dafrie/kelson/internal/delivery"
+	"github.com/dafrie/kelson/internal/renderer"
 )
 
 // The provenance annotations a spine artifact carries beyond the OCI ones.
@@ -75,6 +76,7 @@ func (d *FluxDeliverer) publish(ctx context.Context, rev Revision, repository, t
 			Name:       m.Name,
 			Namespace:  m.Namespace,
 			YAML:       body,
+			Stage:      deliveryStage(m.Stage),
 		})
 	}
 
@@ -149,6 +151,22 @@ func classifyPush(err error, repository, tag string) error {
 	// round: a retry costs a request, and refusing to retry something that
 	// would have worked costs a deployment.
 	return newDeliveryError(v1alpha1.ReasonRegistryUnreachable, doing, err)
+}
+
+// deliveryStage carries the renderer's verdict across the plane boundary. The
+// two enums are deliberately separate types — internal/delivery does not import
+// the renderer, so that its vocabulary cannot drift into renderer internals —
+// which makes this the one place they meet, and the one place a new stage would
+// have to be taught about.
+func deliveryStage(s renderer.Stage) delivery.Stage {
+	switch s {
+	case renderer.StagePrerequisite:
+		return delivery.StagePrerequisite
+	case renderer.StageRelease:
+		return delivery.StageRelease
+	default:
+		return delivery.StageWorkload
+	}
 }
 
 func (d *FluxDeliverer) pusher() PusherFor {

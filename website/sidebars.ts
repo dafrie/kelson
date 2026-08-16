@@ -240,6 +240,11 @@ const sidebars: SidebarsConfig = {
           id: 'adr/0036-autodeploy',
           label: '0036 — autoDeploy',
         },
+        {
+          type: 'doc',
+          id: 'adr/0037-release-hooks-on-the-spine',
+          label: '0037 — Release hooks on the spine',
+        },
       ],
     },
   ],
