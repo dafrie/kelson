@@ -1,0 +1,34 @@
+/*
+ * The drift mark (#260).
+ *
+ * Shaped like the status badge's quiet tier and deliberately not like its loud
+ * one: hairline ring, neutral ink, no fill, and the only colour on it a 5px dot
+ * in `--kelson-suspended`. Stale is not a failure — an environment on revision
+ * 44 is very often live and well — so painting it amber would spend the
+ * Console's whole colour budget on news that is not bad.
+ *
+ * It is sans where the badge is mono, and that difference is the point: the
+ * badge's text is either a computed word or a structured code, and this is a
+ * sentence about the mono revision sitting beside it.
+ */
+
+.k-drift {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 7px;
+  border: 1px solid var(--kelson-hairline);
+  border-radius: var(--kelson-radius-control);
+  font-size: var(--kelson-size-micro);
+  line-height: 1.5;
+  color: var(--kelson-text-2);
+  white-space: nowrap;
+}
+
+.k-drift__dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--kelson-suspended);
+  flex: none;
+}

@@ -52,6 +52,8 @@ export interface ResourceVerdict {
   code: string;
   healthy: boolean;
   degraded: boolean;
+  /** The probe gave up waiting. Not a failure, and not the same as degraded. */
+  stuck: boolean;
   message: string;
   remediation: string;
 }
@@ -225,7 +227,7 @@ function DataServiceRow({
           <span className="k-soon">Deferred</span>
         ) : verdict !== undefined ? (
           <StatusPill
-            status={verdictTone(verdict.healthy, verdict.degraded)}
+            status={verdictTone(verdict)}
             label={verdict.code || "unknown"}
           />
         ) : null}

@@ -1,5 +1,5 @@
 import {
-  statusForPhase,
+  statusForDelivery,
   statusForVerdict,
   UNKNOWN_STATUS,
   type Status,
@@ -48,6 +48,12 @@ export interface VerdictRow {
   code: string;
   healthy: boolean;
   degraded: boolean;
+  /**
+   * The probe gave up waiting on this workload. Deliberately not a failure —
+   * `code` stays a wait code — which is why `degraded` excludes it rather than
+   * covering it.
+   */
+  stuck: boolean;
   message: string;
   remediation: string;
 }
@@ -67,7 +73,9 @@ export interface LiveVerdict {
  * rather than left pointing at the wrong problem. `degraded` is likewise
  * recomputed as the softer claim the event supports: the failure-code set is
  * observation's (IsFailure) and lives in Go, so the browser must not guess
- * which side of it a live code falls on.
+ * which side of it a live code falls on. `stuck` goes the same way as the
+ * remediation and for the same reason: it was the probe's timeout verdict about
+ * the code this event just replaced, and the event carries no new one.
  *
  * A workload the event names but Status never returned is appended: a
  * Deployment that appeared since the last read is real, and hiding it until the
@@ -86,6 +94,7 @@ export function mergeVerdicts(
         code: v.code,
         healthy: v.healthy,
         degraded: v.degraded,
+        stuck: v.stuck,
         message: v.message,
         remediation: v.remediation,
       };
@@ -96,6 +105,7 @@ export function mergeVerdicts(
       code: update.code,
       healthy: update.healthy,
       degraded: !update.healthy,
+      stuck: false,
       message: update.message,
       remediation: "",
     };
@@ -106,6 +116,7 @@ export function mergeVerdicts(
       code: update.code,
       healthy: update.healthy,
       degraded: !update.healthy,
+      stuck: false,
       message: update.message,
       remediation: "",
     });
@@ -113,13 +124,83 @@ export function mergeVerdicts(
   return rows;
 }
 
-/** One environment's answer, as the matrix needs it. */
-export interface EnvironmentRead {
-  environment: string;
+/**
+ * The delivery half of `DeployService.Status`, as every screen needs it.
+ *
+ * Six fields and no interpretation. `answer` and `stale` are the two the wire
+ * gained for #260 and they travel together with the phase and revision they
+ * were computed about — see `deliveryFacts` for what happens when a live
+ * transition replaces those.
+ */
+export interface DeliveryFacts {
   /** The delivery phase, empty when nothing reported one. */
+  phase: string;
+  /** The engine's own verdict. Empty means it was not reported, never "fine". */
+  answer: string;
+  revision: string;
+  /** The revision observed serving. Agrees with `revision` on this spine. */
+  observedRevision: string;
+  cause: string;
+  /** The environment is not serving the spec it holds. Not a health claim. */
+  stale: boolean;
+}
+
+export const NO_DELIVERY: DeliveryFacts = {
+  phase: "",
+  answer: "",
+  revision: "",
+  observedRevision: "",
+  cause: "",
+  stale: false,
+};
+
+/** What `EventService`'s StatusTransition carries: four fields and no more. */
+export interface Transition {
   phase: string;
   revision: string;
   cause: string;
+}
+
+/**
+ * A Status read with the stream's transition applied over it.
+ *
+ * A transition replaces the three fields it carries whole — the fetched
+ * revision and cause described the phase the environment has just left — and
+ * the two it does *not* carry have to be dropped rather than kept, because both
+ * were computed about the read that has just been superseded:
+ *
+ * - **`answer`** is the engine's verdict about the phase that was polled, not
+ *   about the phase that just arrived. It goes empty, and the word falls back
+ *   to being derived from the new phase, which is `statusForDelivery`'s honest
+ *   half. Keeping it would leave `live` on screen through a redeploy.
+ * - **`stale`** was computed for the revision that was polled, so it survives
+ *   only when the transition names that same revision. Otherwise there is
+ *   nothing to compare against and the field's own `false` says exactly that
+ *   ("they agree, or kelson could not compare"), which this UI renders as no
+ *   claim rather than as "current".
+ *
+ * A missing read is `NO_DELIVERY`, plus whatever the transition said: a stream
+ * event about an environment whose Status failed is still a real phase.
+ */
+export function deliveryFacts(
+  data: DeliveryFacts | undefined,
+  transition: Transition | undefined,
+): DeliveryFacts {
+  const read = data ?? NO_DELIVERY;
+  if (transition === undefined) return { ...read };
+  return {
+    phase: transition.phase,
+    answer: "",
+    revision: transition.revision,
+    observedRevision: transition.revision,
+    cause: transition.cause,
+    stale: read.stale && transition.revision === read.revision,
+  };
+}
+
+/** One environment's answer, as the matrix needs it. */
+export interface EnvironmentRead extends DeliveryFacts {
+  environment: string;
   /** The resolved namespace, which is how a verdict is matched to a component. */
   namespace: string;
   verdicts: readonly VerdictRow[];
@@ -128,10 +209,8 @@ export interface EnvironmentRead {
 }
 
 export const NO_READ: EnvironmentRead = {
+  ...NO_DELIVERY,
   environment: "",
-  phase: "",
-  revision: "",
-  cause: "",
   namespace: "",
   verdicts: [],
   read: false,
@@ -186,7 +265,8 @@ export function readCell(
   if (!read.read) {
     return { status: UNKNOWN_STATUS, basis: "unread", code: "", detail: "" };
   }
-  const environment = statusForPhase(read.phase);
+  // The engine's own answer where it sent one; the phase derivation otherwise.
+  const environment = statusForDelivery(read.answer, read.phase);
   if (verdict === undefined) {
     return {
       status: environment,
@@ -196,7 +276,7 @@ export function readCell(
     };
   }
   return {
-    status: statusForVerdict(verdict.healthy, verdict.degraded, environment),
+    status: statusForVerdict(verdict, environment),
     basis: "component",
     code: verdict.code,
     detail: verdict.healthy ? "" : verdict.message,
@@ -251,6 +331,14 @@ export function componentsFromVerdicts(
  * to ignore. `suspended` is out for the opposite reason — nothing is trying, on
  * purpose. `unknown` is in, because "we could not tell" is exactly the state a
  * person has to go and look at, and this UI has never rendered it as fine.
+ *
+ * **Drift is out, and it is out by construction.** The band is keyed on the
+ * word, `stale` is not a word, and nothing maps it to one — so an environment
+ * that is stale and `live` never reaches the band, which is right: revision 44
+ * is up and well, and a rollback pin is stale on purpose. An environment that
+ * is stale and `stuck` is already in the band on the strength of `stuck`. The
+ * one thing drift must never become is a fifth entry in this set: the band is
+ * the loudest object in the system and drift is not bad news.
  */
 const ATTENTION: ReadonlySet<StatusWord> = new Set<StatusWord>([
   "failed",

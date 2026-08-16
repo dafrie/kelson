@@ -7,19 +7,25 @@ import { toFailure, type Failure } from "../api/errors";
 import type { StatusResponse } from "../gen/kelson/v1alpha1/deploy_pb";
 import type { WatchResponse_Event } from "../gen/kelson/v1alpha1/events_pb";
 import { Copyable } from "../components/Copyable";
+import { DriftMark } from "../components/DriftMark";
 import { ErrorPanel } from "../components/ErrorPanel";
 import { LiveIndicator } from "../components/LiveIndicator";
 import { StatusPill } from "../components/StatusPill";
 import {
+  driftFor,
   statusFor,
-  statusForPhase,
+  statusForDelivery,
   UNKNOWN_STATUS,
+  type Drift,
   type Status,
   type StatusWord,
 } from "../components/status";
 import { EmptyState, LoadingState } from "../components/States";
+import { Ticker } from "../live/Ticker";
+import { useTicker } from "../live/ticker";
 import {
   componentsFromVerdicts,
+  deliveryFacts,
   mergeVerdicts,
   needsAttention,
   readCell,
@@ -125,7 +131,14 @@ export function ProjectsPage() {
   const [live, setLive] = useState<Record<string, EnvironmentLive>>({});
   const [generation, setGeneration] = useState(0);
 
+  // Instance-wide: no scope, so every watched pair's transitions land in one
+  // ring. It reads the same events the overlay below does — one stream, two
+  // readers, and the ticker is the one that keeps the sequence.
+  const ticker = useTicker();
+  const recordTick = ticker.record;
+
   const onEvent = useCallback((event: WatchResponse_Event) => {
+    recordTick(event);
     const key = `${event.project}/${event.environment}`;
     const payload = event.payload;
     setLive((prev) => {
@@ -153,7 +166,7 @@ export function ProjectsPage() {
       }
       return prev;
     });
-  }, []);
+  }, [recordTick]);
 
   const reloadSpecs = specs.reload;
   const onResync = useCallback(() => {
@@ -263,9 +276,20 @@ export function ProjectsPage() {
           </section>
         ),
       )}
+
+      {/* Last on the page, and absent until something happens. Home's job is
+          "what is the state of everything", which the grid above answers; this
+          is "what has been happening while I watched", which is context for it
+          and never the headline. Short, too — the ring holds twenty and this
+          shows the newest few, because a home screen is already long and an
+          ambient strip that pushes the projects up is not ambient. */}
+      <Ticker entries={ticker.entries} state={watch} limit={HOME_TICKS} />
     </>
   );
 }
+
+/** How many rows home draws of the ring it keeps. */
+const HOME_TICKS = 5;
 
 /**
  * The band, which is absent when there is nothing in it.
@@ -377,36 +401,30 @@ function EnvironmentBlock({
 
   const failure: Failure | undefined =
     status.error === undefined ? undefined : toFailure(status.error);
-  // A transition is a whole replacement for the three fields it carries: the
-  // fetched revision and cause described the phase this environment has just
-  // left.
-  const phase = live?.transition?.phase ?? status.data?.phase ?? "";
-  const revision = live?.transition
-    ? live.transition.revision
-    : (status.data?.revision ?? "");
-  const cause = live?.transition
-    ? live.transition.cause
-    : (status.data?.cause ?? "");
 
   const verdicts = useMemo(
     () => mergeVerdicts(status.data?.verdicts, live?.verdicts ?? {}),
     [status.data, live?.verdicts],
   );
+  // A transition replaces the fields it carries whole, and voids the two it
+  // does not — `matrix.ts`'s deliveryFacts is where that rule is written down.
   const read = useMemo<EnvironmentRead>(
     () => ({
+      ...deliveryFacts(status.data, live?.transition),
       environment,
-      phase,
-      revision,
-      cause,
       namespace: status.data?.namespace ?? "",
       verdicts,
       read: failure === undefined && status.data !== undefined,
     }),
-    [environment, phase, revision, cause, status.data, verdicts, failure],
+    [environment, status.data, live?.transition, verdicts, failure],
   );
+  const { revision, cause } = read;
 
   const state: Status =
-    failure !== undefined || !read.read ? UNKNOWN_STATUS : statusForPhase(phase);
+    failure !== undefined || !read.read
+      ? UNKNOWN_STATUS
+      : statusForDelivery(read.answer, read.phase);
+  const drift = failure !== undefined ? undefined : driftFor(read);
   const rows = useMemo(
     () =>
       componentsFromVerdicts(read, project).map((found) => ({
@@ -488,6 +506,7 @@ function EnvironmentBlock({
             failure={failure}
             revision={revision}
             cause={cause}
+            drift={drift}
           />
         </span>
       </div>
@@ -529,11 +548,13 @@ function EnvironmentMeta({
   failure,
   revision,
   cause,
+  drift,
 }: {
   status: StatusResponse | undefined;
   failure: Failure | undefined;
   revision: string;
   cause: string;
+  drift: Drift | undefined;
 }) {
   if (failure !== undefined) {
     return <span className="k-card__reason">{reasonOf(failure)}</span>;
@@ -563,6 +584,9 @@ function EnvironmentMeta({
       ) : (
         <span className="k-card__rev">no revision recorded</span>
       )}
+      {/* Straight after the revision it is about, and before the counts: the
+          environment's word is already on the line above and keeps it. */}
+      <DriftMark drift={drift} />
       {counts.length > 0 ? (
         <span className="k-mono">{counts.join(" · ")}</span>
       ) : null}

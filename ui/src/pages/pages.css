@@ -648,9 +648,13 @@
   border-color: var(--kelson-inset-border);
 }
 
-/* The column's revision: the one machine value in a header row. */
+/* The column's revision: the one machine value in a header row — and, when it
+   has drifted, the sans sentence about it on the same line. */
 .k-matrix__rev {
-  display: block;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
   padding-left: 6px;
   font-size: var(--kelson-size-micro);
   color: var(--kelson-muted);

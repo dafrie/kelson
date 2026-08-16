@@ -5,19 +5,29 @@ import { useWatch } from "../api/watch";
 import { toFailure } from "../api/errors";
 import type { WatchResponse_Event } from "../gen/kelson/v1alpha1/events_pb";
 import { Copyable } from "../components/Copyable";
+import { DriftMark } from "../components/DriftMark";
 import { ErrorPanel } from "../components/ErrorPanel";
 import { LiveIndicator } from "../components/LiveIndicator";
 import { StatusPill } from "../components/StatusPill";
-import { statusForPhase, verdictTone } from "../components/status";
+import {
+  driftFor,
+  statusFor,
+  statusForDelivery,
+  verdictTone,
+  type Drift,
+} from "../components/status";
 import { LoadingState } from "../components/States";
 import { DataServices } from "../dataservices/DataServices";
 import { isDataServiceVerdict } from "../dataservices/parse";
 import { PhaseRail } from "../deploy/PhaseRail";
 import { parseCause, type RailInput } from "../deploy/rail";
+import { Ticker } from "../live/Ticker";
+import { useTicker } from "../live/ticker";
 import { Previews } from "../previews/Previews";
 import { SecretsPanel } from "../secrets/SecretsPanel";
 import { useEnvironment } from "./EnvironmentPage";
 import {
+  deliveryFacts,
   mergeVerdicts,
   NO_READ,
   type EnvironmentRead,
@@ -41,11 +51,17 @@ import {
  * transitions move the rail and the pill, health changes replace the verdict
  * they name.
  *
- * The two things the deploy stream has and this does not are still NOT
- * invented: `StatusResponse` carries no adapter name, so the reconciler stage
- * reads "not reported" until a failure cause names a component, and it carries
- * no `stuck` flag, so a stuck verdict is recovered from the engine's own cause
- * reasons (`deploy/rail.ts`'s `isStuckReason`).
+ * What the deploy stream has and this does not is still NOT invented:
+ * `StatusResponse` carries no adapter name, so the reconciler stage reads "not
+ * reported" until a failure cause names a component.
+ *
+ * `StatusResponse.answer` closed the other half of that gap — the engine's own
+ * verdict now reaches the pill and the rail without being re-derived here. Its
+ * one documented limit is honoured rather than papered over: `stuck` is a
+ * timeout verdict, a poll holds no budget that can expire, and so a poll that
+ * never says stuck has not ruled it out. The rail still recovers a stuck
+ * *stage* from the engine's cause reasons (`deploy/rail.ts`'s `isStuckReason`)
+ * for exactly that reason.
  */
 export function EnvironmentOverview() {
   const { project, environment, documents, specLoading } = useEnvironment();
@@ -64,7 +80,14 @@ export function EnvironmentOverview() {
   );
 
   const [live, setLive] = useState<Live>(NO_EVENTS);
+  // The ticker is a second reader of this same stream, not a second stream:
+  // `record` keeps the sequence the overlay below overwrites.
+  const ticker = useTicker(
+    useMemo(() => ({ project, environment }), [project, environment]),
+  );
+  const recordTick = ticker.record;
   const onEvent = useCallback((event: WatchResponse_Event) => {
+    recordTick(event);
     const payload = event.payload;
     setLive((prev) => {
       if (payload.case === "statusTransition") {
@@ -83,7 +106,7 @@ export function EnvironmentOverview() {
       }
       return prev;
     });
-  }, []);
+  }, [recordTick]);
 
   const reload = status.reload;
   const onResync = useCallback(() => {
@@ -103,17 +126,13 @@ export function EnvironmentOverview() {
     status.error === undefined ? undefined : toFailure(status.error);
   const loading = status.loading && status.data === undefined;
 
-  // A transition replaces the three fields it carries whole: the fetched
-  // revision and cause described the phase the environment has just left.
+  // A transition replaces the fields it carries whole, and voids the two it
+  // does not — `matrix.ts`'s deliveryFacts is where that rule is written down.
   const read = useMemo<EnvironmentRead>(() => {
     if (status.data === undefined) return { ...NO_READ, environment };
     return {
+      ...deliveryFacts(status.data, live.transition),
       environment,
-      phase: live.transition?.phase ?? status.data.phase,
-      revision: live.transition
-        ? live.transition.revision
-        : status.data.revision,
-      cause: live.transition ? live.transition.cause : status.data.cause,
       namespace: status.data.namespace,
       verdicts: mergeVerdicts(status.data.verdicts, live.verdicts),
       read: true,
@@ -131,11 +150,21 @@ export function EnvironmentOverview() {
   const railInput = useMemo<RailInput>(
     () => ({
       phase: read.phase,
+      // The engine's own verdict, so the rail's headline and the pill above it
+      // cannot disagree. Empty after a live transition, and the rail derives
+      // one from the phase exactly as it did before the field existed.
+      answer: read.answer,
       cause: parseCause(read.cause),
       reachedPhase: live.transition?.previousPhase,
       unhealthyWorkloads: workloads.filter((v) => !v.healthy).length,
     }),
-    [read.phase, read.cause, live.transition?.previousPhase, workloads],
+    [
+      read.phase,
+      read.answer,
+      read.cause,
+      live.transition?.previousPhase,
+      workloads,
+    ],
   );
   const documentText = useMemo(
     () => ({
@@ -159,7 +188,11 @@ export function EnvironmentOverview() {
             ) : loading ? (
               <StatusPill status="unknown" label="reading…" />
             ) : (
-              <EnvironmentStatus phase={read.phase} />
+              <EnvironmentStatus
+                phase={read.phase}
+                answer={read.answer}
+                drift={driftFor(read)}
+              />
             )}
             <LiveIndicator state={watch} />
           </div>
@@ -225,6 +258,19 @@ export function EnvironmentOverview() {
           </>
         ) : null}
 
+        {/* The sequence behind the rail above: what this environment has been
+            doing since the page opened, newest first. It sits outside the
+            `read.read` block on purpose — a transition about an environment
+            whose Status call failed is still a real phase, and the stream is
+            then the only thing on the page that can say anything at all. No
+            subject on the rows: the heading is already this environment. */}
+        <Ticker
+          entries={ticker.entries}
+          state={watch}
+          subject={false}
+          name={`Activity in ${environment}`}
+        />
+
         {/* Outside the status block on purpose: what a spec declares is
             readable without a cluster, and an environment whose status cannot
             be read still has databases worth describing. */}
@@ -284,12 +330,25 @@ function decodeDocument(bytes: Uint8Array | undefined): string {
  * labelled fact beside it rather than as the pill's text. The phase is what an
  * operator correlates with Flux and it stays reachable; it is not the answer to
  * "is my change live".
+ *
+ * The drift mark sits on the same line for the opposite reason: it *is* part of
+ * that answer, and the pair "live, and older than the spec" is the one sentence
+ * neither half says alone. It goes after the word and never over it.
  */
-function EnvironmentStatus({ phase }: { phase: string }) {
-  const state = statusForPhase(phase);
+function EnvironmentStatus({
+  phase,
+  answer,
+  drift,
+}: {
+  phase: string;
+  answer: string;
+  drift: Drift | undefined;
+}) {
+  const state = statusForDelivery(answer, phase);
   return (
     <>
       <StatusPill status={state.tone} label={state.word} />
+      <DriftMark drift={drift} />
       {phase !== "" ? (
         <span className="k-env__phase">
           phase <span className="k-mono">{phase}</span>
@@ -312,9 +371,17 @@ function Verdict({ verdict }: { verdict: VerdictRow }) {
             other structured code in this UI; only the colour is the shared
             vocabulary's, so a red line here means what a red pill means. */}
         <StatusPill
-          status={verdictTone(verdict.healthy, verdict.degraded)}
+          status={verdictTone(verdict)}
           label={verdict.code || "unknown"}
         />
+        {/* A stuck verdict keeps a *wait* code — `workload/progressing` — so
+            the code above cannot say it and the word has to. It is the only
+            case where a second badge appears on this row, and the reason is
+            that the two badges are saying different kinds of thing: what was
+            observed, and what it means. */}
+        {verdict.stuck ? (
+          <StatusPill status={statusFor("stuck").tone} label="stuck" />
+        ) : null}
       </div>
       {verdict.message ? (
         <p className="k-verdict__message">{verdict.message}</p>

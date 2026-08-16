@@ -319,6 +319,52 @@ describe("ProjectsPage attention band", () => {
       expect(screen.queryByLabelText("Needs attention")).toBeNull();
     });
   });
+
+  it("keeps a drifted-but-live environment out of the band, and still says it drifted", async () => {
+    // Stale is a statement about revisions and not about health (#260): this
+    // environment is on revision 44, which is up and well and simply is not
+    // what the stored spec would publish. That is worth stating and is not a
+    // to-do, so the line says it and the band stays absent.
+    const drifted = createRouterTransport((router) => {
+      router.service(SpecService, {
+        listSpecs: () => ({
+          specs: [
+            { project: "checkout", version: "7", environments: ["production"] },
+          ],
+        }),
+      });
+      router.service(DeployService, {
+        status: () => ({
+          phase: "Healthy",
+          answer: "live",
+          revision: "44-1a2b3c4d",
+          observedRevision: "44-1a2b3c4d",
+          stale: true,
+          namespace: "checkout-production",
+          verdicts: [
+            {
+              resource: "Deployment/checkout-production/web",
+              code: "healthy",
+              healthy: true,
+              degraded: false,
+              stuck: false,
+              message: "Deployment/checkout-production/web healthy",
+              remediation: "",
+            },
+          ],
+        }),
+      });
+    });
+    renderAt(drifted, "/projects", "/projects", <ProjectsPage />);
+
+    expect(
+      await screen.findAllByText("live", { selector: ".k-pill" }),
+    ).toHaveLength(2);
+    expect(screen.getByText("older than the spec")).toBeTruthy();
+    await waitFor(() => {
+      expect(screen.queryByLabelText("Needs attention")).toBeNull();
+    });
+  });
 });
 
 /**
@@ -386,7 +432,12 @@ describe("ProjectsPage live updates", () => {
     ).toBeTruthy();
     const pills = await screen.findAllByText("live", { selector: ".k-pill" });
     expect(pills).toHaveLength(2);
-    expect(screen.getByText("9d3f0aa")).toBeTruthy();
+    // The environment's own meta line. The same revision is also on the
+    // ticker's row for this transition (#260) — the meta line is what is
+    // running, the row is what happened — so the assertion names which.
+    expect(
+      screen.getByText("9d3f0aa", { selector: ".k-card__rev .k-copy__value" }),
+    ).toBeTruthy();
     expect(screen.getByText("3/3 replicas ready")).toBeTruthy();
     // In place: the environment was updated, not refetched.
     expect(statusCalls()).toBe(1);

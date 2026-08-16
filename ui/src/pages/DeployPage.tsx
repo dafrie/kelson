@@ -17,7 +17,7 @@ import { Disclosure, YamlBlock } from "../components/Disclosure";
 import { ErrorPanel } from "../components/ErrorPanel";
 import { StatusPill } from "../components/StatusPill";
 import { formatInstant } from "../components/format";
-import { statusForAnswer, statusForPhase } from "../components/status";
+import { statusForAnswer, statusForDelivery } from "../components/status";
 import { LoadingState } from "../components/States";
 import { DiffView } from "../diff/DiffView";
 import { decodeDiff, type Diff } from "../diff/parse";
@@ -505,7 +505,10 @@ function TransitionRow({ transition }: { transition: DeployResponse_Transition }
  */
 function Settled({ settled }: { settled: DeployResponse_Settled }) {
   const phase = settled.final?.phase ?? "";
-  const state = statusForPhase(phase);
+  // The final transition carries the engine's own answer; the phase is the
+  // fallback for a server that sent none, and it is what `data-settled` keys on
+  // because "Healthy" is a phase and `live` is a word.
+  const state = statusForDelivery(settled.final?.answer ?? "", phase);
   return (
     <div
       className={phase === "Healthy" ? "k-settled" : "k-settled k-settled--other"}

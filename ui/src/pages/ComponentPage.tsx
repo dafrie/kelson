@@ -4,9 +4,10 @@ import { Link, useParams } from "react-router-dom";
 import { useAsync, useClients } from "../api/data";
 import { toFailure } from "../api/errors";
 import { Copyable } from "../components/Copyable";
+import { DriftMark } from "../components/DriftMark";
 import { ErrorPanel } from "../components/ErrorPanel";
 import { StatusPill } from "../components/StatusPill";
-import { verdictTone } from "../components/status";
+import { driftFor, statusFor, verdictTone } from "../components/status";
 import { EmptyState, LoadingState } from "../components/States";
 import {
   bindingFor,
@@ -20,7 +21,9 @@ import {
   type SourceBinding,
 } from "../spec/components";
 import {
+  deliveryFacts,
   mergeVerdicts,
+  NO_READ,
   readCell,
   verdictFor,
   type EnvironmentRead,
@@ -110,20 +113,10 @@ export function ComponentPage() {
   const read = useMemo<EnvironmentRead>(
     () =>
       status.data === undefined
-        ? {
-            environment: env,
-            phase: "",
-            revision: "",
-            cause: "",
-            namespace: "",
-            verdicts: [],
-            read: false,
-          }
+        ? { ...NO_READ, environment: env }
         : {
+            ...deliveryFacts(status.data, undefined),
             environment: env,
-            phase: status.data.phase,
-            revision: status.data.revision,
-            cause: status.data.cause,
             namespace: status.data.namespace,
             verdicts: mergeVerdicts(status.data.verdicts, {}),
             read: true,
@@ -252,7 +245,12 @@ export function ComponentPage() {
                       <Copyable value={read.revision} />{" "}
                       <span className="k-component__fact">
                         the environment's, not this component's
-                      </span>
+                      </span>{" "}
+                      {/* Drift is the environment's fact too, so it goes here
+                          rather than beside the page's own pill — that pill is
+                          this component's word and must not be qualified by
+                          something that is not about it. */}
+                      <DriftMark drift={driftFor(read)} />
                     </>
                   ) : failure !== undefined ? (
                     "not read"
@@ -291,9 +289,17 @@ export function ComponentPage() {
                         {verdict.resource}
                       </span>
                       <StatusPill
-                        status={verdictTone(verdict.healthy, verdict.degraded)}
+                        status={verdictTone(verdict)}
                         label={verdict.code || "unknown"}
                       />
+                      {/* A stuck verdict keeps a wait code, so the code chip
+                          cannot say it and the word has to. */}
+                      {verdict.stuck ? (
+                        <StatusPill
+                          status={statusFor("stuck").tone}
+                          label="stuck"
+                        />
+                      ) : null}
                     </div>
                     {verdict.message ? (
                       <p className="k-verdict__message">{verdict.message}</p>
