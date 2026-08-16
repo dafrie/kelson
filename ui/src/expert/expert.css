@@ -1,0 +1,153 @@
+/*
+ * Expert mode: the header control, the inline facts and the why-carets (#260).
+ *
+ * Everything here is drawn in the Console's quiet register — hairlines, neutral
+ * ink, no fill and no elevation — because none of it is status. Expert mode
+ * adds facts, and a fact that painted itself in a status hue would spend the
+ * one budget the design reserves for things going wrong.
+ */
+
+/* ------------------------------------------------------- the header control */
+
+/* Sized and coloured as `.k-theme` is: a preference, not an action, and it must
+   not compete with the nav beside it. */
+.k-detail-toggle {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 6px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  font-family: var(--kelson-font-mono);
+  font-size: var(--kelson-size-micro);
+  letter-spacing: 0.04em;
+  color: var(--kelson-muted-2);
+  cursor: pointer;
+  transition:
+    color 120ms ease,
+    border-color 120ms ease;
+}
+
+.k-detail-toggle:hover {
+  color: var(--kelson-text);
+}
+
+/* On: the ink comes up and a hairline ring arrives. No fill — the two filled
+   objects in this UI are the needs-attention band and the error panel, and a
+   display preference is neither. */
+.k-detail-toggle[aria-pressed="true"] {
+  color: var(--kelson-text);
+  border-color: var(--kelson-line);
+}
+
+.k-detail-toggle:focus-visible {
+  outline: 1px solid var(--kelson-accent);
+  outline-offset: 1px;
+}
+
+/* --------------------------------------------------------- an inline fact */
+
+/* A label and a mono value, sitting beside whatever it qualifies. It recedes:
+   the row it is in already carries the reader's subject, and this is the extra
+   the preference asked for. */
+.k-kfact {
+  font-size: var(--kelson-size-micro);
+  color: var(--kelson-muted);
+  white-space: nowrap;
+}
+
+/* The facts that follow a mono value on the same line — a revision's generation
+   under a column header, say — separated rather than run together. */
+.k-kfacts {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+}
+
+/* ---------------------------------------------------------- the why-caret */
+
+.k-why {
+  position: relative;
+  display: inline-block;
+  vertical-align: middle;
+  line-height: 1;
+}
+
+/* The caret alone, with no text: the statement it belongs to is one element to
+   the left and is not repeated. It is 11px and muted, so a row of them reads as
+   punctuation rather than as a row of controls. */
+.k-why__caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  color: var(--kelson-muted-deep);
+  font-size: 10px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.k-why__caret::-webkit-details-marker {
+  display: none;
+}
+
+.k-why__caret::before {
+  content: "▸";
+}
+
+.k-why[open] > .k-why__caret {
+  color: var(--kelson-text-2);
+}
+
+.k-why[open] > .k-why__caret::before {
+  content: "▾";
+}
+
+.k-why__caret:hover {
+  color: var(--kelson-text);
+}
+
+.k-why__caret:focus-visible {
+  outline: 1px solid var(--kelson-accent);
+  outline-offset: 1px;
+}
+
+/* Positioned rather than in flow: every site that carries a caret is a flex row
+   of small inline things, and a disclosure that expanded in place would push
+   the page around on every open. Still a hairline panel — the Console has no
+   elevation, so there is no shadow under this. */
+.k-why__body {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 260px;
+  max-width: min(420px, 80vw);
+  padding: 10px 12px;
+  background: var(--kelson-panel);
+  border: 1px solid var(--kelson-line);
+  border-radius: var(--kelson-radius-panel);
+  text-align: left;
+  white-space: normal;
+}
+
+.k-why__facts {
+  gap: 4px 14px;
+}
+
+/* The sentence under the fields: what the claim was computed from, or why the
+   fields above are thin. Sans, because it is prose. */
+.k-why__note {
+  margin: 8px 0 0;
+  font-size: var(--kelson-size-micro);
+  line-height: 1.55;
+  color: var(--kelson-muted);
+}
+
+.k-why__facts + .k-why__note {
+  padding-top: 8px;
+  border-top: 1px solid var(--kelson-hairline);
+}
