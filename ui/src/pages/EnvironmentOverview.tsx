@@ -17,6 +17,9 @@ import {
   type Drift,
 } from "../components/status";
 import { LoadingState } from "../components/States";
+import { Detail, KubeFact } from "../expert/Detail";
+import { revisionParts, resourceParts } from "../expert/facts";
+import { Evidence, Why } from "../expert/Why";
 import { DataServices } from "../dataservices/DataServices";
 import { isDataServiceVerdict } from "../dataservices/parse";
 import { PhaseRail } from "../deploy/PhaseRail";
@@ -188,11 +191,7 @@ export function EnvironmentOverview() {
             ) : loading ? (
               <StatusPill status="unknown" label="reading…" />
             ) : (
-              <EnvironmentStatus
-                phase={read.phase}
-                answer={read.answer}
-                drift={driftFor(read)}
-              />
+              <EnvironmentStatus read={read} drift={driftFor(read)} />
             )}
             <LiveIndicator state={watch} />
           </div>
@@ -224,7 +223,23 @@ export function EnvironmentOverview() {
                   <Copyable value={read.revision} />
                 ) : (
                   "none recorded"
-                )}
+                )}{" "}
+                {/* The tag's two halves named. The generation is the
+                    environment object's own, which is what an operator
+                    correlates with the cluster, and it is otherwise on this
+                    screen only as an unexplained prefix. */}
+                <Detail>
+                  <span className="k-kfacts">
+                    <KubeFact
+                      name="generation"
+                      value={revisionParts(read.revision)?.generation ?? ""}
+                    />
+                    <KubeFact
+                      name="spec hash"
+                      value={revisionParts(read.revision)?.specHash ?? ""}
+                    />
+                  </span>
+                </Detail>
               </span>
               {read.cause ? (
                 <>
@@ -336,19 +351,61 @@ function decodeDocument(bytes: Uint8Array | undefined): string {
  * neither half says alone. It goes after the word and never over it.
  */
 function EnvironmentStatus({
-  phase,
-  answer,
+  read,
   drift,
 }: {
-  phase: string;
-  answer: string;
+  read: EnvironmentRead;
   drift: Drift | undefined;
 }) {
+  const { phase, answer } = read;
   const state = statusForDelivery(answer, phase);
   return (
     <>
       <StatusPill status={state.tone} label={state.word} />
+      {/* The word is the page's loudest plain-language claim, so it is the one
+          that most owes a reader its working: `statusForDelivery` reads the
+          engine's answer and derives from the phase only when there is none,
+          and the caret shows which of those happened here. */}
+      <Why statement={state.word}>
+        <Evidence
+          rows={[
+            { name: "answer", value: answer },
+            { name: "phase", value: phase },
+            { name: "revision", value: read.revision },
+            { name: "cause", value: read.cause, prose: true },
+          ]}
+          note={
+            answer === ""
+              ? "No answer was reported for this environment, so the word is derived from the phase — a derivation that cannot express stuck at all."
+              : "The word is the engine's own answer, translated. The phase is what the controller last wrote and is kept beside it rather than re-read."
+          }
+        />
+      </Why>
       <DriftMark drift={drift} />
+      {/* Drift is a second claim and gets a second caret: a boolean the server
+          computed by comparing the revision's generation against the
+          environment's current one. */}
+      {drift === undefined ? null : (
+        <Why statement={drift.note}>
+          <Evidence
+            rows={[
+              { name: "stale", value: "true" },
+              { name: "revision", value: read.revision },
+              { name: "observed revision", value: read.observedRevision },
+              {
+                name: "generation",
+                value: revisionParts(drift.revision)?.generation ?? "",
+              },
+              { name: "cause", value: read.cause, prose: true },
+            ]}
+            note={
+              drift.pinned
+                ? "The cause names a rollback pin, so this environment is serving an older revision on purpose."
+                : "The revision above was published for an older generation of this environment than the stored spec now has. How far behind is not on the wire."
+            }
+          />
+        </Why>
+      )}
       {phase !== "" ? (
         <span className="k-env__phase">
           phase <span className="k-mono">{phase}</span>
@@ -363,10 +420,24 @@ function EnvironmentStatus({
  * the message, and the remediation as a "fix:" line.
  */
 function Verdict({ verdict }: { verdict: VerdictRow }) {
+  const parts = resourceParts(verdict.resource);
   return (
     <li className="k-verdict">
       <div className="k-verdict__head">
         <span className="k-mono k-verdict__resource">{verdict.resource}</span>
+        {/* The resource string is already whole above; this names its three
+            parts, which is the difference between a reader recognising a
+            Deployment and a reader parsing one. Nothing is drawn for a
+            resource that is not `Kind/namespace/name`. */}
+        {parts === undefined ? null : (
+          <Detail>
+            <span className="k-kfacts">
+              <KubeFact name="kind" value={parts.kind} />
+              <KubeFact name="namespace" value={parts.namespace} />
+              <KubeFact name="name" value={parts.name} />
+            </span>
+          </Detail>
+        )}
         {/* The label is observation's own code, rendered verbatim like every
             other structured code in this UI; only the colour is the shared
             vocabulary's, so a red line here means what a red pill means. */}
@@ -380,7 +451,23 @@ function Verdict({ verdict }: { verdict: VerdictRow }) {
             that the two badges are saying different kinds of thing: what was
             observed, and what it means. */}
         {verdict.stuck ? (
-          <StatusPill status={statusFor("stuck").tone} label="stuck" />
+          <>
+            <StatusPill status={statusFor("stuck").tone} label="stuck" />
+            {/* The claim a reader is most likely to dispute, because the code
+                beside it is a *wait* code: the three booleans are what says
+                the probe gave up rather than that the rollout is slow. */}
+            <Why statement="stuck">
+              <Evidence
+                rows={[
+                  { name: "healthy", value: String(verdict.healthy) },
+                  { name: "degraded", value: String(verdict.degraded) },
+                  { name: "stuck", value: "true" },
+                  { name: "code", value: verdict.code },
+                ]}
+                note="The probe made no progress on this workload before its budget expired, and it was not failing — which is why the code stays a wait code and the word has to say the rest."
+              />
+            </Why>
+          </>
         ) : null}
       </div>
       {verdict.message ? (

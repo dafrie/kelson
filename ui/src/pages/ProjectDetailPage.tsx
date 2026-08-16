@@ -14,6 +14,8 @@ import { LiveIndicator } from "../components/LiveIndicator";
 import { StatusPill } from "../components/StatusPill";
 import { driftFor, statusForDelivery } from "../components/status";
 import { EmptyState, LoadingState } from "../components/States";
+import { Detail, KubeFact } from "../expert/Detail";
+import { revisionParts } from "../expert/facts";
 import {
   effectiveImage,
   isDataComponentKind,
@@ -484,6 +486,25 @@ function ColumnHead({ project, column }: { project: string; column: Column }) {
         <span className="k-mono">{column.read.revision || "no revision"}</span>
         <DriftMark drift={driftFor(column.read)} />
       </span>
+      {/* The column's expert line: the generation the tag above is half of, and
+          the namespace every cell below it resolves into — the two facts a
+          reader correlating this grid with a cluster needs and which are
+          otherwise only on the environment's own page.
+
+          There is deliberately no why-caret anywhere in this table. A cell is a
+          link and a disclosure cannot live inside an anchor; a header sits
+          inside the grid's horizontal scroll container, which would clip the
+          panel. The environment's Overview is one press away and carries the
+          same evidence with room to draw it. */}
+      <Detail>
+        <span className="k-matrix__detail k-kfacts">
+          <KubeFact
+            name="generation"
+            value={revisionParts(column.read.revision)?.generation ?? ""}
+          />
+          <KubeFact name="namespace" value={column.read.namespace} />
+        </span>
+      </Detail>
     </>
   );
 }
