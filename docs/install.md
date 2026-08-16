@@ -130,6 +130,57 @@ per-rule RBAC reasoning.
 two replicas racing to do either is a real hazard; `controller.leaderElection.enabled=true` is what
 makes `controller.replicaCount: 2` a safe value change instead of a two-step migration.
 
+#### The delivery substrate installs itself
+
+Turning the controller on also makes sure this cluster has the substrate the controller cannot
+work without. `substrate.autoInstall` is **on by default**, and what it does is one Helm hook Job,
+after install and after every upgrade:
+
+1. it detects Flux;
+2. if this cluster **has** Flux — from `flux bootstrap`, flux-operator, flux-aio, a vendor's
+   distribution — it prints what it found, applies nothing, and exits;
+3. if this cluster has **none**, it installs one through the same catalog `kelson install` uses
+   (same pins, same digest verification, same per-object provenance): flux-aio when the release
+   carries its rendered snapshot, flux-operator otherwise
+   ([ADR-0030](adr/0030-flux-aio-install.md));
+4. it then waits for the cluster to serve `OCIRepository` and `Kustomization`, and restarts the
+   controller — whose Flux detection is one-shot at start-up, so a pod that came up before the
+   substrate existed would otherwise report `FluxNotInstalled` until somebody restarted it by hand.
+
+The default is on because [ADR-0028](adr/0028-delivery-spine.md) makes Flux the only reconciliation
+path there is. Without it, a cluster with no Flux gets a kelson that validates and renders every
+environment and deploys none of them — a working install of a product that does nothing, which is
+the outcome the default exists to prevent.
+
+**Nothing about detection's authority changes.** A cluster that already reconciles comes out of a
+`helm install` untouched, and a cluster where detection *could not look* — an RBAC gap over the
+discovery endpoints — is a refusal, not a guess: the hook fails loudly rather than installing a
+second Flux beside one it could not see. That is [ADR-0003](adr/0003-install-model.md)'s rule
+holding under an install nobody is watching, which is the case where it is easiest to lose.
+
+**What it holds while it runs.** The Job carries its own ServiceAccount and a cluster-scoped grant
+wide enough to install an operator: `create`/`patch`/`get` on CRDs, namespaces, RBAC (including
+`escalate` and `bind`, which Kubernetes requires of anything that creates RBAC wider than its own),
+Deployments, Services, ServiceAccounts, ConfigMaps, Secrets, ResourceQuotas, NetworkPolicies and
+flux-operator's `FluxInstance`. There is no `delete` verb anywhere in it and no wildcard. All of it
+is created with the hook and deleted with it, succeed or fail; the standing controller grant gains
+nothing. Turn it off if that is not a trade you want made automatically:
+
+```sh
+--set substrate.autoInstall=false
+```
+
+and install the substrate yourself with `kelson install flux-aio`
+([below](#platform-components-kelson-install)) — the same install, by the same code, under your own
+credentials.
+
+**It inherits the air-gap caveat**, and on the same terms
+([below](#what-it-installs-and-from-where)). The flux-aio row is bytes the release already carries,
+so that path needs no egress at all; the flux-operator fallback fetches its pinned manifest at
+install time and the hook fails, naming the URL it could not reach, on a cluster without egress to
+it. Nothing is half-applied either way — every manifest is fetched and digest-verified before
+anything is applied.
+
 **The controller holds no RBAC over workloads**, by design and not yet: the `Kustomization` it
 writes carries `wait: true`, so kustomize-controller's own health assessment is what `Ready` means,
 and R1's exit gate needs nothing more from the controller itself. Reading Pod- and container-level
@@ -149,11 +200,15 @@ not colonise one.
 - **No Ingress and no HTTPRoute.** The server terminates no TLS and how you expose it is your
   cluster's routing decision. Port-forward, or route to the `ClusterIP` Service yourself.
 - **Nothing that duplicates what you already run** — no ingress controller, no cert-manager, no
-  external-secrets, no Flux, no CloudNativePG, no Prometheus objects. "Never install what is
-  already there" is the rule ADR-0003 states, and detection is how kelson finds out
+  external-secrets, no CloudNativePG, no Prometheus objects, and no second Flux. "Never install
+  what is already there" is the rule ADR-0003 states, and detection is how kelson finds out
   ([cluster detection](detection.md)). Installing components that are genuinely *missing* is a
-  separate, opt-in verb you run yourself: [`kelson install`](#platform-components-kelson-install)
-  below.
+  separate verb you run yourself: [`kelson install`](#platform-components-kelson-install) below.
+  The **one** exception is the delivery substrate, and it is an exception to "opt-in", never to
+  "never install what is already there": with `controller.enabled=true`, a hook installs Flux on a
+  cluster that has none, because ADR-0028 leaves the controller nothing to reconcile with
+  ([above](#the-delivery-substrate-installs-itself)). A cluster that has Flux is adopted untouched,
+  and `substrate.autoInstall=false` declines even that.
 - **No write access to your workloads, unless you ask for it.** By default the chart grants the
   control plane its own custom resources, the managed Secrets ADR-0009 defines, build Jobs, and the
   reads behind status and logs — nothing that can apply a rendered spec. `rbac.createDeployClusterRole`

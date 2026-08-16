@@ -97,6 +97,15 @@ log "== stage: build kelson =="
 log "== stage: flux (kelson install flux) =="
 # Already-installed is a refusal, not an error: `kelson install` never modifies a
 # component it did not install, and prints why. So this is safe to re-run.
+#
+# The chart stage below also carries a substrate hook that would install Flux on
+# a cluster with none (deploy/chart/kelson/templates/substrate-hook.yaml, owner
+# decision 2026-08-16). This stage stays, and stays first, for two reasons: it
+# pins full Flux through flux-operator, which is what the preview assertions
+# need and what the hook would NOT choose on a build carrying a flux-aio
+# snapshot; and it makes the hook exercise its adopt path here, while a fresh
+# `helm install` on a bare cluster exercises the install path. Both halves of
+# the hook's decision get covered, in the two places each one is real.
 "$KELSON" install flux --yes --kubeconfig "$KUBECONFIG_FILE" ||
 	die "kelson install flux failed"
 

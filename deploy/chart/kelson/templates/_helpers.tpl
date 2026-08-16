@@ -109,6 +109,16 @@ value and cannot drift apart.
 {{- default .Release.Namespace .Values.controller.fluxNamespace -}}
 {{- end }}
 
+{{/*
+The ensure-substrate hook's names (owner decision 2026-08-16, ADR-0028,
+ADR-0030). One name for the Job, its ServiceAccount and its cluster-scoped
+grant, because they are one thing with one lifetime: created before the Job
+runs, deleted with it. Nothing standing carries this name.
+*/}}
+{{- define "kelson.substrate.fullname" -}}
+{{- printf "%s-ensure-substrate" (include "kelson.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
 {{- define "kelson.controller.image" -}}
 {{- $tag := default .Values.image.tag .Values.controller.image.tag -}}
 {{- $tag = required "controller.image.tag (or image.tag) is required: the chart does not default to `latest`, because a mutable tag makes a Deployment's identity unknowable. Pass the release you mean, e.g. --set image.tag=v0.1.0" $tag -}}
