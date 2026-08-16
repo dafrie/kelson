@@ -188,13 +188,13 @@ export function capabilityDetail(sc: StorageClassCapability): string {
       );
     case "none":
       return (
-        "No VolumeSnapshotClass serves this provisioner, so snapshot-based backups and branching " +
-        "cannot run here at all — a restore-based path is the only option, and it is not built yet."
+        "This storage cannot snapshot, so snapshot-based backups and branching " +
+        "cannot run here."
       );
     case "unknown":
       return (
-        "Unknown is not the same as unavailable: this storage may well snapshot fine. It means the " +
-        "detection could not establish it, and kelson will not guess in either direction."
+        "Unknown is not the same as unavailable: detection could not establish " +
+        "it, and kelson will not guess either way."
       );
   }
 }
@@ -236,9 +236,8 @@ export function snapshotDriverLine(sc: StorageClassCapability): string {
 export function cnpgLine(cnpg: OperatorFinding | undefined): string {
   if (cnpg === undefined) {
     return (
-      "CloudNativePG: not detected. kelson renders the Cluster manifest either way — " +
-      "an operator that is absent, or that detection could not see, shows up as an apply-time " +
-      "error from the API server rather than as a database."
+      "CloudNativePG: not detected. Without it a postgres component deploys " +
+      "and never becomes a database."
     );
   }
   return `CloudNativePG: detected (${where(cnpg)}).`;
@@ -259,8 +258,8 @@ export function cnpgLine(cnpg: OperatorFinding | undefined): string {
 export function helmControllerLine(helm: OperatorFinding | undefined): string {
   if (helm === undefined) {
     return (
-      "helm-controller: not detected. A `kind: helm` component renders a HelmRelease either way — " +
-      "with no controller to reconcile it, the cluster accepts the manifest and installs nothing."
+      "helm-controller: not detected. Without it a `kind: helm` component " +
+      "deploys and installs nothing."
     );
   }
   return `helm-controller: detected (${where(helm)}). A \`kind: helm\` component has something to reconcile it.`;

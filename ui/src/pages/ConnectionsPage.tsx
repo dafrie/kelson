@@ -261,7 +261,7 @@ export function ConnectionsPage() {
           {connections.length === 1 ? "connection" : "connections"}
         </span>
         <span>·</span>
-        <span>what this instance can clone, and act as, on a forge</span>
+        <span>the forges kelson can clone from</span>
       </div>
 
       {manifestStart.error !== undefined ? (
@@ -273,16 +273,12 @@ export function ConnectionsPage() {
 
       {outcome !== undefined ? <ManifestOutcomeBanner outcome={outcome} /> : null}
 
+      {/* The visibility sentence is not decoration: the owner column looks
+          like a permission and is not one until #231 gives it a subject. */}
       <p className="k-note">
-        A connection names a forge, its host and the Secret holding the
-        credential — never the credential itself. kelson reads that Secret in
-        the planes that have cluster access to mint short-lived tokens; nothing
-        here can show you a token, and no field on this wire could carry one
-        (ADR-0009, ADR-0033). <strong>Every connection below is visible to
-        everyone on this instance</strong>, and anyone who can reach this server
-        can test or delete any of them. The owner column records who a
-        connection will belong to; it enforces nothing until principals exist
-        (#231).
+        A connection names a forge and the Secret holding its credential, never
+        the credential itself. <strong>Every connection below is visible to
+        everyone on this instance</strong>, and anyone can test or delete it.
       </p>
 
       <ManifestNote />
@@ -302,14 +298,9 @@ export function ConnectionsPage() {
       ) : null}
 
       {list.data !== undefined && connections.length === 0 ? (
-        <EmptyState title="No git connections — kelson can clone public repositories and nothing else">
-          A connection is what lets this instance clone a private repository,
-          and what a preview, a commit status or a pull-request comment is made
-          with. There are two ways to make one: “Connect GitHub” above runs
-          GitHub's app-manifest flow and creates a per-instance app, and the
-          token form below takes a personal or project access token that is
-          already in a Secret — the only path for a forge whose adapter has not
-          landed.
+        <EmptyState title="No connections yet">
+          Without one, kelson can clone public repositories and nothing else.
+          Use “Connect GitHub” above, or the token form below.
         </EmptyState>
       ) : null}
 
@@ -338,28 +329,17 @@ export function ConnectionsPage() {
  * What pressing “Connect GitHub” actually does, said before it is pressed.
  *
  * A reader who is asked to press a button and leave the app for GitHub is
- * entitled to know what it does with the session it is about to spend — this
- * costs three sentences and keeps the flow legible before the redirect makes
- * it unrecoverable to read again.
+ * entitled to know where the credential ends up — the redirect makes this
+ * unrecoverable to read afterwards, so it is said in two lines beforehand.
  */
 function ManifestNote() {
   return (
     <div className="k-panel k-connect">
-      <div className="k-eyebrow">Connect GitHub · the app-manifest flow</div>
+      <div className="k-eyebrow">Connect GitHub</div>
       <p className="k-connect__body">
-        kelson sends you to GitHub with a manifest for an app of your own. You
-        approve creating it on your account or an organisation, GitHub redirects
-        back here with a one-time code, and the server exchanges it for the app
-        id, the private key and the webhook secret — which it writes into a
-        Secret on this instance. The key never leaves it and no kelson-operated
-        relay is involved. You then pick the repositories the app may see.
-      </p>
-      <p className="k-connect__body k-mono">
-        The button first asks this server for a one-time ticket — a{" "}
-        <code className="k-field__code">POST</code> that carries your session,
-        same as every other action on this page — then leaves for GitHub with
-        it. The ticket is single-use and short-lived, so it is minted at the
-        moment you press the button, never before.
+        GitHub asks you to approve an app of your own, then sends you back here.
+        Its key is written to this instance and never leaves it. You pick the
+        repositories the app may see last.
       </p>
     </div>
   );
@@ -415,16 +395,14 @@ function ManifestConnected({
         <span className="k-settled__title">{name} is connected</span>
       </div>
       <span className="k-mono">
-        the app-manifest flow created the app on GitHub and wrote its key here
-        — {name}, in the list below, is it.
+        the app exists on GitHub and its key is stored here — {name}, in the
+        list below, is it.
       </span>
       {install !== undefined ? (
         <>
           <span className="k-mono">
-            it has no repositories chosen yet, so its row shows unreachable
-            until you install it (ADR-0033 decision 2 step 3) — pick the
-            repositories the app may see, then “Test connection” on its row
-            confirms it.
+            no repositories are chosen yet, so its row shows unreachable. Pick
+            them on GitHub, then “Test connection” confirms it.
           </span>
           <a
             className="k-button k-button--primary"
@@ -484,10 +462,9 @@ function Removal({ removed }: { removed: Removed }) {
             ))}
           </div>
           <span className="k-mono">
-            their next build has no credential for the repository and fails.
-            Point each at another connection with{" "}
-            <code>spec.source.connection</code>, or make one that matches the
-            host again.
+            their next build has no credential and fails. Point each at another
+            connection with <code>spec.source.connection</code>, or make one
+            that matches the host again.
           </span>
         </>
       ) : (
@@ -497,8 +474,7 @@ function Removal({ removed }: { removed: Removed }) {
       )}
 
       <span className="k-mono">
-        the Secret it named was not deleted: kelson did not write it, and
-        removing somebody else's object on the way out is not this call's to do.
+        the Secret it named was not deleted — kelson did not write it.
       </span>
     </div>
   );
@@ -573,9 +549,8 @@ function ConnectionRow({
           somebody would otherwise read as a permission (ADR-0033 decision 6). */}
       {ownerIsInstance(connection.owner) ? null : (
         <p className="k-connection__owner k-mono">
-          a recorded owner and not a boundary: this connection is visible to
-          everyone on this instance, and everyone can edit or delete it, until
-          tenancy gives the field a subject (#231)
+          a recorded owner, not a boundary: everyone on this instance can edit
+          or delete this connection
         </p>
       )}
 
@@ -611,11 +586,8 @@ function ConnectionRow({
         <div className="k-connection__confirm" role="alert">
           <span>
             Delete <span className="k-mono">{connection.name}</span>? Projects
-            that resolve through it are not checked first and the delete is not
-            blocked by them — the response names them afterwards, because a
-            connection is deleted when it is wrong and a leaked credential must
-            not be harder to revoke than to keep. The Secret it references stays
-            where it is.
+            resolving through it keep working until their next build, and are
+            named once it is gone. The Secret it references stays.
           </span>
           <div className="k-actions">
             <button type="button" className="k-button" onClick={onCancel}>
@@ -753,13 +725,12 @@ function CreateForm({ onCreated }: { onCreated: () => void }) {
           }}
         >
           <p className="k-connect__body">
-            The fallback every forge answers, and the only path for one whose
-            adapter has not landed: a personal, project or deploy token. Write
-            the token into a Secret in <span className="k-mono">kelson-system</span>{" "}
-            first — <code className="k-mono">token</code>, and optionally{" "}
-            <code className="k-mono">username</code> — then name it here. A
-            connection that names a Secret which does not exist yet is created
-            and reports not-ready with the reason, so either order works.
+            Works with any forge. Put the token in a Secret in{" "}
+            <span className="k-mono">kelson-system</span> — key{" "}
+            <code className="k-mono">token</code>, optionally{" "}
+            <code className="k-mono">username</code> — then name that Secret
+            here. Either order works; a connection naming a Secret that does not
+            exist yet reports not-ready until it does.
           </p>
 
           <div className="k-new__row">
@@ -769,7 +740,7 @@ function CreateForm({ onCreated }: { onCreated: () => void }) {
               onChange={(v) => update("name", v, "name")}
               placeholder="acme-github"
               problem={problemFor("name")}
-              note="the CR's metadata.name in kelson-system, and what spec.source.connection names when a project disambiguates"
+              note="what a project names in spec.source.connection"
             />
 
             <ProviderField
@@ -791,7 +762,7 @@ function CreateForm({ onCreated }: { onCreated: () => void }) {
               onChange={(v) => update("host", v, "host")}
               placeholder="https://github.com"
               problem={problemFor("host")}
-              note="the forge base URL — a self-hosted GHE, GitLab or Forgejo sets its own, and it is half of the host match that resolves a project's source"
+              note="the forge's base URL, scheme included — a self-hosted GHE, GitLab or Forgejo sets its own"
             />
 
             <Field
@@ -800,7 +771,7 @@ function CreateForm({ onCreated }: { onCreated: () => void }) {
               onChange={(v) => update("secretRef", v, "secretRef")}
               placeholder="acme-git-token"
               problem={problemFor("secretRef")}
-              note="the name of an existing Secret in kelson-system — a reference, never a value. Nothing on this page accepts a token."
+              note="the name of a Secret in kelson-system — a reference, never a token"
             />
           </div>
 
@@ -820,9 +791,7 @@ function CreateForm({ onCreated }: { onCreated: () => void }) {
               {create.running ? "Connecting…" : "Create the connection"}
             </button>
             <span className="k-mono k-deploy__note">
-              owned by the instance · visible to everyone on it · no credential
-              value leaves this page, because there is no field on the wire for
-              one
+              owned by the instance · visible to everyone on it
             </span>
           </div>
         </form>
@@ -847,8 +816,7 @@ function Created({ connection }: { connection: GitConnection }) {
       </span>
       <span className="k-mono">{health.detail}</span>
       <span className="k-mono">
-        “Test connection” on the row above asks the forge now, rather than
-        reading a condition written at some earlier reconcile.
+        “Test connection” on the row above asks the forge now.
       </span>
     </div>
   );
@@ -928,8 +896,8 @@ function ProviderField({
       </select>
       <span className="k-field__note k-mono">
         {value === "github"
-          ? "github.com or GitHub Enterprise with a token — the adapter that also does webhooks, statuses and PR comments"
-          : "any git host reachable with a token: private clones and nothing else, because a repo picker and a webhook are the adapter's, not the token's"}
+          ? "github.com or GitHub Enterprise: clones, webhooks, commit statuses and PR comments"
+          : "any git host reachable with a token: private clones only, no webhooks or commit statuses"}
       </span>
     </div>
   );

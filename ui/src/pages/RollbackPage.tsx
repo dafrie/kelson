@@ -194,8 +194,7 @@ export function RollbackPage() {
           ) : null}
           {history.data !== undefined && entries.length === 0 ? (
             <div className="k-panel k-panel--dim k-mono">
-              no recorded history — nothing has been deployed for this
-              environment, so there is nothing to roll back to
+              no deploys yet, so there is nothing to roll back to
             </div>
           ) : null}
           {unknownRequest ? (
@@ -358,9 +357,7 @@ function Findings({ preview }: { preview: PreviewState }) {
 
         {findings.length === 0 ? (
           <div className="k-panel k-panel--dim k-mono">
-            no findings. The preview event is always sent, even when nothing
-            else could be checked — an absent warning is not the same as nothing
-            to warn about.
+            no findings — nothing kelson checked would survive this rollback
           </div>
         ) : (
           <ul className="k-diff__findings">

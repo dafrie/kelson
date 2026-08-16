@@ -251,8 +251,8 @@ export function RepositoryPicker({
 
       {found.length > 0 && shown.length === 0 ? (
         <p className="k-picker__note k-mono">
-          nothing matches “{query}”. The filter is over the {found.length}{" "}
-          repositories this connection can see, not a search of the forge.
+          nothing matches “{query}” among the {found.length} repositories this
+          connection can see
         </p>
       ) : null}
 
@@ -293,9 +293,8 @@ export function RepositoryPicker({
           <code className="k-field__code">
             source.connection: {picked.connection}
           </code>{" "}
-          — its builds authenticate through this connection by name rather than
-          by matching the repository's host, so a second connection covering the
-          same forge later cannot change which credential it uses.
+          — its builds always authenticate through this connection, whatever
+          else is added later.
         </p>
       ) : null}
     </div>

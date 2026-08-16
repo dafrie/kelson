@@ -133,7 +133,9 @@ describe("SecretsPanel", () => {
     expect(
       await screen.findByText(/kelson manages no Secrets in namespace/),
     ).toBeTruthy();
-    expect(screen.getByText(/absent rather than filtered/)).toBeTruthy();
+    expect(
+      screen.getByText(/Secrets it did not write are not listed here/),
+    ).toBeTruthy();
   });
 
   it("sends the keys as typed and never asks for a value back", async () => {
@@ -205,10 +207,10 @@ describe("SecretsPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Delete checkout-db" }));
     // Nothing has been sent yet — the confirm is the act.
     expect(seen.deletes).toEqual([]);
-    expect(screen.getByText(/kelson does not look for referrers/)).toBeTruthy();
+    expect(screen.getByText(/Components referencing it are not checked first/)).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(screen.queryByText(/kelson does not look for referrers/)).toBeNull();
+    expect(screen.queryByText(/Components referencing it are not checked first/)).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Delete checkout-db" }));
     // The row's own Delete is gone while the confirm is up, so the button that

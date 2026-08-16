@@ -67,6 +67,11 @@ const sidebars: SidebarsConfig = {
           id: 'research/hierarchy-prior-art',
           label: 'Hierarchy prior art',
         },
+        {
+          type: 'doc',
+          id: 'research/ux-overhaul',
+          label: 'UX overhaul research',
+        },
       ],
     },
     {

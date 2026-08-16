@@ -30,8 +30,7 @@ export function OnboardingPage() {
       </div>
       <div className="k-page-sub">
         <span>
-          kelson detects what your cluster already runs and offers to install
-          what is missing — never both
+          what this cluster already runs, and what kelson can install
           {components.length > 0
             ? ` · ${present} of ${components.length} components present`
             : ""}
@@ -49,9 +48,8 @@ export function OnboardingPage() {
         <div className="k-eyebrow">Then</div>
         <div className="k-section__body k-panel">
           <p>
-            With a Gateway API implementation installed, projects that declare
-            domains render and route. <Link to="/projects/new">Create your
-            first project</Link>, or review the cluster as kelson reads it on
+            With a gateway installed, projects that declare domains get routed.{" "}
+            <Link to="/projects/new">Create your first project</Link>, or read
             the <Link to="/cluster">Cluster</Link> page.
           </p>
         </div>

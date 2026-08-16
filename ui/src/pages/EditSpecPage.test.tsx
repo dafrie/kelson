@@ -350,7 +350,7 @@ describe("EditSpecPage", () => {
     // The mode is still unset, and the note says what will happen rather than
     // a disabled checkbox that cannot explain itself.
     expect(
-      screen.getByText(/previews render in flux delivery mode only/),
+      screen.getByText(/previews need the flux delivery mode/),
     ).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText("Delivery mode"), {
@@ -967,7 +967,10 @@ spec:
     expect(
       await screen.findByText(/does not compose with a git-reconciled Environment/),
     ).toBeTruthy();
-    expect(screen.getByText(/ADR-0036 decision/)).toBeTruthy();
+    // The remedy, not the reasoning: the ADR is a code comment now.
+    expect(
+      screen.getByText(/Track the image in the repository instead/),
+    ).toBeTruthy();
   });
 
   it("does not warn about autoDeploy when no document declares it", async () => {
@@ -983,7 +986,7 @@ spec:
     await edited({ gitops: OWNED });
 
     expect(screen.queryByRole("heading", { name: proposeHeading })).toBeNull();
-    expect(screen.getByText(/Check the spec to see what the change does/)).toBeTruthy();
+    expect(screen.getByText(/Check the spec first/)).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Check and preview the diff" }));
     await screen.findByRole("heading", { name: proposeHeading });

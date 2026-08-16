@@ -145,17 +145,15 @@ export function ProjectsPage() {
       ) : null}
 
       {specs.data !== undefined && projects === 0 ? (
-        <EmptyState title="No projects stored yet — kelson-server's spec store is empty">
-          Create one with “New project” above, or put one with `kelson` or
-          SpecService.PutSpec, and it appears here.
+        <EmptyState title="No projects yet">
+          Create one with “New project” above, or with `kelson spec put`.
         </EmptyState>
       ) : null}
 
       {projects > 0 && pairs.length === 0 ? (
-        <EmptyState title="No environments declared">
-          Every stored project has a Project document but no Environment
-          document. An Environment is what names a namespace and a delivery
-          mode, so there is nothing to deploy yet.
+        <EmptyState title="No environments yet">
+          No stored project declares one, so there is nothing to deploy. Add one
+          on a project's edit screen.
         </EmptyState>
       ) : null}
 
