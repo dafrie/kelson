@@ -58,6 +58,47 @@ func TestPinsAreInternallyConsistent(t *testing.T) {
 					}
 					break
 				}
+				if c.Rendered {
+					// SHA256 is deliberately NOT asserted here. On a Rendered
+					// row it digests the committed snapshot, so it is empty
+					// exactly when the snapshot has not been generated yet —
+					// a real state (a tree before `make flux-aio`) that the
+					// installer refuses rather than crashes on.
+					// TestRenderedSnapshotMatchesThePin asserts both halves of
+					// that against the embedded filesystem, which is the only
+					// place the question can be answered.
+					if c.ManifestURL != "" {
+						t.Fatal("a Rendered row applies a committed snapshot, not a fetched manifest, and " +
+							"carries no ManifestURL")
+					}
+					if c.Image != "" || c.ImageDigest != "" {
+						t.Fatal("a Rendered row pins a module, not an image")
+					}
+					if c.RenderedPath == "" {
+						t.Fatal("a Rendered row must say where its committed snapshot lives")
+					}
+					if !strings.HasPrefix(c.ModuleRef, "oci://") {
+						t.Fatalf("ModuleRef %q is not an oci:// reference: the row must name the upstream "+
+							"artifact its bytes came out of (ADR-0030 §2)", c.ModuleRef)
+					}
+					if c.Version == "" || c.ModuleVersion == "" {
+						t.Fatal("a Rendered row pins two versions: the upstream release it packages, and the " +
+							"module tag that packages it")
+					}
+					// The same rule a fetched row's ManifestURL carries: a row
+					// that documents one release and installs another is a pin
+					// that means nothing. hack/flux-aio-render.sh asserts this
+					// before it renders; this asserts it without a network.
+					if !strings.HasPrefix(c.ModuleVersion, strings.TrimPrefix(c.Version, "v")) {
+						t.Fatalf("ModuleVersion %q does not package Version %q: the row documents one release "+
+							"and installs another", c.ModuleVersion, c.Version)
+					}
+					if !digestPattern.MatchString(c.ModuleDigest) {
+						t.Fatalf("ModuleDigest %q is not a lowercase hex sha256 digest; pin the digest, never "+
+							"only a tag", c.ModuleDigest)
+					}
+					break
+				}
 				if c.Image != "" || c.ImageDigest != "" {
 					t.Fatal("a fetched row does not pin its own image; the image reference lives inside the manifest")
 				}
@@ -82,7 +123,7 @@ func TestPinsAreInternallyConsistent(t *testing.T) {
 				if !strings.Contains(c.FollowUp, "#60") {
 					t.Fatalf("FollowUp %q does not name the issue the follow-up hangs off", c.FollowUp)
 				}
-				if c.Version != "" || c.ManifestURL != "" || c.SHA256 != "" || c.Authored {
+				if c.Version != "" || c.ManifestURL != "" || c.SHA256 != "" || c.Authored || c.Rendered {
 					t.Fatal("a deferred row carries a pin, which reads as an install it will not perform")
 				}
 			default:
@@ -127,6 +168,12 @@ func TestProfileFieldsExist(t *testing.T) {
 // the "empty profile gives No" assertion applies to it.
 func TestPresenceIsWiredForEveryRow(t *testing.T) {
 	present := map[string]func(*clusterprofile.ClusterProfile){
+		// flux-aio reads the `flux` finding, and the fixture uses the finding
+		// that is NOT flux-operator on purpose: ADR-0030 decision 1 says a
+		// cluster with Flux is adopted whatever installed it, so a bare Flux
+		// with no operator — `flux bootstrap`, a vendor's distribution, an
+		// earlier flux-aio — has to refuse this row just as firmly.
+		"flux-aio":         func(p *clusterprofile.ClusterProfile) { p.Flux = &clusterprofile.Component{} },
 		"flux":             func(p *clusterprofile.ClusterProfile) { p.FluxOperator = &clusterprofile.Component{} },
 		"cert-manager":     func(p *clusterprofile.ClusterProfile) { p.CertManager = &clusterprofile.CertManager{} },
 		"cnpg":             func(p *clusterprofile.ClusterProfile) { p.CloudNativePG = &clusterprofile.CloudNativePG{} },
@@ -185,10 +232,17 @@ func TestFluxPresenceCoversBothFindings(t *testing.T) {
 func TestNamesMatchTheSupportMatrix(t *testing.T) {
 	// Every supported row must have a support-matrix floor, except envoy-gateway
 	// which the matrix tracks as the API ("gateway-api") rather than as an
-	// implementation, and registry: the matrix carries Kubernetes-API version
+	// implementation, flux-aio which the matrix tracks as the thing it installs
+	// ("flux" — it is a packaging of the same controllers, not a component in
+	// its own right), and registry: the matrix carries Kubernetes-API version
 	// floors, and a container kelson runs itself has no such floor — its pin
 	// is the image digest in pins.go, not a cluster capability.
-	exempt := map[string]string{"envoy-gateway": "gateway-api", "external-secrets": "", "registry": ""}
+	exempt := map[string]string{
+		"envoy-gateway":    "gateway-api",
+		"flux-aio":         "flux",
+		"external-secrets": "",
+		"registry":         "",
+	}
 	for _, c := range Components {
 		if alias, ok := exempt[c.Name]; ok {
 			if alias == "" {
@@ -215,8 +269,15 @@ func TestNamesMatchTheSupportMatrix(t *testing.T) {
 // and the support matrix's `flux` and `helm-controller` floors are about that.
 func TestPinnedVersionsClearTheSupportFloor(t *testing.T) {
 	floorFor := func(c Component) (string, string) {
-		if c.Name == "flux" {
+		if c.Name == FluxOperatorName {
 			return strings.TrimSuffix(FluxDistributionVersion, ".x") + ".0", "flux"
+		}
+		// flux-aio pins an exact Flux release rather than an expression: there
+		// is no operator reconciling patches within a minor, the snapshot IS
+		// the installation, and what it installs is checked against the same
+		// `flux` floor the row above is.
+		if c.Name == FluxAIOName {
+			return strings.TrimPrefix(c.Version, "v"), "flux"
 		}
 		return strings.TrimPrefix(c.Version, "v"), c.Name
 	}
