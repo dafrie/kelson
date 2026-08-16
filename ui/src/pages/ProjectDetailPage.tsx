@@ -2,10 +2,10 @@ import { useCallback, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { useAsync, useClients } from "../api/data";
-import { useWatch } from "../api/watch";
-import { toFailure } from "../api/errors";
+import { useWatch, type WatchState } from "../api/watch";
+import { toFailure, type Failure } from "../api/errors";
 import type { SpecDocuments } from "../gen/kelson/v1alpha1/common_pb";
-import type { WorkloadVerdict } from "../gen/kelson/v1alpha1/deploy_pb";
+import type { StatusResponse } from "../gen/kelson/v1alpha1/deploy_pb";
 import type { WatchResponse_Event } from "../gen/kelson/v1alpha1/events_pb";
 import { Copyable } from "../components/Copyable";
 import { Disclosure, YamlBlock } from "../components/Disclosure";
@@ -21,33 +21,65 @@ import { parseCause, type RailInput } from "../deploy/rail";
 import { Previews } from "../previews/Previews";
 import { SecretsPanel } from "../secrets/SecretsPanel";
 import {
+  effectiveImage,
   isDataComponentKind,
   isKnownKind,
   parseComponents,
+  parseOverrides,
+  projectImage,
   type ComponentSummary,
 } from "../spec/components";
+import {
+  mergeVerdicts,
+  NO_READ,
+  readCell,
+  shortImage,
+  verdictFor,
+  type EnvironmentRead,
+  type LiveVerdict,
+  type VerdictRow,
+} from "./matrix";
 
 /**
- * One project: its environments' delivery state, its documents, its actions.
+ * One project: what it is made of, where it runs, and how each of those is
+ * doing — as a matrix (#260).
  *
- * The two halves answer different questions and neither substitutes for the
- * other (issue #53): the phase says whether the change arrived, the verdicts
- * say whether it works. Both are shown, always, and a phase of Healthy with a
- * crash-looping verdict underneath is a real and important thing to see.
+ * The component is the lifecycle-bearing unit (docs/model.md §6: components
+ * deploy independently, each carries its own spec-hash) and the environment is
+ * what gives it a namespace, an image pin and a phase. Neither alone has a
+ * status, so the thing with one is the *pair* — and a page whose subject is the
+ * project draws every pair at once: components down, environments across. It is
+ * Heroku's pipeline view transposed, because kelson projects have more
+ * components than environments.
  *
- * Data components are a third thing and get their own section (issue #107): a
- * database has no image to roll and no replicas to scale, its topology is a
- * preset an operator implements, and listing it among the workloads would
- * invite every wrong instinct at once.
+ * What the grid replaced was a list of components with no state at all, above
+ * one environment's panel: a reader could see what the project contained, or
+ * how one environment was doing, and had to click between tabs to put the two
+ * together.
  *
- * Above all of it is what the Project *is*: its components (issue #214). A
- * Project is a container of them (ADR-0014) and this page used to show only
- * where they run, which made a project read as a single app with environments.
- * The list is the spec's own — read from the stored document, kind derived the
- * way docs/model.md derives it — and it sits before the environment tabs
- * because it is a fact about the project rather than about one environment. It
- * does not replace the data-services section: this says what the project
- * contains, that one says what a database is doing.
+ * # One Status per environment, and one stream for the page
+ *
+ * The columns are `DeployService.Status` calls, one per environment — the
+ * slow, cluster-touching call — issued together and reported per column, so an
+ * unreachable environment darkens its own column and blanks nothing else. The
+ * panel below reuses its column's answer rather than issuing a second call for
+ * the environment already on screen.
+ *
+ * The live half is one `EventService.Watch` over every environment (#76), the
+ * same one-stream rule the project list follows: transitions land on the column
+ * they name and health changes on the cell.
+ *
+ * # Two answers per cell, and the cell says which one it has
+ *
+ * `Status` reports per-component health only for what observation probes, which
+ * is Deployments. A `cron`, a chart and a database therefore have no reading of
+ * their own, and their cells show the *environment's* word marked as such
+ * (`matrix.ts`) rather than borrowing a claim nobody made.
+ *
+ * Below the matrix the environment in view keeps its full panel: the phase
+ * rail, the workload verdicts, data services, previews, Secrets, and the six
+ * flows — all of which are addressed by (project, environment) and stay that
+ * way in this slice.
  *
  * The spec documents are printed byte-faithfully. The server stores what was
  * authored (ADR-0013: the spec is the user's document) and re-serialising YAML
@@ -62,19 +94,132 @@ export function ProjectDetailPage() {
     [clients, project],
   );
 
-  const environments = spec.data?.spec?.environments ?? [];
+  const environments = useMemo(
+    () => spec.data?.spec?.environments ?? [],
+    [spec.data],
+  );
+  // The list is the read's key: a Status per environment is re-issued when the
+  // set of environments changes, not when the response object is replaced.
+  const key = environments.join("\u0000");
   const [active, setActive] = useState<string | undefined>(undefined);
-  const selected = active ?? environments[0];
+  const selected = active !== undefined && environments.includes(active)
+    ? active
+    : environments[0];
+
+  const statuses = useAsync(
+    (signal) =>
+      Promise.all(
+        environments.map(async (environment): Promise<EnvironmentAnswer> => {
+          try {
+            const data = await clients.deploy.status(
+              { spec: { spec: { case: "project", value: project } }, environment },
+              { signal },
+            );
+            return { environment, data };
+          } catch (error) {
+            // Per column: one environment whose cluster is unreachable must
+            // not take the other columns' answers down with it.
+            return { environment, error };
+          }
+        }),
+      ),
+    // `key` stands in for the array, which is a new object every render.
+    [clients, project, key],
+  );
+
+  const [live, setLive] = useState<Record<string, EnvironmentLive>>({});
+  const onEvent = useCallback((event: WatchResponse_Event) => {
+    const environment = event.environment;
+    const payload = event.payload;
+    setLive((prev) => {
+      const current = prev[environment] ?? NO_EVENTS;
+      if (payload.case === "statusTransition") {
+        const { phase, previousPhase, revision, cause } = payload.value;
+        return {
+          ...prev,
+          [environment]: {
+            ...current,
+            transition: { phase, previousPhase, revision, cause },
+          },
+        };
+      }
+      if (payload.case === "healthChange") {
+        const v = payload.value;
+        return {
+          ...prev,
+          [environment]: {
+            ...current,
+            verdicts: {
+              ...current.verdicts,
+              [v.resource]: {
+                code: v.code,
+                healthy: v.healthy,
+                message: v.message,
+              },
+            },
+          },
+        };
+      }
+      return prev;
+    });
+  }, []);
+
+  const reload = statuses.reload;
+  const onResync = useCallback(() => {
+    setLive({});
+    reload();
+  }, [reload]);
+  // The stream opens once every column has an answer: a delta applied before
+  // its Status landed would be overwritten by the older answer.
+  const settled = environments.length > 0 && statuses.data !== undefined;
+  const scopes = useMemo(
+    () => (settled ? environments.map((environment) => ({ project, environment })) : []),
+    [settled, environments, project],
+  );
+  const watch = useWatch({ scopes, onEvent, onResync });
+
+  const columns = useMemo(
+    () => environments.map((environment) => column(environment, statuses, live)),
+    [environments, statuses, live],
+  );
+  const documents = spec.data?.spec?.documents;
+  const projectDoc = useMemo(
+    () => decodeDocument(documents?.project),
+    [documents],
+  );
+  const components = useMemo(() => parseComponents(projectDoc), [projectDoc]);
+  const selectedColumn =
+    columns.find((c) => c.environment === selected) ?? undefined;
 
   return (
     <>
       <div className="k-page-head">
         <h1>{project}</h1>
+        {/* Adding one is an edit of the stored spec, so it goes to the editor
+            rather than growing a second write path — the query parameter opens
+            it on the panel that does it. */}
+        <Link
+          className="k-button"
+          to={`/projects/${encodeURIComponent(project)}/edit?add=component`}
+        >
+          Add component
+        </Link>
       </div>
       <div className="k-page-sub">
         <Link to="/projects">← all projects</Link>
         <span>·</span>
         <span>version {spec.data?.spec?.version || "—"}</span>
+        <span>·</span>
+        <span>
+          {components.length}{" "}
+          {components.length === 1 ? "component" : "components"}
+        </span>
+        <span>·</span>
+        <span>
+          {environments.length}{" "}
+          {environments.length === 1 ? "environment" : "environments"}
+        </span>
+        <LiveIndicator state={watch} />
       </div>
 
       {spec.loading && spec.data === undefined ? (
@@ -92,24 +237,26 @@ export function ProjectDetailPage() {
         </EmptyState>
       ) : null}
 
-      {spec.data !== undefined ? (
-        <Components
+      {spec.data !== undefined && environments.length > 0 ? (
+        <Matrix
           project={project}
-          environment={selected}
-          projectDoc={decodeDocument(spec.data.spec?.documents?.project)}
+          components={components}
+          columns={columns}
+          selected={selected}
+          onSelect={setActive}
+          documents={documents}
+          projectDoc={projectDoc}
         />
       ) : null}
 
-      {environments.length > 0 ? (
+      {environments.length > 0 && selected !== undefined ? (
         <>
           <nav className="k-tabs" aria-label="Environments">
             {environments.map((env) => (
               <button
                 key={env}
                 type="button"
-                className={
-                  env === selected ? "k-tab k-tab--active" : "k-tab"
-                }
+                className={env === selected ? "k-tab k-tab--active" : "k-tab"}
                 aria-current={env === selected ? "true" : undefined}
                 onClick={() => setActive(env)}
               >
@@ -117,66 +264,163 @@ export function ProjectDetailPage() {
               </button>
             ))}
           </nav>
-          {selected ? (
+          <EnvironmentPanel
             // Keyed by the pair: switching tabs must not carry one
-            // environment's live deltas onto another's status.
-            <EnvironmentPanel
-              key={`${project}/${selected}`}
-              project={project}
-              environment={selected}
-              others={environments.filter((name) => name !== selected)}
-              documents={spec.data?.spec?.documents}
-            />
-          ) : null}
+            // environment's panel state onto another's.
+            key={`${project}/${selected}`}
+            project={project}
+            environment={selected}
+            others={environments.filter((name) => name !== selected)}
+            documents={documents}
+            column={selectedColumn}
+            watch={watch}
+          />
         </>
       ) : null}
 
-      {spec.data?.spec?.documents ? (
-        <Documents project={project} documents={spec.data.spec.documents} />
-      ) : null}
+      {documents ? <Documents project={project} documents={documents} /> : null}
     </>
   );
 }
 
+/** One environment's Status call, settled either way. */
+interface EnvironmentAnswer {
+  environment: string;
+  data?: StatusResponse;
+  error?: unknown;
+}
+
+/** What the stream has said about one environment since its Status was read. */
+interface EnvironmentLive {
+  transition?: {
+    phase: string;
+    /** The phase this transition left — how the rail places a rejection. */
+    previousPhase: string;
+    revision: string;
+    cause: string;
+  };
+  verdicts: Record<string, LiveVerdict>;
+}
+
+const NO_EVENTS: EnvironmentLive = { verdicts: {} };
+
+/** One column of the matrix: an environment, as read and as streamed. */
+interface Column {
+  environment: string;
+  read: EnvironmentRead;
+  /** Decoded for the header's tooltip; `error` is what the panel renders. */
+  failure: Failure | undefined;
+  error: unknown;
+  loading: boolean;
+  previousPhase: string | undefined;
+}
+
+function column(
+  environment: string,
+  statuses: { data: EnvironmentAnswer[] | undefined; loading: boolean },
+  live: Record<string, EnvironmentLive>,
+): Column {
+  const answer = statuses.data?.find((a) => a.environment === environment);
+  const events = live[environment] ?? NO_EVENTS;
+  const failure =
+    answer?.error === undefined ? undefined : toFailure(answer.error);
+  const loading = answer === undefined && statuses.loading;
+  // A transition replaces the three fields it carries whole: the fetched
+  // revision and cause described the phase the column has just left.
+  const phase = events.transition?.phase ?? answer?.data?.phase ?? "";
+  const revision = events.transition
+    ? events.transition.revision
+    : (answer?.data?.revision ?? "");
+  const cause = events.transition
+    ? events.transition.cause
+    : (answer?.data?.cause ?? "");
+  const read: EnvironmentRead =
+    answer?.data === undefined
+      ? { ...NO_READ, environment }
+      : {
+          environment,
+          phase,
+          revision,
+          cause,
+          namespace: answer.data.namespace,
+          verdicts: mergeVerdicts(answer.data.verdicts, events.verdicts),
+          read: true,
+        };
+  return {
+    environment,
+    read,
+    failure,
+    error: answer?.error,
+    loading,
+    previousPhase: events.transition?.previousPhase,
+  };
+}
+
 /**
- * What this project is made of (#214).
+ * The matrix: one row per component, one column per environment.
  *
- * The kinds are the spec's own: derived from the shape for a workload — a
- * `port:` is a service, a `schedule:` is a cron, neither is a worker — and read
- * from `kind:` for the ones that state it (docs/model.md, ADR-0014). Nothing
- * here asks a cluster: a Project document says what its components are whether
- * or not anything is deployed, and that is exactly the claim this section
- * makes. Health belongs to the environment panel below, per environment,
- * because a component is not healthy or unhealthy in the abstract.
+ * A row header states what the component *is* — the kind the document says or
+ * the shape derives (docs/model.md, ADR-0014) — because that is a fact about
+ * the project and does not change per environment. A cell states how it is
+ * doing where it runs, and links to the page about exactly that pair.
  *
- * Each row links to the one screen that is *about* a single component: the log
- * tail, which takes a component name and prefills it from the link. Deploy,
- * diff and rollback are environment-wide acts and stay where they are.
+ * The image on a cell is the one the *documents* resolve to (rule P3: the
+ * environment's pin, else the component's, else the project's), not one a
+ * cluster reported. It is labelled as configuration on the component's own page
+ * and shown here as the value that differs from cell to cell — the revision
+ * does not, so it belongs to the column header where it is stated once.
  */
-function Components({
+function Matrix({
   project,
-  environment,
+  components,
+  columns,
+  selected,
+  onSelect,
+  documents,
   projectDoc,
 }: {
   project: string;
-  /** The environment tab in view, which is where a per-component link points. */
-  environment: string | undefined;
-  /** The stored Project document, as authored. */
+  components: ComponentSummary[];
+  columns: Column[];
+  selected: string | undefined;
+  onSelect: (environment: string) => void;
+  documents: SpecDocuments | undefined;
   projectDoc: string;
 }) {
-  const components = useMemo(() => parseComponents(projectDoc), [projectDoc]);
-  const base = `/projects/${encodeURIComponent(project)}`;
+  const fromProject = useMemo(() => projectImage(projectDoc), [projectDoc]);
+  const overrides = useMemo(() => {
+    const out = new Map<string, ReturnType<typeof parseOverrides>>();
+    for (const c of columns) {
+      out.set(
+        c.environment,
+        parseOverrides(decodeDocument(documents?.environments[c.environment])),
+      );
+    }
+    return out;
+  }, [columns, documents]);
+
+  const cells = useMemo(
+    () =>
+      components.map((component) =>
+        columns.map((c) => {
+          const verdict = verdictFor(c.read, {
+            project,
+            component: component.name,
+            kind: component.kind,
+          });
+          return readCell(c.read, verdict);
+        }),
+      ),
+    [components, columns, project],
+  );
+  const borrowed = cells.some((row) =>
+    row.some((cell) => cell.basis === "environment"),
+  );
 
   return (
     <section className="k-section">
       <div className="k-env__head">
-        <div className="k-eyebrow">Components ({components.length})</div>
-        {/* Adding one is an edit of the stored spec, so it goes to the editor
-            rather than growing a second write path — the query parameter opens
-            it on the panel that does it. */}
-        <Link className="k-button" to={`${base}/edit?add=component`}>
-          Add component
-        </Link>
+        <div className="k-eyebrow">Components × environments</div>
       </div>
       <div className="k-section__body">
         {components.length === 0 ? (
@@ -185,112 +429,191 @@ function Components({
             documents below are what this list comes from.
           </p>
         ) : (
-          <ul className="k-components">
-            {components.map((component) => (
-              <ComponentRow
-                key={component.name}
-                component={component}
-                project={project}
-                environment={environment}
-              />
-            ))}
-          </ul>
+          <>
+            <div className="k-matrix__scroll">
+              <table className="k-matrix">
+                <thead>
+                  <tr>
+                    <th scope="col" className="k-matrix__corner">
+                      Component
+                    </th>
+                    {columns.map((c) => (
+                      <th
+                        key={c.environment}
+                        scope="col"
+                        className="k-matrix__col"
+                        aria-current={
+                          c.environment === selected ? "true" : undefined
+                        }
+                      >
+                        <ColumnHead
+                          column={c}
+                          selected={c.environment === selected}
+                          onSelect={onSelect}
+                        />
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {components.map((component, row) => (
+                    <tr key={component.name}>
+                      <th scope="row" className="k-matrix__row">
+                        <span className="k-mono k-matrix__name">
+                          {component.name}
+                        </span>
+                        <span className="k-chip k-mono">{component.kind}</span>
+                        {isKnownKind(component.kind) ? null : (
+                          <span className="k-mono k-component__fact">
+                            a kind this build does not know
+                          </span>
+                        )}
+                      </th>
+                      {columns.map((c, index) => (
+                        <td key={c.environment} className="k-matrix__cell">
+                          <MatrixCell
+                            project={project}
+                            component={component}
+                            environment={c.environment}
+                            cell={cells[row]?.[index]}
+                            image={
+                              effectiveImage(
+                                component,
+                                overrides.get(c.environment)?.get(component.name),
+                                fromProject,
+                              ).image
+                            }
+                          />
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {borrowed ? (
+              <p className="k-mono k-matrix__legend">
+                env — the environment's own status: nothing reports on this
+                component separately
+              </p>
+            ) : null}
+          </>
         )}
       </div>
     </section>
   );
 }
 
-function ComponentRow({
-  component,
-  project,
-  environment,
+/**
+ * A column header: the environment, its word, its revision — and the control
+ * that brings its panel, and with it the six flows, into view below.
+ */
+function ColumnHead({
+  column,
+  selected,
+  onSelect,
 }: {
-  component: ComponentSummary;
-  project: string;
-  environment: string | undefined;
+  column: Column;
+  selected: boolean;
+  onSelect: (environment: string) => void;
 }) {
-  const data = isDataComponentKind(component.kind);
+  const state = statusForPhase(column.read.phase);
   return (
-    <li className="k-component">
-      <div className="k-component__ident">
-        <span className="k-mono k-component__name">{component.name}</span>
-        <span className="k-chip k-mono">{component.kind}</span>
-        <span className="k-mono k-component__fact">{componentFact(component)}</span>
-        {isKnownKind(component.kind) ? null : (
-          <span className="k-mono k-component__fact">
-            a kind this build does not know — the server is the authority on
-            whether it renders
+    <>
+      <button
+        type="button"
+        className={
+          selected ? "k-matrix__env k-matrix__env--on" : "k-matrix__env"
+        }
+        aria-pressed={selected}
+        onClick={() => onSelect(column.environment)}
+      >
+        <span className="k-mono">{column.environment}</span>
+        {column.failure !== undefined ? (
+          <span title={reasonOf(column.failure)}>
+            <StatusPill status="unknown" label="status unavailable" />
           </span>
+        ) : column.loading ? (
+          <StatusPill status="unknown" label="reading…" />
+        ) : (
+          <StatusPill status={state.tone} label={state.word} />
         )}
-      </div>
-      {data ? (
-        // A database has no pods, so no log stream to offer: what it is doing
-        // is the data services section's answer, per environment (#107).
-        <span className="k-mono k-component__fact">
-          a managed data service — its preset and health are in Data services
-        </span>
-      ) : environment !== undefined ? (
-        <Link
-          className="k-button"
-          to={`/projects/${encodeURIComponent(project)}/${encodeURIComponent(
-            environment,
-          )}/logs?component=${encodeURIComponent(component.name)}`}
-        >
-          Logs
-        </Link>
-      ) : null}
-    </li>
+      </button>
+      <span className="k-mono k-matrix__rev">
+        {column.read.revision || "no revision"}
+      </span>
+    </>
   );
 }
 
-/** The one thing worth saying about a component beside its kind. */
-function componentFact(component: ComponentSummary): string {
-  if (isDataComponentKind(component.kind)) {
-    return component.preset === "" ? "the model's default preset" : `preset: ${component.preset}`;
-  }
-  const shape =
-    component.schedule !== ""
-      ? component.schedule
-      : component.port !== ""
-        ? `port ${component.port}`
-        : "no port, no schedule";
-  // Rule P3, which is what makes one repository ship a web process and a
-  // worker: a component with no image of its own runs the project's.
-  return component.image === ""
-    ? `${shape} · the project's image`
-    : `${shape} · ${component.image}`;
+function MatrixCell({
+  project,
+  component,
+  environment,
+  cell,
+  image,
+}: {
+  project: string;
+  component: ComponentSummary;
+  environment: string;
+  cell: ReturnType<typeof readCell> | undefined;
+  image: string;
+}) {
+  if (cell === undefined) return null;
+  const data = isDataComponentKind(component.kind);
+  // The code when something is wrong, the configured image when nothing is:
+  // a reader scanning for trouble wants the code, and a reader scanning a row
+  // wants to know what each environment is set to run.
+  const fact =
+    cell.basis === "unread"
+      ? "not read"
+      : cell.code !== "" && cell.detail !== ""
+        ? cell.code
+        : data
+          ? component.preset || "the model's default preset"
+          : shortImage(image) || "no image configured";
+  return (
+    <Link
+      className="k-cell"
+      data-basis={cell.basis}
+      data-word={cell.status.word}
+      to={`/projects/${encodeURIComponent(project)}/${encodeURIComponent(
+        environment,
+      )}/components/${encodeURIComponent(component.name)}`}
+      title={cell.detail || (image !== "" && !data ? image : undefined)}
+    >
+      <span className="k-cell__word">
+        <StatusPill status={cell.status.tone} label={cell.status.word} />
+        {cell.basis === "environment" ? (
+          <span className="k-mono k-cell__basis">env</span>
+        ) : null}
+      </span>
+      <span className="k-mono k-cell__fact">{fact}</span>
+    </Link>
+  );
 }
 
-/** A verdict row as rendered: the fetched one, or the stream's delta over it. */
-interface VerdictRow {
-  resource: string;
-  code: string;
-  healthy: boolean;
-  degraded: boolean;
-  message: string;
-  remediation: string;
+function reasonOf(failure: Failure): string {
+  const first = failure.wire[0];
+  if (first) return `${first.code}: ${first.message}`;
+  return failure.code ? `${failure.code}: ${failure.message}` : failure.message;
 }
 
-/** What the stream has said about this environment since Status was read. */
-interface PanelLive {
-  transition?: {
-    phase: string;
-    /** The phase this transition left — how the rail places a rejection. */
-    previousPhase: string;
-    revision: string;
-    cause: string;
-  };
-  verdicts: Record<string, { code: string; healthy: boolean; message: string }>;
-}
-
-const NO_LIVE: PanelLive = { verdicts: {} };
-
+/**
+ * The environment in view, whole: its phase rail, its workload verdicts, its
+ * data services, its previews, its Secrets, and the flows that take a
+ * (project, environment) pair.
+ *
+ * It reads the column the page already fetched rather than calling Status a
+ * second time for an environment that is on screen twice.
+ */
 function EnvironmentPanel({
   project,
   environment,
   others,
   documents,
+  column,
+  watch,
 }: {
   project: string;
   environment: string;
@@ -302,67 +625,12 @@ function EnvironmentPanel({
   others: string[];
   /** The stored documents, which is where a data component's preset lives. */
   documents: SpecDocuments | undefined;
+  column: Column | undefined;
+  watch: WatchState;
 }) {
-  const clients = useClients();
-  const status = useAsync(
-    (signal) =>
-      clients.deploy.status(
-        { spec: { spec: { case: "project", value: project } }, environment },
-        { signal },
-      ),
-    [clients, project, environment],
-  );
-
-  // The same watch the project list opens (#76), narrowed to this one
-  // environment: the status block follows transitions, the workload list
-  // follows health changes.
-  const [live, setLive] = useState<PanelLive>(NO_LIVE);
-  const onEvent = useCallback((event: WatchResponse_Event) => {
-    const payload = event.payload;
-    setLive((prev) => {
-      if (payload.case === "statusTransition") {
-        const { phase, previousPhase, revision, cause } = payload.value;
-        return { ...prev, transition: { phase, previousPhase, revision, cause } };
-      }
-      if (payload.case === "healthChange") {
-        const v = payload.value;
-        return {
-          ...prev,
-          verdicts: {
-            ...prev.verdicts,
-            [v.resource]: {
-              code: v.code,
-              healthy: v.healthy,
-              message: v.message,
-            },
-          },
-        };
-      }
-      return prev;
-    });
-  }, []);
-  const reload = status.reload;
-  const onResync = useCallback(() => {
-    setLive(NO_LIVE);
-    reload();
-  }, [reload]);
-  const scopes = useMemo(
-    () => [{ project, environment }],
-    [project, environment],
-  );
-  const watch = useWatch({ scopes, onEvent, onResync });
-
-  const failure =
-    status.error === undefined ? undefined : toFailure(status.error);
-  const phase = live.transition?.phase ?? status.data?.phase;
-  const revision = live.transition
-    ? live.transition.revision
-    : status.data?.revision;
-  const cause = live.transition ? live.transition.cause : status.data?.cause;
-  const verdicts = useMemo(
-    () => mergeVerdicts(status.data?.verdicts, live.verdicts),
-    [status.data, live.verdicts],
-  );
+  const read = column?.read ?? { ...NO_READ, environment };
+  const failure = column?.failure;
+  const verdicts = read.verdicts;
   // A data component's own resource is not a workload, so it is taken out of
   // the workload list and handed to the section that knows what it is. The
   // verdicts themselves are untouched: one health source, two readers.
@@ -381,12 +649,12 @@ function EnvironmentPanel({
   // own cause reasons (rail.ts:isStuckReason).
   const railInput = useMemo<RailInput>(
     () => ({
-      phase: phase ?? "",
-      cause: parseCause(cause ?? ""),
-      reachedPhase: live.transition?.previousPhase,
+      phase: read.phase,
+      cause: parseCause(read.cause),
+      reachedPhase: column?.previousPhase,
       unhealthyWorkloads: workloads.filter((v) => !v.healthy).length,
     }),
-    [phase, cause, live.transition, workloads],
+    [read.phase, read.cause, column?.previousPhase, workloads],
   );
   const documentText = useMemo(
     () => ({
@@ -413,10 +681,10 @@ function EnvironmentPanel({
             <span className="k-chip k-mono">{environment}</span>
             {failure !== undefined ? (
               <StatusPill status="unknown" label="status unavailable" />
-            ) : status.loading && status.data === undefined ? (
+            ) : column?.loading ? (
               <StatusPill status="unknown" label="reading…" />
             ) : (
-              <EnvironmentStatus phase={phase ?? ""} />
+              <EnvironmentStatus phase={read.phase} />
             )}
             <span className="k-mono">
               <LiveIndicator state={watch} />
@@ -467,11 +735,11 @@ function EnvironmentPanel({
         {failure !== undefined ? (
           <ErrorPanel
             title="Could not read this environment's status"
-            error={status.error}
+            error={column?.error}
           />
         ) : null}
 
-        {status.data !== undefined ? (
+        {read.read ? (
           <>
             <PhaseRail
               input={railInput}
@@ -484,19 +752,24 @@ function EnvironmentPanel({
             <div className="k-kv">
               <span className="k-kv__key">revision</span>
               <span>
-                {revision ? <Copyable value={revision} /> : "none recorded"}
+                {read.revision ? (
+                  <Copyable value={read.revision} />
+                ) : (
+                  "none recorded"
+                )}
               </span>
-              {cause ? (
+              {read.cause ? (
                 <>
                   <span className="k-kv__key">cause</span>
-                  <span>{cause}</span>
+                  <span>{read.cause}</span>
                 </>
               ) : null}
-              {Object.entries(status.data.detail)
-                .sort(([a], [b]) => a.localeCompare(b))
-                .map(([k, v]) => (
-                  <Fragmented key={k} name={k} value={v} />
-                ))}
+              {read.namespace ? (
+                <>
+                  <span className="k-kv__key">namespace</span>
+                  <span>{read.namespace}</span>
+                </>
+              ) : null}
             </div>
 
             <div className="k-env__verdicts">
@@ -526,9 +799,9 @@ function EnvironmentPanel({
           projectDoc={documentText.project}
           environmentDoc={documentText.environment}
           health={
-            status.data !== undefined
+            read.read
               ? { state: "read", verdicts }
-              : status.loading
+              : column?.loading
                 ? { state: "loading" }
                 : { state: "unavailable" }
           }
@@ -573,69 +846,6 @@ function EnvironmentStatus({ phase }: { phase: string }) {
       ) : null}
     </>
   );
-}
-
-function Fragmented({ name, value }: { name: string; value: string }) {
-  return (
-    <>
-      <span className="k-kv__key">{name}</span>
-      <span>{value}</span>
-    </>
-  );
-}
-
-/**
- * The fetched verdicts with the stream's deltas applied.
- *
- * A HEALTH_CHANGE carries a code, a verdict and a message — not the
- * remediation, which is the fix for the code it replaced, so it is dropped
- * rather than left pointing at the wrong problem. `degraded` is likewise
- * recomputed as the softer claim the event supports: the failure-code set is
- * observation's (IsFailure) and lives in Go, so the browser must not guess
- * which side of it a live code falls on.
- *
- * A workload the event names but Status never returned is appended: a
- * Deployment that appeared since the last read is real, and hiding it until
- * the next refetch would be the staleness this stream exists to remove.
- */
-function mergeVerdicts(
-  fetched: readonly WorkloadVerdict[] | undefined,
-  live: PanelLive["verdicts"],
-): VerdictRow[] {
-  const pending = { ...live };
-  const rows: VerdictRow[] = (fetched ?? []).map((v) => {
-    const update = pending[v.resource];
-    if (update === undefined) {
-      return {
-        resource: v.resource,
-        code: v.code,
-        healthy: v.healthy,
-        degraded: v.degraded,
-        message: v.message,
-        remediation: v.remediation,
-      };
-    }
-    delete pending[v.resource];
-    return {
-      resource: v.resource,
-      code: update.code,
-      healthy: update.healthy,
-      degraded: !update.healthy,
-      message: update.message,
-      remediation: "",
-    };
-  });
-  for (const [resource, update] of Object.entries(pending)) {
-    rows.push({
-      resource,
-      code: update.code,
-      healthy: update.healthy,
-      degraded: !update.healthy,
-      message: update.message,
-      remediation: "",
-    });
-  }
-  return rows;
 }
 
 /**

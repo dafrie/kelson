@@ -5,6 +5,7 @@ import { AppShell } from "./components/AppShell";
 import { LoginPage } from "./pages/LoginPage";
 import { ProjectsPage } from "./pages/ProjectsPage";
 import { ProjectDetailPage } from "./pages/ProjectDetailPage";
+import { ComponentPage } from "./pages/ComponentPage";
 import { ClusterPage } from "./pages/ClusterPage";
 import { ConnectionsPage } from "./pages/ConnectionsPage";
 import { DeployPage } from "./pages/DeployPage";
@@ -62,6 +63,15 @@ export const routes = createRoutesFromElements(
         <Route path="projects/new" element={<NewProjectPage />} />
         <Route path="projects/:project" element={<ProjectDetailPage />} />
         <Route path="projects/:project/edit" element={<EditSpecPage />} />
+        {/* The component in an environment, which is the unit that deploys
+            (docs/model.md §6) and until #260 had no address of its own. The
+            path is the pair every other flow takes plus the component's name,
+            so it composes with them rather than replacing any of them: the
+            page links out to the same deploy, diff, history and log routes. */}
+        <Route
+          path="projects/:project/:env/components/:component"
+          element={<ComponentPage />}
+        />
         <Route path="projects/:project/:env/deploy" element={<DeployPage />} />
         <Route path="projects/:project/:env/diff" element={<DiffPage />} />
         <Route path="projects/:project/:env/history" element={<HistoryPage />} />

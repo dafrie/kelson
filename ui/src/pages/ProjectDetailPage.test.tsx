@@ -73,6 +73,7 @@ const transport = createRouterTransport((router) => {
       return {
         phase: "Healthy",
         revision: "8f2c1ad",
+        namespace: "checkout-production",
         detail: { resources: "4", live: "4" },
         verdicts: [
           {
@@ -93,16 +94,30 @@ function renderDetail() {
   return renderAt(transport, "/projects/checkout", "/projects/:project", <ProjectDetailPage />);
 }
 
+/**
+ * The matrix draws as soon as the documents arrive and fills in as each
+ * column's Status lands, so a test that reads a cell waits for the columns to
+ * stop saying they are reading.
+ */
+async function settled() {
+  await screen.findByText("Components × environments");
+  await waitFor(() => {
+    expect(screen.queryAllByText("reading…")).toHaveLength(0);
+  });
+}
+
 describe("ProjectDetailPage", () => {
   it("shows the phase and the workload verdicts, which are different answers", async () => {
     renderDetail();
 
-    expect(await screen.findByText("live", { selector: ".k-pill" })).toBeTruthy();
-    expect(screen.getByText("phase Healthy")).toBeTruthy();
+    expect(
+      await screen.findByText("phase Healthy"),
+    ).toBeTruthy();
+    expect(screen.getAllByText("live", { selector: ".k-pill" }).length).toBeGreaterThan(0);
     expect(screen.getByText("8f2c1ad")).toBeTruthy();
     // A Healthy phase with a crash-looping workload underneath is exactly the
     // pair the two signals exist to tell apart.
-    expect(screen.getByText("crash-loop-back-off")).toBeTruthy();
+    expect(screen.getAllByText("crash-loop-back-off").length).toBeGreaterThan(0);
     expect(screen.getByText("web is restarting repeatedly (7 restarts)")).toBeTruthy();
     expect(screen.getByText("fix:")).toBeTruthy();
   });
@@ -184,6 +199,8 @@ describe("ProjectDetailPage", () => {
     // screen has the real precondition and its own honest error if it fails.
     renderDetail();
 
+    // The tab, not the matrix column header: the column button's accessible
+    // name carries its status word too.
     fireEvent.click(await screen.findByRole("button", { name: "staging" }));
 
     const rollback = await screen.findByRole("link", { name: "Rollback" });
@@ -195,7 +212,14 @@ describe("ProjectDetailPage", () => {
   });
 });
 
-describe("ProjectDetailPage components (#214)", () => {
+/**
+ * The matrix (#260): components down, environments across, one cell per pair.
+ *
+ * The fixture is deliberately mixed — a service and a worker that observation
+ * reports on, a cron and a database it does not — because the interesting
+ * property is that a cell says which of the two answers it is standing on.
+ */
+describe("ProjectDetailPage matrix", () => {
   const MULTI_PROJECT = `kind: Project
 metadata:
   name: checkout
@@ -203,9 +227,15 @@ metadata:
 spec:
   image: ghcr.io/acme/checkout:1.4.2
 
+  sources:
+    - name: app
+      git: https://github.com/acme/checkout
+      ref: main
+
   components:
     - name: web
       port: 8080
+      source: app
 
     - name: worker
 
@@ -217,22 +247,66 @@ spec:
       preset: small
 `;
 
+  const PRODUCTION_YAML = `kind: Environment
+metadata:
+  name: production
+spec:
+  components:
+    - name: web
+      image: ghcr.io/acme/checkout:1.4.3
+`;
+
   const multi = createRouterTransport((router) => {
     router.service(SpecService, {
       getSpec: () => ({
         spec: {
           project: "checkout",
           version: "7",
-          environments: ["production"],
+          environments: ["production", "staging"],
           documents: {
             project: new TextEncoder().encode(MULTI_PROJECT),
-            environments: { production: new TextEncoder().encode(ENV_YAML) },
+            environments: {
+              production: new TextEncoder().encode(PRODUCTION_YAML),
+              staging: new TextEncoder().encode(ENV_YAML),
+            },
           },
         },
       }),
     });
     router.service(DeployService, {
-      status: () => ({ phase: "Healthy", revision: "8f2c1ad", verdicts: [] }),
+      status: (req) => {
+        if (req.environment === "staging") {
+          return {
+            phase: "Reconciling",
+            revision: "c41b90e",
+            namespace: "checkout-staging",
+            verdicts: [],
+          };
+        }
+        return {
+          phase: "Healthy",
+          revision: "8f2c1ad",
+          namespace: "checkout-production",
+          verdicts: [
+            {
+              resource: "Deployment/checkout-production/web",
+              code: "healthy",
+              healthy: true,
+              degraded: false,
+              message: "Deployment/checkout-production/web healthy",
+              remediation: "",
+            },
+            {
+              resource: "Deployment/checkout-production/worker",
+              code: "crash-loop-back-off",
+              healthy: false,
+              degraded: true,
+              message: "worker is restarting repeatedly (7 restarts)",
+              remediation: "kelson logs worker --at-termination",
+            },
+          ],
+        };
+      },
     });
   });
 
@@ -240,28 +314,164 @@ spec:
     return renderAt(multi, "/projects/checkout", "/projects/:project", <ProjectDetailPage />);
   }
 
-  it("lists the project's components with the kind each shape derives", async () => {
-    renderMulti();
+  it("draws a row per component and a column per environment", async () => {
+    const { container } = renderMulti();
 
-    expect(await screen.findByText("Components (4)")).toBeTruthy();
-    const kinds = new Map(
-      [...document.querySelectorAll(".k-component")].map((row) => [
-        row.querySelector(".k-component__name")?.textContent,
-        row.querySelector(".k-chip")?.textContent,
-      ]),
-    );
-    // The table of docs/model.md: a port is a service, a schedule is a cron,
-    // neither is a worker, and a written kind is read rather than derived.
-    expect(kinds.get("web")).toBe("service");
-    expect(kinds.get("worker")).toBe("worker");
-    expect(kinds.get("nightly")).toBe("cron");
-    expect(kinds.get("db")).toBe("postgres");
-    // Rule P3 is visible where it decides something: the worker declares no
-    // image, so it runs the project's.
-    expect(screen.getByText(/no port, no schedule · the project's image/)).toBeTruthy();
+    await settled();
+    const rows = [...container.querySelectorAll("tbody tr")];
+    expect(
+      rows.map((row) => row.querySelector(".k-matrix__name")?.textContent),
+    ).toEqual(["web", "worker", "nightly", "db"]);
+    // The kind is a fact about the project and does not change per environment,
+    // so it stays on the row header: the table of docs/model.md, a port being a
+    // service, a schedule a cron, neither a worker, and a written kind read.
+    expect(
+      rows.map((row) => row.querySelector(".k-chip")?.textContent),
+    ).toEqual(["service", "worker", "cron", "postgres"]);
+    const columns = [...container.querySelectorAll("thead .k-matrix__env")];
+    expect(columns.map((c) => c.textContent)).toEqual([
+      "productionlive",
+      "stagingdeploying",
+    ]);
+    // The revision is an environment's fact and is stated once per column.
+    expect(
+      [...container.querySelectorAll(".k-matrix__rev")].map((r) => r.textContent),
+    ).toEqual(["8f2c1ad", "c41b90e"]);
   });
 
-  it("offers adding one, and sends it to the editor that writes the spec", async () => {
+  it("gives each cell the component's own word, and links to the pair's page", async () => {
+    const { container } = renderMulti();
+
+    await settled();
+    const cells = [...container.querySelectorAll(".k-cell")];
+    const byKey = new Map(
+      cells.map((c) => [c.getAttribute("href"), c] as const),
+    );
+    const web = byKey.get("/projects/checkout/production/components/web");
+    const worker = byKey.get("/projects/checkout/production/components/worker");
+    expect(web?.querySelector(".k-pill")?.textContent).toBe("live");
+    // Production's phase is Healthy; this component is not, and the cell says
+    // the component's answer rather than its environment's.
+    expect(worker?.querySelector(".k-pill")?.textContent).toBe("unhealthy");
+    expect(worker?.getAttribute("data-basis")).toBe("component");
+    // The observation code, verbatim, is the fact under a cell in trouble.
+    expect(worker?.querySelector(".k-cell__fact")?.textContent).toBe(
+      "crash-loop-back-off",
+    );
+    // And the effective image (rule P3: the environment's pin wins) is the fact
+    // under one that is not.
+    expect(web?.querySelector(".k-cell__fact")?.textContent).toBe(
+      "checkout:1.4.3",
+    );
+  });
+
+  it("marks a cell that is showing the environment's word, not the component's", async () => {
+    const { container } = renderMulti();
+
+    await settled();
+    const nightly = container.querySelector(
+      '[href="/projects/checkout/production/components/nightly"]',
+    );
+    // Nothing observes a CronJob (internal/api's observeWorkloads probes
+    // Deployments), so the cell borrows production's word and says so.
+    expect(nightly?.getAttribute("data-basis")).toBe("environment");
+    expect(nightly?.querySelector(".k-pill")?.textContent).toBe("live");
+    expect(nightly?.querySelector(".k-cell__basis")?.textContent).toBe("env");
+    expect(
+      screen.getByText(
+        /the environment's own status: nothing reports on this component separately/,
+      ),
+    ).toBeTruthy();
+    // A database is in the same position and shows what it is sized as.
+    const db = container.querySelector(
+      '[href="/projects/checkout/staging/components/db"]',
+    );
+    expect(db?.querySelector(".k-cell__fact")?.textContent).toBe("small");
+  });
+
+  it("reads one Status per environment and reuses it for the panel below", async () => {
+    const calls: string[] = [];
+    const counted = createRouterTransport((router) => {
+      router.service(SpecService, {
+        getSpec: () => ({
+          spec: {
+            project: "checkout",
+            version: "7",
+            environments: ["production", "staging"],
+            documents: {
+              project: new TextEncoder().encode(MULTI_PROJECT),
+              environments: {},
+            },
+          },
+        }),
+      });
+      router.service(DeployService, {
+        status: (req) => {
+          calls.push(req.environment);
+          return { phase: "Healthy", revision: "8f2c1ad", verdicts: [] };
+        },
+      });
+    });
+    renderAt(counted, "/projects/checkout", "/projects/:project", <ProjectDetailPage />);
+
+    await settled();
+    await waitFor(() => {
+      expect(calls.length).toBe(2);
+    });
+    // One per column, and the panel below the matrix is the column already
+    // read rather than a second call for an environment on screen twice.
+    expect([...calls].sort()).toEqual(["production", "staging"]);
+  });
+
+  it("darkens only the column whose Status failed", async () => {
+    const partial = createRouterTransport((router) => {
+      router.service(SpecService, {
+        getSpec: () => ({
+          spec: {
+            project: "checkout",
+            version: "7",
+            environments: ["production", "staging"],
+            documents: {
+              project: new TextEncoder().encode(MULTI_PROJECT),
+              environments: {},
+            },
+          },
+        }),
+      });
+      router.service(DeployService, {
+        status: (req) => {
+          if (req.environment === "staging") {
+            throw new ConnectError(
+              "api: building the delivery plane: connection refused",
+              Code.Unavailable,
+            );
+          }
+          return { phase: "Healthy", revision: "8f2c1ad", verdicts: [] };
+        },
+      });
+    });
+    const { container } = renderAt(
+      partial,
+      "/projects/checkout",
+      "/projects/:project",
+      <ProjectDetailPage />,
+    );
+
+    // One column is unreadable and the other is not: the calls are per column
+    // precisely so the second one still answers.
+    await settled();
+    const columns = [...container.querySelectorAll("thead .k-matrix__env")];
+    expect(columns[0]?.textContent).toBe("productionlive");
+    expect(columns[1]?.textContent).toBe("stagingstatus unavailable");
+    // And the cells under the dark column claim nothing.
+    const cell = container.querySelector(
+      '[href="/projects/checkout/staging/components/web"]',
+    );
+    expect(cell?.getAttribute("data-basis")).toBe("unread");
+    expect(cell?.querySelector(".k-cell__fact")?.textContent).toBe("not read");
+  });
+
+  it("offers adding a component, and sends it to the editor that writes the spec", async () => {
     renderMulti();
 
     expect(
@@ -269,32 +479,11 @@ spec:
     ).toBe("/projects/checkout/edit?add=component");
   });
 
-  it("links each workload to its own logs, and a database to the section that owns it", async () => {
-    renderMulti();
-
-    await screen.findByText("Components (4)");
-    const links = screen.getAllByRole("link", { name: "Logs" });
-    // One per workload — the environment in the tab, the component in the query.
-    expect(links.map((l) => l.getAttribute("href"))).toEqual([
-      "/projects/checkout/production/logs?component=web",
-      "/projects/checkout/production/logs?component=worker",
-      "/projects/checkout/production/logs?component=nightly",
-      // …and the environment panel's own Logs button, which takes none.
-      "/projects/checkout/production/logs",
-    ]);
-    // A database has no pods, so it is pointed at the section that can answer
-    // for it rather than at a log stream that cannot exist (#107).
-    expect(
-      screen.getByText(/a managed data service — its preset and health are in Data services/),
-    ).toBeTruthy();
-  });
-
   it("says so when the stored document declares no components", async () => {
     renderDetail();
 
-    expect(await screen.findByText("Components (0)")).toBeTruthy();
     expect(
-      screen.getByText(/No components were read from the stored Project document/),
+      await screen.findByText(/No components were read from the stored Project document/),
     ).toBeTruthy();
   });
 });
@@ -331,6 +520,7 @@ spec:
       status: () => ({
         phase: "Healthy",
         revision: "8f2c1ad",
+        namespace: "checkout-production",
         verdicts: [
           {
             resource: "Deployment/checkout-production/web",
@@ -376,6 +566,26 @@ spec:
       ),
     ).toBeTruthy();
   });
+
+  it("reads a data component's cell from the verdict about its own resource", async () => {
+    const { container } = renderAt(
+      withData,
+      "/projects/checkout",
+      "/projects/:project",
+      <ProjectDetailPage />,
+    );
+
+    await settled();
+    const db = container.querySelector(
+      '[href="/projects/checkout/production/components/db"]',
+    );
+    // A CloudNativePG Cluster is named `<project>-<environment>-<component>`,
+    // which is how a verdict about it is recognised as this component's.
+    await waitFor(() => {
+      expect(db?.getAttribute("data-basis")).toBe("component");
+    });
+    expect(db?.querySelector(".k-pill")?.textContent).toBe("live");
+  });
 });
 
 describe("ProjectDetailPage live updates", () => {
@@ -395,6 +605,7 @@ describe("ProjectDetailPage live updates", () => {
         status: () => ({
           phase: "Reconciling",
           revision: "8f2c1ad",
+          namespace: "checkout-production",
           verdicts: [
             {
               resource: "Deployment/checkout-production/web",
@@ -412,7 +623,7 @@ describe("ProjectDetailPage live updates", () => {
     renderAt(live, "/projects/checkout", "/projects/:project", <ProjectDetailPage />);
 
     expect(
-      await screen.findByText("deploying", { selector: ".k-pill" }),
+      await screen.findAllByText("deploying", { selector: ".k-pill" }),
     ).toBeTruthy();
 
     events.push(
@@ -426,7 +637,7 @@ describe("ProjectDetailPage live updates", () => {
       }),
     );
     expect(
-      await screen.findByText("live", { selector: ".k-pill" }),
+      await screen.findAllByText("live", { selector: ".k-pill" }),
     ).toBeTruthy();
     expect(screen.getByText("9d3f0aa")).toBeTruthy();
     expect(screen.getByText("3/3 replicas ready")).toBeTruthy();
