@@ -313,6 +313,10 @@ func printInstallBoundary(out *printer, plan *install.Plan) {
 		case "flux":
 			out.printf("  the FluxInstance sets no sync source. Flux is running and reconciling nothing until\n")
 			out.printf("  `kelson deploy --mode flux` writes to a repository you point it at.\n")
+		case "flux-aio":
+			out.printf("  Flux is running and reconciling nothing yet — and there is nothing here to configure:\n")
+			out.printf("  the kelson controller writes each environment's OCIRepository and Kustomization on its\n")
+			out.printf("  first deploy.\n")
 		case "cnpg":
 			out.printf("  CloudNativePG is running with no databases. `kind: postgres` components render against\n")
 			out.printf("  it from the next deploy; run `kelson profile` to see the presets it can serve.\n")
