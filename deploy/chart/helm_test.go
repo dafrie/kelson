@@ -786,3 +786,33 @@ func TestGitSourceRBAC(t *testing.T) {
 		}
 	}
 }
+
+// TestServerRoleCanCreateTheFirstProject pins the verb whose absence broke the
+// first real "New project" click: the spec store writes with server-side
+// apply, and an apply that brings a new object into existence is authorized as
+// a create. With only `patch` granted the server could update every project
+// that already existed and could not create one — and the e2e never notices,
+// because it installs the chart with replicaCount=0 and the server pod is
+// never scheduled there.
+func TestServerRoleCanCreateTheFirstProject(t *testing.T) {
+	docs := decodeDocs(t, helmTemplate(t, authValues...))
+
+	var serverRules []policyRule
+	for _, doc := range docs {
+		if doc["kind"] == "Role" && nameOf(doc) == "kelson-state" {
+			remarshal(t, doc["rules"], &serverRules)
+		}
+	}
+	if serverRules == nil {
+		t.Fatal("no kelson-state Role was rendered; the server holds no state grants at all")
+	}
+
+	for _, resource := range []string{"projects", "environments"} {
+		for _, verb := range []string{"create", "patch"} {
+			if !granted(serverRules, "kelson.dev", resource, verb) {
+				t.Errorf("the server's state Role does not grant %s on %s — PutSpec's server-side "+
+					"apply needs both create and patch:\n%s", verb, resource, mustYAML(t, serverRules))
+			}
+		}
+	}
+}
