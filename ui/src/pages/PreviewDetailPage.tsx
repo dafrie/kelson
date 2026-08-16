@@ -3,18 +3,17 @@ import { Link, useParams } from "react-router-dom";
 import { useAsync, useClients } from "../api/data";
 import { Copyable } from "../components/Copyable";
 import { ErrorPanel } from "../components/ErrorPanel";
-import { StatusPill } from "../components/StatusPill";
 import { formatAge } from "../components/format";
 import { EmptyState, LoadingState } from "../components/States";
+import { Detail as KubeDetail, KubeFact } from "../expert/Detail";
 import type {
   ListPreviewsResponse,
   Preview,
   PreviewSettings,
 } from "../gen/kelson/v1alpha1/preview_pb";
-import { PreviewPill } from "../previews/Previews";
+import { LifecycleStatus, PreviewPill } from "../previews/Previews";
 import {
   changeRequestUrl,
-  lifecycleLine,
   previewHeadline,
   shortSha,
 } from "../previews/phase";
@@ -129,7 +128,6 @@ function NotFound({
   pr: string;
   response: ListPreviewsResponse;
 }) {
-  const lifecycle = lifecycleLine(response.lifecycle);
   return (
     <div className="k-previews__empty">
       <p className="k-previews__lede">
@@ -138,10 +136,7 @@ function NotFound({
         closed, excluded by the filter, or waiting on manifests CI has not
         published — those look alike from here.
       </p>
-      <div className="k-previews__lifecycle">
-        <StatusPill status={lifecycle.status} label="lifecycle" />
-        <span className="k-previews__lifecycle-text">{lifecycle.text}</span>
-      </div>
+      <LifecycleStatus lifecycle={response.lifecycle} />
     </div>
   );
 }
@@ -203,6 +198,16 @@ function Detail({
           <span className="k-kv__key">namespace</span>
           <span>
             <Copyable value={preview.namespace} />
+            {/* The proto documents this namespace as also being the name of
+                the OCIRepository and the Kustomization this preview reads
+                from — an object is named only where the response actually
+                named it, which here is the same string three times. */}
+            <KubeDetail>
+              <span className="k-kfacts">
+                <KubeFact name="OCIRepository" value={preview.namespace} />
+                <KubeFact name="Kustomization" value={preview.namespace} />
+              </span>
+            </KubeDetail>
           </span>
 
           <span className="k-kv__key">artifact ready</span>
