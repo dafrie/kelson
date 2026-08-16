@@ -170,8 +170,14 @@ export function ProjectDetailPage() {
     reload();
   }, [reload]);
   // The stream opens once every column has an answer: a delta applied before
-  // its Status landed would be overwritten by the older answer.
-  const settled = environments.length > 0 && statuses.data !== undefined;
+  // its Status landed would be overwritten by the older answer. The check is
+  // per environment rather than "the read finished", because a refetch keeps
+  // the previous key's answers on screen while the new ones are in flight.
+  const settled =
+    environments.length > 0 &&
+    environments.every((environment) =>
+      statuses.data?.some((a) => a.environment === environment),
+    );
   const scopes = useMemo(
     () => (settled ? environments.map((environment) => ({ project, environment })) : []),
     [settled, environments, project],
