@@ -50,6 +50,25 @@ const CONFIG = {
             component: "web",
             field: "$.spec.components[0].env.LOG_LEVEL",
           }),
+          // Written in three places: the project, the component, and the
+          // override that won.
+          shadowed: [
+            {
+              value: { value: { case: "literal" as const, value: "info" } },
+              setAt: setAt(SetAtLevel.PROJECT, {
+                document: "Project",
+                field: "$.spec.env.LOG_LEVEL",
+              }),
+            },
+            {
+              value: { value: { case: "literal" as const, value: "debug" } },
+              setAt: setAt(SetAtLevel.COMPONENT, {
+                document: "Project",
+                component: "web",
+                field: "$.spec.components[0].env.LOG_LEVEL",
+              }),
+            },
+          ],
         },
         {
           name: "REGION",
@@ -74,6 +93,20 @@ const CONFIG = {
             component: "web",
             field: "$.spec.components[0].env.STRIPE_KEY",
           }),
+          shadowed: [
+            {
+              value: {
+                value: {
+                  case: "secret" as const,
+                  value: { secret: "checkout-stripe-test", key: "secretKey" },
+                },
+              },
+              setAt: setAt(SetAtLevel.PROJECT, {
+                document: "Project",
+                field: "$.spec.env.STRIPE_KEY",
+              }),
+            },
+          ],
         },
         {
           name: "FEATURE_X",
@@ -85,6 +118,17 @@ const CONFIG = {
             component: "web",
             field: "$.spec.components[0].env.FEATURE_X",
           }),
+          // The unset case: the winner is an empty value, so the shadow is the
+          // only thing on the row that can say what was unset.
+          shadowed: [
+            {
+              value: { value: { case: "literal" as const, value: "enabled" } },
+              setAt: setAt(SetAtLevel.PROJECT, {
+                document: "Project",
+                field: "$.spec.env.FEATURE_X",
+              }),
+            },
+          ],
         },
         {
           name: "image",
@@ -200,6 +244,92 @@ describe("EffectiveConfigTable", () => {
       selector: ".k-config__setat",
     })[0];
     expect(builtIn?.getAttribute("title")).toBeNull();
+  });
+
+  it("draws what a value replaced under it, struck through and quiet", async () => {
+    const { container } = open();
+
+    await screen.findByText("LOG_LEVEL");
+    // The chain, in the wire's order, under the one value that runs.
+    expect(screen.getByText("info")).toBeTruthy();
+    expect(screen.getByText("debug")).toBeTruthy();
+    // The sentence names both blocks, so which one took the value away is part
+    // of it: LOG_LEVEL and FEATURE_X lost theirs to the environment's override
+    // of this component, STRIPE_KEY's to the component itself.
+    expect(
+      screen.getAllByText("set on the project, overridden for production", {
+        selector: ".k-config__setat",
+      }).length,
+    ).toBe(2);
+    expect(
+      screen.getByText("set on the project, overridden on the component", {
+        selector: ".k-config__setat",
+      }),
+    ).toBeTruthy();
+    expect(
+      screen.getByText("set on the component, overridden for production", {
+        selector: ".k-config__setat",
+      }),
+    ).toBeTruthy();
+
+    // Struck through, named as past, and carrying no name of its own — it is
+    // the same setting as the row above it.
+    const struck = container.querySelectorAll("s.k-config__shadow-value");
+    expect(struck.length).toBe(4); // LOG_LEVEL twice, STRIPE_KEY, FEATURE_X
+    expect(struck[0]?.textContent).toBe("info");
+    expect(container.querySelectorAll(".k-config__was").length).toBe(4);
+    const shadowRows = container.querySelectorAll("tr.k-config__shadow");
+    expect(shadowRows[0]?.querySelector(".k-config__name")).toBeNull();
+
+    // The document path rides on the shadow's own sentence, the way it does on
+    // the winner's.
+    expect(
+      screen
+        .getAllByText("set on the project, overridden for production", {
+          selector: ".k-config__setat",
+        })[0]
+        ?.getAttribute("title"),
+    ).toBe("$.spec.env.LOG_LEVEL");
+  });
+
+  it("leaves a row nothing overrode exactly as it was", async () => {
+    const { container } = open();
+
+    await screen.findByText("REGION");
+    // REGION, image and replicas are unshadowed, so the table gains no line for
+    // them: only the four rows with a chain behind them do.
+    const rows = container.querySelectorAll("tbody tr");
+    const shadows = container.querySelectorAll("tr.k-config__shadow");
+    expect(shadows.length).toBe(4);
+    // Three group headings, six settings on the component, one on the
+    // environment, and four shadow lines.
+    expect(rows.length).toBe(3 + 6 + 1 + 4);
+    const region = screen.getByText("REGION").closest("tr");
+    expect(region?.classList.contains("k-config__row--shadowed")).toBe(false);
+    expect(region?.nextElementSibling?.classList.contains("k-config__shadow")).toBe(
+      false,
+    );
+  });
+
+  it("says what an empty override unset, which the winner cannot", async () => {
+    open();
+
+    await screen.findByText("FEATURE_X");
+    // The winner is an empty value and reads as one; the shadow is what says
+    // the project had set something here.
+    expect(screen.getByText("empty", { selector: ".k-config__empty" })).toBeTruthy();
+    expect(screen.getByText("enabled")).toBeTruthy();
+  });
+
+  it("keeps a shadowed secret a reference", async () => {
+    open();
+
+    await screen.findByText("STRIPE_KEY");
+    // Both halves of the chain print as references: kelson reads neither
+    // Secret, so there is no value on either line.
+    expect(
+      screen.getByText("{ secret: checkout-stripe-test, key: secretKey }"),
+    ).toBeTruthy();
   });
 
   it("omits a setting the answer did not mention", async () => {

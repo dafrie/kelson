@@ -197,6 +197,27 @@ Five things the table is deliberate about:
   variable is named by its author and `resources.requests.cpu` by the model, so
   a project is free to declare a variable called `image` and it is a different
   row from the workload setting. The wire says which group each row is in.
+- **What a value replaced is drawn under it, struck through**
+  ([#268](https://github.com/dafrie/kelson/issues/268)). `EffectiveSetting`
+  carries the losing values with the blocks that held them, outermost first —
+  the order the merge applied the scopes in — and each becomes one quiet line:
+  `was debug · set on the component, overridden for production`. The sentence
+  names *both* blocks, because "set on the component" is only half an answer
+  when the reader is looking at something else. Three things follow. A shadow
+  line appears only where there is a shadow, so a table where nothing is
+  overridden is exactly the height it was, and it is collapsed onto the winner —
+  no name of its own, no rule of its own, one hairline under the whole block —
+  so the eye reads one setting rather than two rows. **The unset case is the one
+  it exists for**: overriding a variable to `""` for an environment makes the
+  winner a value that says nothing about itself, and the shadow is the only
+  thing on the row that can say what was unset. And a shadowed reference is
+  still a reference — the same `envValueText`, the same `{ secret: …, key: … }`,
+  no value on either line. Blocks that the model replaces whole shadow the same
+  way it attributes them: `replicas` is one row and shadows as one, a replaced
+  `resources:` block reports what the displaced block held at each row's own
+  field, and a quantity the winning block does not set has no row to hang a
+  shadow on — the table does not invent one, because a row whose winner does not
+  exist is a setting kelson never merged.
 
 The JSONPath into the document — `$.spec.components[0].env.LOG_LEVEL`, the same
 spelling a structured error's `field` uses — rides on the row's `title` rather
