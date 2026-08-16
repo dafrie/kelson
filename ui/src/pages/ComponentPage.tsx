@@ -157,7 +157,7 @@ export function ComponentPage() {
         {/* The environment is a link, not a label: it is where this component's
             logs, history and actions live (#260), so the page it names is one
             press away rather than a path a reader reassembles. */}
-        <Link className="k-chip k-mono" to={base}>
+        <Link className="k-chip" to={base}>
           {env}
         </Link>
         {summary !== undefined ? (
@@ -220,11 +220,12 @@ export function ComponentPage() {
             </div>
             <div className="k-section__body">
               <div className="k-kv">
-                <Fact name="shape" value={shapeOf(summary)} />
+                <Fact name="shape" value={shapeOf(summary)} prose />
                 {data ? (
                   <Fact
                     name="preset"
                     value={summary.preset || "the model's default preset"}
+                    prose={summary.preset === ""}
                   />
                 ) : (
                   <>
@@ -235,7 +236,7 @@ export function ComponentPage() {
                       ) : (
                         <>
                           <Copyable value={image.image} />{" "}
-                          <span className="k-mono k-component__fact">
+                          <span className="k-component__fact">
                             set on the {image.scope}
                           </span>
                         </>
@@ -249,7 +250,7 @@ export function ComponentPage() {
                   {read.revision ? (
                     <>
                       <Copyable value={read.revision} />{" "}
-                      <span className="k-mono k-component__fact">
+                      <span className="k-component__fact">
                         the environment's, not this component's
                       </span>
                     </>
@@ -263,7 +264,9 @@ export function ComponentPage() {
                   <Fact name="namespace" value={read.namespace} />
                 ) : null}
                 {read.phase ? <Fact name="phase" value={read.phase} /> : null}
-                {read.cause ? <Fact name="cause" value={read.cause} /> : null}
+                {read.cause ? (
+                  <Fact name="cause" value={read.cause} prose />
+                ) : null}
               </div>
             </div>
           </section>
@@ -304,7 +307,7 @@ export function ComponentPage() {
                   </li>
                 </ul>
               ) : (
-                <p className="k-mono k-env__note">
+                <p className="k-env__note">
                   {data
                     ? "no reading for this database — its section on the project page has what there is"
                     : `no reading for ${component} here — the word above is ${env}'s own`}
@@ -343,13 +346,14 @@ function SourceFacts({
 }) {
   if (data) return null;
   if (binding.basis === "none") {
-    return <Fact name="source" value="none declared — image only" />;
+    return <Fact name="source" value="none declared — image only" prose />;
   }
   if (binding.basis === "undeclared") {
     return (
       <Fact
         name="source"
         value={`${binding.requested} — not declared by this project`}
+        prose
       />
     );
   }
@@ -358,6 +362,7 @@ function SourceFacts({
       <Fact
         name="source"
         value="several declared and none named default — this component names none"
+        prose
       />
     );
   }
@@ -366,7 +371,7 @@ function SourceFacts({
   return (
     <>
       <span className="k-kv__key">source</span>
-      <span>
+      <span className="k-kv__prose">
         {source.name}
         {binding.basis === "named" ? "" : " (the project's default)"}
       </span>
@@ -379,11 +384,29 @@ function SourceFacts({
   );
 }
 
-function Fact({ name, value }: { name: string; value: string }) {
+/**
+ * One row of the fact grid: a label and a value.
+ *
+ * The grid renders values in mono because a value here is what the machine
+ * holds — an image reference, a namespace, a phase. `prose` is the opt-out for
+ * the rows whose "value" is a sentence somebody wrote (a shape read out loud, a
+ * cause the engine phrased, a source that has to explain itself), because mono
+ * on a sentence is the claim this UI spends its type system making, said about
+ * something that is not true of it (#260).
+ */
+function Fact({
+  name,
+  value,
+  prose,
+}: {
+  name: string;
+  value: string;
+  prose?: boolean;
+}) {
   return (
     <>
       <span className="k-kv__key">{name}</span>
-      <span>{value}</span>
+      <span className={prose ? "k-kv__prose" : undefined}>{value}</span>
     </>
   );
 }

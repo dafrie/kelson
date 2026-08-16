@@ -98,7 +98,13 @@ describe("DataServices", () => {
 
     expect(await screen.findByText("Data services (1)")).toBeTruthy();
     expect(screen.getByText("db")).toBeTruthy();
-    expect(screen.getByText("preset: ha-small")).toBeTruthy();
+    // The preset name is a value the model names, so the chip is a sans label
+    // around a mono value (#260) rather than one text node.
+    expect(
+      screen.getByText(
+        (_, el) => el?.className === "k-chip" && el.textContent === "preset: ha-small",
+      ),
+    ).toBeTruthy();
     expect(screen.getByText("3 instances")).toBeTruthy();
     expect(screen.getByText("500m CPU requested per instance, no limit")).toBeTruthy();
     expect(screen.getByText("1Gi memory, request and limit")).toBeTruthy();
@@ -130,7 +136,13 @@ describe("DataServices", () => {
     ]);
 
     expect(await screen.findByText("Data services (1)")).toBeTruthy();
-    expect(screen.getByText("preset: ha-small")).toBeTruthy();
+    // The preset name is a value the model names, so the chip is a sans label
+    // around a mono value (#260) rather than one text node.
+    expect(
+      screen.getByText(
+        (_, el) => el?.className === "k-chip" && el.textContent === "preset: ha-small",
+      ),
+    ).toBeTruthy();
     expect(
       screen.getByText(
         "3 shards × 1 replica each (6 pods) — needs a cluster-aware client",

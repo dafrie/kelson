@@ -1,11 +1,15 @@
+/* The error panel keeps its fill, and after this pass it is one of only two
+   objects in the UI that has one (the other is the needs-attention band). That
+   is the point: when the rest of the page is grey, a filled red block is
+   unmissable without being large. */
 .k-error {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 20px 22px;
+  gap: 10px;
+  padding: 14px 16px;
   background: var(--kelson-failed-fill);
   border: 1px solid var(--kelson-failed-border);
-  border-radius: 6px;
+  border-radius: var(--kelson-radius-panel);
 }
 
 .k-error__head {
@@ -16,19 +20,22 @@
 }
 
 .k-error__title {
-  font-size: 15px;
+  font-size: var(--kelson-size-body);
   font-weight: 500;
   color: var(--kelson-failed);
 }
 
+/* The RPC path is machine, and it is the one thing an operator quotes. */
 .k-error__rpc {
-  color: var(--kelson-muted-2);
+  font-family: var(--kelson-font-mono);
+  font-size: var(--kelson-size-micro);
+  color: var(--kelson-muted);
 }
 
 .k-error__list {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -48,22 +55,24 @@
 }
 
 .k-error__code {
-  padding: 3px 8px;
+  padding: 1px 7px;
   background: var(--kelson-inset);
   border: 1px solid var(--kelson-failed-border);
-  border-radius: 3px;
+  border-radius: var(--kelson-radius-control);
   font-family: var(--kelson-font-mono);
-  font-size: 11.5px;
+  font-size: var(--kelson-size-micro);
   color: var(--kelson-failed);
 }
 
 .k-error__where {
-  color: var(--kelson-muted-2);
+  font-family: var(--kelson-font-mono);
+  font-size: var(--kelson-size-micro);
+  color: var(--kelson-muted);
 }
 
 .k-error__message {
   margin: 0;
-  font-size: 13.5px;
+  font-size: var(--kelson-size-body);
   color: var(--kelson-text);
   overflow-wrap: anywhere;
 }
@@ -76,30 +85,31 @@
 
 .k-error__fix {
   margin: 0;
-  font-size: 13.5px;
+  font-size: var(--kelson-size-body);
   color: var(--kelson-text-2);
 }
 
+/* `fix:` is a word: sans, and prominent by weight rather than by colour. */
 .k-error__fix-label {
-  font-family: var(--kelson-font-mono);
-  font-size: 12px;
-  color: var(--kelson-accent);
+  font-weight: 500;
+  color: var(--kelson-text);
 }
 
 .k-error__docs {
-  font-family: var(--kelson-font-mono);
-  font-size: 12px;
+  font-size: var(--kelson-size-fact);
   overflow-wrap: anywhere;
 }
 
+/* The server's own hint text, verbatim — mono, because it is output. */
 .k-error__hint {
   margin: 0;
-  padding: 12px 14px;
+  padding: 10px 12px;
   background: var(--kelson-panel-dim);
-  border: 1px solid var(--kelson-border);
-  border-radius: 4px;
-  font-size: 12px;
-  line-height: 1.7;
+  border: 1px solid var(--kelson-hairline);
+  border-radius: var(--kelson-radius-control);
+  font-family: var(--kelson-font-mono);
+  font-size: var(--kelson-size-fact);
+  line-height: 1.65;
   color: var(--kelson-muted);
   white-space: pre-wrap;
 }

@@ -148,7 +148,7 @@ export function RepositoryPicker({
     <div className="k-panel k-picker">
       <div className="k-picker__head">
         <span className="k-eyebrow">Pick from a connection</span>
-        <span className="k-picker__note k-mono">
+        <span className="k-picker__note">
           fills the fields below · the repository, its default branch, and the
           connection the build authenticates with
         </span>
@@ -175,7 +175,7 @@ export function RepositoryPicker({
       ) : null}
 
       {refusal !== undefined ? (
-        <p className="k-picker__refusal k-mono" role="status">
+        <p className="k-picker__refusal" role="status">
           {refusal}
         </p>
       ) : null}
@@ -188,7 +188,7 @@ export function RepositoryPicker({
       ) : null}
 
       {refusal === undefined && repositories.loading ? (
-        <p className="k-picker__note k-mono">Reading the forge…</p>
+        <p className="k-picker__note">Reading the forge…</p>
       ) : null}
 
       {refusal === undefined &&

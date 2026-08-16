@@ -143,7 +143,7 @@ export function HistoryPage() {
             Diff against the cluster
           </button>
         )}
-        <span className="k-mono k-deploy__note">newest first</span>
+        <span className="k-deploy__note">newest first</span>
       </div>
 
       {comparing ? (
@@ -205,7 +205,7 @@ export function HistoryPage() {
             {/* Four states and four sentences, because "still reading" and
                 "the server named nothing" are different answers and only one
                 of them is about this environment. */}
-            <p className="k-mono k-timeline__note">
+            <p className="k-timeline__note">
               {statusFailure !== undefined
                 ? `no “deployed now” marker: the live revision could not be read${
                     statusFailure.code === undefined
@@ -218,7 +218,7 @@ export function HistoryPage() {
                     ? "no “deployed now” marker: the server reports no live revision for this environment"
                     : "the phase pill is live; a row’s recorded outcome is what was true when it stopped being current"}
             </p>
-            <p className="k-mono k-timeline__note">
+            <p className="k-timeline__note">
               kelson does not record who deployed yet (
               <a href="https://github.com/dafrie/kelson/issues/74">#74</a>), and
               there is no commit or pull-request link — a revision is an
@@ -271,11 +271,11 @@ function Revision({
             (ADR-0028 decision 2) — so it needs no further abbreviation. */}
         <Copyable value={entry.revision} className="k-timeline__rev" />
         {entry.beyondWindow ? (
-          <span className="k-chip k-mono">registry only</span>
+          <span className="k-chip">registry only</span>
         ) : null}
         {live ? (
           <>
-            <span className="k-chip k-mono k-timeline__live">deployed now</span>
+            <span className="k-chip k-timeline__live">deployed now</span>
             <LivePill phase={livePhase} />
           </>
         ) : null}
@@ -288,15 +288,15 @@ function Revision({
           that says the record is thin rather than the deployment featureless.
           It is still restorable: the artifact is immutable. */}
       {entry.beyondWindow ? (
-        <div className="k-timeline__meta k-mono">
+        <div className="k-timeline__meta">
           <span title="older than the history the cluster keeps; confirmed against the registry's tag list">
             only the registry remembers this revision — nothing was recorded
             about when it was published, what it ran, or how it ended
           </span>
         </div>
       ) : (
-        <div className="k-timeline__meta k-mono">
-          {when !== "" ? <span>{when}</span> : null}
+        <div className="k-timeline__meta">
+          {when !== "" ? <span className="k-mono">{when}</span> : null}
           {/* The recorded outcome is prefixed rather than shown as a pill, so it
             cannot be mistaken for the live one above it: it says how that
             deployment ended, not how it is. */}
@@ -306,10 +306,14 @@ function Revision({
             </span>
           ) : null}
           {entry.specHash !== "" ? (
-            <span title={entry.specHash}>spec {shortHash(entry.specHash)}</span>
+            <span title={entry.specHash}>
+              spec <span className="k-mono">{shortHash(entry.specHash)}</span>
+            </span>
           ) : null}
           {entry.digest !== "" ? (
-            <span title={entry.digest}>artifact {shortHash(entry.digest)}</span>
+            <span title={entry.digest}>
+              artifact <span className="k-mono">{shortHash(entry.digest)}</span>
+            </span>
           ) : null}
           <span
             className={

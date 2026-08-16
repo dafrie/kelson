@@ -282,7 +282,7 @@ export function PromotePage() {
           ) : null}
 
           {refused ? null : counts.pinned === 0 ? (
-            <div className="k-panel k-panel--dim k-mono k-promote__nothing">
+            <div className="k-panel k-panel--dim k-promote__nothing">
               nothing to pin: no component would change. {env} is already
               pinned to what {plan.from} deployed, or every component was
               skipped for the reason above — either way there is nothing to
@@ -300,7 +300,7 @@ export function PromotePage() {
                 >
                   {applyRun.running ? "Pinning…" : "Pin these images"}
                 </button>
-                <span className="k-mono k-deploy__note">
+                <span className="k-deploy__note">
                   nothing has been written yet · writes against version{" "}
                   {plan.version || "—"} · deploys nothing
                 </span>
@@ -338,8 +338,8 @@ function Source({
           checked={checked}
           onChange={() => onSelect(name)}
         />
-        <span className="k-mono k-revision__rev">{name}</span>
-        <span className="k-mono k-revision__meta">
+        <span className="k-revision__rev">{name}</span>
+        <span className="k-revision__meta">
           promotes the images this environment's latest revision runs
         </span>
       </label>
@@ -383,7 +383,7 @@ function PlanTable({
         </div>
 
         {components.length === 0 ? (
-          <div className="k-panel k-panel--dim k-mono">
+          <div className="k-panel k-panel--dim">
             the promotion considered no components — this project declares no
             workload component that could carry an image pin
           </div>
@@ -560,7 +560,7 @@ function ConflictState({
           {running ? "Planning…" : "Plan again from the stored spec"}
         </button>
       </div>
-      <span className="k-mono k-deploy__note">
+      <span className="k-deploy__note">
         the plan above was computed from documents that are no longer stored, so
         it is not offered for a retry
       </span>

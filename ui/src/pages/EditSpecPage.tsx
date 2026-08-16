@@ -371,7 +371,7 @@ function Editor({
           <span className="k-edit__guard-title">
             This spec has unsaved changes
           </span>
-          <span className="k-mono">
+          <span>
             leaving now discards them — nothing has been written to the store
           </span>
           <div className="k-actions">
@@ -479,7 +479,7 @@ function Editor({
         >
           {check.running ? "Checking…" : "Check and preview the diff"}
         </button>
-        <span className="k-mono k-deploy__note">
+        <span className="k-deploy__note">
           {dirty
             ? "validates and renders every environment · stores nothing"
             : "nothing has changed yet"}
@@ -535,7 +535,7 @@ function Editor({
             >
               {save.running ? "Saving…" : `Save ${project}`}
             </button>
-            <span className="k-mono k-deploy__note">
+            <span className="k-deploy__note">
               writes against version {version || "—"} · nothing is deployed by
               saving
             </span>
@@ -546,7 +546,7 @@ function Editor({
           <button type="button" className="k-button k-button--wide" disabled>
             Save {project}
           </button>
-          <span className="k-mono k-deploy__note">
+          <span className="k-deploy__note">
             check the spec first — Save writes what the diff was about
           </span>
         </div>
@@ -652,7 +652,7 @@ function SpecForm({
       {edit.environments.map((env, i) => (
         <section className="k-section" key={env.name}>
           <div className="k-eyebrow">
-            Environment · <span className="k-mono">{env.name}</span>
+            Environment · <span>{env.name}</span>
           </div>
           <div className="k-section__body k-edit__group">
             <div className="k-new__row">
@@ -866,7 +866,7 @@ function DataComponentRow({ component }: { component: ComponentEdit }) {
   return (
     <section className="k-section">
       <div className="k-eyebrow">
-        Component · <span className="k-mono">{component.name}</span>
+        Component · <span>{component.name}</span>
         <span className="k-chip k-mono k-edit__kind">{component.kind}</span>
       </div>
       <div className="k-section__body k-edit__group">
@@ -1125,7 +1125,7 @@ function AddComponent({
             <button type="button" className="k-button" onClick={() => onOpen(false)}>
               Cancel
             </button>
-            <span className="k-mono k-deploy__note">
+            <span className="k-deploy__note">
               appends one entry to spec.components · stores nothing
             </span>
           </div>
@@ -1187,7 +1187,7 @@ function ComponentForm({
   return (
     <section className="k-section">
       <div className="k-eyebrow">
-        Component · <span className="k-mono">{component.name}</span>
+        Component · <span>{component.name}</span>
         <span className="k-chip k-mono k-edit__kind">{kind}</span>
       </div>
       <div className="k-section__body k-edit__group">
@@ -1720,7 +1720,7 @@ function ConflictState({
           {running ? "Overwriting…" : "Overwrite their version"}
         </button>
       </div>
-      <span className="k-mono k-deploy__note">
+      <span className="k-deploy__note">
         Reloading starts over from the stored bytes — your edits are discarded,
         not merged. Overwriting stores yours and their change is lost.
       </span>
@@ -1736,7 +1736,7 @@ function Saved({ project }: { project: string }) {
         <StatusPill status="synced" label="stored" />
         <span className="k-settled__title">The spec is stored</span>
       </div>
-      <span className="k-mono">
+      <span>
         nothing has been applied to a cluster — deploying is the next, separate
         step
       </span>

@@ -161,9 +161,7 @@ export function EnvironmentOverview() {
             ) : (
               <EnvironmentStatus phase={read.phase} />
             )}
-            <span className="k-mono">
-              <LiveIndicator state={watch} />
-            </span>
+            <LiveIndicator state={watch} />
           </div>
         </div>
 
@@ -198,7 +196,7 @@ export function EnvironmentOverview() {
               {read.cause ? (
                 <>
                   <span className="k-kv__key">cause</span>
-                  <span>{read.cause}</span>
+                  <span className="k-kv__prose">{read.cause}</span>
                 </>
               ) : null}
               {read.namespace ? (
@@ -212,7 +210,7 @@ export function EnvironmentOverview() {
             <div className="k-env__verdicts">
               <div className="k-eyebrow">Workloads ({workloads.length})</div>
               {workloads.length === 0 ? (
-                <p className="k-mono k-env__note">
+                <p className="k-env__note">
                   no verdicts — nothing here is being watched, which is not the
                   same as nothing failing
                 </p>
@@ -293,7 +291,9 @@ function EnvironmentStatus({ phase }: { phase: string }) {
     <>
       <StatusPill status={state.tone} label={state.word} />
       {phase !== "" ? (
-        <span className="k-mono k-env__phase">phase {phase}</span>
+        <span className="k-env__phase">
+          phase <span className="k-mono">{phase}</span>
+        </span>
       ) : null}
     </>
   );
