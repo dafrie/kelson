@@ -312,10 +312,8 @@ export function HistoryPage() {
                     : "the phase pill is live; a stop’s recorded outcome is what was true when it stopped being current"}
             </p>
             <p className="k-history__note">
-              kelson does not record who deployed yet (
-              <a href="https://github.com/dafrie/kelson/issues/74">#74</a>), and
-              there is no commit or pull-request link — a revision is an
-              artifact, not a commit.
+              kelson does not record who deployed yet, and there is no commit
+              or pull-request link — a revision is an artifact, not a commit.
             </p>
           </div>
         </section>
@@ -527,7 +525,7 @@ function Stop({
               }
               title={
                 entry.author === ""
-                  ? "kelson does not record who deployed yet (#74)"
+                  ? "kelson does not record who deployed yet"
                   : entry.author
               }
             >

@@ -16,7 +16,6 @@ import {
   snapshotDriverLine,
   type StorageClassCapability,
 } from "./capability";
-import { issueUrl } from "./presets";
 
 /**
  * What the detected storage means for a database, next to the databases.
@@ -113,15 +112,7 @@ export function CapabilityPanel() {
 
           <p className="k-cap__foot">
             Storage capability is detected, not configured: it is what decides
-            whether{" "}
-            <a href={issueUrl(94)} target="_blank" rel="noreferrer">
-              backups (#94)
-            </a>{" "}
-            and{" "}
-            <a href={issueUrl(99)} target="_blank" rel="noreferrer">
-              branching (#99)
-            </a>{" "}
-            can be cheap once they exist.
+            whether backups and branching can be cheap once they exist.
           </p>
         </>
       ) : null}

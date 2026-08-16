@@ -213,7 +213,7 @@ describe("DataServices", () => {
     expect(screen.queryByText(/no verdict/)).toBeNull();
   });
 
-  it("labels backups and branching as coming soon, with their issues", async () => {
+  it("labels backups and branching as coming soon, without citing the tracker", async () => {
     renderSection(PROJECT, []);
 
     expect(await screen.findByText("Backups")).toBeTruthy();
@@ -222,11 +222,9 @@ describe("DataServices", () => {
     expect(
       screen.getByText("volume snapshots", { exact: false }).textContent,
     ).toContain("per environment");
-    const issues = screen.getAllByRole("link", { name: /^#(94|99)$/ });
-    expect(issues.map((a) => a.getAttribute("href"))).toEqual([
-      "https://github.com/dafrie/kelson/issues/94",
-      "https://github.com/dafrie/kelson/issues/99",
-    ]);
+    // Issue links are working records, not interface: the badge says "not
+    // yet" and the summary says why, and that is the whole statement.
+    expect(screen.queryByRole("link", { name: /^#\d+$/ })).toBeNull();
   });
 
   it("surfaces the server's own not-implemented error for a deferred preset", async () => {
@@ -236,11 +234,10 @@ describe("DataServices", () => {
     expect(await screen.findByText("render/service-not-implemented")).toBeTruthy();
     expect(screen.getByText(SHARED_REFUSAL.message)).toBeTruthy();
     expect(screen.getByText(/Use preset: small/)).toBeTruthy();
-    // And the row itself reads as deliberate rather than broken.
+    // And the row itself reads as deliberate rather than broken. No issue
+    // link beside it: the server's own message is the whole explanation.
     expect(screen.getByText("Deferred")).toBeTruthy();
-    expect(
-      screen.getByRole("link", { name: "#93" }).getAttribute("href"),
-    ).toBe("https://github.com/dafrie/kelson/issues/93");
+    expect(screen.queryByRole("link", { name: /^#\d+$/ })).toBeNull();
     // A deferred component renders nothing, so it is never given a topology.
     expect(screen.queryByText("1 instance")).toBeNull();
   });

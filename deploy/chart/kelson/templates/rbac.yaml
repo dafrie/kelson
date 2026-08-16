@@ -37,22 +37,25 @@ rules:
   #
   # `patch` is the apply — server-side apply is a PATCH with the apply content
   # type — and it is why there is no `update` here: the store never sends a full
-  # replacement. `create` is not granted either, because an apply of an absent
-  # object creates it through the same verb. `delete` is DeleteSpec, and it
-  # removes the Environments before the Project so a reader never sees an
-  # Environment whose Project is gone.
+  # replacement. `create` sits beside it because an apply that brings a NEW
+  # object into existence is authorized as a create — without it, PutSpec can
+  # update every project that already exists and cannot create the first one.
+  # `delete` is DeleteSpec, and it removes the Environments before the Project
+  # so a reader never sees an Environment whose Project is gone.
   #
-  # No `watch`: the server reads on demand and the controller does the watching,
-  # with its own ClusterRole. No `status` subresource: status is the
-  # controller's to write, and a server that cannot write it cannot race it
-  # (ADR-0027 decision 1).
-  # `create` sits beside `patch` because the store writes with server-side
-  # apply, and an apply that brings a NEW object into existence is authorized
-  # as a create — without it, PutSpec can update every project that already
-  # exists and cannot create the first one.
+  # No `status` subresource: status is the controller's to write, and a server
+  # that cannot write it cannot race it (ADR-0027 decision 1).
   - apiGroups: ["kelson.dev"]
     resources: ["projects", "environments"]
     verbs: ["get", "list", "create", "patch", "delete"]
+  # `watch`, on environments only: the event stream (deploy streaming and the
+  # UI's transition feed) follows Environment status through
+  # controlstore.EnvironmentStore.Watch. Projects stay read-on-demand, and the
+  # status subresource stays the controller's to write — watching a status is
+  # not writing one.
+  - apiGroups: ["kelson.dev"]
+    resources: ["environments"]
+    verbs: ["watch"]
   # internal/controlstore's connection store (ADR-0033 decision 1, issue #248).
   # A GitConnection is one custom resource in this namespace, and the verbs
   # differ from the spec store's a rule above because the write does: there is
