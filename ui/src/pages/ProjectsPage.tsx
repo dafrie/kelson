@@ -17,7 +17,7 @@ import { EmptyState, LoadingState } from "../components/States";
  * The project list: one card per (project, environment).
  *
  * A project is not a deployable thing — an environment is (docs/model.md: the
- * Environment carries the namespace, the delivery mode and the cluster). So the
+ * Environment carries the namespace and the cluster). So the
  * grid is keyed by the pair, which is also what the mockup's cards are shaped
  * for: a name, a status, and mono metadata underneath.
  *

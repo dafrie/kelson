@@ -25,7 +25,6 @@ const CONFIGURED: Response = {
   project: "checkout",
   environment: "staging",
   namespace: "checkout-staging",
-  mode: "flux",
   settings: {
     provider: "github",
     repo: "https://github.com/acme/checkout",
@@ -180,7 +179,6 @@ describe("PreviewDetailPage", () => {
       project: "checkout",
       environment: "staging",
       namespace: "checkout-staging",
-      mode: "direct",
     });
 
     expect(
@@ -189,22 +187,21 @@ describe("PreviewDetailPage", () => {
     expect(screen.getByText(/412 was never a candidate/)).toBeTruthy();
   });
 
-  it("shows the server's own render/previews-require-flux, code and fix intact", async () => {
+  it("shows a structured refusal the server sent, code and fix intact", async () => {
     renderDetail("412", {
       ...CONFIGURED,
-      mode: "direct",
       errors: [
         {
-          code: "render/previews-require-flux",
+          code: "render/preview-name-too-long",
           resource: "",
           field: "",
           application: "",
           overlay: "",
           target: "",
           message:
-            'environment "staging" declares previews, which render a flux-operator ResourceSet and ResourceSetInputProvider, but its delivery mode is "direct"',
+            'previews name every child "checkout-staging-pr<change request>", and "checkout-staging" is already 47 characters',
           remediation:
-            "set delivery.mode: flux on this environment, or remove the previews block",
+            "shorten the project or environment name so that <project>-<environment> is at most 45 characters",
           docsUrl: "",
           line: 0,
           column: 0,
@@ -213,8 +210,8 @@ describe("PreviewDetailPage", () => {
       ],
     });
 
-    expect(await screen.findByText("render/previews-require-flux")).toBeTruthy();
-    expect(screen.getByText(/set delivery.mode: flux/)).toBeTruthy();
+    expect(await screen.findByText("render/preview-name-too-long")).toBeTruthy();
+    expect(screen.getByText(/shorten the project or environment name/)).toBeTruthy();
   });
 
   it("reports a transport failure as one, rather than an empty preview", async () => {

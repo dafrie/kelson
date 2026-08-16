@@ -476,8 +476,8 @@ describe("ProjectDetailPage live updates", () => {
       <ProjectDetailPage />,
     );
 
-    // Compact, and honest about what it cannot know: StatusResponse carries no
-    // delivery mode, so the reconciler stage stays unnamed.
+    // Compact, and honest about what it cannot know: StatusResponse names no
+    // adapter, so the reconciler stage stays unnamed.
     await waitFor(() => {
       expect(container.querySelector(".k-rail--compact")).toBeTruthy();
     });
@@ -507,7 +507,9 @@ describe("ProjectDetailPage live updates", () => {
     expect(
       container.querySelector('[data-diagnosis="not-picked-up"]'),
     ).toBeTruthy();
-    expect(screen.getByText(/Check the delivery configuration/)).toBeTruthy();
+    expect(
+      screen.getByText(/Check this environment's configuration/),
+    ).toBeTruthy();
     // The cause named a component, so the reconciler stage can be named now.
     expect(screen.getByText("Flux (kustomize-controller)")).toBeTruthy();
 

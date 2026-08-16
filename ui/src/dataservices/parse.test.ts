@@ -36,7 +36,8 @@ spec:
       replicas: { min: 2, max: 10 }
 
   defaults:
-    deliveryMode: flux
+    secrets:
+      backend: cluster
 `;
 
 const ENVIRONMENT = `apiVersion: kelson.dev/v1alpha1

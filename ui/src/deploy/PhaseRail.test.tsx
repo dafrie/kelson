@@ -91,9 +91,9 @@ describe("PhaseRail", () => {
     // Not a terminal failure: the stage is wedged, not failed.
     expect(stage("Committed").dataset.state).toBe("stuck");
     expect(diagnosis().dataset.diagnosis).toBe("not-picked-up");
-    expect(screen.getByText(/has not picked this commit up/)).toBeTruthy();
+    expect(screen.getByText(/has not picked this revision up/)).toBeTruthy();
     expect(
-      screen.getByText(/Check the delivery configuration/),
+      screen.getByText(/Check this environment's configuration/),
     ).toBeTruthy();
     expect(
       screen.getByText(

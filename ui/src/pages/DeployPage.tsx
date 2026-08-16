@@ -192,8 +192,7 @@ export function DeployPage() {
               </button>
             ) : null}
             <span className="k-mono k-deploy__note">
-              mode {proposed.mode || "—"} · nothing is written until this is
-              pressed
+              nothing is written until this is pressed
             </span>
           </div>
         </section>
@@ -229,8 +228,6 @@ function Preview({
         <span>{proposed.environment || environment}</span>
         <span className="k-kv__key">resources</span>
         <span>{proposed.resources}</span>
-        <span className="k-kv__key">mode</span>
-        <span>{proposed.mode || "—"}</span>
       </div>
 
       <div className="k-manifests">
@@ -405,10 +402,10 @@ function Stream({
  *
  * Everything the rail needs is on the wire here and none of it is inferred: the
  * phase, answer, stuck flag and cause come from the last Transition (or the
- * Settled event's `final`, which is the same message), the delivery mode from
- * Proposed and the adapter that actually took the revision from Committed. The
- * furthest phase reached is read off the transition list, which is what lets a
- * rejection land on the stage it happened at instead of a default.
+ * Settled event's `final`, which is the same message), and the adapter that
+ * actually took the revision from Committed. The furthest phase reached is read
+ * off the transition list, which is what lets a rejection land on the stage it
+ * happened at instead of a default.
  */
 function railInput(live: Live): RailInput {
   const last = live.settled?.final ?? live.transitions[live.transitions.length - 1];
@@ -431,7 +428,6 @@ function railInput(live: Live): RailInput {
         }
       : undefined,
     reachedPhase: reached >= 0 ? RAIL_PHASES[reached] : undefined,
-    mode: live.proposed?.mode ?? "",
     adapter: live.committed?.adapter ?? "",
   };
 }
@@ -442,10 +438,7 @@ function EventLog({ live }: { live: Live }) {
       {live.proposed ? (
         <div className="k-stream__row">
           <span className="k-mono k-stream__label">proposed</span>
-          <span className="k-mono">
-            {live.proposed.resources} resources · mode{" "}
-            {live.proposed.mode || "—"}
-          </span>
+          <span className="k-mono">{live.proposed.resources} resources</span>
         </div>
       ) : null}
 

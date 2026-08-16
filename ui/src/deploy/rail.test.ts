@@ -192,11 +192,11 @@ describe("the three failure modes", () => {
     expect(actions).toEqual(["config", "manifest", "logs"]);
   });
 
-  it("says check the configuration for a commit nothing picked up", () => {
+  it("says check the configuration for a revision nothing picked up", () => {
     expect(notPickedUp.diagnosis?.nextStep).toContain(
-      "Check the delivery configuration",
+      "Check this environment's configuration",
     );
-    expect(notPickedUp.diagnosis?.title).toContain("has not picked this commit up");
+    expect(notPickedUp.diagnosis?.title).toContain("has not picked this revision up");
     // Which stage is wedged IS the diagnosis, so it is carried, not flattened.
     expect(notPickedUp.diagnosis?.stage).toBe("Committed");
     expect(notPickedUp.diagnosis?.component).toBe("flux");
@@ -274,8 +274,8 @@ describe("stuck", () => {
   });
 
   it("distinguishes a stalled reconciler from one that never started", () => {
-    const never = buildRail({ phase: "Committed", stuck: true, mode: "flux" });
-    const stalled = buildRail({ phase: "Reconciling", stuck: true, mode: "flux" });
+    const never = buildRail({ phase: "Committed", stuck: true, adapter: "flux" });
+    const stalled = buildRail({ phase: "Reconciling", stuck: true, adapter: "flux" });
     expect(never.diagnosis?.kind).toBe("not-picked-up");
     expect(stalled.diagnosis?.kind).toBe("not-picked-up");
     expect(never.diagnosis?.title).not.toBe(stalled.diagnosis?.title);
@@ -328,11 +328,8 @@ describe("who is responsible", () => {
     expect(stages.every((s) => s.actorKnown)).toBe(true);
   });
 
-  it("names the reconciler from the adapter, the mode, or the blamed component", () => {
+  it("names the reconciler from the adapter or the blamed component", () => {
     expect(reconcilerActor({ phase: "", adapter: "flux" }).name).toBe(
-      "Flux (kustomize-controller)",
-    );
-    expect(reconcilerActor({ phase: "", mode: "flux" }).name).toBe(
       "Flux (kustomize-controller)",
     );
     expect(
@@ -342,10 +339,14 @@ describe("who is responsible", () => {
       }).name,
     ).toBe("Flux (kustomize-controller)");
     // The Committed event's adapter is what actually took the revision, so it
-    // wins over the mode that was merely requested.
-    expect(reconcilerActor({ phase: "", adapter: "flux", mode: "" }).name).toBe(
-      "Flux (kustomize-controller)",
-    );
+    // wins over a component a later failure blames.
+    expect(
+      reconcilerActor({
+        phase: "",
+        adapter: "flux",
+        cause: { component: "kustomize", reason: "", message: "" },
+      }).name,
+    ).toBe("Flux (kustomize-controller)");
   });
 
   it("prints a name outside the table verbatim, never hiding it", () => {

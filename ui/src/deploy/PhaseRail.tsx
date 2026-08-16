@@ -13,7 +13,7 @@ import "./PhaseRail.css";
  * an invitation to stare at the wrong screen: whether the thing that has to act
  * next is kelson, Flux or the cluster decides where you look. So every stage
  * says who owns it, and the reconciler stage says "not reported" rather than a
- * plausible name whenever the server did not send the mode — see
+ * plausible name whenever the server did not name it — see
  * rail.ts:reconcilerActor for what field would fix that.
  *
  * `compact` is the same rail on one line, for a screen where the deployment is
@@ -88,9 +88,7 @@ function Stage({ stage, compact }: { stage: RailStage; compact: boolean }) {
             : "k-rail__actor k-rail__actor--unknown k-mono"
         }
         title={
-          stage.actorKnown
-            ? undefined
-            : "the server did not report which delivery mode ran"
+          stage.actorKnown ? undefined : "the server did not name the reconciler"
         }
       >
         {stage.actorKnown ? stage.actor : `${stage.actor} · not reported`}

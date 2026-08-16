@@ -37,7 +37,6 @@ function transportFor(events: () => AsyncIterable<unknown>, seen?: DeployRequest
                 project: "checkout",
                 environment: "production",
                 resources: 2,
-                mode: "flux",
                 manifests: [
                   {
                     apiVersion: "v1",
@@ -68,7 +67,7 @@ async function* unhealthyDeploy() {
   yield create(DeployResponseSchema, {
     event: {
       case: "proposed",
-      value: { project: "checkout", environment: "production", resources: 2, mode: "flux" },
+      value: { project: "checkout", environment: "production", resources: 2 },
     },
   });
   yield create(DeployResponseSchema, {
@@ -119,11 +118,10 @@ function renderDeploy(
 }
 
 describe("DeployPage", () => {
-  it("previews with a render dry-run: resource count, mode and manifests", async () => {
+  it("previews with a render dry-run: resource count and manifests", async () => {
     renderDeploy(unhealthyDeploy);
 
-    expect(await screen.findByText("flux")).toBeTruthy();
-    expect(screen.getByText("Namespace/checkout-production")).toBeTruthy();
+    expect(await screen.findByText("Namespace/checkout-production")).toBeTruthy();
     expect(screen.getByText("Deployment/web")).toBeTruthy();
     // The byte-faithful YAML is there, collapsed behind its disclosure.
     expect(screen.getByText(/kind: Deployment/)).toBeTruthy();

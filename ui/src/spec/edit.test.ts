@@ -16,7 +16,6 @@ import {
   componentSnippet,
   editFieldForError,
   emptyComponentDraft,
-  emptyDelivery,
   emptyPreviews,
   isRebuildable,
   mapEditErrors,
@@ -142,12 +141,6 @@ metadata:
 spec:
   project: hello
   namespace: hello-staging
-  delivery:
-    mode: flux
-    git:
-      repo: git@github.com:acme/deploy.git
-      branch: main
-      path: hello/staging
   previews:
     provider: github
     repo: https://github.com/acme/hello
@@ -176,12 +169,6 @@ describe("previews on an Environment (ADR-0017)", () => {
     expect(edit).toBeDefined();
 
     const env = edit?.environments[0];
-    expect(env?.delivery).toEqual({
-      mode: "flux",
-      gitRepo: "git@github.com:acme/deploy.git",
-      gitBranch: "main",
-      gitPath: "hello/staging",
-    });
     expect(env?.previews).toEqual({
       enabled: true,
       provider: "github",
@@ -214,8 +201,7 @@ describe("previews on an Environment (ADR-0017)", () => {
     expect(doc).not.toContain("previews:");
     // Everything else is untouched: turning previews off is not a rewrite of
     // the environment.
-    expect(doc).toContain("    mode: flux");
-    expect(doc).toContain("      path: hello/staging");
+    expect(doc).toContain("  namespace: hello-staging");
   });
 
   it("keeps a required field even when it is empty, so the server names it", () => {
@@ -285,8 +271,10 @@ describe("previews on an Environment (ADR-0017)", () => {
     expect(at("$.spec.previews.skip.labels[1]")).toBe(
       "environment.staging.previews.skipLabels",
     );
-    // A whole-stanza finding lands on the field that makes it go away.
-    expect(at("$.spec.delivery.git")).toBe("environment.staging.delivery.gitRepo");
+    // The retired `delivery:` block has no input to land on: the model's
+    // answer is "delete the whole block", so the finding goes to the general
+    // panel with that remediation instead of onto a field (ADR-0028, #234).
+    expect(at("$.spec.delivery")).toBeUndefined();
   });
 });
 
@@ -313,7 +301,6 @@ describe("round trip", () => {
         name: "development",
         project: "hello",
         namespace: "",
-        delivery: emptyDelivery(),
         previews: emptyPreviews(),
       },
     ]);

@@ -375,7 +375,7 @@ function EnvironmentPanel({
   // page is open says so, and says what to do, without a reload.
   //
   // Two things the deploy stream has are missing here and are NOT invented:
-  // StatusResponse carries no delivery mode or adapter, so the reconciler stage
+  // StatusResponse carries no adapter name, so the reconciler stage
   // reads "not reported" until a failure cause names a component; and it
   // carries no `stuck` flag, so a stuck verdict is recovered from the engine's
   // own cause reasons (rail.ts:isStuckReason).

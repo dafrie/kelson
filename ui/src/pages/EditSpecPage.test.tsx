@@ -272,15 +272,6 @@ describe("EditSpecPage", () => {
     const { recorder } = renderEditor();
     await openedOnForm();
 
-    // Previews render in flux mode only, so the mode and its deployment
-    // repository are part of the same act of turning them on.
-    fireEvent.change(screen.getByLabelText("Delivery mode"), {
-      target: { value: "flux" },
-    });
-    fireEvent.change(screen.getByLabelText("Deployment repository"), {
-      target: { value: "git@github.com:acme/deploy.git" },
-    });
-
     fireEvent.click(
       screen.getByRole("checkbox", {
         name: /Spawn a preview environment per open pull request/,
@@ -303,8 +294,6 @@ describe("EditSpecPage", () => {
     await waitFor(() => expect(recorder.writes).toHaveLength(1));
 
     const doc = writtenEnvironment(recorder);
-    expect(doc).toContain("  delivery:\n    mode: flux\n");
-    expect(doc).toContain("      repo: git@github.com:acme/deploy.git\n");
     expect(doc).toContain("  previews:\n    provider: github\n");
     expect(doc).toContain("    repo: https://github.com/acme/hello\n");
     // A Secret name, never a token: there is no field here a value could go in.
@@ -338,26 +327,23 @@ describe("EditSpecPage", () => {
     expect(screen.getByText("nothing has changed yet")).toBeTruthy();
   });
 
-  it("says previews need flux mode instead of disabling the control", async () => {
+  it("offers no delivery mode, which the model no longer has", async () => {
     renderEditor();
     await openedOnForm();
+
+    // `spec.delivery` — the mode, the git target, the enum — was deleted from
+    // the model (ADR-0028, #234) and the server refuses a document carrying
+    // one, so the form must not be able to author it.
+    expect(screen.queryByLabelText("Delivery mode")).toBeNull();
+    expect(screen.queryByLabelText("Deployment repository")).toBeNull();
 
     fireEvent.click(
       screen.getByRole("checkbox", {
         name: /Spawn a preview environment per open pull request/,
       }),
     );
-    // The mode is still unset, and the note says what will happen rather than
-    // a disabled checkbox that cannot explain itself.
-    expect(
-      screen.getByText(/previews need the flux delivery mode/),
-    ).toBeTruthy();
-
-    fireEvent.change(screen.getByLabelText("Delivery mode"), {
-      target: { value: "flux" },
-    });
-    // And once the mode is right, the note becomes the other half nobody
-    // remembers: the CI step that publishes the artifacts.
+    // Turning previews on needs nothing set above it. The note is the other
+    // half nobody remembers: the CI step that publishes the artifacts.
     expect(screen.getAllByText(/kelson preview publish/).length).toBeGreaterThan(0);
   });
 

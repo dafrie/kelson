@@ -138,21 +138,6 @@ export interface ProjectEdit {
 }
 
 /**
- * The delivery stanza, as fields.
- *
- * `mode` empty means the document carries no `delivery:` block at all, which is
- * the model's default (direct). It is a field rather than a checkbox because
- * the block's whole content is the mode plus, for the modes that need one, a
- * git target — there is nothing else to switch on.
- */
-export interface DeliveryEdit {
-  mode: string;
-  gitRepo: string;
-  gitBranch: string;
-  gitPath: string;
-}
-
-/**
  * The previews stanza (ADR-0017), as fields.
  *
  * `enabled` is the block's presence: previews are declared or they are not, and
@@ -178,16 +163,21 @@ export interface PreviewsEdit {
   artifactsSecretRef: string;
 }
 
+/**
+ * An Environment, as fields.
+ *
+ * There is no delivery stanza here. `spec.delivery` — the mode, the git target,
+ * the enum — was deleted from the model (ADR-0028, #234) and the server now
+ * refuses a document that carries one, so a form that could write it would
+ * build a spec nothing accepts. A stored document that still has the block
+ * parses without it, fails the byte guard on rebuild, and opens on the YAML tab
+ * with the server's own "delete the whole `delivery:` block" beside it.
+ */
 export interface EnvironmentEdit {
   name: string;
   project: string;
   namespace: string;
-  delivery: DeliveryEdit;
   previews: PreviewsEdit;
-}
-
-export function emptyDelivery(): DeliveryEdit {
-  return { mode: "", gitRepo: "", gitBranch: "", gitPath: "" };
 }
 
 /**
@@ -325,28 +315,9 @@ export function buildEnvironmentDocument(e: EnvironmentEdit): string {
     `  project: ${yamlScalar(e.project)}`,
   ];
   if (set(e.namespace)) lines.push(`  namespace: ${yamlScalar(e.namespace)}`);
-  // Key order is the model's own (internal/model/environment.go): delivery
-  // before previews, because that is the order a reader of the Go type and of
-  // docs/model.md meets them in, and because the block that decides whether
-  // previews may exist at all belongs above the block that declares them.
-  lines.push(...deliveryLines(e.delivery));
+  // Key order is the model's own (internal/model/environment.go).
   lines.push(...previewsLines(e.previews));
   return lines.join("\n") + "\n";
-}
-
-function deliveryLines(d: DeliveryEdit): string[] {
-  if (!set(d.mode)) return [];
-  const lines = ["  delivery:", `    mode: ${yamlScalar(d.mode)}`];
-  // A git target is written when there is one to write. Flux and argocd need
-  // one (semantic/git-target-missing) and the server says so about the missing
-  // field; writing an empty stanza here would put the refusal on `repo` instead
-  // of on the block, which is a worse place for it.
-  if (set(d.gitRepo) || set(d.gitBranch) || set(d.gitPath)) {
-    lines.push("    git:", `      repo: ${yamlScalar(d.gitRepo)}`);
-    if (set(d.gitBranch)) lines.push(`      branch: ${yamlScalar(d.gitBranch)}`);
-    if (set(d.gitPath)) lines.push(`      path: ${yamlScalar(d.gitPath)}`);
-  }
-  return lines;
 }
 
 function previewsLines(p: PreviewsEdit): string[] {
@@ -583,33 +554,10 @@ export function parseEnvironmentDocument(text: string): EnvironmentEdit | undefi
   if (typeof name !== "string" || typeof project !== "string") return undefined;
   if (typeof namespace !== "string") return undefined;
 
-  const delivery = readDelivery(spec.get("delivery"));
-  if (delivery === undefined) return undefined;
   const previews = readPreviews(spec.get("previews"));
   if (previews === undefined) return undefined;
 
-  return { name, project, namespace, delivery, previews };
-}
-
-function readDelivery(node: YNode | undefined): DeliveryEdit | undefined {
-  const out = emptyDelivery();
-  if (node === undefined) return out;
-  if (!isMap(node)) return undefined;
-
-  const mode = node.get("mode") ?? "";
-  if (typeof mode !== "string") return undefined;
-  out.mode = mode;
-
-  const git = node.get("git");
-  if (git !== undefined) {
-    if (!isMap(git)) return undefined;
-    const fields = readStrings(git, ["repo", "branch", "path"]);
-    if (fields === undefined) return undefined;
-    out.gitRepo = fields.repo ?? "";
-    out.gitBranch = fields.branch ?? "";
-    out.gitPath = fields.path ?? "";
-  }
-  return out;
+  return { name, project, namespace, previews };
 }
 
 /**
@@ -1130,12 +1078,6 @@ export function editFieldForError(error: WireError): EditFieldKey | undefined {
     switch (target.on) {
       case "namespace":
         return `environment.${target.environment}.namespace`;
-      case "delivery": {
-        const field = deliveryField(target.field);
-        return field === undefined
-          ? undefined
-          : `environment.${target.environment}.delivery.${field}`;
-      }
       case "previews": {
         const field = previewsField(target.field);
         return field === undefined
@@ -1165,20 +1107,6 @@ export function editFieldForError(error: WireError): EditFieldKey | undefined {
       }
       return `component.${target.index}.${target.field}`;
   }
-}
-
-/**
- * A `$.spec.delivery...` path onto the input that holds it. A whole-stanza
- * finding — `semantic/git-target-missing` points at `$.spec.delivery.git`, the
- * block rather than a key — lands on the repository, which is the field that
- * makes it go away.
- */
-function deliveryField(field: string): string | undefined {
-  if (field === "" || field === "mode") return "mode";
-  if (field === "git" || field === "git.repo") return "gitRepo";
-  if (field === "git.branch") return "gitBranch";
-  if (field === "git.path") return "gitPath";
-  return undefined;
 }
 
 /**
