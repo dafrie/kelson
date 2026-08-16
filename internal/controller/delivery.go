@@ -2,6 +2,8 @@ package controller
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -14,6 +16,7 @@ import (
 	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/delivery/flux"
 	"github.com/dafrie/kelson/internal/delivery/statemachine"
+	"github.com/dafrie/kelson/internal/renderer"
 )
 
 // DefaultFluxNamespace is where kelson's own Flux objects live. It is the
@@ -45,8 +48,13 @@ const DefaultInterval = 5 * time.Minute
 // manifest set needs and far less than "forever".
 const DefaultPublishTimeout = 2 * time.Minute
 
-// FluxDeliverer is ADR-0028 steps 4 to 6: publish the artifact, apply the two
-// Flux objects that consume it, and read the result back.
+// FluxDeliverer is ADR-0028 steps 4 to 6: publish the artifact, apply the Flux
+// objects that consume it, and read the result back.
+//
+// "The pair" is the usual shape and the one every comment here is written for —
+// an OCIRepository and a Kustomization. An environment whose components declare
+// a release hook gets a third object over the same source, and the whole of what
+// that changes is in [FluxDeliverer.releaseKustomization] (issue #227).
 //
 // # What it does not do
 //
@@ -287,11 +295,113 @@ func (d *FluxDeliverer) observe(ctx context.Context, rev Revision, revision, dig
 	status := flux.PhaseFor(flux.KustomizationFrom(live.Object, name, d.namespace()), revision, digest)
 	phase, cause := string(status.Phase), status.Cause
 
+	// The release stage, when there is one, is read before the workloads: an
+	// environment held behind a migration has no workloads of this revision to
+	// classify, and the question a human has is not "which pod" but "why has
+	// nothing moved".
+	if released, releasedCause := d.observeRelease(ctx, rev, revision, digest, phase); released != "" {
+		return released, releasedCause, nil
+	}
+
 	workloads := d.readWorkloads(ctx, rev)
 	if refined, refinedCause := refine(phase, cause, workloads); refined != "" {
 		phase, cause = refined, refinedCause
 	}
 	return phase, cause, workloads
+}
+
+// observeRelease answers "why is this environment stuck" when the answer is the
+// release hook. An empty phase means it has nothing to say and the workload
+// Kustomization's own verdict stands.
+//
+// # Why it exists at all
+//
+// Everything about the barrier is Flux's (see
+// [FluxDeliverer.releaseKustomization]), including the part where a failed
+// migration stops the rollout. What Flux cannot do is *say so*: the workload
+// Kustomization reports `DependencyNotReady` and a message naming another
+// Kustomization, which is a true sentence about Flux objects and no sentence at
+// all about a migration. An operator reading `kelson status` would see a
+// deployment that has been Reconciling for twenty minutes with no reason given.
+// So the object the dependency names is read as well, and its verdict is
+// reported in the workload Kustomization's place.
+//
+// # The two answers, in the vocabulary that already exists
+//
+// ADR-0019 decision 5 fixed this mapping before the mechanism existed, and
+// nothing here adds to the seven phases:
+//
+//   - running is **Reconciling** — something is actively working on this
+//     revision, which is exactly what a migration is;
+//   - failed is **Rejected** — the revision was processed and refused, it is not
+//     live, and the previous one is still serving. That is what a blocked
+//     `dependsOn` produces, and it is the definition of Rejected.
+//
+// Flux's own reason for a Job that never completed is `HealthCheckFailed`, which
+// [flux.PhaseFor] maps to Degraded — right about the Kustomization (it applied
+// its stage and the stage is unhealthy) and wrong about the environment (none of
+// the new revision's workloads were applied at all). The environment's phase is
+// the one being written here, so a settled failure of either kind becomes
+// Rejected. It is terminal, deliberately: a Job past its backoffLimit does not
+// become complete on its own, and what clears it is a new revision — which
+// renders a new Job name and starts its own lifecycle (see [phaseFor]).
+func (d *FluxDeliverer) observeRelease(ctx context.Context, rev Revision, revision, digest, phase string) (string, string) {
+	plan := releaseStage(rev)
+	if !plan.wanted {
+		return "", ""
+	}
+	name := ReleaseObjectName(rev.Project, rev.Environment)
+	live := &unstructured.Unstructured{}
+	live.SetGroupVersionKind(kustomizationGVK)
+	key := types.NamespacedName{Namespace: d.namespace(), Name: name}
+	if err := d.Client.Get(ctx, key, live); err != nil {
+		// Not observed yet is the first few milliseconds after it was applied,
+		// and is not a failure — same reasoning as the workload Kustomization's
+		// own not-found branch above.
+		return "", ""
+	}
+	status := flux.PhaseFor(flux.KustomizationFrom(live.Object, name, d.namespace()), revision, digest)
+
+	switch status.Phase {
+	case v1alpha1.PhaseRejected, v1alpha1.PhaseDegraded:
+		return v1alpha1.PhaseRejected, fmt.Sprintf(
+			"the release hook did not succeed, so none of revision %s was applied and the previous revision "+
+				"is still serving. %s\n  jobs: %s\n  fix: the Job's name carries the spec hash, so a re-deploy of "+
+				"the same spec addresses the same Job and does not re-run it — read its logs, fix the migration, "+
+				"and deploy the fix as a new revision (`kubectl logs -n %s job/<name>`).",
+			revision, status.Cause, releaseJobNames(rev), rev.TargetNamespace)
+	case v1alpha1.PhaseHealthy:
+		// The barrier is open. Nothing to say: the workload Kustomization's own
+		// phase is now the whole answer.
+		return "", ""
+	}
+
+	// The stage has not settled. Only worth reporting while the workload
+	// Kustomization is actually held behind it — once it has started applying,
+	// its own phase is the more specific answer.
+	if phase != v1alpha1.PhaseCommitted && phase != v1alpha1.PhaseReconciling {
+		return "", ""
+	}
+	return v1alpha1.PhaseReconciling, fmt.Sprintf(
+		"the release hook is running; revision %s does not roll until it succeeds.\n  jobs: %s\n  waiting on: "+
+			"Kustomization %s/%s", revision, releaseJobNames(rev), d.namespace(), name)
+}
+
+// releaseJobNames is what an operator types after `kubectl logs`. The names come
+// from the rendered set rather than from a cluster read, because they are
+// already here and a Job that has not been applied yet still has the name it
+// will have.
+func releaseJobNames(rev Revision) string {
+	var names []string
+	for _, m := range rev.Manifests {
+		if m.Stage == renderer.StageRelease {
+			names = append(names, m.Name)
+		}
+	}
+	if len(names) == 0 {
+		return "(none rendered)"
+	}
+	return strings.Join(names, ", ")
 }
 
 // readWorkloads runs step 6's second half and cannot fail the reconcile.
