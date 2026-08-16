@@ -95,6 +95,26 @@ jobs:
       - name: build the web UI into the embed directory
         run: make ui
 
+      # The flux-aio snapshot is the one thing kelson ships that it did not
+      # write and did not fetch at install time, so it is the one thing a
+      # release has to prove rather than assume (ADR-0030 decision 2).
+      #
+      # This re-renders it from the two pins in the script — a checksum-verified
+      # timoni binary and a digest-pinned OCI module — and fails the release if
+      # the result is not byte-for-byte what is committed, or if nothing is
+      # committed at all. That check is the entire difference between "a
+      # mechanically regenerated snapshot in kelson's custody" and the vendored
+      # copies ADR-0021 decision 2 refuses: without it, the committed YAML is
+      # just a file somebody could have edited.
+      #
+      # It runs BEFORE goreleaser deliberately. The snapshot is compiled into
+      # the binaries by //go:embed, so a stale one has to stop the release
+      # rather than be discovered in it. Nothing about this step reaches a
+      # user's machine: timoni is downloaded to a temporary directory on this
+      # runner, run once, and deleted (ADR-0030 decision 3).
+      - name: verify the flux-aio snapshot against its pins
+        run: hack/flux-aio-render.sh --check
+
       - name: login to ghcr.io
         uses: docker/login-action@v3
         with:

@@ -179,7 +179,33 @@ func (r Request) Validate() error {
 			"--all-missing and a named component both say what to install, and they disagree",
 			"pass one of them")
 	}
+	// The two Flux rows are one decision, and naming both makes it twice.
+	// flux-aio and flux-operator each install a complete set of Flux
+	// controllers; a cluster that got both would have two reconcilers watching
+	// the same CRDs, which is the "second manager for the same controllers"
+	// failure Presence already refuses for a Flux somebody else installed. It
+	// is caught here rather than in refuse() because it is a property of the
+	// request, not of the cluster: detection reports the same No for both rows
+	// and neither one is individually wrong.
+	if names(r.Components)[FluxAIOName] && names(r.Components)[FluxOperatorName] {
+		return delivery.ApplyFailed("(request)", "components",
+			FluxAIOName+" and "+FluxOperatorName+" both install a complete set of Flux controllers, and a "+
+				"cluster gets one",
+			"pick one: `kelson install "+FluxAIOName+"` is one pod of Flux and the right answer for a small "+
+				"cluster (ADR-0030), `kelson install "+FluxOperatorName+"` is full Flux through flux-operator "+
+				"and what PR previews need. Installing flux-aio now and flux-operator later is supported — "+
+				"detection will report the Flux that is already there and kelson will adopt it")
+	}
 	return nil
+}
+
+// names indexes a component list for membership tests.
+func names(in []string) map[string]bool {
+	out := make(map[string]bool, len(in))
+	for _, n := range in {
+		out[n] = true
+	}
+	return out
 }
 
 // Options configures an Installer.
@@ -357,6 +383,54 @@ func refuse(c Component, prof clusterprofile.ClusterProfile, allMissing bool) (*
 			Remediation: "install it yourself from upstream; kelson detects and adopts it (ADR-0003)",
 		}, true
 	}
+	// A Rendered row whose snapshot this build does not carry cannot be
+	// installed, and saying so is the whole point. The bytes are produced at
+	// release time by hack/flux-aio-render.sh (ADR-0030 decision 2), so a
+	// working tree before `make flux-aio`, or a build made where ghcr.io could
+	// not be reached, legitimately has none — and an install that silently did
+	// nothing, or a sweep that quietly left a cluster with no reconciler, is
+	// exactly the half-installed outcome this package exists to prevent. The
+	// refusal is reported in a sweep as well as on an explicit name, unlike a
+	// present-component refusal: "kelson cannot offer the default Flux" must
+	// never be swallowed by --all-missing.
+	if c.Rendered && !renderedAvailable(c) {
+		return &Refusal{
+			Name:    c.Name,
+			Outcome: clusterprofile.OutcomeNo,
+			Reason: "detection reports it absent, and this kelson build carries no rendered manifests for it: " +
+				c.RenderedPath + " is empty or absent",
+			Remediation: "the snapshot is rendered at release time from a pinned timoni module and committed " +
+				"(ADR-0030 decision 2). Use a released kelson, or run `make flux-aio` and rebuild. " +
+				"`kelson install " + FluxOperatorName + "` installs full Flux from flux-operator's published " +
+				"manifest and needs no snapshot",
+		}, true
+	}
+	// The two Flux rows, and which one a sweep picks.
+	//
+	// ADR-0030 decision 1 makes flux-aio the default OFFER on a cluster with no
+	// Flux: one pod rather than six, sized for the clusters ADR-0028's hard
+	// Flux requirement is hardest on. Full Flux through flux-operator stays
+	// available and is required for PR previews (decision 4), but it is an
+	// explicit choice, so a sweep declines it and says which command makes that
+	// choice. Both rows read the same `flux` finding, so on a cluster that HAS
+	// Flux this never runs — Presence has already refused both.
+	//
+	// The guard matters as much as the preference: a build with no flux-aio
+	// snapshot must not decline flux-operator in favour of a row it cannot
+	// install. That would answer ADR-0028's blocking question with nothing at
+	// all, which is worse than answering it with six Deployments.
+	if c.Name == FluxOperatorName && allMissing && fluxAIOInstallable() {
+		return &Refusal{
+			Name:    c.Name,
+			Outcome: clusterprofile.OutcomeNo,
+			Reason: "detection reports no Flux, and the default offer for a cluster with none is " + FluxAIOName +
+				" — every Flux controller in one pod (ADR-0030). A sweep installs that one, not both",
+			Remediation: "nothing is missing: `kelson install --all-missing` is installing " + FluxAIOName +
+				" for you. Choose full Flux by name instead — `kelson install " + FluxOperatorName + "` — if " +
+				"you want flux-operator's lifecycle, one Deployment per controller, or PR previews, which are " +
+				"the one feature that needs its ResourceSet CRDs",
+		}, true
+	}
 	// envoy-gateway is the one row a sweep treats differently from an explicit
 	// name. Its pinned manifest claims no GatewayClass, so installing it cannot
 	// touch the traffic an existing ingress stack carries — but it is still a
@@ -412,14 +486,34 @@ func ingressClassList(prof clusterprofile.ClusterProfile) string {
 func (i *Installer) load(ctx context.Context, c Component) (*Item, error) {
 	var objects []Object
 	digest := c.SHA256
-	if c.Authored {
+	switch {
+	case c.Authored:
 		built, err := i.composeAuthored(c)
 		if err != nil {
 			return nil, err
 		}
 		objects = built
 		digest = c.ImageDigest
-	} else {
+	case c.Rendered:
+		// The snapshot is read out of this binary rather than fetched, and it
+		// is verified anyway. The digest is not ceremony: it is the half of
+		// ADR-0030 decision 2's "cannot be hand-edited" argument that a
+		// reviewer cannot perform by eye, and checking it here rather than only
+		// at release time means a tampered binary refuses before it applies
+		// instead of after.
+		body, err := renderedManifest(c)
+		if err != nil {
+			return nil, err
+		}
+		if err := verifyRenderedDigest(c, body); err != nil {
+			return nil, err
+		}
+		decoded, err := i.decode(c, body)
+		if err != nil {
+			return nil, err
+		}
+		objects = decoded
+	default:
 		body, err := i.fetch.Fetch(ctx, c.ManifestURL)
 		if err != nil {
 			return nil, unreachable(c.ManifestURL, err.Error())
@@ -433,7 +527,11 @@ func (i *Installer) load(ctx context.Context, c Component) (*Item, error) {
 		}
 		objects = decoded
 	}
-	if c.Name == "flux" {
+	// The FluxInstance belongs to the flux-operator row alone. flux-aio's
+	// snapshot IS the Flux installation — there is no operator to hand a
+	// desired state to, and applying a FluxInstance beside it would create a
+	// custom resource whose CRD nothing in that snapshot serves.
+	if c.Name == FluxOperatorName {
 		obj, err := i.fluxInstance(c)
 		if err != nil {
 			return nil, err
@@ -491,7 +589,7 @@ func (i *Installer) decode(c Component, body []byte) ([]Object, error) {
 		if err != nil {
 			return nil, malformed(c, fmt.Sprintf("document %d could not be read: %v", n, err))
 		}
-		if len(bytes.TrimSpace(stripSeparator(doc))) == 0 {
+		if isBlankOrComments(stripSeparator(doc)) {
 			continue
 		}
 		obj := &unstructured.Unstructured{}
@@ -522,6 +620,33 @@ func (i *Installer) decode(c Component, body []byte) ([]Object, error) {
 // on the first document of a stream that starts with one.
 func stripSeparator(doc []byte) []byte {
 	return bytes.TrimPrefix(bytes.TrimSpace(doc), []byte("---"))
+}
+
+// isBlankOrComments reports whether a document carries no object.
+//
+// Blank documents are ordinary in a YAML stream. Comment-only ones are too, and
+// they are not merely tolerated here — they are how a manifest says where it
+// came from. A file header naming the pins and the renderer sits ahead of the
+// first `---` (hack/flux-aio-render.sh), and every object in a rendered
+// snapshot carries a provenance comment above it, which is the per-object
+// answer to "which upstream produced this byte" that ADR-0021's labels cannot
+// give for bytes kelson ships itself. Upstream manifests open with copyright
+// headers for the same structural reason.
+//
+// Decoding one of these yields YAML `null`, which reaches the caller as
+// "document 1 is not a Kubernetes object" — an error naming a document a reader
+// would not think of as a document at all. Skipping them here keeps that
+// message meaning what it says. A stream that is ONLY comments still fails, at
+// the "it contains no objects" check below, which is the honest place for it.
+func isBlankOrComments(doc []byte) bool {
+	for _, line := range bytes.Split(doc, []byte("\n")) {
+		trimmed := bytes.TrimSpace(line)
+		if len(trimmed) == 0 || trimmed[0] == '#' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // object stamps provenance on one decoded document and resolves its resource.
@@ -638,8 +763,14 @@ func (i *Installer) readExistence(ctx context.Context, objects []Object) {
 }
 
 func malformed(c Component, detail string) error {
-	return delivery.ApplyFailed(c.ManifestURL, "",
+	remediation := "the digest matched, so these are the bytes upstream published — this is a kelson bug or an " +
+		"upstream format change. Report it with the component name and version; nothing was applied"
+	if c.Rendered {
+		remediation = "the digest matched, so these are the bytes hack/flux-aio-render.sh produced from " +
+			c.ModuleRef + "@sha256:" + c.ModuleDigest + " — this is a kelson bug or an upstream module change. " +
+			"Report it with the component and module version; nothing was applied"
+	}
+	return delivery.ApplyFailed(source(c), "",
 		"the pinned install manifest for "+c.Title+" "+c.Version+" could not be read: "+detail,
-		"the digest matched, so these are the bytes upstream published — this is a kelson bug or an upstream "+
-			"format change. Report it with the component name and version; nothing was applied")
+		remediation)
 }

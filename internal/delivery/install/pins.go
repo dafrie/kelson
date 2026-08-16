@@ -66,9 +66,13 @@ type Component struct {
 	// documents one thing and installs another. Empty when Authored is true —
 	// there is no manifest to fetch.
 	ManifestURL string
-	// SHA256 is the hex digest of the bytes at ManifestURL. An install that
-	// fetches anything else refuses and applies nothing. Empty when Authored is
-	// true, for the same reason as ManifestURL.
+	// SHA256 is the hex digest of the bytes kelson applies. For an ordinary row
+	// those are the bytes at ManifestURL and an install that fetches anything
+	// else refuses and applies nothing; for a Rendered row they are the
+	// committed snapshot at RenderedPath, checked before it is decoded. Empty
+	// when Authored is true, for the same reason as ManifestURL — and empty on
+	// a Rendered row whose snapshot has not been generated yet, which is a
+	// build that refuses to install it (fluxaio.go).
 	SHA256 string
 	// Authored marks a row whose manifest kelson composes itself rather than
 	// fetching one — the exception ADR-0021 §2 states and ADR-0030's amendment
@@ -84,6 +88,31 @@ type Component struct {
 	// tag — whatever registry.k8s.io or GHCR later moves. Meaningless when
 	// Authored is false.
 	ImageDigest string
+	// Rendered marks a row whose manifests kelson RENDERS at release time from
+	// an upstream module and commits, rather than fetching at install time —
+	// ADR-0030 decision 2, the first of the two exceptions ADR-0021 §2 carves
+	// out and the reason that ADR exists. ManifestURL is unset because upstream
+	// publishes no install manifest to point at; the three Module fields below
+	// record which upstream produced the bytes and SHA256 records kelson's own
+	// digest of them, so both questions the ADR names — *which upstream is this*
+	// and *are these the bytes kelson shipped* — are answered in this table.
+	Rendered bool
+	// RenderedPath is where the committed snapshot lives inside the embedded
+	// filesystem (fluxaio.go). Meaningless when Rendered is false.
+	RenderedPath string
+	// ModuleRef is the OCI reference of the upstream module the snapshot was
+	// rendered from, exactly as the render script pulls it. Meaningless when
+	// Rendered is false.
+	ModuleRef string
+	// ModuleVersion is that module's own tag. It is documentation and a
+	// cross-check — ModuleDigest is what is pulled — and it must package
+	// Version, which the render script asserts before it renders anything.
+	ModuleVersion string
+	// ModuleDigest is the hex sha256 of the module's OCI manifest: the exact
+	// upstream artifact the committed bytes came out of, never a tag. This is
+	// the "which upstream did this come from" half of the provenance; SHA256 is
+	// the "are these the bytes kelson shipped" half.
+	ModuleDigest string
 	// Namespace is the namespace the manifest creates and the component runs
 	// in, reported in the preview so a user knows where it is about to land.
 	Namespace string
@@ -138,8 +167,63 @@ var FluxComponents = []string{
 
 // Components is the pins table, in stable authoring order.
 var Components = []Component{
+	// flux-aio comes first because table order is offer order, and ADR-0030
+	// decision 1 makes this the default offer on a cluster with no Flux at all:
+	// every Flux controller in one pod, one Deployment, one ServiceAccount,
+	// sized for the k3s and edge clusters that ADR-0028's hard Flux requirement
+	// would otherwise shut out. Full Flux through flux-operator is the row
+	// below, and stays an explicit choice.
+	//
+	// This is the row that costs ADR-0021 §2 its "nothing is vendored" rule,
+	// and the price is stated rather than skirted. Upstream publishes flux-aio
+	// ONLY as a timoni module, so there is no install.yaml to pin a URL and a
+	// digest against. What is committed instead is a mechanically regenerated
+	// snapshot: hack/flux-aio-render.sh runs a checksum-verified timoni binary
+	// against ModuleDigest, writes RenderedPath, and .github/workflows/release.yml
+	// fails the release when the committed bytes are not what those two pins
+	// produce. ModuleRef/ModuleVersion/ModuleDigest say where the bytes came
+	// from; SHA256 says they are the bytes kelson shipped.
+	//
+	// Nothing about timoni reaches a user, a cluster or go.mod (ADR-0030
+	// decision 3). The binary runs once per kelson release, on a CI runner, and
+	// its output is bytes.
+	//
+	// ProfileField is "flux" — the same finding the row below reads, and
+	// deliberately so. A cluster with Flux is adopted whatever installed it:
+	// `flux bootstrap`, flux-operator, flux-aio, a vendor's distribution. The
+	// finding is what matters, not its provenance (ADR-0030 decision 1).
 	{
-		Name:         "flux",
+		Name:   FluxAIOName,
+		Title:  "flux-aio (every Flux controller in one pod)",
+		Status: StatusSupported,
+		// The Flux release the pinned module packages, which is what
+		// kelson.dev/installed-version stamps and what the support floor is
+		// checked against. It must stay inside FluxDistributionVersion's minor
+		// for the reason hack/flux-crds.sh gives: the Flux this product
+		// installs and the Flux schemas its tests validate against have to be
+		// the same Flux.
+		Version:       "v2.9.4",
+		Rendered:      true,
+		RenderedPath:  "rendered/flux-aio.yaml",
+		ModuleRef:     "oci://ghcr.io/stefanprodan/modules/flux-aio",
+		ModuleVersion: "2.9.4-0",
+		ModuleDigest:  "2fdfc00b5a1b59017f63ec0ab78be8b013fa7d542a57d6f1a6db4df64eab5a5a",
+		// SHA256 is filled in by hack/flux-aio-render.sh, which prints the
+		// block to paste here. It is empty until the snapshot is generated and
+		// committed, and a build in that state REFUSES to install this row
+		// rather than installing something unpinned — see fluxaio.go and
+		// TestRenderedSnapshotMatchesThePin, which fail loudly in both
+		// directions.
+		SHA256:       "",
+		Namespace:    "flux-system",
+		ProfileField: "flux",
+		Provides: "the delivery spine (ADR-0028) on a cluster that has no Flux: the OCIRepository and " +
+			"Kustomization pair kelson-controller writes, and the helm-controller every `kind: helm` " +
+			"component needs — in one pod rather than six. It installs no flux-operator, so PR previews " +
+			"need `kelson install flux` as well (ADR-0030 decision 4)",
+	},
+	{
+		Name:         FluxOperatorName,
 		Title:        "flux-operator (and the Flux controllers it installs)",
 		Status:       StatusSupported,
 		Version:      "v0.58.0",
@@ -307,13 +391,32 @@ func (c Component) Presence(prof clusterprofile.ClusterProfile) (clusterprofile.
 	// controllers without the operator are somebody's hand-managed install, and
 	// dropping a FluxInstance beside them would hand a second manager the same
 	// controllers.
-	if c.Name == "flux" {
+	if c.Name == FluxOperatorName {
 		switch {
 		case prof.FluxOperator != nil:
 			return clusterprofile.OutcomeYes, describe("flux-operator", prof.FluxOperator)
 		case prof.Flux != nil:
 			return clusterprofile.OutcomeYes, describe("the Flux controllers", prof.Flux) +
 				", installed by something other than flux-operator"
+		default:
+			return clusterprofile.OutcomeNo, ""
+		}
+	}
+	// flux-aio reads the same findings and draws no distinction between them,
+	// which is ADR-0030 decision 1 exactly: a cluster with Flux is adopted and
+	// nothing is installed, whether that Flux came from flux-operator, from
+	// `flux bootstrap`, from flux-aio itself or from a vendor's distribution.
+	// The single-pod shape is a trade that is right for a cluster with no Flux
+	// and wrong as a migration for a cluster that already has some, so the
+	// refusal here is not merely "already present" bookkeeping — it is the ADR
+	// declining to reshape somebody's working reconciler.
+	if c.Name == FluxAIOName {
+		switch {
+		case prof.Flux != nil:
+			return clusterprofile.OutcomeYes, describe("the Flux controllers", prof.Flux)
+		case prof.FluxOperator != nil:
+			return clusterprofile.OutcomeYes, describe("flux-operator", prof.FluxOperator) +
+				", which owns the Flux installation on this cluster"
 		default:
 			return clusterprofile.OutcomeNo, ""
 		}
