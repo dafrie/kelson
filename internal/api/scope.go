@@ -430,6 +430,17 @@ var rpcScopes = map[string]methodScope{
 			return secretTargetScope(req.GetTarget())
 		},
 	},
+	kelsonv1alpha1connect.SecretServiceUnsetSecretProcedure: {
+		Operation: controlstore.OpMutate,
+		Reach:     reachTargeted,
+		Targets: func(msg any) ([]scopeTarget, bool) {
+			req, ok := msg.(*kelsonv1alpha1.UnsetSecretRequest)
+			if !ok {
+				return nil, false
+			}
+			return secretTargetScope(req.GetTarget())
+		},
+	},
 	kelsonv1alpha1connect.SecretServiceListSecretsProcedure: {
 		Operation: controlstore.OpRead,
 		Reach:     reachTargeted,
