@@ -1104,6 +1104,7 @@ Where it landed, and what each surface gained:
 | Component page | the same two revision halves; the verdict's three parts | the page's word (its own probe, or its environment's, or unread) |
 | Project matrix | per column: `generation` and the resolved `namespace` | **none** — see below |
 | History tab | each row's `generation` | "deployed now" |
+| Previews section, preview detail page | a preview's `namespace` named again as the OCIRepository and the Kustomization it also is; `PreviewLifecycle.name` named as the ResourceSetInputProvider and the ResourceSet | a preview's status word (`Preview.phase` / `.suspended`, with `artifactReady` / `appliedReady` / `reason` / `message` as evidence); the lifecycle sentence (`providerReady` / `providerReason` and `setReady` / `setReason` as evidence) |
 
 **What was deliberately not reached**, so the next slice starts from the truth:
 
@@ -1113,20 +1114,30 @@ Where it landed, and what each surface gained:
   The environment's Overview is one press away and carries the same evidence
   with room to draw it. The column heads still gain their two facts.
 - **Untouched surfaces:** the deploy / promote / rollback actions, the logs tab,
-  the previews section and the preview detail page, the cluster and connections
-  screens, the editor, and home. `Preview` in particular carries Flux object
-  names worth surfacing — its `namespace` is documented as also being the name
-  of the OCIRepository and the Kustomization, and `PreviewLifecycle` carries the
-  ResourceSetInputProvider / ResourceSet pair's name and both Ready conditions
-  with their reasons — which is the obvious next application.
-- **Wire gaps hit.** Three facts wanted and not available: `StatusResponse` has
+  the cluster and connections screens, the editor, and home. The previews
+  section and the preview detail page came off this list (#268 item 3):
+  `Preview.namespace` is named again as the OCIRepository and the Kustomization
+  it also is, `PreviewLifecycle.name` is named as the ResourceSetInputProvider
+  and the ResourceSet, and both are wrapped in the shared `LifecycleStatus`
+  component (`src/previews/Previews.tsx`) so the environment's Previews section
+  and the preview detail page's not-found state carry the same facts rather
+  than two copies of the markup. `PreviewPill`'s why-caret shows a preview's two
+  Ready conditions and its `reason` / `message`, and `LifecycleStatus`'s shows
+  the provider and set conditions' reasons — the fields the lifecycle sentence
+  is actually derived from (`lifecycleLine`).
+- **Wire gaps hit.** Two facts wanted and not available: `StatusResponse` has
   a `detail` map documented for adapter counts (`resources` / `live` /
   `degraded`) that `internal/api` never fills, so there is nothing to print;
-  `stale` is a boolean and the *spec's* current generation is on no message, so
-  "45 vs 47" cannot be shown, only "45, and behind"; and no response carries the
-  Flux `Kustomization` / `OCIRepository` names for a normal environment the way
-  `Preview` does for a preview, so an environment's own Flux objects cannot be
-  named without inventing them from the model's conventions.
+  and `stale` is a boolean and the *spec's* current generation is on no
+  message, so "45 vs 47" cannot be shown, only "45, and behind". No response
+  still carries the Flux `Kustomization` / `OCIRepository` names for a *normal*
+  environment the way `Preview` does for a preview, so an environment's own
+  Flux objects still cannot be named without inventing them from the model's
+  conventions — that gap is now closed only on the previews surfaces, where the
+  wire actually names the objects. `Preview` itself carries no per-condition
+  reason for `artifactReady` / `appliedReady` — only one `reason` / `message`
+  pair for the whole phase — so the why-caret shows the pair rather than a
+  reason per condition.
 
 ### Two themes
 
