@@ -1541,6 +1541,14 @@
   color: var(--kelson-muted);
 }
 
+/* A sentence inside the mono line that reports the restored revision: it says
+   why the second revision is absent, and it is words, so it steps back out of
+   the face its parent is in (#260). */
+.k-rollback__note {
+  font-family: var(--kelson-font);
+  color: var(--kelson-muted);
+}
+
 /* ------------------------------------------------------------------ promote */
 
 /* The plan is a table because it is tabular: one row per component, the pin it
