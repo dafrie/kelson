@@ -829,6 +829,97 @@ The transport indicator says **streaming**, not "live", for the same reason: a
 connected event stream and a running revision are different claims and must not
 share a label on one screen.
 
+### The reconciliation ticker
+
+The Console's signature interaction
+([#260](https://github.com/dafrie/kelson/issues/260), direction A of the UX
+research): a bounded strip of what the cluster has been *doing*, newest first.
+Every other live surface here is present tense — the pill, the phase rail, the
+drift mark, the verdict rows — and each new answer erases the last one, so an
+environment that went `Committed → Reconciling → Rejected` while a reader was on
+another tab shows one red pill and no story. The ticker is the story.
+`src/live/ticker.ts` is the logic, `src/live/Ticker.tsx` the whole of the
+drawing.
+
+One row, verbatim:
+
+```
+12s   checkout · production   deploying   Committed → Reconciling   45-9e8d7c6b
+```
+
+Left to right: how long ago, which pair, the vocabulary's word, the phases it
+moved between, the revision it moved to. The pair is the two names somebody
+chose and is therefore sans and a link; everything else is a value the machine
+produced and is mono. The arrow appears only when the phase actually moved — a
+transition is emitted for a change of phase *or* of revision, so both sides are
+sometimes the same phase.
+
+Six decisions, and each of them is what keeps a log from becoming a second
+status display:
+
+- **It reads the stream and does not re-interpret it.** The word is
+  `statusForPhase(transition.phase)`, which is exactly where a pill on the same
+  transition lands: `deliveryFacts` voids the fetched `answer` when a transition
+  arrives, so `statusForDelivery` falls through to the phase derivation. The two
+  are on screen together and a disagreement between them would be unarguable.
+- **Rows are records, so no row carries a `StatusPill`.** A pill claims "this is
+  the state now", and the third row down is a statement about an instant that has
+  passed. Exactly one object on a screen makes the present-tense claim.
+- **Only a settled failure is coloured.** `rowTone` hands a tone to `failed` and
+  `unhealthy` and to nothing else, so a strip of twenty normal rows is grey and
+  one red word in it is the only thing in view. The badge's *working* tier —
+  blue `deploying` — is exactly wrong here: twenty coloured objects reporting
+  that everything is fine.
+- **Empty is absent, on both screens.** Not a box saying nothing has happened.
+  The ring is memory only, nothing is persisted, and the server retains no
+  history a page could backfill from, so a fresh load of a quiet instance would
+  otherwise carry a permanent empty box.
+- **No second transport indicator.** Both screens already have a
+  `LiveIndicator` in their header. The strip adds only what that cannot say —
+  `reconnecting — rows may be missing` — because while the stream is down the
+  rows are not merely stale, they are incomplete. A Resync does *not* clear the
+  ring: it says the client's view has gaps, not that what it already saw was
+  false, and the strip has never claimed to be the last twenty transitions that
+  *occurred*.
+- **It opens no stream of its own.** It is a second reader of the `onEvent` the
+  screen already hands to `useWatch`.
+
+**Where they are.** The environment's Overview carries its own — that pair's
+transitions only, no subject column, sitting below the workloads and *outside*
+the `Status` block, because a transition about an environment whose `Status`
+call failed is still a real phase and is then the only thing on the page that
+can say anything. Home carries the instance-wide one, last on the page and cut
+to the newest five of the twenty it holds: home answers "what is the state of
+everything" and this is context for that, never the headline.
+
+**The deploy stream is not duplicated.** `/actions/deploy` is a route of its own
+and renders its own transitions, so a deploy screen and a ticker are never on
+one screen. The ticker is the ambient telling of the same events, which is the
+case the deploy screen cannot cover: a deploy someone else started, or one
+started from `kelson deploy`, moves these rows exactly as one started here does.
+There is deliberately no "a deploy is in progress" note — the rows are the
+answer, and inferring one from a phase would be a second opinion beside the
+phase rail that already draws it.
+
+**What the stream could not tell it.** `StatusTransition` carries four fields,
+so a row cannot say **who** caused it (there is no actor on the wire; a browser,
+a `kelson deploy` and a controller re-reconciling are indistinguishable), **which
+component** moved (a transition is an environment's; only `HealthChange` is per
+workload), or **the engine's answer** (there is none on the message, which is
+why the word is derived). Two things it *could* have been given and was not:
+`HEALTH_CHANGE` events stay out, because the verdict row and the attention band
+already move on one and `HealthChange` carries no remediation and no `stuck`, so
+a row would be the same news twice and the poorer telling of it.
+
+**Two clocks.** `WatchResponse.Event.at_unix_ms` is the *server's* stamp and
+`Date.now()` is the browser's, so "12s ago" is an elapsed time computed across
+two machines. It is still the right field: a client that reconnects inside the
+retained window is replayed events that are genuinely minutes old, and printing
+those against receipt time would date every one of them to now. The skew is
+handled by clamping at zero — a server whose clock runs ahead prints `now`,
+never a time in the future — and an event carrying no stamp at all falls back to
+when this browser received it. The exact instant stays on the row's `title`.
+
 ### Two themes
 
 The UI **follows the operating system by default** and can be pinned either way.
