@@ -394,13 +394,13 @@ function ManifestConnected({
         <StatusPill status="synced" label="connected" />
         <span className="k-settled__title">{name} is connected</span>
       </div>
-      <span className="k-mono">
+      <span>
         the app exists on GitHub and its key is stored here — {name}, in the
         list below, is it.
       </span>
       {install !== undefined ? (
         <>
-          <span className="k-mono">
+          <span>
             no repositories are chosen yet, so its row shows unreachable. Pick
             them on GitHub, then “Test connection” confirms it.
           </span>
@@ -461,19 +461,17 @@ function Removal({ removed }: { removed: Removed }) {
               </span>
             ))}
           </div>
-          <span className="k-mono">
+          <span>
             their next build has no credential and fails. Point each at another
             connection with <code>spec.source.connection</code>, or make one
             that matches the host again.
           </span>
         </>
       ) : (
-        <span className="k-mono">
-          no stored project resolved its source through it
-        </span>
+        <span>no stored project resolved its source through it</span>
       )}
 
-      <span className="k-mono">
+      <span>
         the Secret it named was not deleted — kelson did not write it.
       </span>
     </div>
@@ -790,7 +788,7 @@ function CreateForm({ onCreated }: { onCreated: () => void }) {
             >
               {create.running ? "Connecting…" : "Create the connection"}
             </button>
-            <span className="k-mono k-deploy__note">
+            <span className="k-deploy__note">
               owned by the instance · visible to everyone on it
             </span>
           </div>
@@ -814,10 +812,8 @@ function Created({ connection }: { connection: GitConnection }) {
         {connection.provider} · {connection.host} · secret{" "}
         {connection.secretRef}
       </span>
-      <span className="k-mono">{health.detail}</span>
-      <span className="k-mono">
-        “Test connection” on the row above asks the forge now.
-      </span>
+      <span>{health.detail}</span>
+      <span>“Test connection” on the row above asks the forge now.</span>
     </div>
   );
 }

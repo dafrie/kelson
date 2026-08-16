@@ -166,7 +166,7 @@ export function DataServices({
             </div>
             <p className="k-data__summary">{item.summary}</p>
             <a
-              className="k-data__issue k-mono"
+              className="k-data__issue"
               href={item.url}
               target="_blank"
               rel="noreferrer"
@@ -209,13 +209,15 @@ function DataServiceRow({
       <div className="k-data__head">
         <span className="k-data__name">{service.name}</span>
         <span className="k-chip k-mono">{service.kind}</span>
-        <span className="k-chip k-mono">preset: {service.preset}</span>
+        <span className="k-chip">
+          preset: <span className="k-mono">{service.preset}</span>
+        </span>
         {service.presetSource === "environment" ? (
-          <span className="k-mono k-data__source">
+          <span className="k-data__source">
             set by this environment
           </span>
         ) : service.presetSource === "default" ? (
-          <span className="k-mono k-data__source">
+          <span className="k-data__source">
             no preset in the spec — the model's default
           </span>
         ) : null}
@@ -279,7 +281,7 @@ function Deferred({
         </p>
       ) : null}
       <a
-        className="k-data__issue k-mono"
+        className="k-data__issue"
         href={deferral.url}
         target="_blank"
         rel="noreferrer"

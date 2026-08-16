@@ -138,7 +138,7 @@ function NotConfigured() {
         pushes the manifests each preview applies.
       </p>
       <a
-        className="k-previews__docs k-mono"
+        className="k-previews__docs"
         href={PREVIEWS_DOCS}
         target="_blank"
         rel="noreferrer"
@@ -224,7 +224,9 @@ export function PreviewPill({ preview }: { preview: Preview }) {
     <>
       <StatusPill status={state.tone} label={state.word} />
       {preview.phase !== "" ? (
-        <span className="k-mono k-previews__muted">phase {preview.phase}</span>
+        <span className="k-previews__muted">
+          phase <span className="k-mono">{preview.phase}</span>
+        </span>
       ) : null}
     </>
   );
@@ -297,7 +299,7 @@ function PreviewRow({
       <p className="k-previews__headline">{previewHeadline(preview)}</p>
 
       {preview.message ? (
-        <p className="k-mono k-previews__detail">
+        <p className="k-previews__detail">
           {preview.reason ? `${preview.reason}: ` : ""}
           {preview.message}
         </p>
@@ -318,15 +320,15 @@ function PreviewRow({
           ))}
         </div>
       ) : (
-        <p className="k-mono k-previews__muted">
+        <p className="k-previews__muted">
           no hostnames — this preview declares no routes, or kelson cannot read
           them in its namespace
         </p>
       )}
 
       {preview.revision ? (
-        <p className="k-mono k-previews__muted">
-          applied revision {preview.revision}
+        <p className="k-previews__muted">
+          applied revision <span className="k-mono">{preview.revision}</span>
         </p>
       ) : null}
     </li>

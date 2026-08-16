@@ -539,7 +539,7 @@ export function NewProjectPage() {
             >
               {check.running ? "Checking…" : "Check and preview"}
             </button>
-            <span className="k-mono k-deploy__note">
+            <span className="k-deploy__note">
               validates and renders every environment · stores nothing
             </span>
           </div>
@@ -963,11 +963,11 @@ function Preview({
               The check could not render this yet, and that is expected
             </span>
             {expected.map((e, i) => (
-              <span className="k-mono" key={`${e.code}:${i}`}>
+              <span key={`${e.code}:${i}`}>
                 <code className="k-field__code">{e.code}</code> {e.message}
               </span>
             ))}
-            <span className="k-mono">
+            <span>
               storing a spec does not render it, so this create succeeds. The
               image arrives when the build below produces one.
             </span>
@@ -987,7 +987,7 @@ function Preview({
           >
             {running ? "Creating…" : `Create ${documents.projectName}`}
           </button>
-          <span className="k-mono k-deploy__note">
+          <span className="k-deploy__note">
             the check passed · nothing is written or deployed yet
           </span>
         </div>
@@ -1017,7 +1017,7 @@ function Stored({ created }: { created: Created }) {
           <StatusPill status="synced" label="stored" />
           <span className="k-settled__title">The spec is stored</span>
         </div>
-        <span className="k-mono">
+        <span>
           {created.buildsFromSource
             ? "nothing is built or deployed yet — this project has no image until a build produces one"
             : "nothing has been deployed yet — that is the next, separate step"}
@@ -1138,7 +1138,7 @@ function BuildAndDeploy({
               Stop watching
             </button>
           ) : null}
-          <span className="k-mono k-deploy__note">
+          <span className="k-deploy__note">
             builds in the cluster with the strategy above · stopping stops the
             watching, not the build
           </span>
@@ -1176,7 +1176,7 @@ function BuildAndDeploy({
             <span className="k-mono">
               <Copyable value={finished.reference} />
             </span>
-            <span className="k-mono">
+            <span>
               pinned by digest, so the deploy below and any repeat of it get the
               same bytes
             </span>

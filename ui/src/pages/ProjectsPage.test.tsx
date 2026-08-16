@@ -114,8 +114,12 @@ describe("ProjectsPage", () => {
     const links = screen.getAllByRole("link", { name: "checkout" });
     expect(links).toHaveLength(1);
     expect(links[0]?.getAttribute("href")).toBe("/projects/checkout");
-    expect(screen.getByText("2 projects")).toBeTruthy();
-    expect(screen.getByText("3 environments")).toBeTruthy();
+    // The counts are mono and the words beside them are not (#260), so each
+    // one is a span around a span and the assertion is about the line.
+    const counted = (text: string) =>
+      screen.getByText((_, el) => el?.tagName === "SPAN" && el.textContent === text);
+    expect(counted("2 projects")).toBeTruthy();
+    expect(counted("3 environments")).toBeTruthy();
     // The one way into the create flow (#63).
     expect(
       screen.getByRole("link", { name: "New project" }).getAttribute("href"),

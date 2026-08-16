@@ -113,7 +113,13 @@ describe("EnvironmentOverview", () => {
   it("shows the phase and the workload verdicts, which are different answers", async () => {
     renderOverview();
 
-    expect(await screen.findByText("phase Healthy")).toBeTruthy();
+    // The label is sans and the phase itself is mono (#260), so the line is
+    // two elements and the assertion is about what it reads as.
+    expect(
+      await screen.findByText(
+        (_, el) => el?.className === "k-env__phase" && el.textContent === "phase Healthy",
+      ),
+    ).toBeTruthy();
     expect(
       screen.getAllByText("live", { selector: ".k-pill" }).length,
     ).toBeGreaterThan(0);

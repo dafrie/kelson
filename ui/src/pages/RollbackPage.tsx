@@ -201,12 +201,12 @@ export function RollbackPage() {
             />
           ) : null}
           {history.data !== undefined && entries.length === 0 ? (
-            <div className="k-panel k-panel--dim k-mono">
+            <div className="k-panel k-panel--dim">
               no deploys yet, so there is nothing to roll back to
             </div>
           ) : null}
           {unknownRequest ? (
-            <p className="k-mono k-rollback__requested">
+            <p className="k-rollback__requested">
               {entries[0]?.revision === requested
                 ? `${requested} is what is deployed now — restoring it is not a rollback, so nothing is preselected`
                 : `${requested} is not among the recorded revisions for this environment — pick a target below`}
@@ -252,7 +252,7 @@ export function RollbackPage() {
                   ? "Rolling back…"
                   : `Restore ${preview.preview.toRevision} to ${project}/${env}`}
               </button>
-              <span className="k-mono k-deploy__note">
+              <span className="k-deploy__note">
                 nothing has been written yet — the preview above is a dry run
               </span>
             </div>
@@ -358,13 +358,13 @@ function Findings({ preview }: { preview: PreviewState }) {
       </div>
       <div className="k-section__body k-rollback__preview">
         {notes.map((note) => (
-          <div className="k-panel k-panel--dim k-mono" key={note.cause}>
+          <div className="k-panel k-panel--dim" key={note.cause}>
             {note.message}
           </div>
         ))}
 
         {findings.length === 0 ? (
-          <div className="k-panel k-panel--dim k-mono">
+          <div className="k-panel k-panel--dim">
             no findings — nothing kelson checked would survive this rollback
           </div>
         ) : (
@@ -405,7 +405,7 @@ function Finding({ finding }: { finding: RollbackResponse_Finding }) {
       <div className="k-diff__finding-head">
         <code className="k-mono">{finding.resource}</code>
         {finding.cause ? (
-          <span className="k-mono k-diff__finding-where">{finding.cause}</span>
+          <span className="k-diff__finding-note">{finding.cause}</span>
         ) : null}
         {finding.unrecoverable ? (
           <span className="k-pill k-pill--failed">
@@ -443,7 +443,7 @@ function Outcome({ applied, error }: { applied: Applied; error: unknown }) {
                 // "recorded as" — as_revision arrives empty, always, and a
                 // blank chip here would look like a value that was dropped
                 // rather than one that never existed.
-                <span className="k-mono k-rollback__note">
+                <span className="k-rollback__note">
                   {" "}
                   — no new revision recorded; a rollback publishes nothing
                 </span>

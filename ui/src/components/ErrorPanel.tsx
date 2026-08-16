@@ -90,7 +90,9 @@ function WireErrorRow({ error }: { error: WireError }) {
       </div>
       <p className="k-error__message">{error.message}</p>
       {error.cause ? (
-        <p className="k-error__cause k-mono">cause: {error.cause}</p>
+        <p className="k-error__cause">
+          cause: <span className="k-mono">{error.cause}</span>
+        </p>
       ) : null}
       {error.remediation ? (
         <p className="k-error__fix">
