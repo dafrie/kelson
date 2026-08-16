@@ -24,6 +24,7 @@ syntax = "proto3";
 package kelson.v1alpha1;
 
 import "kelson/v1alpha1/common.proto";
+import "kelson/v1alpha1/effectiveconfig.proto";
 
 option go_package = "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1;kelsonv1alpha1";
 
@@ -186,4 +187,10 @@ service SpecService {
   rpc ListSpecs(ListSpecsRequest) returns (ListSpecsResponse);
   rpc DeleteSpec(DeleteSpecRequest) returns (DeleteSpecResponse);
   rpc ProposeSpec(ProposeSpecRequest) returns (ProposeSpecResponse);
+  // GetEffectiveConfig reads the stored documents and answers what a component
+  // actually runs with in one environment, with the block that set each value
+  // (effectiveconfig.proto). It is a read of the spec store like GetSpec —
+  // nothing is applied, no cluster is touched, and it needs no new
+  // authorization: it says less than the documents GetSpec already returns.
+  rpc GetEffectiveConfig(GetEffectiveConfigRequest) returns (GetEffectiveConfigResponse);
 }
