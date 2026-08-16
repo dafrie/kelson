@@ -309,8 +309,9 @@ export type GetEffectiveConfigRequest = Message<"kelson.v1alpha1.GetEffectiveCon
   project: string;
 
   /**
-   * Required: the effective configuration is a property of the pair, and there
-   * is no defensible answer for a project without one.
+   * The environment to answer for. Empty is accepted only when the project
+   * declares exactly one — the rule `--env` already follows, because an
+   * unnamed environment is unambiguous in no other case.
    *
    * @generated from field: string environment = 2;
    */

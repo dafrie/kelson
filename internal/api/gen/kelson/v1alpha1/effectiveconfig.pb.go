@@ -703,8 +703,9 @@ func (x *EffectiveConfig) GetComponents() []*EffectiveComponent {
 type GetEffectiveConfigRequest struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
 	Project string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
-	// Required: the effective configuration is a property of the pair, and there
-	// is no defensible answer for a project without one.
+	// The environment to answer for. Empty is accepted only when the project
+	// declares exactly one — the rule `--env` already follows, because an
+	// unnamed environment is unambiguous in no other case.
 	Environment string `protobuf:"bytes,2,opt,name=environment,proto3" json:"environment,omitempty"`
 	// One component. Empty means every component the project declares.
 	Component     string `protobuf:"bytes,3,opt,name=component,proto3" json:"component,omitempty"`
