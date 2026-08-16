@@ -154,6 +154,168 @@ func TestSetSecretRelaysTheServersRefusalWithoutTheValue(t *testing.T) {
 	assertNoToolSecret(t, out)
 }
 
+// The removal half (issue #269). It is `remove_keys` on this tool rather than a
+// tool of its own, so the assertions are about the dispatch as much as about
+// the answer: values go to SetSecret, remove_keys go to UnsetSecret, and a call
+// carrying both is refused before either.
+
+// unsetServer stages a SecretService whose UnsetSecret answers the way the real
+// one does: what it removed, what is left, never a value.
+func unsetServer(left ...string) (*fakeServer, *[]*kelsonv1alpha1.UnsetSecretRequest) {
+	var seen []*kelsonv1alpha1.UnsetSecretRequest
+	fake := &fakeServer{}
+	fake.unsetSecret = func(req *kelsonv1alpha1.UnsetSecretRequest) (*kelsonv1alpha1.UnsetSecretResponse, error) {
+		seen = append(seen, req)
+		dry := req.GetDryRun() != kelsonv1alpha1.DryRun_DRY_RUN_NONE
+		summary := &kelsonv1alpha1.SecretSummary{
+			Name:      req.GetName(),
+			Namespace: req.GetTarget().GetProject() + "-" + req.GetTarget().GetEnvironment(),
+		}
+		if !dry {
+			summary.Keys = left
+		}
+		return &kelsonv1alpha1.UnsetSecretResponse{
+			Secret: summary, RemovedKeys: req.GetKeys(), DryRun: dry,
+		}, nil
+	}
+	return fake, &seen
+}
+
+// TestRemoveKeysComposesUnsetSecret: the dispatch, and the preview default the
+// write has. An agent that names keys to remove and does not say execute gets a
+// validation, exactly as it does for a write.
+func TestRemoveKeysComposesUnsetSecret(t *testing.T) {
+	fake, seen := unsetServer("api-key")
+	h := start(t, fake)
+
+	out := h.call(t, "set_secret", map[string]any{
+		"project":     "checkout",
+		"environment": "production",
+		"name":        "payments",
+		"remove_keys": []any{"webhook"},
+	})
+	if len(*seen) != 1 {
+		t.Fatalf("the server saw %d UnsetSecret calls, want 1", len(*seen))
+	}
+	if got := (*seen)[0].GetDryRun(); got != kelsonv1alpha1.DryRun_DRY_RUN_RENDER {
+		t.Errorf("dry_run = %v, want RENDER by default", got)
+	}
+	if got := (*seen)[0].GetKeys(); len(got) != 1 || got[0] != "webhook" {
+		t.Errorf("keys = %v, want the ones named for removal", got)
+	}
+	for _, want := range []string{"VALIDATED ONLY", "nothing was removed", "execute=true"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the answer should say %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestRemoveKeysExecutesAndReportsWhatIsLeft, including the one thing an agent
+// has to be told: the value is not recoverable, and a reference to the removed
+// key now breaks the next pod start.
+func TestRemoveKeysExecutesAndReportsWhatIsLeft(t *testing.T) {
+	fake, seen := unsetServer("api-key")
+	h := start(t, fake)
+
+	out := h.call(t, "set_secret", map[string]any{
+		"project":     "checkout",
+		"environment": "production",
+		"name":        "payments",
+		"remove_keys": []any{"webhook"},
+		"execute":     true,
+	})
+	if got := (*seen)[0].GetDryRun(); got != kelsonv1alpha1.DryRun_DRY_RUN_NONE {
+		t.Errorf("dry_run = %v, want NONE with execute=true", got)
+	}
+	for _, want := range []string{"REMOVED", "keys removed  webhook", "keys left     api-key", "CreateContainerConfigError"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the answer should contain %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestRemovingTheLastKeySaysTheSecretIsEmpty: the core leaves an empty Secret
+// rather than deleting one, so the surface that can reach that state has to
+// name it — and name the verb that removes the object, which is not here.
+func TestRemovingTheLastKeySaysTheSecretIsEmpty(t *testing.T) {
+	fake, _ := unsetServer()
+	h := start(t, fake)
+
+	out := h.call(t, "set_secret", map[string]any{
+		"project":     "checkout",
+		"environment": "production",
+		"name":        "payments",
+		"remove_keys": []any{"api-key"},
+		"execute":     true,
+	})
+	if !strings.Contains(out, "empty and still exists") || !strings.Contains(out, "kelson secret delete") {
+		t.Errorf("the answer should say the object survives and name what removes it:\n%s", out)
+	}
+}
+
+// TestWritingAndRemovingInOneCallIsRefused before either RPC: two mutations
+// behind one answer would leave an agent unable to tell which half happened.
+func TestWritingAndRemovingInOneCallIsRefused(t *testing.T) {
+	fake, seen := unsetServer("api-key")
+	fake.setSecret = func(*kelsonv1alpha1.SetSecretRequest) (*kelsonv1alpha1.SetSecretResponse, error) {
+		t.Error("the refused call reached SetSecret")
+		return &kelsonv1alpha1.SetSecretResponse{}, nil
+	}
+	h := start(t, fake)
+
+	out := h.callErr(t, "set_secret", map[string]any{
+		"project":     "checkout",
+		"environment": "production",
+		"name":        "payments",
+		"values":      map[string]any{"api-key": toolSecretValue},
+		"remove_keys": []any{"webhook"},
+		"execute":     true,
+	})
+	if !strings.Contains(out, "two calls") {
+		t.Errorf("the refusal should say what to do instead:\n%s", out)
+	}
+	if len(*seen) != 0 {
+		t.Errorf("the refused call reached UnsetSecret: %+v", *seen)
+	}
+	assertNoToolSecret(t, out)
+}
+
+// TestRemoveKeysRelaysTheBackendRefusal is issue #269's other half seen from
+// here: an environment on a backend kelson must not write is refused by the
+// server, and the tool relays the code and the remediation rather than
+// rewording them.
+func TestRemoveKeysRelaysTheBackendRefusal(t *testing.T) {
+	fake := &fakeServer{}
+	fake.unsetSecret = func(*kelsonv1alpha1.UnsetSecretRequest) (*kelsonv1alpha1.UnsetSecretResponse, error) {
+		cerr := connect.NewError(connect.CodeFailedPrecondition,
+			errorf("environment \"production\" uses secret backend externalSecrets"))
+		detail, derr := connect.NewErrorDetail(&kelsonv1alpha1.Error{
+			Code:        "secret/external-backend",
+			Resource:    "environment/checkout/production",
+			Message:     "environment \"production\" uses secret backend externalSecrets (secrets.store vault-backend)",
+			Remediation: "write the value at that store",
+		})
+		if derr == nil {
+			cerr.AddDetail(detail)
+		}
+		return nil, cerr
+	}
+	h := start(t, fake)
+
+	out := h.callErr(t, "set_secret", map[string]any{
+		"project":     "checkout",
+		"environment": "production",
+		"name":        "payments",
+		"remove_keys": []any{"webhook"},
+		"execute":     true,
+	})
+	for _, want := range []string{"secret/external-backend", "vault-backend"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the refusal should carry %q:\n%s", want, out)
+		}
+	}
+}
+
 // TestSetSecretIsDeclaredDestructive: overwriting a key changes what the next
 // pod reads and kelson keeps no previous value to restore, which is exactly
 // what the destructive hint is for.
