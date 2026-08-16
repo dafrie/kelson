@@ -50,21 +50,26 @@ const (
 	// Helm release name derived from it.
 	ErrChartName = "render/chart-name-too-long"
 
-	// Four delivery-mode codes stood here and all four are deleted with the
+	// ErrReleaseName: release-<component>-<8 hex of the spec hash> is longer
+	// than the 63 characters a Kubernetes object name allows. Refusing beats
+	// truncating: two components whose truncated Job names collided would run
+	// one migration under the other's identity (release.go).
+	ErrReleaseName = "render/release-name-too-long"
+
+	// Three delivery-mode codes stood here and all three are deleted with the
 	// mode vocabulary itself (ADR-0028 decisions 8 and 9):
 	//
 	//   - render/helm-requires-flux     (ADR-0016 decision 4)
 	//   - render/previews-require-flux  (ADR-0017 decision 5)
 	//   - render/sops-requires-flux     (ADR-0022 decision 2)
-	//   - render/release-requires-direct and render/release-name-too-long
 	//
-	// The first three refused a mode that is not flux, and flux is the only
-	// mode there is; the fourth refused every mode that is not direct, and
-	// `components[].release` is refused one plane earlier now, as
-	// schema/not-implemented from internal/model's gate table (#227) — which
-	// also makes the Job's name-length refusal unreachable, since no Job is
-	// rendered. Nothing in this package is conditioned on delivery any more:
-	// what an environment renders is what its documents say.
+	// All three refused a mode that is not flux, and flux is the only mode
+	// there is. A fourth, `render/release-requires-direct`, refused every mode
+	// that was *not* direct; it went the other way — direct mode is gone, and
+	// `components[].release` is now delivered as two Kustomizations with a
+	// dependsOn (#227) rather than refused. Nothing in this package is
+	// conditioned on delivery any more: what an environment renders is what its
+	// documents say.
 
 	// ErrPreviewName: <project>-<environment> leaves no room for the
 	// per-preview namespace derived from it (<project>-<environment>-pr<id>,

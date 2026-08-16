@@ -693,3 +693,95 @@ func createPod(t *testing.T, c client.Client, namespace, name string, labels map
 		t.Fatalf("writing the Pod status of %s/%s: %v", namespace, name, err)
 	}
 }
+
+// TestReleaseSplitSurvivesTheFluxSchema is the one assertion about #227 that no
+// fake client can make: does kustomize-controller's own CRD accept the shape
+// kelson writes for a release stage?
+//
+// Four fields carry the whole design and every one of them is a place the schema
+// could say no. `dependsOn` is a list of typed references, so a bare name has to
+// be the right spelling of one. `timeout` is a duration string with a pattern —
+// "960s" either matches it or is refused. `prune: false` and `path: ./release`
+// are plain enough, but a key the schema does not declare is *pruned silently*
+// by the API server, which is exactly how a barrier could end up not existing at
+// all while every unit test passed.
+func TestReleaseSplitSurvivesTheFluxSchema(t *testing.T) {
+	c := envtestClient(t)
+	crNS, fluxNS := deliveryNamespaces(t, c)
+	ctx := context.Background()
+
+	d := envtestDeliverer(t, c, fluxNS, &fakePusher{})
+	rev := releaseRevision(t)
+	rev.EnvironmentNamespace = crNS
+	if _, err := d.Deliver(ctx, rev); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+
+	name := ObjectName("checkout", "production")
+	release := liveFluxObject(t, c, kustomizationGVK, fluxNS, ReleaseObjectName("checkout", "production"))
+	if got := nestedString(t, release, "spec", "path"); got != "./"+delivery.ReleaseStageDir {
+		t.Errorf("spec.path = %q, want ./%s", got, delivery.ReleaseStageDir)
+	}
+	if got := nestedString(t, release, "spec", "timeout"); got != "960s" {
+		t.Errorf("spec.timeout = %q, want 960s — the pattern on this field is why it is asserted here", got)
+	}
+	prune, found, err := unstructured.NestedBool(release.Object, "spec", "prune")
+	if err != nil || !found {
+		t.Fatalf("spec.prune is not set on the release Kustomization (found=%v, err=%v)", found, err)
+	}
+	if prune {
+		t.Error("the release Kustomization prunes; the completed Jobs are the idempotency key")
+	}
+	if got := nestedString(t, release, "spec", "sourceRef", "name"); got != name {
+		t.Errorf("the release Kustomization reads from %q, want the one OCIRepository %q", got, name)
+	}
+
+	workload := liveFluxObject(t, c, kustomizationGVK, fluxNS, name)
+	deps, found, err := unstructured.NestedSlice(workload.Object, "spec", "dependsOn")
+	if err != nil || !found {
+		t.Fatalf("spec.dependsOn did not survive the schema (found=%v, err=%v) — without it there is "+
+			"no barrier at all and the migration runs beside the rollout", found, err)
+	}
+	if len(deps) != 1 {
+		t.Fatalf("spec.dependsOn = %v, want exactly the release stage", deps)
+	}
+	if got := deps[0].(map[string]any)["name"]; got != ReleaseObjectName("checkout", "production") {
+		t.Errorf("spec.dependsOn names %v, want %s", got, ReleaseObjectName("checkout", "production"))
+	}
+}
+
+// TestRemovingTheHookAgainstARealAPIServer: the delete half of the same story.
+// A fake client deletes whatever it is handed; a real one has to be asked for an
+// object that exists, in the right namespace, at the right coordinates — and the
+// dependsOn has to come off the workload Kustomization in the same reconcile, or
+// Flux is left waiting on a Kustomization that has been deleted.
+func TestRemovingTheHookAgainstARealAPIServer(t *testing.T) {
+	c := envtestClient(t)
+	crNS, fluxNS := deliveryNamespaces(t, c)
+	ctx := context.Background()
+
+	d := envtestDeliverer(t, c, fluxNS, &fakePusher{})
+	staged := releaseRevision(t)
+	staged.EnvironmentNamespace = crNS
+	if _, err := d.Deliver(ctx, staged); err != nil {
+		t.Fatal(err)
+	}
+	liveFluxObject(t, c, kustomizationGVK, fluxNS, ReleaseObjectName("checkout", "production"))
+
+	plain := testRevision(t)
+	plain.EnvironmentNamespace = crNS
+	if _, err := d.Deliver(ctx, plain); err != nil {
+		t.Fatal(err)
+	}
+
+	u := &unstructured.Unstructured{}
+	u.SetGroupVersionKind(kustomizationGVK)
+	key := types.NamespacedName{Namespace: fluxNS, Name: ReleaseObjectName("checkout", "production")}
+	if err := c.Get(ctx, key, u); !apierrors.IsNotFound(err) {
+		t.Errorf("the release Kustomization is still there after the hook was removed (err=%v)", err)
+	}
+	workload := liveFluxObject(t, c, kustomizationGVK, fluxNS, ObjectName("checkout", "production"))
+	if _, found, _ := unstructured.NestedSlice(workload.Object, "spec", "dependsOn"); found {
+		t.Error("the workload Kustomization still depends on a Kustomization that has been deleted")
+	}
+}

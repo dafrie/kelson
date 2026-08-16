@@ -39,7 +39,6 @@ milestone that will implement the field.
 |---|---|
 | `Project.spec.components[].tools` (`kind: agent`) | M7 · Agent surface & MCP ([#75](https://github.com/dafrie/kelson/issues/75)) |
 | `Project.spec.defaults.policy.deployers`, `Environment.spec.policy.deployers` | tenancy ([#231](https://github.com/dafrie/kelson/issues/231)) |
-| `Project.spec.components[].release` | the Flux-native `dependsOn` split ([#227](https://github.com/dafrie/kelson/issues/227), [ADR-0028](adr/0028-delivery-spine.md) decision 8) |
 
 The rest of `policy:` is enforced as of [ADR-0025](adr/0025-agent-policy.md) — `deployers` stays gated
 because it is about human subjects, which kelson does not model yet
@@ -718,24 +717,15 @@ not a data service kelson manages. See [Secrets](#secrets-references-never-liter
 
 ## Release commands: migrations, before the rollout
 
-> **Gated — the field validates and renders nothing** ([ADR-0028](adr/0028-delivery-spine.md)
-> decision 8). [ADR-0019](adr/0019-release-command-hook.md)'s guarantee was *"the Job finished before
-> the Deployments changed"*, and its own rationale said only *the mode where kelson performs the apply
-> itself can stop between two resources*. That mode is gone, so `release:` moves into the gate table:
-> refused by name, with the tracked work in the message
-> ([#227](https://github.com/dafrie/kelson/issues/227)), rather than silently dropping a migration.
->
-> The replacement is known and not built: two `Kustomization`s with `dependsOn`, the first holding the
-> release Job with a health check, the second the workloads. It is possible now precisely *because*
-> kelson owns the Kustomization ([ADR-0028](adr/0028-delivery-spine.md) decision 3) — ADR-0019's own
-> "Revisit when" predicted this exact resolution. The shape below is what #227 has to honour, and is
-> kept for that reason.
->
-> **Nothing renders it today.** The Job, its ServiceAccount and the direct-mode gate that used to
-> refuse the field outside `delivery.mode: direct` are all deleted
-> ([#234](https://github.com/dafrie/kelson/issues/234)); a document carrying `release:` is refused at
-> validation and never reaches the renderer. Everything below is written as the contract, in the
-> present tense it will be true in again — read it as the specification #227 implements.
+> **Implemented** ([#227](https://github.com/dafrie/kelson/issues/227)), and the mechanism is Flux's
+> own. [ADR-0019](adr/0019-release-command-hook.md)'s guarantee was *"the Job finished before the
+> Deployments changed"*, and its rationale said only *the mode where kelson performs the apply itself
+> can stop between two resources*. That mode is gone — but so is the premise: kelson owns the
+> `Kustomization` now ([ADR-0028](adr/0028-delivery-spine.md) decision 3), so the barrier is a
+> `dependsOn` between two of them rather than a pause in an apply loop. ADR-0019's own "Revisit when"
+> predicted this exact resolution and said it supersedes that ADR rather than amending it. What the
+> delivery plane does with the two stages is in
+> [docs/delivery.md](delivery.md#release-commands-and-the-barrier-that-carries-them).
 
 A `release:` command runs to completion, and successfully, **before the revision's workloads roll**.
 It is where database migrations go.
@@ -767,35 +757,40 @@ business.
 
 One `ServiceAccount` (the component's own, moved here from its workload group because the Job's pod
 names it) and one `Job`, placed **after the data services and the charts, and before every workload**.
-(Rendered *when #227 lands*: today the field is refused and nothing is emitted for it.)
 The Job carries the component's image, the component's whole environment — bindings and secret
 references included, so the migration reads exactly the `DATABASE_URL` the application reads —
 `restartPolicy: Never`, `backoffLimit: 2` and the `activeDeadlineSeconds` your `timeout` resolves to.
 
 Order in a rendered set is not a wait: applying a Job before a Deployment says nothing about the Job
-having finished. **The waiting is delivery's**, and that is the whole reason the field is gated: the
-one path that could stop between two resources was the mode kelson applied in itself. The Flux-native
-answer puts the wait between two `Kustomization`s instead — see
-[docs/delivery.md](delivery.md#release-commands-and-the-barrier-that-is-not-built-yet).
+having finished. **The waiting is delivery's**, and it is where the ordering above becomes a barrier:
+everything emitted before the Job is a *prerequisite* the release stage applies too, the Job is the
+release stage alone, and the workloads sit behind a `dependsOn` on it. See
+[docs/delivery.md](delivery.md#release-commands-and-the-barrier-that-carries-them) for the two objects
+that produces.
 
 The small `backoffLimit` is deliberate and is not a retry policy for broken migrations. It exists so a
 *first* deploy — where the database was created seconds earlier and is not yet accepting connections —
-does not fail for a reason that has nothing to do with the migration. kelson does not wait for a data
-service to be ready before starting the release command; the two pod retries (10s, then 20s) are what
-absorbs that window today.
+does not fail for a reason that has nothing to do with the migration. That window is much narrower
+than it was: the release stage carries the data services and waits for them to be healthy before it
+reports ready, so the first attempt usually finds a database that is accepting connections. The two
+pod retries (10s, then 20s) stay because "usually" is not "always".
 
 ### Failure, and what stays running
 
 A failed release command **fails the deploy before any workload of the new revision is applied**. The
-previous revision keeps serving, nothing is recorded in the history, and nothing is pruned. The error
-is a structured `delivery/release-failed` naming the Job, and it carries the tail of the command's own
-output as its cause, because the sentence you need is in there rather than in anything kelson could
-write:
+previous revision keeps serving and nothing is pruned, because kustomize-controller will not begin
+applying a `Kustomization` whose dependency is not ready. The environment's `Ready` condition names
+the Job and points at its logs:
 
 ```
-release-web-5be0c165 [delivery/release-failed] the release command failed: BackoffLimitExceeded;
-the workloads of this revision were not applied, so the previous revision is still running
-(cause: ERROR: relation "orders" does not exist)
+the release hook did not succeed, so none of revision 12-9f3c1a7d was applied and the previous
+revision is still serving. flux: Kustomization kelson-system/checkout-production-release applied the
+change but it is unhealthy (HealthCheckFailed): Health check failed after 15m0s:
+Job/checkout-production/release-web-5be0c165 status: 'Failed'
+  jobs: release-web-5be0c165
+  fix: the Job's name carries the spec hash, so a re-deploy of the same spec addresses the same Job
+  and does not re-run it — read its logs, fix the migration, and deploy the fix as a new revision
+  (`kubectl logs -n checkout-production job/<name>`).
 ```
 
 While it runs, the deployment reads as `Reconciling` with the Job named; a failure is `Rejected` —
@@ -811,9 +806,12 @@ key**:
   run it again. A completed release command is a fact about a revision, not about a deploy attempt.
 - a **changed** revision — a new image, a new release command, a new env value — is a different spec
   hash and therefore a different Job, so a deploy runs its migrations.
-- re-deploying a revision whose Job **failed** deletes it and runs it again. A Job cannot be edited, so
-  a verdict that must be re-taken is a delete and a create; without it the first transient failure
-  would be permanent short of `kubectl`.
+- re-deploying a revision whose Job **failed** changes nothing: the Job is still there, still failed,
+  and re-applying it is a no-op, so the environment stays `Rejected` and the previous revision keeps
+  serving. This is the one place the spine differs from the deleted direct adapter, which deleted and
+  re-ran a failed Job. **The retry is a new revision** — fix the migration and deploy, which renders a
+  new Job name and starts its own lifecycle. `kubectl delete job -n <namespace> <name>` re-runs the
+  same revision if that is really what you want.
 
 **Write idempotent migrations anyway.** kelson bounds how often a command is re-run; it cannot bound
 what the command does when it is. A migration that is not safe to re-run will eventually be re-run — by
@@ -843,15 +841,22 @@ The consequence worth stating: promoting a revision whose migration already ran 
 again in production**, against production's database, because it is a different database. That is what
 you want, and it is another reason the migration must be idempotent.
 
-### What the gate costs, stated plainly
+### Previews run them too
 
-Anyone whose deploy runs migrations loses the ordering guarantee ADR-0019 built, and gets an error
-message instead of a silent omission — honest, and still a regression
-([ADR-0028](adr/0028-delivery-spine.md) consequences). Until
-[#227](https://github.com/dafrie/kelson/issues/227) lands, run migrations the way you would without
-kelson: a `Job` through `spec.overlays`, or a command against the database out of band. An overlay
-carries the same *ordering* limitation — a rendered set is ordered, and order is not a wait — so
-whichever you choose, keep the migration backwards-compatible with the revision still serving.
+A preview's manifests come out of the same renderer and the same publisher as its parent
+environment's ([ADR-0028](adr/0028-delivery-spine.md) decision 2), so a preview of a project with a
+release hook runs that hook against the preview's own database before its workloads roll — the same
+two `Kustomization`s, instantiated per change request by the `ResourceSet`. This is the second
+acceptance criterion of [#104](https://github.com/dafrie/kelson/issues/104), which ADR-0019 had to
+record as *not met* because previews were Flux-only and the hook was direct-only.
+
+### What it costs, stated plainly
+
+The release stage **never prunes**, which is what keeps the Job's name meaning something (above), so
+completed release Jobs accumulate in the namespace — one per component per revision that changed it —
+until the namespace goes. And the release stage waits for the data services and charts it carries to
+be healthy, so a first deploy of an environment with a slow dependency waits for it before the
+migration starts rather than racing it.
 
 ## Helm components: a chart, delegated
 

@@ -2,24 +2,25 @@ package model
 
 import (
 	"slices"
-	"strings"
 	"testing"
 )
 
 // The authoring half of the release-command hook (issue #104): which kinds may
 // carry one, what it must say, and what resolution fills in.
 //
-// Since ADR-0028 decision 8 the hook is *gated*: the plane that waited for the
-// Job is deleted, so a component that carries one is refused by name with #227
-// in the message. What is tested here is therefore two things at once — the
-// refusal, and that the shape checks still run underneath it, because the day
-// #227 lands the row goes and these documents have to be judged on their own
-// terms again.
+// The hook spent one release in the gate table, because ADR-0028 deleted the
+// plane that waited for the Job. Issue #227 gave it a barrier that is Flux's own
+// — two Kustomizations with a `dependsOn`, the first health-gated on the Job —
+// so the refusal is gone and these documents are judged on their own terms
+// again. The tests below are the ones that were written against the gate,
+// turned back the right way up: what was "and the gate fires" is now "and
+// nothing else is wrong with it".
 
-// TestReleaseHookIsGated: a well-formed hook on a kind that may carry one is
-// refused, and the refusal names the field and the issue rather than leaving
-// the author to discover that their migration never ran.
-func TestReleaseHookIsGated(t *testing.T) {
+// TestReleaseHookIsAccepted: a well-formed hook on a kind that may carry one
+// validates, with no complaint of any kind. This is the assertion that used to
+// require a schema/not-implemented refusal naming #227, and it is the one line
+// of the model that landing #227 changed.
+func TestReleaseHookIsAccepted(t *testing.T) {
 	for _, entry := range []string{
 		`{name: web, port: 8080, release: {command: ["./manage.py", "migrate"]}}`,
 		`{name: worker, release: {command: ["rake", "db:migrate"], timeout: 30m}}`,
@@ -27,28 +28,18 @@ func TestReleaseHookIsGated(t *testing.T) {
 	} {
 		t.Run(entry, func(t *testing.T) {
 			errs := decodeProjectSpec(t, "  image: i:1\n  components:\n    - "+entry+"\n")
-			var gate *Error
-			for i := range errs {
-				if errs[i].Code == ErrNotImplemented && errs[i].Field == "$.spec.components[0].release" {
-					gate = &errs[i]
-				}
-			}
-			if gate == nil {
-				t.Fatalf("a release hook must be gated until #227, got:\n%v", errs)
-			}
-			if !strings.Contains(gate.Remediation, "#227") {
-				t.Errorf("the gate must name where the work is tracked, got %q", gate.Remediation)
-			}
-			if len(errs) != 1 {
-				t.Errorf("a well-formed hook must produce the gate and nothing else, got:\n%v", errs)
+			if len(errs) != 0 {
+				t.Fatalf("a well-formed release hook must validate, got:\n%v", errs)
 			}
 		})
 	}
 }
 
-// TestReleaseHookShapeIsStillChecked: the gate is about what kelson implements,
-// not about what the author wrote.
-func TestReleaseHookShapeIsStillChecked(t *testing.T) {
+// TestReleaseHookShapeIsChecked: what the author wrote is still judged, and the
+// judgements are the ones ADR-0019 decision 1 fixed — which kinds may carry a
+// hook, that it names a command, and that its timeout is a duration a command
+// could finish in.
+func TestReleaseHookShapeIsChecked(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		entry    string
@@ -127,9 +118,11 @@ func TestReleaseRefusalNamesTheField(t *testing.T) {
 // duration is seconds by the time it gets there — and an unset timeout is the
 // default rather than "no deadline".
 //
-// Resolution keeps working under the gate on purpose (internal/model's gate
-// table says so): landing #227 is deleting a row and a call site, not
-// rebuilding the field.
+// The number this produces is read twice: it is the Job's
+// activeDeadlineSeconds, and it is what the release Kustomization's own
+// spec.timeout is derived from, so a migration is not reported failed by the
+// reconciler while it is still running (internal/renderer's
+// ReleaseTimeoutSeconds).
 func TestReleaseResolvesItsTimeout(t *testing.T) {
 	for _, tc := range []struct {
 		written string
@@ -142,9 +135,6 @@ func TestReleaseResolvesItsTimeout(t *testing.T) {
 	} {
 		t.Run("timeout "+tc.written, func(t *testing.T) {
 			p, e := releaseDocuments(t, tc.written)
-			// resolve rather than Resolve: the exported entry point validates
-			// first, and validation is where the gate lives. This is the same
-			// split every other gated field's precedence test uses.
 			r, errs := resolve(p, e, nil)
 			if len(errs) > 0 {
 				t.Fatalf("resolve: %v", errs)
@@ -211,13 +201,8 @@ kind: Environment
 metadata: {name: production}
 spec: {project: p}
 `))
-	// The gate is the point of TestReleaseHookIsGated and noise here: this
-	// helper is about what resolution does with a hook, which is still
-	// everything it did before the field was refused.
-	for _, e := range errs {
-		if e.Code != ErrNotImplemented {
-			t.Fatalf("decode: %v", errs)
-		}
+	if len(errs) > 0 {
+		t.Fatalf("decode: %v", errs)
 	}
 	return docs[0].(*Project), docs[1].(*Environment)
 }

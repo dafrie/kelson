@@ -7,6 +7,7 @@ import (
 	"github.com/dafrie/kelson/internal/build/registry"
 	"github.com/dafrie/kelson/internal/delivery"
 	"github.com/dafrie/kelson/internal/preview/naming"
+	"github.com/dafrie/kelson/internal/renderer"
 )
 
 // The publisher lives in internal/artifact now.
@@ -61,7 +62,10 @@ const (
 // internal/artifact's.
 //
 // The Kustomization the ResourceSet templates builds `path: ./`, so the files
-// sit at the root of the tar with no directory above them.
+// sit at the root of the tar with no directory above them — except for a
+// project with a release hook, whose set is laid out in two stages and whose
+// ResourceSet templates the second Kustomization that applies the first
+// (issue #227).
 func Package(set *Set) (Artifact, error) {
 	if set == nil {
 		return Artifact{}, fmt.Errorf("preview: packaging needs a rendered set")
@@ -78,6 +82,14 @@ func Package(set *Set) (Artifact, error) {
 			Name:       m.Name,
 			Namespace:  m.Namespace,
 			YAML:       body,
+			// A preview of a project with a release hook is laid out in two
+			// stages exactly as its parent environment is, and its ResourceSet
+			// templates the matching pair of Kustomizations
+			// (internal/renderer/previews.go). This one field is the whole of
+			// what previews had to learn: it is one renderer and one publisher,
+			// so #104's "previews run migrations too" arrives with the split
+			// rather than after it (issue #227, ADR-0028 decision 2).
+			Stage: previewStage(m.Stage),
 		})
 	}
 	files := ManifestFiles(ms)
@@ -101,6 +113,21 @@ func Package(set *Set) (Artifact, error) {
 		Files:       files,
 		Annotations: annotations,
 	})
+}
+
+// previewStage is the renderer's stage in the delivery plane's vocabulary. It
+// is the same mapping internal/controller's deliveryStage performs for the
+// spine, and it exists twice because the two enums are separate types on
+// purpose: internal/delivery must not import the renderer.
+func previewStage(s renderer.Stage) delivery.Stage {
+	switch s {
+	case renderer.StagePrerequisite:
+		return delivery.StagePrerequisite
+	case renderer.StageRelease:
+		return delivery.StageRelease
+	default:
+		return delivery.StageWorkload
+	}
 }
 
 // ManifestFiles lays a rendered ManifestSet out as files.

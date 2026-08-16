@@ -206,6 +206,29 @@ func tarball(files []File) ([]byte, error) {
 	}
 	gz.Header = gzip.Header{ModTime: artifactEpoch}
 	tw := tar.NewWriter(gz)
+	// A file entry under a directory is preceded by an entry for the directory
+	// itself. Nothing in the tar format requires that, and an extractor is not
+	// required to invent the parent of a regular file either — so the artifact
+	// says it rather than relying on whichever untar the consumer runs
+	// (source-controller's, `flux pull artifact`'s, a reviewer's `tar -x`).
+	// Order is the caller's, so this stays deterministic.
+	dirs := map[string]bool{}
+	for _, f := range files {
+		dir, _, cut := strings.Cut(f.Path, "/")
+		if !cut || dirs[dir] {
+			continue
+		}
+		dirs[dir] = true
+		if err := tw.WriteHeader(&tar.Header{
+			Typeflag: tar.TypeDir,
+			Name:     dir + "/",
+			Mode:     0o755,
+			ModTime:  artifactEpoch,
+			Format:   tar.FormatUSTAR,
+		}); err != nil {
+			return nil, fmt.Errorf("artifact: packaging %s/: %w", dir, err)
+		}
+	}
 	for _, f := range files {
 		hdr := &tar.Header{
 			Typeflag: tar.TypeReg,
@@ -315,19 +338,89 @@ type File struct {
 //
 // This is packaging, not rendering: the manifest bytes are passed through
 // verbatim (ADR-0001).
+//
+// # The release stage (issue #227)
+//
+// A set that carries a release hook is laid out in two pieces instead of one,
+// because the two are applied by two Kustomizations with a `dependsOn` between
+// them (ADR-0028 decision 3, internal/controller/fluxobjects.go):
+//
+//	kustomization.yaml            the workload stage, listed explicitly
+//	001-namespace-….yaml          … and its files, at the root, unmoved
+//	release/001-….yaml            the release stage
+//
+// The workload stage stays at the root under the same names it has always had,
+// so the Kustomization that applies it keeps `path: ./` and a rollback to an
+// artifact published before any of this existed still resolves. What makes the
+// root exclude `release/` is the generated `kustomization.yaml`: without one,
+// kustomize-controller synthesises a kustomization from *everything it finds
+// beneath the path*, subdirectories included, and the Job would be applied
+// beside the Deployments it is supposed to gate — the precise failure the split
+// exists to prevent, arriving quietly through the layout.
+//
+// A set with no release hook is laid out exactly as it was before this existed:
+// a flat directory, no generated kustomization.yaml, byte-identical output for
+// byte-identical input. The split must not tax a set that does not use it.
 func ManifestFiles(set delivery.ManifestSet) []File {
-	files := make([]File, 0, len(set.Manifests))
+	staged := false
+	for _, m := range set.Manifests {
+		if m.Stage == delivery.StageRelease {
+			staged = true
+			break
+		}
+	}
+	if !staged {
+		return manifestFiles(set.Manifests, "")
+	}
+
+	var workload, release []delivery.Manifest
+	for _, m := range set.Manifests {
+		if m.Stage != delivery.StageRelease {
+			workload = append(workload, m)
+		}
+		if m.Stage != delivery.StageWorkload {
+			release = append(release, m)
+		}
+	}
+	files := manifestFiles(workload, "")
+	files = append(files, kustomizationFile("", files))
+	files = append(files, manifestFiles(release, delivery.ReleaseStageDir+"/")...)
+	return files
+}
+
+// manifestFiles is the flat layout, optionally under a directory. Numbering
+// restarts per directory, which is what keeps the workload stage's file names
+// identical to the ones an unstaged set of the same manifests produces.
+func manifestFiles(manifests []delivery.Manifest, dir string) []File {
+	files := make([]File, 0, len(manifests))
 	seen := map[string]int{}
-	for i, m := range set.Manifests {
+	for i, m := range manifests {
 		name := fmt.Sprintf("%03d-%s-%s.yaml", i+1, slugify(m.Kind), slugify(m.Name))
 		if n := seen[name]; n > 0 {
 			// Same kind+name in two namespaces: keep both, deterministically.
 			name = fmt.Sprintf("%03d-%s-%s-%s.yaml", i+1, slugify(m.Kind), slugify(m.Namespace), slugify(m.Name))
 		}
 		seen[name]++
-		files = append(files, File{Path: name, Data: m.YAML})
+		files = append(files, File{Path: dir + name, Data: m.YAML})
 	}
 	return files
+}
+
+// kustomizationFile writes the explicit resource list that stops
+// kustomize-controller from walking into the release directory. It is built by
+// hand rather than through a YAML encoder because it is four lines of fixed
+// shape and because sigs.k8s.io/kustomize is not a dependency this repository
+// carries — and because the bytes have to be deterministic to the digest, which
+// a literal is and a marshaller is only by convention.
+func kustomizationFile(dir string, files []File) File {
+	var b strings.Builder
+	b.WriteString("apiVersion: kustomize.config.k8s.io/v1beta1\n")
+	b.WriteString("kind: Kustomization\n")
+	b.WriteString("resources:\n")
+	for _, f := range files {
+		b.WriteString("  - " + strings.TrimPrefix(f.Path, dir) + "\n")
+	}
+	return File{Path: dir + "kustomization.yaml", Data: []byte(b.String())}
 }
 
 var slugUnsafe = regexp.MustCompile(`[^a-z0-9]+`)

@@ -127,12 +127,39 @@ func Render(resolved *model.Resolved, profile clusterprofile.ClusterProfile, res
 		out = append(out, ms...)
 	}
 
-	// A release hook used to render a Job here, between the two, and the direct
-	// adapter waited for it. That adapter is gone and order alone does not wait
-	// (issue #89), so `components[].release` renders nothing at all and
-	// internal/model refuses it by name instead — ADR-0028 decision 8, tracked
-	// on #227. Nothing is emitted for it and nothing is silently dropped: a
-	// document carrying the field never reaches the renderer.
+	// Release hooks go here, between the two, exactly where ADR-0019 decision 2
+	// put them: after everything a migration talks to and before everything that
+	// must not roll until it has finished. Order alone still does not wait
+	// (issue #89) — what waits is the pair of Kustomizations the controller
+	// builds out of the stages marked below (release.go, issue #227).
+	//
+	// Everything already emitted is what a release Job depends on: the
+	// Namespace it runs in, the Secrets its env references and the data services
+	// it migrates. Those become prerequisites, applied by both stages, so the
+	// release stage can stand up without borrowing anything from the stage it
+	// gates. Nothing is marked at all when no component declares a hook, and a
+	// set with no release stage is published and delivered exactly as it was
+	// before this existed — the split must not tax an environment that does not
+	// use it.
+	var release []Manifest
+	for i := range resolved.Components {
+		c := &resolved.Components[i]
+		if c.Release == nil {
+			continue
+		}
+		ms, err := releaseManifests(resolved, c, services)
+		if err != nil {
+			return nil, err
+		}
+		release = append(release, ms...)
+	}
+	if len(release) > 0 {
+		for i := range out {
+			out[i].Stage = StagePrerequisite
+		}
+		out = append(out, release...)
+	}
+
 	for i := range resolved.Components {
 		ms, err := componentManifests(resolved, &resolved.Components[i], profile, services)
 		if err != nil {

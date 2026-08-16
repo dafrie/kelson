@@ -313,3 +313,114 @@ func untar(t *testing.T, layer []byte) []tarEntry {
 	}
 	return out
 }
+
+// stagedSet is testSet with a release hook: a Namespace and a ServiceAccount
+// both stages need, a Job only the release stage may see, and the workloads that
+// must not roll until it has completed (issue #227).
+func stagedSet() delivery.ManifestSet {
+	return delivery.ManifestSet{
+		Project:     "checkout",
+		Environment: "production",
+		Manifests: []delivery.Manifest{
+			{APIVersion: "v1", Kind: "Namespace", Name: "checkout-production",
+				YAML: []byte("kind: Namespace\n"), Stage: delivery.StagePrerequisite},
+			{APIVersion: "v1", Kind: "ServiceAccount", Name: "web", Namespace: "checkout-production",
+				YAML: []byte("kind: ServiceAccount\n"), Stage: delivery.StagePrerequisite},
+			{APIVersion: "batch/v1", Kind: "Job", Name: "release-web-1a2b3c4d", Namespace: "checkout-production",
+				YAML: []byte("kind: Job\n"), Stage: delivery.StageRelease},
+			{APIVersion: "apps/v1", Kind: "Deployment", Name: "web", Namespace: "checkout-production",
+				YAML: []byte("kind: Deployment\n")},
+		},
+	}
+}
+
+func filePaths(files []artifact.File) []string {
+	out := make([]string, len(files))
+	for i, f := range files {
+		out[i] = f.Path
+	}
+	return out
+}
+
+// TestManifestFilesLaysOutTheReleaseStage is the layout the two-Kustomization
+// split rests on. The workload stage keeps the root and keeps its names — the
+// Kustomization that applies it is still `path: ./`, and an artifact published
+// before any of this existed still resolves under it — and the release stage
+// gets a directory of its own that only the release Kustomization points at.
+func TestManifestFilesLaysOutTheReleaseStage(t *testing.T) {
+	got := filePaths(artifact.ManifestFiles(stagedSet()))
+	want := []string{
+		"001-namespace-checkout-production.yaml",
+		"002-serviceaccount-web.yaml",
+		"003-deployment-web.yaml",
+		"kustomization.yaml",
+		"release/001-namespace-checkout-production.yaml",
+		"release/002-serviceaccount-web.yaml",
+		"release/003-job-release-web-1a2b3c4d.yaml",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("laid out %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("file %d is %q, want %q\nfull layout: %v", i, got[i], want[i], got)
+		}
+	}
+}
+
+// TestGeneratedKustomizationExcludesTheReleaseStage is the whole reason the root
+// gets an explicit resource list. Without one, kustomize-controller synthesises a
+// kustomization from everything beneath the path — subdirectories included — so
+// `path: ./` would apply the release Job beside the Deployment it exists to
+// gate, quietly, through the layout rather than through anything anyone wrote.
+func TestGeneratedKustomizationExcludesTheReleaseStage(t *testing.T) {
+	var root string
+	for _, f := range artifact.ManifestFiles(stagedSet()) {
+		if f.Path == "kustomization.yaml" {
+			root = string(f.Data)
+		}
+	}
+	if root == "" {
+		t.Fatal("a staged set produced no root kustomization.yaml")
+	}
+	if strings.Contains(root, "release") {
+		t.Errorf("the root kustomization lists the release stage:\n%s", root)
+	}
+	for _, want := range []string{
+		"kind: Kustomization\n",
+		"  - 001-namespace-checkout-production.yaml\n",
+		"  - 003-deployment-web.yaml\n",
+	} {
+		if !strings.Contains(root, want) {
+			t.Errorf("the root kustomization does not carry %q:\n%s", want, root)
+		}
+	}
+}
+
+// TestManifestFilesLeavesAnUnstagedSetFlat: the split must not tax a set that
+// does not use it. No directory, no generated kustomization.yaml, and therefore
+// the same digest an artifact of the same manifests had before #227.
+func TestManifestFilesLeavesAnUnstagedSetFlat(t *testing.T) {
+	for _, f := range artifact.ManifestFiles(testSet()) {
+		if strings.Contains(f.Path, "/") || f.Path == "kustomization.yaml" {
+			t.Errorf("a set with no release stage produced %q", f.Path)
+		}
+	}
+}
+
+// TestStagedArtifactIsDeterministic: the directory entry the tar carries for
+// `release/` is written from the file list, so it must not reorder or duplicate
+// between two packagings of one input.
+func TestStagedArtifactIsDeterministic(t *testing.T) {
+	contents := func() artifact.Contents {
+		return artifact.Contents{
+			Repository: testRepository,
+			Tag:        testTag,
+			Files:      artifact.ManifestFiles(stagedSet()),
+		}
+	}
+	first, second := mustPackage(t, contents()), mustPackage(t, contents())
+	if first.Digest != second.Digest {
+		t.Errorf("two packagings of one staged input produced %s and %s", first.Digest, second.Digest)
+	}
+}
