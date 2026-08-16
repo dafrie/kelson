@@ -622,7 +622,7 @@ repository, where byte fidelity is git's job and always was. `promote/document-u
 `components:` list the pin cannot be spliced into) survives only on the **file** path, where there is
 still a document whose formatting kelson refuses to rewrite.
 
-The UI's promote screen (`/projects/<project>/<environment>/promote`) drives the same RPC: the
+The UI's promote screen (`/projects/<project>/<environment>/actions/promote`) drives the same RPC: the
 environment in the path is the target, the plan and its diff are shown before anything is
 written, and a successful promotion leads to the deploy flow rather than deploying itself.
 
