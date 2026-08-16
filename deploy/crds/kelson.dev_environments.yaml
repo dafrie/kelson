@@ -226,7 +226,7 @@ spec:
                         - github
                         - gitlab
                     repo:
-                      description: HTTP(S) URL of the source repository whose change requests become previews; not delivery.git.repo
+                      description: HTTP(S) URL of the source repository whose change requests become previews
                       type: string
                     secretRef:
                       description: name of the Secret holding forge credentials; never a token. Omit it to have kelson materialize one from the git connection covering previews.repo
