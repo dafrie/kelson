@@ -207,6 +207,11 @@
   font-size: 12.5px;
   color: var(--kelson-text-3);
   cursor: pointer;
+  /* The environment's tabs are links, because a tab there is a route (#260);
+     the log screen's are buttons, because its two modes are one screen. They
+     have to look identical, so the anchor loses its underline and takes the
+     button's box. */
+  text-decoration: none;
 }
 
 .k-tab:hover {
@@ -217,6 +222,31 @@
 .k-tab--active:hover {
   color: var(--kelson-text);
   border-bottom-color: var(--kelson-accent);
+}
+
+/*
+ * The environment's second-layer bar (#260): where it can be looked at on the
+ * left, what can be done to it on the right. One rule holds them apart, and the
+ * tab strip gives up its own bottom border to the bar so the two do not stack
+ * two hairlines on top of each other.
+ */
+.k-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--kelson-hairline);
+}
+
+.k-bar .k-tabs {
+  margin-bottom: 0;
+  border-bottom: none;
+}
+
+.k-bar .k-actions {
+  padding-bottom: 8px;
 }
 
 .k-field {

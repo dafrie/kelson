@@ -127,21 +127,30 @@ describe("ComponentPage", () => {
     expect(screen.getByText("checkout-production")).toBeTruthy();
   });
 
-  it("links to the flows that act on it, with itself preselected in the logs", async () => {
+  it("links to the tabs and actions that act on it, itself preselected in the logs", async () => {
     open("web");
 
     await screen.findByText("serves on port 8080");
     const href = (name: string) =>
       screen.getByRole("link", { name }).getAttribute("href");
+    // Two views of this component's environment...
     expect(href("Logs")).toBe(
       "/projects/checkout/production/logs?component=web",
     );
-    expect(href("Deploy")).toBe("/projects/checkout/production/deploy");
     expect(href("History")).toBe("/projects/checkout/production/history");
-    expect(href("Diff")).toBe("/projects/checkout/production/diff");
-    expect(href("Rollback")).toBe("/projects/checkout/production/rollback");
-    // And back to the matrix it came from.
+    // ...and two things that can be done to it (#260).
+    expect(href("Deploy")).toBe(
+      "/projects/checkout/production/actions/deploy",
+    );
+    expect(href("Rollback")).toBe(
+      "/projects/checkout/production/actions/rollback",
+    );
+    // Diff is not among them: it is not a destination any more, it is what the
+    // deploy shows before it writes and what a history row opens.
+    expect(screen.queryByRole("link", { name: "Diff" })).toBeNull();
+    // Back to the matrix it came from, and into the environment it runs in.
     expect(href("← checkout")).toBe("/projects/checkout");
+    expect(href("production")).toBe("/projects/checkout/production");
   });
 
   it("shows the component's own verdict when observation has one", async () => {

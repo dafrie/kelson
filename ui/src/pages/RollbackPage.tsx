@@ -175,9 +175,17 @@ export function RollbackPage() {
         <h1>Rollback</h1>
       </div>
       <div className="k-page-sub">
-        <Link to={`/projects/${encodeURIComponent(project)}`}>← {project}</Link>
+        {/* Back to the environment, not to the project: an action is entered
+            from the environment it acts on and finishes by returning to it
+            (#260). The project stays one hop further out, through the
+            environment's own breadcrumb. */}
+        <Link
+          to={`/projects/${encodeURIComponent(project)}/${encodeURIComponent(env)}`}
+        >
+          ← {env}
+        </Link>
         <span>·</span>
-        <span className="k-chip k-mono">{env}</span>
+        <span>{project}</span>
       </div>
 
       <section className="k-section">

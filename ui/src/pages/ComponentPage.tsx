@@ -154,7 +154,12 @@ export function ComponentPage() {
       <div className="k-page-sub">
         <Link to={`/projects/${encodeURIComponent(project)}`}>← {project}</Link>
         <span>·</span>
-        <span className="k-chip k-mono">{env}</span>
+        {/* The environment is a link, not a label: it is where this component's
+            logs, history and actions live (#260), so the page it names is one
+            press away rather than a path a reader reassembles. */}
+        <Link className="k-chip k-mono" to={base}>
+          {env}
+        </Link>
         {summary !== undefined ? (
           <>
             <span>·</span>
@@ -186,6 +191,10 @@ export function ComponentPage() {
           <section className="k-section">
             <div className="k-env__head">
               <div className="k-eyebrow">What it runs</div>
+              {/* Two tabs of this component's environment and two of its
+                  actions (#260). Diff is not among them any more: it is not a
+                  place, it is what the deploy shows before it writes and what a
+                  history row opens against a revision. */}
               <div className="k-actions">
                 {data ? null : (
                   <Link
@@ -195,16 +204,16 @@ export function ComponentPage() {
                     Logs
                   </Link>
                 )}
-                <Link className="k-button k-button--primary" to={`${base}/deploy`}>
+                <Link
+                  className="k-button k-button--primary"
+                  to={`${base}/actions/deploy`}
+                >
                   Deploy
                 </Link>
                 <Link className="k-button" to={`${base}/history`}>
                   History
                 </Link>
-                <Link className="k-button" to={`${base}/diff`}>
-                  Diff
-                </Link>
-                <Link className="k-button" to={`${base}/rollback`}>
+                <Link className="k-button" to={`${base}/actions/rollback`}>
                   Rollback
                 </Link>
               </div>

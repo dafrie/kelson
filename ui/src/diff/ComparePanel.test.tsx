@@ -6,7 +6,7 @@ import { DeployService } from "../gen/kelson/v1alpha1/deploy_pb";
 import { RenderService } from "../gen/kelson/v1alpha1/render_pb";
 import { DryRun } from "../gen/kelson/v1alpha1/common_pb";
 import { renderAt } from "../test/render";
-import { DiffPage } from "./DiffPage";
+import { ComparePanel } from "./ComparePanel";
 
 /** One modified Deployment, the shape diff.EncodeJSON produces. */
 function diffJson(image: string): Uint8Array {
@@ -71,28 +71,34 @@ const transport = createRouterTransport((router) => {
   });
 });
 
-function renderDiff() {
+/**
+ * The panel where the history tab opens it (#260). It was a screen of its own
+ * until the flow consolidation; the subject of these tests is unchanged, only
+ * the mounting is — the panel takes the pair and the revision as props now,
+ * where it used to read them off the URL.
+ */
+function renderCompare() {
   return renderAt(
     transport,
-    "/projects/checkout/production/diff",
-    "/projects/:project/:env/diff",
-    <DiffPage />,
+    "/projects/checkout/production/history?compare=1",
+    "/projects/:project/:env/history",
+    <ComparePanel project="checkout" env="production" />,
   );
 }
 
-/** The screen as the history timeline links to it: a revision in the URL. */
-function renderDiffFrom(revision: string) {
+/** The panel as a history row opens it: a revision already chosen. */
+function renderCompareFrom(revision: string) {
   return renderAt(
     transport,
-    `/projects/checkout/production/diff?from=${revision}`,
-    "/projects/:project/:env/diff",
-    <DiffPage />,
+    `/projects/checkout/production/history?from=${revision}`,
+    "/projects/:project/:env/history",
+    <ComparePanel project="checkout" env="production" from={revision} />,
   );
 }
 
-describe("DiffPage", () => {
+describe("ComparePanel", () => {
   it("opens against the live cluster and reports its failure as one", async () => {
-    renderDiff();
+    renderCompare();
     expect(
       screen.getByRole("button", { name: "Against live cluster" }).getAttribute("aria-current"),
     ).toBe("true");
@@ -100,7 +106,7 @@ describe("DiffPage", () => {
   });
 
   it("diffs against a deployed revision once one is picked (#162)", async () => {
-    renderDiff();
+    renderCompare();
     fireEvent.click(screen.getByRole("button", { name: "Against deployed revision" }));
 
     // The revision list is the History RPC's, newest first, and nothing is
@@ -118,7 +124,7 @@ describe("DiffPage", () => {
   });
 
   it("re-reads the diff when another revision is picked", async () => {
-    renderDiff();
+    renderCompare();
     fireEvent.click(screen.getByRole("button", { name: "Against deployed revision" }));
     await screen.findByText("rev-00000002");
 
@@ -133,12 +139,12 @@ describe("DiffPage", () => {
     );
   });
 
-  it("opens on a revision named in the URL, which is how history links here (#67)", async () => {
-    renderDiffFrom("rev-00000001");
+  it("opens on the revision it was given, which is how a history row opens it (#67)", async () => {
+    renderCompareFrom("rev-00000001");
 
-    // `?from=` only means something in the rendered mode, so it selects the tab
-    // as well as the revision — and the diff is requested without a click,
-    // because the link already made the choice this screen would ask for.
+    // A revision only means something in the rendered mode, so it selects the
+    // mode as well as the revision — and the diff is requested without a click,
+    // because the row that opened the panel already made the choice.
     expect(
       screen
         .getByRole("button", { name: "Against deployed revision" })

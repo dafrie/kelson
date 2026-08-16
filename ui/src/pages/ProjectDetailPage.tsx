@@ -2,24 +2,17 @@ import { useCallback, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { useAsync, useClients } from "../api/data";
-import { useWatch, type WatchState } from "../api/watch";
+import { useWatch } from "../api/watch";
 import { toFailure, type Failure } from "../api/errors";
 import type { SpecDocuments } from "../gen/kelson/v1alpha1/common_pb";
 import type { StatusResponse } from "../gen/kelson/v1alpha1/deploy_pb";
 import type { WatchResponse_Event } from "../gen/kelson/v1alpha1/events_pb";
-import { Copyable } from "../components/Copyable";
 import { Disclosure, YamlBlock } from "../components/Disclosure";
 import { ErrorPanel } from "../components/ErrorPanel";
 import { LiveIndicator } from "../components/LiveIndicator";
 import { StatusPill } from "../components/StatusPill";
-import { statusForPhase, verdictTone } from "../components/status";
+import { statusForPhase } from "../components/status";
 import { EmptyState, LoadingState } from "../components/States";
-import { DataServices } from "../dataservices/DataServices";
-import { isDataServiceVerdict } from "../dataservices/parse";
-import { PhaseRail } from "../deploy/PhaseRail";
-import { parseCause, type RailInput } from "../deploy/rail";
-import { Previews } from "../previews/Previews";
-import { SecretsPanel } from "../secrets/SecretsPanel";
 import {
   effectiveImage,
   isDataComponentKind,
@@ -29,6 +22,7 @@ import {
   projectImage,
   type ComponentSummary,
 } from "../spec/components";
+import { environmentPath } from "./flows";
 import {
   mergeVerdicts,
   NO_READ,
@@ -37,7 +31,6 @@ import {
   verdictFor,
   type EnvironmentRead,
   type LiveVerdict,
-  type VerdictRow,
 } from "./matrix";
 
 /**
@@ -76,10 +69,14 @@ import {
  * their own, and their cells show the *environment's* word marked as such
  * (`matrix.ts`) rather than borrowing a claim nobody made.
  *
- * Below the matrix the environment in view keeps its full panel: the phase
- * rail, the workload verdicts, data services, previews, Secrets, and the six
- * flows — all of which are addressed by (project, environment) and stay that
- * way in this slice.
+ * # The matrix is the whole page
+ *
+ * An environment used to open a panel below the grid, selected by a strip of
+ * buttons that only this page knew the state of. That panel is the Overview tab
+ * of the environment's own route now (#260, `EnvironmentPage`), so a column
+ * header is a link and the environment a reader is looking at is in the URL.
+ * The page's subject is the project again: what it is made of, where it runs,
+ * how each pair is doing, and the documents that say so.
  *
  * The spec documents are printed byte-faithfully. The server stores what was
  * authored (ADR-0013: the spec is the user's document) and re-serialising YAML
@@ -101,10 +98,6 @@ export function ProjectDetailPage() {
   // The list is the read's key: a Status per environment is re-issued when the
   // set of environments changes, not when the response object is replaced.
   const key = environments.join("\u0000");
-  const [active, setActive] = useState<string | undefined>(undefined);
-  const selected = active !== undefined && environments.includes(active)
-    ? active
-    : environments[0];
 
   const statuses = useAsync(
     (signal) =>
@@ -194,8 +187,6 @@ export function ProjectDetailPage() {
     [documents],
   );
   const components = useMemo(() => parseComponents(projectDoc), [projectDoc]);
-  const selectedColumn =
-    columns.find((c) => c.environment === selected) ?? undefined;
 
   return (
     <>
@@ -248,40 +239,9 @@ export function ProjectDetailPage() {
           project={project}
           components={components}
           columns={columns}
-          selected={selected}
-          onSelect={setActive}
           documents={documents}
           projectDoc={projectDoc}
         />
-      ) : null}
-
-      {environments.length > 0 && selected !== undefined ? (
-        <>
-          <nav className="k-tabs" aria-label="Environments">
-            {environments.map((env) => (
-              <button
-                key={env}
-                type="button"
-                className={env === selected ? "k-tab k-tab--active" : "k-tab"}
-                aria-current={env === selected ? "true" : undefined}
-                onClick={() => setActive(env)}
-              >
-                {env}
-              </button>
-            ))}
-          </nav>
-          <EnvironmentPanel
-            // Keyed by the pair: switching tabs must not carry one
-            // environment's panel state onto another's.
-            key={`${project}/${selected}`}
-            project={project}
-            environment={selected}
-            others={environments.filter((name) => name !== selected)}
-            documents={documents}
-            column={selectedColumn}
-            watch={watch}
-          />
-        </>
       ) : null}
 
       {documents ? <Documents project={project} documents={documents} /> : null}
@@ -380,16 +340,12 @@ function Matrix({
   project,
   components,
   columns,
-  selected,
-  onSelect,
   documents,
   projectDoc,
 }: {
   project: string;
   components: ComponentSummary[];
   columns: Column[];
-  selected: string | undefined;
-  onSelect: (environment: string) => void;
   documents: SpecDocuments | undefined;
   projectDoc: string;
 }) {
@@ -444,19 +400,8 @@ function Matrix({
                       Component
                     </th>
                     {columns.map((c) => (
-                      <th
-                        key={c.environment}
-                        scope="col"
-                        className="k-matrix__col"
-                        aria-current={
-                          c.environment === selected ? "true" : undefined
-                        }
-                      >
-                        <ColumnHead
-                          column={c}
-                          selected={c.environment === selected}
-                          onSelect={onSelect}
-                        />
+                      <th key={c.environment} scope="col" className="k-matrix__col">
+                        <ColumnHead project={project} column={c} />
                       </th>
                     ))}
                   </tr>
@@ -511,28 +456,20 @@ function Matrix({
 }
 
 /**
- * A column header: the environment, its word, its revision — and the control
- * that brings its panel, and with it the six flows, into view below.
+ * A column header: the environment, its word, its revision — and the way in.
+ *
+ * It used to be a button that revealed a panel below the grid. The environment
+ * has its own route now (#260), so it is a link: the column is the entrance to
+ * the environment's Overview, its logs, its history and its actions, and where
+ * a reader ends up is in the address bar instead of in this page's state.
  */
-function ColumnHead({
-  column,
-  selected,
-  onSelect,
-}: {
-  column: Column;
-  selected: boolean;
-  onSelect: (environment: string) => void;
-}) {
+function ColumnHead({ project, column }: { project: string; column: Column }) {
   const state = statusForPhase(column.read.phase);
   return (
     <>
-      <button
-        type="button"
-        className={
-          selected ? "k-matrix__env k-matrix__env--on" : "k-matrix__env"
-        }
-        aria-pressed={selected}
-        onClick={() => onSelect(column.environment)}
+      <Link
+        className="k-matrix__env"
+        to={environmentPath(project, column.environment)}
       >
         <span className="k-mono">{column.environment}</span>
         {column.failure !== undefined ? (
@@ -544,7 +481,7 @@ function ColumnHead({
         ) : (
           <StatusPill status={state.tone} label={state.word} />
         )}
-      </button>
+      </Link>
       <span className="k-mono k-matrix__rev">
         {column.read.revision || "no revision"}
       </span>
@@ -605,283 +542,9 @@ function reasonOf(failure: Failure): string {
   return failure.code ? `${failure.code}: ${failure.message}` : failure.message;
 }
 
-/**
- * The environment in view, whole: its phase rail, its workload verdicts, its
- * data services, its previews, its Secrets, and the flows that take a
- * (project, environment) pair.
- *
- * It reads the column the page already fetched rather than calling Status a
- * second time for an environment that is on screen twice.
- */
-function EnvironmentPanel({
-  project,
-  environment,
-  others,
-  documents,
-  column,
-  watch,
-}: {
-  project: string;
-  environment: string;
-  /**
-   * The project's other environments — the promotion's possible sources. A
-   * project with only this one has nothing to promote from, and the action says
-   * so rather than opening a screen with an empty picker.
-   */
-  others: string[];
-  /** The stored documents, which is where a data component's preset lives. */
-  documents: SpecDocuments | undefined;
-  column: Column | undefined;
-  watch: WatchState;
-}) {
-  const read = column?.read ?? { ...NO_READ, environment };
-  const failure = column?.failure;
-  const verdicts = read.verdicts;
-  // A data component's own resource is not a workload, so it is taken out of
-  // the workload list and handed to the section that knows what it is. The
-  // verdicts themselves are untouched: one health source, two readers.
-  const workloads = useMemo(
-    () => verdicts.filter((v) => !isDataServiceVerdict(v.resource)),
-    [verdicts],
-  );
-  // The same rail the deploy screen draws, in compact form, off Status plus the
-  // stream's deltas — so an environment that goes stuck or degraded while this
-  // page is open says so, and says what to do, without a reload.
-  //
-  // Two things the deploy stream has are missing here and are NOT invented:
-  // StatusResponse carries no adapter name, so the reconciler stage
-  // reads "not reported" until a failure cause names a component; and it
-  // carries no `stuck` flag, so a stuck verdict is recovered from the engine's
-  // own cause reasons (rail.ts:isStuckReason).
-  const railInput = useMemo<RailInput>(
-    () => ({
-      phase: read.phase,
-      cause: parseCause(read.cause),
-      reachedPhase: column?.previousPhase,
-      unhealthyWorkloads: workloads.filter((v) => !v.healthy).length,
-    }),
-    [read.phase, read.cause, column?.previousPhase, workloads],
-  );
-  const documentText = useMemo(
-    () => ({
-      project: decodeDocument(documents?.project),
-      environment: decodeDocument(documents?.environments[environment]),
-    }),
-    [documents, environment],
-  );
-  // Rollback used to share a precondition with this page's Status call: both
-  // came from the same delivery plane, so Status failing Unimplemented meant
-  // Rollback would too. The rebuilt server (ADR-0028, R2 #225) split them —
-  // Status's Unimplemented now means only that this build has no workload
-  // observation client, which says nothing about whether the Environment
-  // store Rollback needs is configured. So Rollback is no longer preemptively
-  // disabled here: like Deploy, Diff and Logs, it stays a plain link and
-  // shows its own honest error if the call itself fails.
-  const base = `/projects/${encodeURIComponent(project)}/${encodeURIComponent(environment)}`;
-
-  return (
-    <section className="k-section">
-      <div className="k-env">
-        <div className="k-env__head">
-          <div className="k-env__ident">
-            <span className="k-chip k-mono">{environment}</span>
-            {failure !== undefined ? (
-              <StatusPill status="unknown" label="status unavailable" />
-            ) : column?.loading ? (
-              <StatusPill status="unknown" label="reading…" />
-            ) : (
-              <EnvironmentStatus phase={read.phase} />
-            )}
-            <span className="k-mono">
-              <LiveIndicator state={watch} />
-            </span>
-          </div>
-          <div className="k-actions">
-            <Link className="k-button k-button--primary" to={`${base}/deploy`}>
-              Deploy
-            </Link>
-            <Link className="k-button" to={`${base}/diff`}>
-              Diff
-            </Link>
-            {/* Named from this environment's side, because that is the side the
-                reader is standing on: the environment in the tab is the one the
-                pins are written to, and the source is picked on the screen.
-                Promotion writes the spec and deploys nothing, so it sits with
-                the other spec-shaped actions and not next to Deploy. */}
-            {others.length === 0 ? (
-              <button
-                type="button"
-                className="k-button"
-                disabled
-                title={`${project} declares no other environment to promote from`}
-              >
-                Promote into this environment
-              </button>
-            ) : (
-              <Link className="k-button" to={`${base}/promote`}>
-                Promote into this environment
-              </Link>
-            )}
-            <Link className="k-button" to={`${base}/logs`}>
-              Logs
-            </Link>
-            {/* History reads the Environment's own record and needs no
-                observation client, so it is offered even when Status could
-                not be read — the past is exactly what a reader wants when the
-                present is unavailable. */}
-            <Link className="k-button" to={`${base}/history`}>
-              History
-            </Link>
-            <Link className="k-button" to={`${base}/rollback`}>
-              Rollback
-            </Link>
-          </div>
-        </div>
-
-        {failure !== undefined ? (
-          <ErrorPanel
-            title="Could not read this environment's status"
-            error={column?.error}
-          />
-        ) : null}
-
-        {read.read ? (
-          <>
-            <PhaseRail
-              input={railInput}
-              project={project}
-              environment={environment}
-              compact
-              label={`Deployment phase for ${environment}`}
-            />
-
-            <div className="k-kv">
-              <span className="k-kv__key">revision</span>
-              <span>
-                {read.revision ? (
-                  <Copyable value={read.revision} />
-                ) : (
-                  "none recorded"
-                )}
-              </span>
-              {read.cause ? (
-                <>
-                  <span className="k-kv__key">cause</span>
-                  <span>{read.cause}</span>
-                </>
-              ) : null}
-              {read.namespace ? (
-                <>
-                  <span className="k-kv__key">namespace</span>
-                  <span>{read.namespace}</span>
-                </>
-              ) : null}
-            </div>
-
-            <div className="k-env__verdicts">
-              <div className="k-eyebrow">Workloads ({workloads.length})</div>
-              {workloads.length === 0 ? (
-                <p className="k-mono k-env__note">
-                  no verdicts — nothing here is being watched, which is not the
-                  same as nothing failing
-                </p>
-              ) : (
-                <ul className="k-verdicts">
-                  {workloads.map((v) => (
-                    <Verdict key={v.resource} verdict={v} />
-                  ))}
-                </ul>
-              )}
-            </div>
-          </>
-        ) : null}
-
-        {/* Outside the status block on purpose: what a spec declares is
-            readable without a cluster, and an environment whose status cannot
-            be read still has databases worth describing. */}
-        <DataServices
-          project={project}
-          environment={environment}
-          projectDoc={documentText.project}
-          environmentDoc={documentText.environment}
-          health={
-            read.read
-              ? { state: "read", verdicts }
-              : column?.loading
-                ? { state: "loading" }
-                : { state: "unavailable" }
-          }
-        />
-
-        {/* A preview is a *child* of this environment rather than a part of it
-            (ADR-0017): kelson recorded no Environment document for it and its
-            phase is flux-operator's, not the state machine's. So it sits below
-            the environment's own state rather than among the workloads, for the
-            same reason the data services do — reading it as one of this
-            environment's resources is the mistake the placement prevents. */}
-        <Previews project={project} environment={environment} />
-
-        {/* Beside the data services, and outside the status block for the same
-            reason: the Secrets an environment holds are readable whether or not
-            its workloads are. A spec's `{secret: <name>, key: <key>}` points
-            here, and #116 is what writes what it points at. */}
-        <SecretsPanel project={project} environment={environment} />
-      </div>
-    </section>
-  );
-}
-
 /** The stored bytes as text. Absent documents are an empty document. */
 function decodeDocument(bytes: Uint8Array | undefined): string {
   return bytes === undefined ? "" : new TextDecoder().decode(bytes);
-}
-
-/**
- * The environment's own pill: the shared word, with the wire's phase kept as a
- * labelled fact beside it rather than as the pill's text. The phase is what an
- * operator correlates with Flux and it stays reachable; it is not the answer to
- * "is my change live".
- */
-function EnvironmentStatus({ phase }: { phase: string }) {
-  const state = statusForPhase(phase);
-  return (
-    <>
-      <StatusPill status={state.tone} label={state.word} />
-      {phase !== "" ? (
-        <span className="k-mono k-env__phase">phase {phase}</span>
-      ) : null}
-    </>
-  );
-}
-
-/**
- * A verdict row, shaped like the CLI's (#151): the health code as a mono chip,
- * the message, and the remediation as a "fix:" line.
- */
-function Verdict({ verdict }: { verdict: VerdictRow }) {
-  return (
-    <li className="k-verdict">
-      <div className="k-verdict__head">
-        <span className="k-mono k-verdict__resource">{verdict.resource}</span>
-        {/* The label is observation's own code, rendered verbatim like every
-            other structured code in this UI; only the colour is the shared
-            vocabulary's, so a red line here means what a red pill means. */}
-        <StatusPill
-          status={verdictTone(verdict.healthy, verdict.degraded)}
-          label={verdict.code || "unknown"}
-        />
-      </div>
-      {verdict.message ? (
-        <p className="k-verdict__message">{verdict.message}</p>
-      ) : null}
-      {verdict.remediation ? (
-        <p className="k-verdict__fix">
-          <span className="k-verdict__fix-label">fix:</span>{" "}
-          {verdict.remediation}
-        </p>
-      ) : null}
-    </li>
-  );
 }
 
 function Documents({
@@ -899,8 +562,9 @@ function Documents({
       <div className="k-env__head">
         <div className="k-eyebrow">Spec documents ({1 + envs.length})</div>
         {/* Editing is a write to the store and nothing else: it changes what
-            would be deployed, never what is running. The Deploy button above is
-            the separate act (#65). */}
+            would be deployed, never what is running. Deploying is the separate
+            act (#65), and it is an action of an environment — a column above
+            leads to the environment that would run this. */}
         <Link
           className="k-button"
           to={`/projects/${encodeURIComponent(project)}/edit`}
