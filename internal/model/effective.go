@@ -23,6 +23,14 @@ import (
 // agree value-for-value on the fixture that exercises P1–P6 at once. If the two
 // ever disagree, the test names the setting.
 //
+// Since #268 it records what *lost* as well ([EffectiveSetting.Shadowed]).
+// Resolution cannot keep that — a merge that overwrites is the whole point of a
+// merge — so the walk is the only place a losing value survives, and "the
+// project says info, so why is this trace" is the question the table exists to
+// answer. It is held to the same standard as the winner: only a block that
+// actually wrote something at that field appears, the entries are the documents
+// as authored, and the walk still changes no resolution anywhere.
+//
 // # Why this lives beside the resolver rather than in a browser
 //
 // Because a copy of a precedence merge in another language drifts, silently, in
@@ -113,7 +121,19 @@ const (
 	GroupEnvironment SettingGroup = "environment"
 )
 
-// EffectiveSetting is one setting, its winning value, and the block that set it.
+// Shadowed is one value the winner replaced: what a losing block held, and
+// which block that was.
+//
+// It carries the same [EnvValue] the winner does, for the same reason: a
+// shadowed `{secret, key}` is still a reference and flattening it on the way
+// out would put a value where kelson has none (ADR-0009, ADR-0018).
+type Shadowed struct {
+	Value EnvValue `json:"value"`
+	SetAt SetAt    `json:"setAt"`
+}
+
+// EffectiveSetting is one setting, its winning value, the block that set it,
+// and the values that block replaced.
 //
 // The value is an [EnvValue] rather than a string so that a reference stays a
 // reference all the way out: `{secret, key}` and `{from: {service, key}}` are
@@ -125,6 +145,17 @@ type EffectiveSetting struct {
 	Group SettingGroup `json:"group"`
 	Value EnvValue     `json:"value"`
 	SetAt SetAt        `json:"setAt"`
+	// Shadowed are the values this setting's winner replaced, **outermost
+	// first** — the order the merge applied them, so the list plus the winner
+	// reads as the chain in one direction (#268).
+	//
+	// Only a block that actually held a value at that field appears. A scope
+	// that said nothing about the setting is not a loser, it is a silence, and
+	// a row for it would claim a merge that did not happen — which is the same
+	// standard [SetAt] is held to.
+	//
+	// The winner is never in its own list.
+	Shadowed []Shadowed `json:"shadowed,omitempty"`
 }
 
 // EffectiveComponent is one component's effective configuration.
@@ -287,6 +318,45 @@ func literal(group SettingGroup, name, value string, at SetAt) EffectiveSetting 
 	return EffectiveSetting{Name: name, Group: group, Value: EnvValue{Literal: value}, SetAt: at}
 }
 
+// held is one block's contribution to a chain: a value, and the block that
+// writes it. A scope that says nothing about the setting contributes no held —
+// which is what keeps a silence out of the shadow list.
+type held struct {
+	value EnvValue
+	at    SetAt
+}
+
+func heldLiteral(value string, at SetAt) held { return held{value: EnvValue{Literal: value}, at: at} }
+
+// chain turns the blocks that held a value, outermost first, into one setting:
+// the innermost wins and the rest are its shadows, in the order they were
+// applied. An empty chain has no setting at all — the caller decides whether
+// that is a built-in or an absence, because those are different answers.
+//
+// This is the same order resolve.go applies the scopes in, written once, so a
+// chain here cannot pick a different winner than the resolver does by picking a
+// different *direction*.
+func chain(group SettingGroup, name string, blocks []held) *EffectiveSetting {
+	if len(blocks) == 0 {
+		return nil
+	}
+	win := blocks[len(blocks)-1]
+	out := EffectiveSetting{Name: name, Group: group, Value: win.value, SetAt: win.at}
+	out.Shadowed = shadows(blocks[:len(blocks)-1])
+	return &out
+}
+
+func shadows(blocks []held) []Shadowed {
+	if len(blocks) == 0 {
+		return nil
+	}
+	out := make([]Shadowed, 0, len(blocks))
+	for _, b := range blocks {
+		out = append(out, Shadowed{Value: b.value, SetAt: b.at})
+	}
+	return out
+}
+
 // workloadSettings is P1, P2 and P3 for one workload, plus the domain default
 // and the two-level autoDeploy flag (ADR-0036 decision 1).
 func (w walker) workloadSettings() []EffectiveSetting {
@@ -304,41 +374,34 @@ func (w walker) workloadSettings() []EffectiveSetting {
 // key, with the innermost scope that names a key replacing the outer value
 // wholesale.
 //
-// A key set at an outer scope and again at an inner one appears once, carrying
-// the inner value and the inner block — which is the whole point. The shadowed
-// value is not reported: it is in the document the reader can open, and a
-// second value in a row that claims to say what runs is how a table starts
-// lying.
+// A key set at an outer scope and again at an inner one appears **once**,
+// carrying the inner value and the inner block — the row still says what runs,
+// and says it in one place. What the row now also carries is the chain it beat
+// (#268): the outer values, in the order they were applied, each with the block
+// that wrote it. That is a statement about the documents rather than about the
+// container, so it cannot compete with the winner for the question "what is
+// running" while it answers the one a reader actually arrives with — *why is it
+// not what I wrote*.
 func (w walker) envSettings() []EffectiveSetting {
-	type entry struct {
-		value EnvValue
-		at    SetAt
+	blocks := make(map[string][]held, len(w.project.Spec.Env))
+	add := func(scope map[string]EnvValue, at func(string) SetAt) {
+		for k, v := range scope {
+			blocks[k] = append(blocks[k], held{value: v, at: at("env." + k)})
+		}
 	}
-	merged := make(map[string]entry, len(w.project.Spec.Env))
-	for k, v := range w.project.Spec.Env {
-		merged[k] = entry{value: v, at: w.atProject("env." + k)}
-	}
-	for k, v := range w.component.Env {
-		merged[k] = entry{value: v, at: w.atComponent("env." + k)}
-	}
-	for k, v := range w.override.Env {
-		merged[k] = entry{value: v, at: w.atOverride("env." + k)}
-	}
+	add(w.project.Spec.Env, w.atProject)
+	add(w.component.Env, w.atComponent)
+	add(w.override.Env, w.atOverride)
 
-	keys := make([]string, 0, len(merged))
-	for k := range merged {
+	keys := make([]string, 0, len(blocks))
+	for k := range blocks {
 		keys = append(keys, k)
 	}
 	slices.Sort(keys)
 
 	out := make([]EffectiveSetting, 0, len(keys))
 	for _, k := range keys {
-		out = append(out, EffectiveSetting{
-			Name:  k,
-			Group: GroupEnv,
-			Value: merged[k].value,
-			SetAt: merged[k].at,
-		})
+		out = append(out, *chain(GroupEnv, k, blocks[k]))
 	}
 	return out
 }
@@ -354,13 +417,18 @@ func (w walker) envSettings() []EffectiveSetting {
 // nothing in these two documents names an image, and what will run comes from a
 // build.
 func (w walker) imageSetting() []EffectiveSetting {
-	switch {
-	case w.override.Image != "":
-		return []EffectiveSetting{literal(GroupWorkload, SettingImage, w.override.Image, w.atOverride(SettingImage))}
-	case w.component.Image != "":
-		return []EffectiveSetting{literal(GroupWorkload, SettingImage, w.component.Image, w.atComponent(SettingImage))}
-	case w.project.Spec.Image != "":
-		return []EffectiveSetting{literal(GroupWorkload, SettingImage, w.project.Spec.Image, w.atProject(SettingImage))}
+	var blocks []held
+	if w.project.Spec.Image != "" {
+		blocks = append(blocks, heldLiteral(w.project.Spec.Image, w.atProject(SettingImage)))
+	}
+	if w.component.Image != "" {
+		blocks = append(blocks, heldLiteral(w.component.Image, w.atComponent(SettingImage)))
+	}
+	if w.override.Image != "" {
+		blocks = append(blocks, heldLiteral(w.override.Image, w.atOverride(SettingImage)))
+	}
+	if s := chain(GroupWorkload, SettingImage, blocks); s != nil {
+		return []EffectiveSetting{*s}
 	}
 	return nil
 }
@@ -378,12 +446,20 @@ func (w walker) commandSetting() []EffectiveSetting {
 
 // replicasSetting is half of rule P2: the environment override replaces the
 // component's whole, and absent at both is the built-in `{min: 1}`.
+//
+// The block is replaced whole and reported as one row, so it shadows as one
+// row: `2–4` shadowed by `5` says exactly what the merge did, and there is no
+// per-field claim to get wrong.
 func (w walker) replicasSetting() EffectiveSetting {
-	switch {
-	case w.override.Replicas != nil:
-		return literal(GroupWorkload, SettingReplicas, replicaText(*w.override.Replicas), w.atOverride(SettingReplicas))
-	case w.component.Replicas != nil:
-		return literal(GroupWorkload, SettingReplicas, replicaText(*w.component.Replicas), w.atComponent(SettingReplicas))
+	var blocks []held
+	if w.component.Replicas != nil {
+		blocks = append(blocks, heldLiteral(replicaText(*w.component.Replicas), w.atComponent(SettingReplicas)))
+	}
+	if w.override.Replicas != nil {
+		blocks = append(blocks, heldLiteral(replicaText(*w.override.Replicas), w.atOverride(SettingReplicas)))
+	}
+	if s := chain(GroupWorkload, SettingReplicas, blocks); s != nil {
+		return *s
 	}
 	return literal(GroupWorkload, SettingReplicas, replicaText(Replicas{Min: 1}), builtIn())
 }
@@ -406,32 +482,73 @@ func replicaText(r Replicas) string {
 // Nothing is reported when neither scope sets the block. "No requests and no
 // limits" is the built-in and it is an absence rather than a value; four rows
 // of nothing would be four rows a reader has to read.
+// The shadow follows the same attribution. The **block** is what was replaced,
+// so the block the override displaced is what shadows — reported on the rows
+// the winning block produced, at the same leaf inside the losing block, and
+// only where that block actually wrote that leaf. Nothing is invented in either
+// direction: a leaf the winning block does not set has no row to hang a shadow
+// on, so a quantity the component set and the environment did not restate is
+// absent here exactly as it is absent from the container.
 func (w walker) resourceSettings() []EffectiveSetting {
 	res, at := w.component.Resources, w.atComponent(settingResourcesSuffix)
+	var lost *Resources
+	var lostAt SetAt
 	if w.override.Resources != nil {
+		lost, lostAt = w.component.Resources, at
 		res, at = w.override.Resources, w.atOverride(settingResourcesSuffix)
 	}
 	if res == nil {
 		return nil
 	}
 	var out []EffectiveSetting
-	add := func(name, value, field string) {
+	add := func(name, field string) {
+		value := resourceQuantity(res, field)
 		if value == "" {
 			return
 		}
 		set := at
 		set.Field += field
-		out = append(out, literal(GroupWorkload, name, value, set))
+		s := literal(GroupWorkload, name, value, set)
+		if before := resourceQuantity(lost, field); before != "" {
+			shadowAt := lostAt
+			shadowAt.Field += field
+			s.Shadowed = []Shadowed{{Value: EnvValue{Literal: before}, SetAt: shadowAt}}
+		}
+		out = append(out, s)
 	}
-	if req := res.Requests; req != nil {
-		add(settingRequestsCPU, req.CPU, ".requests.cpu")
-		add(settingRequestsMemory, req.Memory, ".requests.memory")
-	}
-	if lim := res.Limits; lim != nil {
-		add(settingLimitsCPU, lim.CPU, ".limits.cpu")
-		add(settingLimitsMemory, lim.Memory, ".limits.memory")
-	}
+	add(settingRequestsCPU, ".requests.cpu")
+	add(settingRequestsMemory, ".requests.memory")
+	add(settingLimitsCPU, ".limits.cpu")
+	add(settingLimitsMemory, ".limits.memory")
 	return out
+}
+
+// resourceQuantity reads one leaf of a resources block by the same suffix the
+// row's Field is built from, so the row and its shadow cannot point at
+// different quantities.
+func resourceQuantity(res *Resources, field string) string {
+	if res == nil {
+		return ""
+	}
+	switch field {
+	case ".requests.cpu":
+		if res.Requests != nil {
+			return res.Requests.CPU
+		}
+	case ".requests.memory":
+		if res.Requests != nil {
+			return res.Requests.Memory
+		}
+	case ".limits.cpu":
+		if res.Limits != nil {
+			return res.Limits.CPU
+		}
+	case ".limits.memory":
+		if res.Limits != nil {
+			return res.Limits.Memory
+		}
+	}
+	return ""
 }
 
 // domainSettings is the domain defaulting docs/model.md resolves beside the
@@ -466,11 +583,15 @@ func (w walker) domainSettings() []EffectiveSetting {
 // has — and an absent row would read as "kelson did not say" on the one setting
 // whose whole point is that both levels are legible at once.
 func (w walker) autoDeploySetting() EffectiveSetting {
-	switch {
-	case w.override.AutoDeploy != nil:
-		return literal(GroupWorkload, SettingAutoDeploy, boolText(*w.override.AutoDeploy), w.atOverride(SettingAutoDeploy))
-	case w.environment.Spec.AutoDeploy != nil:
-		return literal(GroupWorkload, SettingAutoDeploy, boolText(*w.environment.Spec.AutoDeploy), w.atEnvironment(SettingAutoDeploy))
+	var blocks []held
+	if w.environment.Spec.AutoDeploy != nil {
+		blocks = append(blocks, heldLiteral(boolText(*w.environment.Spec.AutoDeploy), w.atEnvironment(SettingAutoDeploy)))
+	}
+	if w.override.AutoDeploy != nil {
+		blocks = append(blocks, heldLiteral(boolText(*w.override.AutoDeploy), w.atOverride(SettingAutoDeploy)))
+	}
+	if s := chain(GroupWorkload, SettingAutoDeploy, blocks); s != nil {
+		return *s
 	}
 	return literal(GroupWorkload, SettingAutoDeploy, boolText(false), builtIn())
 }
@@ -485,11 +606,15 @@ func boolText(b bool) string {
 // dataSettings is rule P5: the environment's preset override, else the
 // component's own, else the built-in `shared`.
 func (w walker) dataSettings() []EffectiveSetting {
-	switch {
-	case w.override.Preset != "":
-		return []EffectiveSetting{literal(GroupData, SettingPreset, string(w.override.Preset), w.atOverride(SettingPreset))}
-	case w.component.Preset != "":
-		return []EffectiveSetting{literal(GroupData, SettingPreset, string(w.component.Preset), w.atComponent(SettingPreset))}
+	var blocks []held
+	if w.component.Preset != "" {
+		blocks = append(blocks, heldLiteral(string(w.component.Preset), w.atComponent(SettingPreset)))
+	}
+	if w.override.Preset != "" {
+		blocks = append(blocks, heldLiteral(string(w.override.Preset), w.atOverride(SettingPreset)))
+	}
+	if s := chain(GroupData, SettingPreset, blocks); s != nil {
+		return []EffectiveSetting{*s}
 	}
 	return []EffectiveSetting{literal(GroupData, SettingPreset, string(PresetShared), builtIn())}
 }
@@ -503,55 +628,124 @@ func (w walker) dataSettings() []EffectiveSetting {
 // block is gone, and the effective `agents` is the *built-in* `allow`. So the
 // two fields of one block can carry two different levels, and each row says
 // which.
+// This is also where a shadow is at its most useful and at its most easily
+// wrong, so it is stated as a block and never as a field: what the Environment
+// displaced is the Project's whole `defaults` block, and each row reports what
+// that block held **at that row's own field**, or nothing when it held nothing
+// there. The `agents` case is the one to read twice — the winner is the
+// *built-in* and the shadow is the project's `propose-only`, which is exactly
+// the surprise the rule produces and the only place a table can say it.
+//
+// A field the winning block leaves unset and the displaced one wrote produces
+// no row at all, here as before: an entry whose winner does not exist would be
+// a setting kelson invented.
 func environmentSettings(p *Project, e *Environment) []EffectiveSetting {
 	var out []EffectiveSetting
 
-	// policy: whichever block won, then the built-in for the fields it left unset.
-	policyAt := builtIn()
-	var policy Policy
+	// policy: whichever block won, then the built-in for the fields it left
+	// unset. The blocks are collected outermost first so the last is the winner
+	// and the rest are what it displaced.
+	type policyBlock struct {
+		policy Policy
+		at     SetAt
+	}
+	var policyBlocks []policyBlock
 	if d := p.Spec.Defaults; d != nil && d.Policy != nil {
-		policy, policyAt = *d.Policy, SetAt{Level: SetAtProject, Document: KindProject, Field: "$.spec.defaults.policy"}
+		policyBlocks = append(policyBlocks, policyBlock{*d.Policy,
+			SetAt{Level: SetAtProject, Document: KindProject, Field: "$.spec.defaults.policy"}})
 	}
 	if e.Spec.Policy != nil {
-		policy, policyAt = *e.Spec.Policy, SetAt{
+		policyBlocks = append(policyBlocks, policyBlock{*e.Spec.Policy, SetAt{
 			Level: SetAtEnvironment, Document: KindEnvironment,
 			Environment: e.Metadata.Name, Field: "$.spec.policy",
-		}
+		}})
 	}
+	policy, policyAt := Policy{}, builtIn()
+	var displacedPolicy []policyBlock
+	if n := len(policyBlocks); n > 0 {
+		policy, policyAt = policyBlocks[n-1].policy, policyBlocks[n-1].at
+		displacedPolicy = policyBlocks[:n-1]
+	}
+	policyShadows := func(field string, read func(Policy) string) []Shadowed {
+		var shadowed []Shadowed
+		for _, b := range displacedPolicy {
+			value := read(b.policy)
+			if value == "" {
+				continue
+			}
+			at := b.at
+			at.Field += field
+			shadowed = append(shadowed, Shadowed{Value: EnvValue{Literal: value}, SetAt: at})
+		}
+		return shadowed
+	}
+
 	agents, agentsAt := policy.Agents, policyAt
 	if agents == "" {
 		agents, agentsAt = AgentsAllow, builtIn()
 	} else {
 		agentsAt.Field += ".agents"
 	}
-	out = append(out, literal(GroupEnvironment, SettingPolicyAgents, string(agents), agentsAt))
+	agentsRow := literal(GroupEnvironment, SettingPolicyAgents, string(agents), agentsAt)
+	agentsRow.Shadowed = policyShadows(".agents", func(pl Policy) string { return string(pl.Agents) })
+	out = append(out, agentsRow)
 	if len(policy.Require) > 0 {
 		at := policyAt
 		at.Field += ".require"
-		out = append(out, literal(GroupEnvironment, SettingPolicyRequire, strings.Join(policy.Require, ", "), at))
+		requireRow := literal(GroupEnvironment, SettingPolicyRequire, strings.Join(policy.Require, ", "), at)
+		requireRow.Shadowed = policyShadows(".require", func(pl Policy) string { return strings.Join(pl.Require, ", ") })
+		out = append(out, requireRow)
 	}
 
 	// secrets: the same chain, then the two defaults resolution fills in.
-	secretsAt := builtIn()
-	secrets := SecretBackend{Backend: SecretsCluster}
+	type secretsBlock struct {
+		secrets SecretBackend
+		at      SetAt
+	}
+	var secretsBlocks []secretsBlock
 	if d := p.Spec.Defaults; d != nil && d.Secrets != nil {
-		secrets, secretsAt = *d.Secrets, SetAt{Level: SetAtProject, Document: KindProject, Field: "$.spec.defaults.secrets"}
+		secretsBlocks = append(secretsBlocks, secretsBlock{*d.Secrets,
+			SetAt{Level: SetAtProject, Document: KindProject, Field: "$.spec.defaults.secrets"}})
 	}
 	if e.Spec.Secrets != nil {
-		secrets, secretsAt = *e.Spec.Secrets, SetAt{
+		secretsBlocks = append(secretsBlocks, secretsBlock{*e.Spec.Secrets, SetAt{
 			Level: SetAtEnvironment, Document: KindEnvironment,
 			Environment: e.Metadata.Name, Field: "$.spec.secrets",
-		}
+		}})
 	}
+	secrets, secretsAt := SecretBackend{Backend: SecretsCluster}, builtIn()
+	var displacedSecrets []secretsBlock
+	if n := len(secretsBlocks); n > 0 {
+		secrets, secretsAt = secretsBlocks[n-1].secrets, secretsBlocks[n-1].at
+		displacedSecrets = secretsBlocks[:n-1]
+	}
+	secretsShadows := func(field string, read func(SecretBackend) string) []Shadowed {
+		var shadowed []Shadowed
+		for _, b := range displacedSecrets {
+			value := read(b.secrets)
+			if value == "" {
+				continue
+			}
+			at := b.at
+			at.Field += field
+			shadowed = append(shadowed, Shadowed{Value: EnvValue{Literal: value}, SetAt: at})
+		}
+		return shadowed
+	}
+
 	backendAt := secretsAt
 	if backendAt.Level != SetAtBuiltIn {
 		backendAt.Field += ".backend"
 	}
-	out = append(out, literal(GroupEnvironment, SettingSecretsBackend, string(secrets.Backend), backendAt))
+	backendRow := literal(GroupEnvironment, SettingSecretsBackend, string(secrets.Backend), backendAt)
+	backendRow.Shadowed = secretsShadows(".backend", func(s SecretBackend) string { return string(s.Backend) })
+	out = append(out, backendRow)
 	if secrets.Store != "" {
 		at := secretsAt
 		at.Field += ".store"
-		out = append(out, literal(GroupEnvironment, SettingSecretsStore, secrets.Store, at))
+		storeRow := literal(GroupEnvironment, SettingSecretsStore, secrets.Store, at)
+		storeRow.Shadowed = secretsShadows(".store", func(s SecretBackend) string { return s.Store })
+		out = append(out, storeRow)
 	}
 	// The two fields resolution defaults are reported with the level that
 	// actually decided them, which is the built-in whenever the block was
@@ -564,7 +758,9 @@ func environmentSettings(p *Project, e *Environment) []EffectiveSetting {
 		} else {
 			at.Field += ".refreshInterval"
 		}
-		out = append(out, literal(GroupEnvironment, SettingSecretsRefresh, interval, at))
+		refreshRow := literal(GroupEnvironment, SettingSecretsRefresh, interval, at)
+		refreshRow.Shadowed = secretsShadows(".refreshInterval", func(s SecretBackend) string { return s.RefreshInterval })
+		out = append(out, refreshRow)
 	}
 	if secrets.Backend == SecretsSOPS {
 		name, at := secrets.AgeKeySecret, secretsAt
@@ -573,7 +769,9 @@ func environmentSettings(p *Project, e *Environment) []EffectiveSetting {
 		} else {
 			at.Field += ".ageKeySecret"
 		}
-		out = append(out, literal(GroupEnvironment, SettingSecretsAgeKey, name, at))
+		ageKeyRow := literal(GroupEnvironment, SettingSecretsAgeKey, name, at)
+		ageKeyRow.Shadowed = secretsShadows(".ageKeySecret", func(s SecretBackend) string { return s.AgeKeySecret })
+		out = append(out, ageKeyRow)
 	}
 	return out
 }

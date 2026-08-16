@@ -3,6 +3,7 @@ package model
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -17,7 +18,12 @@ import (
 // agreesWithResolve checks every setting the walk reported against the value
 // [resolve] carries for it, and checks the other direction too — a value
 // resolution has that the walk reported nothing about is a hole, not a pass.
-func agreesWithResolve(t *testing.T, r *Resolved, ef *Effective) {
+//
+// It takes the documents as well as the resolution because a shadow is a claim
+// resolution cannot check: the losing value is precisely what the merge threw
+// away, so the only thing that can confirm it is the document it was read from
+// (see [checkShadows]).
+func agreesWithResolve(t *testing.T, p *Project, e *Environment, r *Resolved, ef *Effective) {
 	t.Helper()
 
 	if ef.Project != r.Project || ef.Environment != r.Environment.Name {
@@ -83,15 +89,278 @@ func agreesWithResolve(t *testing.T, r *Resolved, ef *Effective) {
 	}
 
 	// Every SetAt must be structurally complete: a level that names a document
-	// must name one, and a level in a document must point at a field.
+	// must name one, and a level in a document must point at a field. Every
+	// shadow must be a value the document it names actually holds.
 	for _, s := range ef.Settings {
 		checkSetAt(t, "environment", s)
+		checkShadows(t, "environment", p, e, s)
 	}
 	for _, ec := range ef.Components {
 		for _, s := range ec.Settings {
 			checkSetAt(t, ec.Name, s)
+			checkShadows(t, ec.Name, p, e, s)
 		}
 	}
+}
+
+// checkShadows is the agreement harness for what lost (#268). Four claims per
+// entry, each of which fails the moment the walk invents one:
+//
+//   - the value is what the shadowed document holds at that field — read back
+//     out of the decoded documents here, not asked of the walk again;
+//   - the entry is structurally complete, exactly as the winner's own answer is;
+//   - the winner is not in its own shadow list;
+//   - the list is outermost first, so a consumer can render the chain in one
+//     direction without sorting it.
+func checkShadows(t *testing.T, where string, p *Project, e *Environment, s EffectiveSetting) {
+	t.Helper()
+	last := -1
+	for i, sh := range s.Shadowed {
+		checkSetAt(t, where, EffectiveSetting{Name: s.Name + " (shadowed)", SetAt: sh.SetAt})
+		if sh.SetAt.Level == SetAtBuiltIn {
+			t.Errorf("%s/%s: a built-in shadows something; it is the outermost answer and displaces nothing", where, s.Name)
+			continue
+		}
+		if sh.SetAt == s.SetAt {
+			t.Errorf("%s/%s: the winning block %+v is in its own shadow list", where, s.Name, s.SetAt)
+		}
+		if got := documentValue(t, p, e, sh.SetAt); got.String() != sh.Value.String() {
+			t.Errorf("%s/%s: shadow %d claims %s at %s, the document holds %s",
+				where, s.Name, i, sh.Value.String(), sh.SetAt.Field, got.String())
+		}
+		if rank := levelRank(sh.SetAt.Level); rank <= last {
+			t.Errorf("%s/%s: shadow %d is at %q, which is not outside the entry before it",
+				where, s.Name, i, sh.SetAt.Level)
+		} else {
+			last = rank
+		}
+	}
+}
+
+// levelRank orders the levels the way the merge applies them, outermost first.
+// It exists only for the ordering assertion; nothing in the model branches on
+// it, and a consumer reads the list's order rather than recomputing this.
+func levelRank(level SetAtLevel) int {
+	switch level {
+	case SetAtBuiltIn:
+		return 0
+	case SetAtProject:
+		return 1
+	case SetAtComponent:
+		return 2
+	case SetAtEnvironment:
+		return 3
+	case SetAtEnvironmentComponent:
+		return 4
+	}
+	return -1
+}
+
+// documentValue reads what a document actually holds at one provenance answer's
+// own field. It walks the decoded documents rather than asking the walk again,
+// which is what makes the shadow assertion an agreement rather than a mirror:
+// the claim under test is "this block writes this value here", and the only way
+// to check it is to go and look.
+func documentValue(t *testing.T, p *Project, e *Environment, at SetAt) EnvValue {
+	t.Helper()
+	path, ok := strings.CutPrefix(at.Field, "$.spec.")
+	if !ok {
+		t.Fatalf("field %q is not a path into a spec", at.Field)
+	}
+	if rest, index, ok := componentPath(path); ok {
+		switch at.Document {
+		case KindProject:
+			if index >= len(p.Spec.Components) {
+				t.Fatalf("field %q points past the project's components", at.Field)
+			}
+			return componentValue(t, p.Spec.Components[index], rest, at.Field)
+		case KindEnvironment:
+			if index >= len(e.Spec.Components) {
+				t.Fatalf("field %q points past the environment's overrides", at.Field)
+			}
+			return overrideValue(t, e.Spec.Components[index], rest, at.Field)
+		}
+	}
+	switch at.Document {
+	case KindProject:
+		return projectValue(t, p, path, at.Field)
+	case KindEnvironment:
+		return environmentValue(t, e, path, at.Field)
+	}
+	t.Fatalf("field %q names document %q", at.Field, at.Document)
+	return EnvValue{}
+}
+
+// componentPath splits `components[3].env.LOG_LEVEL` into the index and what
+// follows it.
+func componentPath(path string) (string, int, bool) {
+	rest, ok := strings.CutPrefix(path, "components[")
+	if !ok {
+		return "", 0, false
+	}
+	digits, rest, ok := strings.Cut(rest, "].")
+	if !ok {
+		return "", 0, false
+	}
+	index, err := strconv.Atoi(digits)
+	if err != nil {
+		return "", 0, false
+	}
+	return rest, index, true
+}
+
+func componentValue(t *testing.T, c Component, path, field string) EnvValue {
+	t.Helper()
+	if key, ok := strings.CutPrefix(path, "env."); ok {
+		return c.Env[key]
+	}
+	if suffix, ok := strings.CutPrefix(path, settingResourcesSuffix); ok {
+		return EnvValue{Literal: documentQuantity(c.Resources, suffix)}
+	}
+	switch path {
+	case SettingImage:
+		return EnvValue{Literal: c.Image}
+	case SettingCommand:
+		return EnvValue{Literal: strings.Join(c.Command, " ")}
+	case SettingDomains:
+		return EnvValue{Literal: strings.Join(c.Domains, ", ")}
+	case SettingPreset:
+		return EnvValue{Literal: string(c.Preset)}
+	case SettingReplicas:
+		if c.Replicas == nil {
+			return EnvValue{}
+		}
+		return EnvValue{Literal: replicaText(*c.Replicas)}
+	}
+	t.Fatalf("no reading for component field %q", field)
+	return EnvValue{}
+}
+
+func overrideValue(t *testing.T, ov ComponentOverride, path, field string) EnvValue {
+	t.Helper()
+	if key, ok := strings.CutPrefix(path, "env."); ok {
+		return ov.Env[key]
+	}
+	if suffix, ok := strings.CutPrefix(path, settingResourcesSuffix); ok {
+		return EnvValue{Literal: documentQuantity(ov.Resources, suffix)}
+	}
+	switch path {
+	case SettingImage:
+		return EnvValue{Literal: ov.Image}
+	case SettingPreset:
+		return EnvValue{Literal: string(ov.Preset)}
+	case SettingReplicas:
+		if ov.Replicas == nil {
+			return EnvValue{}
+		}
+		return EnvValue{Literal: replicaText(*ov.Replicas)}
+	case SettingAutoDeploy:
+		if ov.AutoDeploy == nil {
+			return EnvValue{}
+		}
+		return EnvValue{Literal: boolText(*ov.AutoDeploy)}
+	}
+	t.Fatalf("no reading for override field %q", field)
+	return EnvValue{}
+}
+
+func projectValue(t *testing.T, p *Project, path, field string) EnvValue {
+	t.Helper()
+	if key, ok := strings.CutPrefix(path, "env."); ok {
+		return p.Spec.Env[key]
+	}
+	if path == SettingImage {
+		return EnvValue{Literal: p.Spec.Image}
+	}
+	d := p.Spec.Defaults
+	if rest, ok := strings.CutPrefix(path, "defaults.policy."); ok && d != nil && d.Policy != nil {
+		return EnvValue{Literal: policyField(t, *d.Policy, rest, field)}
+	}
+	if rest, ok := strings.CutPrefix(path, "defaults.secrets."); ok && d != nil && d.Secrets != nil {
+		return EnvValue{Literal: secretsField(t, *d.Secrets, rest, field)}
+	}
+	t.Fatalf("no reading for project field %q", field)
+	return EnvValue{}
+}
+
+func environmentValue(t *testing.T, e *Environment, path, field string) EnvValue {
+	t.Helper()
+	if rest, ok := strings.CutPrefix(path, "policy."); ok && e.Spec.Policy != nil {
+		return EnvValue{Literal: policyField(t, *e.Spec.Policy, rest, field)}
+	}
+	if rest, ok := strings.CutPrefix(path, "secrets."); ok && e.Spec.Secrets != nil {
+		return EnvValue{Literal: secretsField(t, *e.Spec.Secrets, rest, field)}
+	}
+	switch path {
+	case SettingAutoDeploy:
+		if e.Spec.AutoDeploy == nil {
+			return EnvValue{}
+		}
+		return EnvValue{Literal: boolText(*e.Spec.AutoDeploy)}
+	case "routing.domainSuffix":
+		if e.Spec.Routing == nil {
+			return EnvValue{}
+		}
+		return EnvValue{Literal: e.Spec.Routing.DomainSuffix}
+	}
+	t.Fatalf("no reading for environment field %q", field)
+	return EnvValue{}
+}
+
+func policyField(t *testing.T, policy Policy, name, field string) string {
+	t.Helper()
+	switch name {
+	case "agents":
+		return string(policy.Agents)
+	case "require":
+		return strings.Join(policy.Require, ", ")
+	}
+	t.Fatalf("no reading for policy field %q", field)
+	return ""
+}
+
+func secretsField(t *testing.T, secrets SecretBackend, name, field string) string {
+	t.Helper()
+	switch name {
+	case "backend":
+		return string(secrets.Backend)
+	case "store":
+		return secrets.Store
+	case "refreshInterval":
+		return secrets.RefreshInterval
+	case "ageKeySecret":
+		return secrets.AgeKeySecret
+	}
+	t.Fatalf("no reading for secrets field %q", field)
+	return ""
+}
+
+// documentQuantity reads a resources leaf out of the document, spelled the way
+// the row's own field spells it. It is written out here rather than shared with
+// the walk on purpose: a shared accessor would agree with itself.
+func documentQuantity(res *Resources, suffix string) string {
+	if res == nil {
+		return ""
+	}
+	switch suffix {
+	case ".requests.cpu":
+		if res.Requests != nil {
+			return res.Requests.CPU
+		}
+	case ".requests.memory":
+		if res.Requests != nil {
+			return res.Requests.Memory
+		}
+	case ".limits.cpu":
+		if res.Limits != nil {
+			return res.Limits.CPU
+		}
+	case ".limits.memory":
+		if res.Limits != nil {
+			return res.Limits.Memory
+		}
+	}
+	return ""
 }
 
 func agreesOnWorkload(t *testing.T, r *Resolved, rc ResolvedComponent, ec *EffectiveComponent) {
@@ -394,7 +663,7 @@ spec:
 		t.Run(tc.name, func(t *testing.T) {
 			p, e := loadPairUnvalidated(t, precedenceProject, tc.env)
 			r, ef := effectiveOf(t, p, e)
-			agreesWithResolve(t, r, ef)
+			agreesWithResolve(t, p, e, r, ef)
 		})
 	}
 }
@@ -415,7 +684,7 @@ spec:
         LOG_LEVEL: trace
 `)
 	r, ef := effectiveOf(t, p, e)
-	agreesWithResolve(t, r, ef)
+	agreesWithResolve(t, p, e, r, ef)
 
 	web := ef.ComponentNamed("web")
 	if web == nil {
@@ -443,6 +712,237 @@ spec:
 	}
 	if got := setAtOf(t, worker.Settings, GroupWorkload, SettingImage).Level; got != SetAtComponent {
 		t.Errorf("worker image set-at = %q, want the component (P3)", got)
+	}
+}
+
+// shadowsOf renders one setting's shadow chain as `value@field` strings, in the
+// order it carries them, so a test can state the whole chain in one line.
+func shadowsOf(t *testing.T, settings []EffectiveSetting, group SettingGroup, name string) []string {
+	t.Helper()
+	s := find(settings, group, name)
+	if s == nil {
+		t.Fatalf("no %s setting named %s; the table has %v", group, name, settingNames(settings))
+	}
+	out := make([]string, 0, len(s.Shadowed))
+	for _, sh := range s.Shadowed {
+		out = append(out, fmt.Sprintf("%s@%s", sh.Value.String(), sh.SetAt.Field))
+	}
+	return out
+}
+
+// TestEffectiveShadowsTheChainTheWinnerReplaced is #268 item 1: the same three
+// scopes as the test above, now reported as a chain rather than as a winner
+// with an unexplained value. The order is the merge's own — outermost first —
+// so a consumer draws the losers in the direction they were applied and the
+// winner is what follows the list.
+func TestEffectiveShadowsTheChainTheWinnerReplaced(t *testing.T) {
+	p, e := loadPairUnvalidated(t, precedenceProject, `
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata: {name: staging}
+spec:
+  project: shop
+  components:
+    - name: web
+      env:
+        LOG_LEVEL: trace
+`)
+	r, ef := effectiveOf(t, p, e)
+	agreesWithResolve(t, p, e, r, ef)
+
+	web := ef.ComponentNamed("web")
+	if web == nil {
+		t.Fatal("web is absent")
+	}
+	got := shadowsOf(t, web.Settings, GroupEnv, "LOG_LEVEL")
+	want := []string{
+		"info@$.spec.env.LOG_LEVEL",
+		"debug@$.spec.components[2].env.LOG_LEVEL",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("LOG_LEVEL shadows = %v, want the project then the component", got)
+	}
+
+	// A key one scope set is a value with no chain behind it, and a key an
+	// inner scope never mentions has none either — a shadow list is not a list
+	// of scopes, it is a list of values that were replaced.
+	if got := shadowsOf(t, web.Settings, GroupEnv, "REGION"); len(got) != 0 {
+		t.Errorf("REGION shadows %v; only the project ever names it", got)
+	}
+	worker := ef.ComponentNamed("worker")
+	if worker == nil {
+		t.Fatal("worker is absent")
+	}
+	if got := shadowsOf(t, worker.Settings, GroupEnv, "LOG_LEVEL"); len(got) != 0 {
+		t.Errorf("the worker's LOG_LEVEL shadows %v; only web overrides it", got)
+	}
+	// P3 on the worker: the component's image beat the project's, so the
+	// project's is what it replaced.
+	if got, want := shadowsOf(t, worker.Settings, GroupWorkload, SettingImage),
+		[]string{"ghcr.io/acme/shop:2@$.spec.image"}; !slices.Equal(got, want) {
+		t.Errorf("the worker's image shadows %v, want the project's image", got)
+	}
+}
+
+// TestEffectiveShadowsAnEmptyOverride is the case the whole feature is least
+// useful without: docs/model.md unsets a project variable for one environment
+// by overriding it to the empty string, and the winner is then a value that
+// says nothing about itself. The shadow is the only thing on the row that can
+// say what was unset.
+func TestEffectiveShadowsAnEmptyOverride(t *testing.T) {
+	p, e := loadPair(t, `
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata: {name: shop}
+spec:
+  image: i:1
+  env:
+    FEATURE_X: enabled
+  components:
+    - {name: web, port: 8080}
+`, `
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata: {name: production}
+spec:
+  project: shop
+  components:
+    - name: web
+      env:
+        FEATURE_X: ""
+`)
+	ef, errs := EffectiveConfig(p, e)
+	if len(errs) > 0 {
+		t.Fatalf("EffectiveConfig: %v", errs)
+	}
+	r, rerrs := Resolve(p, e)
+	if len(rerrs) > 0 {
+		t.Fatalf("Resolve: %v", rerrs)
+	}
+	agreesWithResolve(t, p, e, r, ef)
+
+	web := ef.ComponentNamed("web")
+	if web == nil {
+		t.Fatal("web is absent")
+	}
+	feature := find(web.Settings, GroupEnv, "FEATURE_X")
+	if feature == nil {
+		t.Fatal("FEATURE_X is absent")
+	}
+	if feature.Value.Literal != "" || feature.SetAt.Level != SetAtEnvironmentComponent {
+		t.Errorf("FEATURE_X = %+v, want the empty override production wrote", feature)
+	}
+	if got, want := shadowsOf(t, web.Settings, GroupEnv, "FEATURE_X"),
+		[]string{"enabled@$.spec.env.FEATURE_X"}; !slices.Equal(got, want) {
+		t.Errorf("FEATURE_X shadows %v, want the project value it unset", got)
+	}
+}
+
+// TestEffectiveShadowedReferencesStayReferences: a shadowed `{secret, key}` is
+// still a reference to a Secret kelson never reads, so it travels as one. There
+// is no value to flatten it into, in either direction of the chain.
+func TestEffectiveShadowedReferencesStayReferences(t *testing.T) {
+	p, e := loadPair(t, `
+apiVersion: kelson.dev/v1alpha1
+kind: Project
+metadata: {name: checkout}
+spec:
+  image: i:1
+  env:
+    STRIPE_KEY: {secret: checkout-stripe-test, key: secretKey}
+    DATABASE_URL: {from: {service: db, key: uri}}
+  components:
+    - {name: db, kind: postgres, preset: small}
+    - name: web
+      port: 8080
+      env:
+        DATABASE_URL: postgres://localhost/dev
+`, `
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata: {name: production}
+spec:
+  project: checkout
+  components:
+    - name: web
+      env:
+        STRIPE_KEY: {secret: checkout-stripe-live, key: secretKey}
+`)
+	ef, errs := EffectiveConfig(p, e)
+	if len(errs) > 0 {
+		t.Fatalf("EffectiveConfig: %v", errs)
+	}
+	r, rerrs := Resolve(p, e)
+	if len(rerrs) > 0 {
+		t.Fatalf("Resolve: %v", rerrs)
+	}
+	agreesWithResolve(t, p, e, r, ef)
+
+	web := ef.ComponentNamed("web")
+	if web == nil {
+		t.Fatal("web is absent")
+	}
+	stripe := find(web.Settings, GroupEnv, "STRIPE_KEY")
+	if stripe == nil || len(stripe.Shadowed) != 1 {
+		t.Fatalf("STRIPE_KEY = %+v, want one shadowed reference", stripe)
+	}
+	was := stripe.Shadowed[0].Value
+	if was.Secret == nil || was.Secret.Name != "checkout-stripe-test" || was.Secret.Key != "secretKey" {
+		t.Errorf("the shadowed STRIPE_KEY = %+v, want the test Secret's reference", was)
+	}
+	if was.Literal != "" {
+		t.Errorf("a shadowed secret reference carried a literal %q", was.Literal)
+	}
+	// And the other direction: a literal that displaced a binding shadows the
+	// binding as a binding.
+	url := find(web.Settings, GroupEnv, "DATABASE_URL")
+	if url == nil || len(url.Shadowed) != 1 {
+		t.Fatalf("DATABASE_URL = %+v, want one shadowed binding", url)
+	}
+	if from := url.Shadowed[0].Value.From; from == nil || from.Service != "db" || from.Key != "uri" {
+		t.Errorf("the shadowed DATABASE_URL = %+v, want the data-service binding", url.Shadowed[0].Value)
+	}
+}
+
+// TestEffectiveResourcesShadowTheBlockTheyReplaced: P2 replaces the block
+// whole, so the shadow is what the displaced block held **at that row's own
+// field** — and a quantity the winning block does not set has no row here at
+// all, exactly as it has no value in the container. The table does not invent a
+// row to hang a lost quantity on, because a row whose winner does not exist is
+// a setting kelson never merged.
+func TestEffectiveResourcesShadowTheBlockTheyReplaced(t *testing.T) {
+	p, e := loadPairUnvalidated(t, precedenceProject, `
+apiVersion: kelson.dev/v1alpha1
+kind: Environment
+metadata: {name: production}
+spec:
+  project: shop
+  components:
+    - name: web
+      replicas: {min: 5}
+      resources:
+        requests: {cpu: 500m, memory: 512Mi}
+`)
+	r, ef := effectiveOf(t, p, e)
+	agreesWithResolve(t, p, e, r, ef)
+
+	web := ef.ComponentNamed("web")
+	if web == nil {
+		t.Fatal("web is absent")
+	}
+	if got, want := shadowsOf(t, web.Settings, GroupWorkload, settingRequestsCPU),
+		[]string{"100m@$.spec.components[2].resources.requests.cpu"}; !slices.Equal(got, want) {
+		t.Errorf("requests.cpu shadows %v, want the component's own quantity", got)
+	}
+	// The component's block says nothing about memory, so the environment's
+	// memory request replaced nothing.
+	if got := shadowsOf(t, web.Settings, GroupWorkload, settingRequestsMemory); len(got) != 0 {
+		t.Errorf("requests.memory shadows %v; the component's block sets none", got)
+	}
+	// Replicas are replaced whole and reported whole, so they shadow whole.
+	if got, want := shadowsOf(t, web.Settings, GroupWorkload, SettingReplicas),
+		[]string{"2–4@$.spec.components[2].replicas"}; !slices.Equal(got, want) {
+		t.Errorf("replicas shadows %v, want the component's own range", got)
 	}
 }
 
@@ -480,7 +980,7 @@ spec:
 	if len(rerrs) > 0 {
 		t.Fatalf("Resolve: %v", rerrs)
 	}
-	agreesWithResolve(t, r, ef)
+	agreesWithResolve(t, p, e, r, ef)
 
 	web := ef.ComponentNamed("web")
 	if web == nil {
@@ -535,7 +1035,7 @@ spec:
 	if len(errs) > 0 {
 		t.Fatalf("EffectiveConfig: %v", errs)
 	}
-	agreesWithResolve(t, r, ef)
+	agreesWithResolve(t, p, e, r, ef)
 
 	web := ef.ComponentNamed("web")
 	if web == nil {
@@ -578,7 +1078,7 @@ spec:
 	if len(rerrs) > 0 {
 		t.Fatalf("Resolve: %v", rerrs)
 	}
-	agreesWithResolve(t, r, ef)
+	agreesWithResolve(t, p, e, r, ef)
 
 	for _, name := range []string{SettingPolicyAgents, SettingSecretsBackend} {
 		if got := setAtOf(t, ef.Settings, GroupEnvironment, name).Level; got != SetAtBuiltIn {
@@ -600,6 +1100,15 @@ spec:
 	}
 	if s := web.Setting(GroupWorkload, SettingDomains); s != nil {
 		t.Errorf("domains reported %q with no suffix and no explicit domains", s.Value.Literal)
+	}
+
+	// Nothing was overridden anywhere, so no row carries a chain. A shadow list
+	// that filled up on a document nobody edited would be a scope list wearing
+	// a shadow's clothes (#268).
+	for _, s := range append(slices.Clone(ef.Settings), web.Settings...) {
+		if len(s.Shadowed) > 0 {
+			t.Errorf("%s shadows %+v; these two documents override nothing", s.Name, s.Shadowed)
+		}
 	}
 }
 
@@ -630,7 +1139,7 @@ spec:
     require: [dry-run]
 `)
 	r, ef := effectiveOf(t, p, e)
-	agreesWithResolve(t, r, ef)
+	agreesWithResolve(t, p, e, r, ef)
 
 	if got := settingValue(t, ef.Settings, GroupEnvironment, SettingPolicyAgents); got != string(AgentsAllow) {
 		t.Errorf("policy.agents = %q, want allow — the environment's block replaced the project's", got)
@@ -641,6 +1150,19 @@ spec:
 	at := setAtOf(t, ef.Settings, GroupEnvironment, SettingPolicyRequire)
 	if at.Level != SetAtEnvironment || at.Field != "$.spec.policy.require" {
 		t.Errorf("policy.require set-at = %+v, want the environment's own block", at)
+	}
+
+	// The block being taken whole is exactly what a shadow makes legible: the
+	// project *did* say propose-only, the environment's block displaced it, and
+	// the winner is kelson's default. Without the entry the row reads as though
+	// nobody ever asked for propose-only (#268).
+	if got, want := shadowsOf(t, ef.Settings, GroupEnvironment, SettingPolicyAgents),
+		[]string{"propose-only@$.spec.defaults.policy.agents"}; !slices.Equal(got, want) {
+		t.Errorf("policy.agents shadows %v, want the project default the block displaced", got)
+	}
+	if got, want := shadowsOf(t, ef.Settings, GroupEnvironment, SettingPolicyRequire),
+		[]string{"dry-run@$.spec.defaults.policy.require"}; !slices.Equal(got, want) {
+		t.Errorf("policy.require shadows %v, want the project's own require", got)
 	}
 }
 
@@ -674,7 +1196,7 @@ spec:
 	if len(rerrs) > 0 {
 		t.Fatalf("Resolve: %v", rerrs)
 	}
-	agreesWithResolve(t, r, ef)
+	agreesWithResolve(t, p, e, r, ef)
 
 	web := ef.ComponentNamed("web")
 	if web == nil {
@@ -730,7 +1252,7 @@ spec:
 	if len(rerrs) > 0 {
 		t.Fatalf("Resolve: %v", rerrs)
 	}
-	agreesWithResolve(t, r, ef)
+	agreesWithResolve(t, p, e, r, ef)
 
 	chart := ef.ComponentNamed("ingress")
 	if chart == nil {
@@ -806,7 +1328,7 @@ spec:
 	if len(rerrs) > 0 {
 		t.Fatalf("Resolve: %v", rerrs)
 	}
-	agreesWithResolve(t, r, ef)
+	agreesWithResolve(t, p, e, r, ef)
 
 	web := ef.ComponentNamed("web")
 	if web == nil {

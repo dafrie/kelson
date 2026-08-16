@@ -96,8 +96,28 @@ func wireSettings(settings []model.EffectiveSetting) []*kelsonv1alpha1.Effective
 	out := make([]*kelsonv1alpha1.EffectiveSetting, 0, len(settings))
 	for _, s := range settings {
 		out = append(out, &kelsonv1alpha1.EffectiveSetting{
-			Name:  s.Name,
-			Group: wireSettingGroup(s.Group),
+			Name:     s.Name,
+			Group:    wireSettingGroup(s.Group),
+			Value:    wireEffectiveValue(s.Value),
+			SetAt:    wireSetAt(s.SetAt),
+			Shadowed: wireShadowed(s.Shadowed),
+		})
+	}
+	return out
+}
+
+// wireShadowed carries the chain the winner replaced in the order the model
+// records it — outermost first — because that order is the contract and
+// re-sorting it here would be a second opinion about the merge (#268). A
+// shadowed reference goes through the same mapping the winner does, so it
+// stays a reference on the wire.
+func wireShadowed(shadowed []model.Shadowed) []*kelsonv1alpha1.ShadowedValue {
+	if len(shadowed) == 0 {
+		return nil
+	}
+	out := make([]*kelsonv1alpha1.ShadowedValue, 0, len(shadowed))
+	for _, s := range shadowed {
+		out = append(out, &kelsonv1alpha1.ShadowedValue{
 			Value: wireEffectiveValue(s.Value),
 			SetAt: wireSetAt(s.SetAt),
 		})
