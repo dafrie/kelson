@@ -1,5 +1,6 @@
 import { Link, NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "../api/auth";
+import { DetailToggle } from "../expert/DetailToggle";
 import { KelsonMark } from "./KelsonMark";
 import { ThemeToggle } from "./ThemeToggle";
 import "./AppShell.css";
@@ -99,6 +100,11 @@ export function AppShell() {
           >
             Docs
           </a>
+          {/* Two display preferences, side by side, and neither is a mode of
+              operation: one changes what the page is painted in, the other how
+              much of what the wire already said is printed on it. Both are this
+              browser's business and neither reaches the server (#260). */}
+          <DetailToggle />
           <ThemeToggle />
           <SignedIn />
         </div>

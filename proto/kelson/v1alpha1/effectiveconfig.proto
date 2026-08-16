@@ -1,0 +1,179 @@
+// The effective configuration of a component in an environment, and where each
+// value was set (#260).
+//
+// # Why this is a read and not a client-side merge
+//
+// kelson's precedence rules (docs/model.md P1–P6) are a two- and three-level
+// merge across two documents, and `GetSpec` returns those documents as authored
+// while `Render` returns the finished manifests. Neither answers the question a
+// developer actually asks — *what is this running with here, and which file put
+// that there* — and a client that answered it by re-implementing the merge would
+// be quoting internal/model from memory: it would drift, silently, in exactly
+// the direction that makes a provenance claim wrong.
+//
+// So the merge stays where it is computed. internal/model walks the same
+// documents the resolver walks, in the same order, recording the block that won
+// each value, and a test asserts the two readings agree value-for-value on the
+// fixture that exercises every rule at once. This service carries that result.
+//
+// # What it never carries
+//
+// A secret value. An environment value is a plain string, a `{secret, key}`
+// reference or a `{from: {service, key}}` binding (ADR-0009, ADR-0018), and the
+// reference arms are exactly what the spec holds — kelson does not read the
+// Secret at any point, so there is no value here to omit. EffectiveValue is a
+// oneof for that reason: a client cannot render a reference as text without
+// knowing it is one.
+syntax = "proto3";
+
+package kelson.v1alpha1;
+
+import "kelson/v1alpha1/common.proto";
+
+option go_package = "github.com/dafrie/kelson/internal/api/gen/kelson/v1alpha1;kelsonv1alpha1";
+
+// SetAtLevel names the block that set a value: which document, and which part
+// of it.
+//
+// The vocabulary is the documents' own, not the rule numbers. "P1" is a fact
+// about kelson's implementation; "the environment's override of this component"
+// is a fact about a file the reader can open, and it is what a plain-language
+// sentence is built from.
+enum SetAtLevel {
+  SET_AT_LEVEL_UNSPECIFIED = 0;
+  // kelson's own default. No document says it: replicas {min: 1},
+  // policy.agents allow, secrets.backend cluster.
+  SET_AT_LEVEL_BUILT_IN = 1;
+  // The Project document, outside any component: spec.image, spec.env,
+  // spec.defaults.
+  SET_AT_LEVEL_PROJECT = 2;
+  // This component's own entry in the Project document's spec.components.
+  SET_AT_LEVEL_COMPONENT = 3;
+  // The Environment document, outside any override: spec.policy, spec.secrets,
+  // spec.routing, spec.autoDeploy.
+  SET_AT_LEVEL_ENVIRONMENT = 4;
+  // This environment's override of this component — the innermost scope of the
+  // per-component rules, and where a promotion writes its image pin.
+  SET_AT_LEVEL_ENVIRONMENT_COMPONENT = 5;
+}
+
+// SettingGroup says what kind of setting an entry is.
+//
+// It exists because the names in one component's table come from two
+// namespaces: an environment variable is named by its author and a workload
+// setting by kelson's model, so a project with a variable called `image`
+// produces two rows that a client must not confuse. Separate on the group,
+// never on the name.
+enum SettingGroup {
+  SETTING_GROUP_UNSPECIFIED = 0;
+  // An environment variable.
+  SETTING_GROUP_ENV = 1;
+  // A workload's own configuration: image, command, replicas, resources,
+  // domains, autoDeploy.
+  SETTING_GROUP_WORKLOAD = 2;
+  // A data component's configuration: its preset.
+  SETTING_GROUP_DATA = 3;
+  // An environment-scoped concern — policy and the secret backend. These
+  // belong to the environment rather than to any one component.
+  SETTING_GROUP_ENVIRONMENT = 4;
+}
+
+// SetAt is one provenance answer: the level, the names that make it concrete,
+// and the exact path within the document.
+message SetAt {
+  SetAtLevel level = 1;
+  // "Project" or "Environment". Empty at the built-in level, which is in no
+  // document.
+  string document = 2;
+  // The environment's name, on the two environment levels.
+  string environment = 3;
+  // The component whose block set the value, on the two component levels.
+  string component = 4;
+  // Where in that document the value is written, in the same JSONPath spelling
+  // Error.field uses — e.g. "$.spec.components[2].env.LOG_LEVEL". Empty at the
+  // built-in level.
+  string field = 5;
+}
+
+// SecretKeyReference is `{secret: <name>, key: <key>}`: a Secret in the
+// environment's namespace and a key within it. kelson references it and never
+// reads it, so there is no value field and there is nothing to add one for.
+message SecretKeyReference {
+  string secret = 1;
+  string key = 2;
+}
+
+// ServiceBindingReference is `{from: {service: <component>, key: <key>}}`: a
+// well-known key of a data component this project declares. It renders as the
+// same secretKeyRef a SecretKeyReference does, against the credential the
+// component's operator generated.
+message ServiceBindingReference {
+  string service = 1;
+  string key = 2;
+}
+
+// EffectiveValue is the winning value of one setting. Exactly one arm is set,
+// and the empty string is a legitimate literal — overriding a variable to ""
+// is how docs/model.md says to unset a project-level one for an environment,
+// which is why this is a oneof and not three optional fields.
+message EffectiveValue {
+  oneof value {
+    string literal = 1;
+    SecretKeyReference secret = 2;
+    ServiceBindingReference binding = 3;
+  }
+}
+
+// EffectiveSetting is one setting, its value, and the block that set it.
+message EffectiveSetting {
+  // The variable's name for an env setting, the model's own field name
+  // otherwise: "image", "command", "replicas", "resources.requests.cpu",
+  // "domains", "autoDeploy", "preset", "policy.agents", "secrets.backend".
+  string name = 1;
+  SettingGroup group = 2;
+  EffectiveValue value = 3;
+  SetAt set_at = 4;
+}
+
+// EffectiveComponent is one component's effective configuration.
+message EffectiveComponent {
+  string name = 1;
+  // The component's effective kind: service, worker, cron, agent, postgres,
+  // valkey or helm.
+  string kind = 2;
+  // Settings in reading order: environment variables sorted by name, then the
+  // component's own configuration.
+  //
+  // A `kind: helm` component has none, and that is the answer rather than an
+  // omission: no precedence rule reaches a chart and an environment takes no
+  // override on one.
+  repeated EffectiveSetting settings = 3;
+}
+
+// EffectiveConfig is one (project, environment) pair's effective configuration.
+message EffectiveConfig {
+  string project = 1;
+  string environment = 2;
+  // The environment-scoped concerns: policy and the secret backend. They are
+  // not per component because nothing about them is.
+  repeated EffectiveSetting settings = 3;
+  repeated EffectiveComponent components = 4;
+}
+
+message GetEffectiveConfigRequest {
+  string project = 1;
+  // The environment to answer for. Empty is accepted only when the project
+  // declares exactly one — the rule `--env` already follows, because an
+  // unnamed environment is unambiguous in no other case.
+  string environment = 2;
+  // One component. Empty means every component the project declares.
+  string component = 3;
+}
+
+message GetEffectiveConfigResponse {
+  EffectiveConfig config = 1;
+  // Validation errors when the stored documents do not resolve. The RPC itself
+  // succeeds and config is unset — a spec that does not validate is an answer,
+  // exactly as in PutSpecResponse and RenderResponse.
+  repeated Error errors = 2;
+}

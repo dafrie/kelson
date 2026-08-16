@@ -51,6 +51,64 @@
  *     property of which entry this is.
  */
 
+/**
+ * Where one revision sits on the rail, relative to the marker.
+ *
+ * The whole vocabulary is positional on purpose. `above` and `below` say only
+ * which side of the live marker a stop is on, which is a fact about the list the
+ * server returned; they carry no claim about how far behind the environment is,
+ * because nothing on the wire supports one — `stale` is a boolean and
+ * `StatusResponse` has no generation to compare against.
+ */
+export type RailPlacement =
+  /** The revision `Status` reports as live: the marker itself. */
+  | "live"
+  /** Recorded after the live revision — above the marker on the rail. */
+  | "above"
+  /** Recorded before it. */
+  | "below"
+  /** Only the registry remembers it (#241): the rail's faded tail. */
+  | "tail"
+  /** There is no marker on this rail at all, so no stop has a side. */
+  | "unmarked";
+
+/** The one field placement reads beyond the revision id. */
+interface RailEntry {
+  revision: string;
+  beyondWindow?: boolean;
+}
+
+/**
+ * Every stop's placement, in the order the entries arrived.
+ *
+ * Two orderings decide the whole function, and both are the honest way round:
+ *
+ *  - **The marker wins over the tail.** A rollback can pin an environment to a
+ *    revision the cluster's bounded history has forgotten, and that is exactly
+ *    the case a reader opens this screen for. Fading the one stop that is live
+ *    would hide the marker on the rail it is the point of.
+ *  - **A live revision the list does not contain marks nothing.** `Status` can
+ *    name a revision that is not among the recorded entries — an unreadable
+ *    delivery plane answers nothing at all, and a truncated window can answer
+ *    something this list has no row for — so the rail is `unmarked` rather than
+ *    guessing which end of it the marker belongs on.
+ */
+export function railPlacements(
+  entries: readonly RailEntry[],
+  liveRevision: string,
+): RailPlacement[] {
+  const liveIndex =
+    liveRevision === ""
+      ? -1
+      : entries.findIndex((entry) => entry.revision === liveRevision);
+  return entries.map((entry, i) => {
+    if (i === liveIndex) return "live";
+    if (entry.beyondWindow === true) return "tail";
+    if (liveIndex === -1) return "unmarked";
+    return i < liveIndex ? "above" : "below";
+  });
+}
+
 /** How much of a long hash is shown, e.g. a spec hash's or digest's hex half. */
 const SHORT_LENGTH = 12;
 

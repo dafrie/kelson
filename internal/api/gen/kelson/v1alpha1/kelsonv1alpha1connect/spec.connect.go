@@ -65,6 +65,9 @@ const (
 	SpecServiceDeleteSpecProcedure = "/kelson.v1alpha1.SpecService/DeleteSpec"
 	// SpecServiceProposeSpecProcedure is the fully-qualified name of the SpecService's ProposeSpec RPC.
 	SpecServiceProposeSpecProcedure = "/kelson.v1alpha1.SpecService/ProposeSpec"
+	// SpecServiceGetEffectiveConfigProcedure is the fully-qualified name of the SpecService's
+	// GetEffectiveConfig RPC.
+	SpecServiceGetEffectiveConfigProcedure = "/kelson.v1alpha1.SpecService/GetEffectiveConfig"
 )
 
 // SpecServiceClient is a client for the kelson.v1alpha1.SpecService service.
@@ -74,6 +77,12 @@ type SpecServiceClient interface {
 	ListSpecs(context.Context, *connect.Request[v1alpha1.ListSpecsRequest]) (*connect.Response[v1alpha1.ListSpecsResponse], error)
 	DeleteSpec(context.Context, *connect.Request[v1alpha1.DeleteSpecRequest]) (*connect.Response[v1alpha1.DeleteSpecResponse], error)
 	ProposeSpec(context.Context, *connect.Request[v1alpha1.ProposeSpecRequest]) (*connect.Response[v1alpha1.ProposeSpecResponse], error)
+	// GetEffectiveConfig reads the stored documents and answers what a component
+	// actually runs with in one environment, with the block that set each value
+	// (effectiveconfig.proto). It is a read of the spec store like GetSpec —
+	// nothing is applied, no cluster is touched, and it needs no new
+	// authorization: it says less than the documents GetSpec already returns.
+	GetEffectiveConfig(context.Context, *connect.Request[v1alpha1.GetEffectiveConfigRequest]) (*connect.Response[v1alpha1.GetEffectiveConfigResponse], error)
 }
 
 // NewSpecServiceClient constructs a client for the kelson.v1alpha1.SpecService service. By default,
@@ -117,16 +126,23 @@ func NewSpecServiceClient(httpClient connect.HTTPClient, baseURL string, opts ..
 			connect.WithSchema(specServiceMethods.ByName("ProposeSpec")),
 			connect.WithClientOptions(opts...),
 		),
+		getEffectiveConfig: connect.NewClient[v1alpha1.GetEffectiveConfigRequest, v1alpha1.GetEffectiveConfigResponse](
+			httpClient,
+			baseURL+SpecServiceGetEffectiveConfigProcedure,
+			connect.WithSchema(specServiceMethods.ByName("GetEffectiveConfig")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // specServiceClient implements SpecServiceClient.
 type specServiceClient struct {
-	putSpec     *connect.Client[v1alpha1.PutSpecRequest, v1alpha1.PutSpecResponse]
-	getSpec     *connect.Client[v1alpha1.GetSpecRequest, v1alpha1.GetSpecResponse]
-	listSpecs   *connect.Client[v1alpha1.ListSpecsRequest, v1alpha1.ListSpecsResponse]
-	deleteSpec  *connect.Client[v1alpha1.DeleteSpecRequest, v1alpha1.DeleteSpecResponse]
-	proposeSpec *connect.Client[v1alpha1.ProposeSpecRequest, v1alpha1.ProposeSpecResponse]
+	putSpec            *connect.Client[v1alpha1.PutSpecRequest, v1alpha1.PutSpecResponse]
+	getSpec            *connect.Client[v1alpha1.GetSpecRequest, v1alpha1.GetSpecResponse]
+	listSpecs          *connect.Client[v1alpha1.ListSpecsRequest, v1alpha1.ListSpecsResponse]
+	deleteSpec         *connect.Client[v1alpha1.DeleteSpecRequest, v1alpha1.DeleteSpecResponse]
+	proposeSpec        *connect.Client[v1alpha1.ProposeSpecRequest, v1alpha1.ProposeSpecResponse]
+	getEffectiveConfig *connect.Client[v1alpha1.GetEffectiveConfigRequest, v1alpha1.GetEffectiveConfigResponse]
 }
 
 // PutSpec calls kelson.v1alpha1.SpecService.PutSpec.
@@ -154,6 +170,11 @@ func (c *specServiceClient) ProposeSpec(ctx context.Context, req *connect.Reques
 	return c.proposeSpec.CallUnary(ctx, req)
 }
 
+// GetEffectiveConfig calls kelson.v1alpha1.SpecService.GetEffectiveConfig.
+func (c *specServiceClient) GetEffectiveConfig(ctx context.Context, req *connect.Request[v1alpha1.GetEffectiveConfigRequest]) (*connect.Response[v1alpha1.GetEffectiveConfigResponse], error) {
+	return c.getEffectiveConfig.CallUnary(ctx, req)
+}
+
 // SpecServiceHandler is an implementation of the kelson.v1alpha1.SpecService service.
 type SpecServiceHandler interface {
 	PutSpec(context.Context, *connect.Request[v1alpha1.PutSpecRequest]) (*connect.Response[v1alpha1.PutSpecResponse], error)
@@ -161,6 +182,12 @@ type SpecServiceHandler interface {
 	ListSpecs(context.Context, *connect.Request[v1alpha1.ListSpecsRequest]) (*connect.Response[v1alpha1.ListSpecsResponse], error)
 	DeleteSpec(context.Context, *connect.Request[v1alpha1.DeleteSpecRequest]) (*connect.Response[v1alpha1.DeleteSpecResponse], error)
 	ProposeSpec(context.Context, *connect.Request[v1alpha1.ProposeSpecRequest]) (*connect.Response[v1alpha1.ProposeSpecResponse], error)
+	// GetEffectiveConfig reads the stored documents and answers what a component
+	// actually runs with in one environment, with the block that set each value
+	// (effectiveconfig.proto). It is a read of the spec store like GetSpec —
+	// nothing is applied, no cluster is touched, and it needs no new
+	// authorization: it says less than the documents GetSpec already returns.
+	GetEffectiveConfig(context.Context, *connect.Request[v1alpha1.GetEffectiveConfigRequest]) (*connect.Response[v1alpha1.GetEffectiveConfigResponse], error)
 }
 
 // NewSpecServiceHandler builds an HTTP handler from the service implementation. It returns the path
@@ -200,6 +227,12 @@ func NewSpecServiceHandler(svc SpecServiceHandler, opts ...connect.HandlerOption
 		connect.WithSchema(specServiceMethods.ByName("ProposeSpec")),
 		connect.WithHandlerOptions(opts...),
 	)
+	specServiceGetEffectiveConfigHandler := connect.NewUnaryHandler(
+		SpecServiceGetEffectiveConfigProcedure,
+		svc.GetEffectiveConfig,
+		connect.WithSchema(specServiceMethods.ByName("GetEffectiveConfig")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/kelson.v1alpha1.SpecService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case SpecServicePutSpecProcedure:
@@ -212,6 +245,8 @@ func NewSpecServiceHandler(svc SpecServiceHandler, opts ...connect.HandlerOption
 			specServiceDeleteSpecHandler.ServeHTTP(w, r)
 		case SpecServiceProposeSpecProcedure:
 			specServiceProposeSpecHandler.ServeHTTP(w, r)
+		case SpecServiceGetEffectiveConfigProcedure:
+			specServiceGetEffectiveConfigHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -239,4 +274,8 @@ func (UnimplementedSpecServiceHandler) DeleteSpec(context.Context, *connect.Requ
 
 func (UnimplementedSpecServiceHandler) ProposeSpec(context.Context, *connect.Request[v1alpha1.ProposeSpecRequest]) (*connect.Response[v1alpha1.ProposeSpecResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("kelson.v1alpha1.SpecService.ProposeSpec is not implemented"))
+}
+
+func (UnimplementedSpecServiceHandler) GetEffectiveConfig(context.Context, *connect.Request[v1alpha1.GetEffectiveConfigRequest]) (*connect.Response[v1alpha1.GetEffectiveConfigResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("kelson.v1alpha1.SpecService.GetEffectiveConfig is not implemented"))
 }

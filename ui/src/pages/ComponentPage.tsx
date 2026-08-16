@@ -9,6 +9,10 @@ import { ErrorPanel } from "../components/ErrorPanel";
 import { StatusPill } from "../components/StatusPill";
 import { driftFor, statusFor, verdictTone } from "../components/status";
 import { EmptyState, LoadingState } from "../components/States";
+import { EffectiveConfigTable } from "../config/EffectiveConfigTable";
+import { Detail, KubeFact } from "../expert/Detail";
+import { resourceParts, revisionParts } from "../expert/facts";
+import { Evidence, Why } from "../expert/Why";
 import {
   bindingFor,
   effectiveImage,
@@ -141,7 +145,43 @@ export function ComponentPage() {
       <div className="k-page-head">
         <h1>{component}</h1>
         {summary === undefined ? null : (
-          <StatusPill status={cell.status.tone} label={cell.status.word} />
+          <>
+            <StatusPill status={cell.status.tone} label={cell.status.word} />
+            {/* The one claim on this page a reader is most likely to
+                misattribute: a component with no probe of its own shows its
+                environment's word, and the caret is where that is said in
+                fields rather than in a note at the bottom of the page. */}
+            <Why statement={cell.status.word}>
+              <Evidence
+                rows={
+                  verdict === undefined
+                    ? [
+                        { name: "basis", value: cell.basis },
+                        { name: "answer", value: read.answer },
+                        { name: "phase", value: read.phase },
+                        { name: "cause", value: read.cause, prose: true },
+                      ]
+                    : [
+                        { name: "basis", value: cell.basis },
+                        { name: "resource", value: verdict.resource },
+                        { name: "code", value: verdict.code },
+                        { name: "healthy", value: String(verdict.healthy) },
+                        { name: "degraded", value: String(verdict.degraded) },
+                        { name: "stuck", value: String(verdict.stuck) },
+                      ]
+                }
+                note={
+                  cell.basis === "unread"
+                    ? "The status call did not answer, so nothing is claimed about this component."
+                    : verdict === undefined
+                      ? `Nothing reports on ${component} separately, so this is ${env}'s own word.`
+                      : verdict.healthy
+                        ? `This component's own probe is healthy, so the word is ${env}'s — the delivery answer is the wider claim and it wins.`
+                        : "This component's own probe decided the word, overruling the environment's."
+                }
+              />
+            </Why>
+          </>
         )}
       </div>
       <div className="k-page-sub">
@@ -250,7 +290,21 @@ export function ComponentPage() {
                           rather than beside the page's own pill — that pill is
                           this component's word and must not be qualified by
                           something that is not about it. */}
-                      <DriftMark drift={driftFor(read)} />
+                      <DriftMark drift={driftFor(read)} />{" "}
+                      <Detail>
+                        <span className="k-kfacts">
+                          <KubeFact
+                            name="generation"
+                            value={
+                              revisionParts(read.revision)?.generation ?? ""
+                            }
+                          />
+                          <KubeFact
+                            name="spec hash"
+                            value={revisionParts(read.revision)?.specHash ?? ""}
+                          />
+                        </span>
+                      </Detail>
                     </>
                   ) : failure !== undefined ? (
                     "not read"
@@ -268,6 +322,18 @@ export function ComponentPage() {
               </div>
             </div>
           </section>
+
+          {/* The three-level merge, drawn. The facts above are what this page
+              could read out of the documents itself; this is the answer only
+              the resolver has — every effective setting and the block that set
+              it — and it is a third call rather than a derivation, because a
+              second copy of the precedence rules in a browser would drift from
+              the one the renderer uses. */}
+          <EffectiveConfigTable
+            project={project}
+            environment={env}
+            component={component}
+          />
 
           <section className="k-section">
             <div className="k-env__head">
@@ -288,6 +354,7 @@ export function ComponentPage() {
                       <span className="k-mono k-verdict__resource">
                         {verdict.resource}
                       </span>
+                      <ResourceParts resource={verdict.resource} />
                       <StatusPill
                         status={verdictTone(verdict)}
                         label={verdict.code || "unknown"}
@@ -295,10 +362,29 @@ export function ComponentPage() {
                       {/* A stuck verdict keeps a wait code, so the code chip
                           cannot say it and the word has to. */}
                       {verdict.stuck ? (
-                        <StatusPill
-                          status={statusFor("stuck").tone}
-                          label="stuck"
-                        />
+                        <>
+                          <StatusPill
+                            status={statusFor("stuck").tone}
+                            label="stuck"
+                          />
+                          <Why statement="stuck">
+                            <Evidence
+                              rows={[
+                                {
+                                  name: "healthy",
+                                  value: String(verdict.healthy),
+                                },
+                                {
+                                  name: "degraded",
+                                  value: String(verdict.degraded),
+                                },
+                                { name: "stuck", value: "true" },
+                                { name: "code", value: verdict.code },
+                              ]}
+                              note="The probe made no progress on this workload before its budget expired, and it was not failing — which is why the code stays a wait code and the word has to say the rest."
+                            />
+                          </Why>
+                        </>
                       ) : null}
                     </div>
                     {verdict.message ? (
@@ -324,6 +410,27 @@ export function ComponentPage() {
         </>
       ) : null}
     </>
+  );
+}
+
+/**
+ * The three parts of the resource observation named, in expert mode.
+ *
+ * The whole string is beside this already; what is added is which part is the
+ * kind and which the namespace, because that is the difference between reading
+ * `Deployment/checkout-production/web` and recognising it.
+ */
+function ResourceParts({ resource }: { resource: string }) {
+  const parts = resourceParts(resource);
+  if (parts === undefined) return null;
+  return (
+    <Detail>
+      <span className="k-kfacts">
+        <KubeFact name="kind" value={parts.kind} />
+        <KubeFact name="namespace" value={parts.namespace} />
+        <KubeFact name="name" value={parts.name} />
+      </span>
+    </Detail>
   );
 }
 

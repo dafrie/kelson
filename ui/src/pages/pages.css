@@ -660,6 +660,13 @@
   color: var(--kelson-muted);
 }
 
+/* The column head's Kubernetes-detail line, under the revision and indented
+   with it (#260). Present only when the display preference is on; the facts
+   inside it are `.k-kfacts`, which owns their type and spacing. */
+.k-matrix__detail {
+  padding-left: 6px;
+}
+
 .k-matrix__row {
   padding: 6px 12px 6px 0;
   border-bottom: 1px solid var(--kelson-hairline);
@@ -1425,11 +1432,20 @@
 
 /* ------------------------------------------------------------------ history */
 
-/* The timeline is a list of records, not a feed: each item is a bordered row
-   like the revision picker's, with a rail down the left so successive states of
-   one environment read as a sequence. The live item is the only filled one,
-   because it is the only revision anything can currently answer for. */
-.k-timeline {
+/* The revision rail (#260, direction B of the UX research, click-first).
+ *
+ * The record is drawn as one vertical line with a stop on it per revision and a
+ * single filled marker on the revision that is live, because the question this
+ * screen is asked is not "what happened" but "what is running, and is it the top
+ * one" — and that is a question about a position. The 2px left edge is the rail
+ * itself: hairline everywhere, ink under the marker, dotted where the record
+ * thins out into the registry's tag list.
+ *
+ * `data-rail` carries the placement (history.ts's `railPlacements`) so the
+ * drawing has no opinion about which stop is which. `above` and `below` paint
+ * identically on purpose — the marker's position is the statement, and striping
+ * the stops around it would be a second, louder one. */
+.k-history__rail {
   display: flex;
   flex-direction: column;
   gap: 0;
@@ -1438,44 +1454,168 @@
   list-style: none;
 }
 
-/* One record per row, separated by a rule, with a 2px rail down the left that
-   only the live revision fills — the record is a rail of revisions, and the
-   marker on it is the single thing this screen is asked most often. */
-.k-timeline__item {
-  padding: 10px 14px;
+/* One stop: a record, a click target, and a point on the rail. */
+.k-history__stop {
+  position: relative;
+  padding: 10px 14px 10px 20px;
   border-top: 1px solid var(--kelson-hairline);
-  border-left: 2px solid transparent;
+  border-left: 2px solid var(--kelson-hairline);
 }
 
-.k-timeline__item:first-child {
+.k-history__rail > .k-history__stop:first-child {
   border-top: none;
 }
 
-.k-timeline__item--live {
+/* The tick: a hairline stub off the rail, level with the head line, so a stop
+   is legible as a stop before anything is read. It sits beside the rail rather
+   than on it, which is what leaves the rail unbroken between stops. */
+.k-history__stop::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 20px;
+  width: 7px;
+  height: 1px;
+  background: var(--kelson-hairline);
+}
+
+/* The marker. The one filled object on the rail, and the whole reason the rail
+   is vertical: how far below the top it sits is the statement. */
+.k-history__stop[data-rail="live"] {
   background: var(--kelson-panel-dim);
   border-left-color: var(--kelson-accent);
 }
 
-.k-timeline__head {
+.k-history__stop[data-rail="live"]::before {
+  left: -6px;
+  top: 16px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--kelson-accent);
+}
+
+/* The tail: revisions only the registry remembers (#241). The rail keeps going
+   and stops carrying ink — the record thins out there, it does not end. */
+.k-history__stop[data-rail="tail"] {
+  border-left-style: dotted;
+  color: var(--kelson-muted);
+}
+
+/* The head: above the newest revision, where the next one arrives. Dotted like
+   the tail because nothing has happened there either, and hollow because there
+   is no revision to mark. */
+.k-history__stop--head {
+  border-top: none;
+  border-left-style: dotted;
+}
+
+.k-history__stop--head::before {
+  left: -4px;
+  top: 15px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: none;
+  box-shadow: inset 0 0 0 1px var(--kelson-muted-2);
+}
+
+/* Everything above the offer is the click target. The button is stretched over
+   it rather than tucked at one end, so pressing the row is pressing the row. */
+.k-history__summary {
+  position: relative;
+}
+
+.k-history__pick {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: var(--kelson-radius-control);
+  background: none;
+  cursor: pointer;
+}
+
+.k-history__pick:focus-visible {
+  outline: 1px solid var(--kelson-accent);
+  outline-offset: 1px;
+}
+
+/* The revision id is itself a copy button, so it — and every other value in the
+   summary — is lifted back above the stretched one. */
+.k-history__summary > *:not(.k-history__pick) {
+  position: relative;
+}
+
+.k-history__stop:hover:not([data-rail="live"]) {
+  background: var(--kelson-panel);
+}
+
+/* The head has no nested value to copy, so its whole line is the button and its
+   visible text is its accessible name. */
+.k-history__pick--head {
+  position: static;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 20px;
+  text-align: left;
+  color: var(--kelson-muted);
+  font: inherit;
+  font-size: var(--kelson-size-micro);
+}
+
+.k-history__pick--head:hover {
+  color: var(--kelson-text-2);
+}
+
+.k-history__next {
+  font-family: var(--kelson-font);
+}
+
+.k-history__head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
 }
 
-.k-timeline__rev {
+/* The disclosure's visible half. It is the only thing on the row that says the
+   row does something, so it is drawn where the eye already is — the end of the
+   head line — and it is the state, not a second control. */
+.k-history__caret {
+  margin-left: auto;
+  color: var(--kelson-muted-2);
+  font-size: var(--kelson-size-micro);
+  line-height: 1;
+}
+
+.k-history__caret::before {
+  content: "▸";
+}
+
+.k-history__stop[data-open="true"] .k-history__caret::before {
+  content: "▾";
+}
+
+.k-history__stop:hover .k-history__caret {
+  color: var(--kelson-text-2);
+}
+
+.k-history__rev {
   font-size: var(--kelson-size-fact);
   color: var(--kelson-text);
 }
 
-/* "live" here is a word about this row, not a status pill: it is marked by
-   weight, and the rail beside it is what carries the eye. */
-.k-timeline__live {
+/* "deployed now" is a word about this stop, not a status pill: it is marked by
+   weight, and the marker beside it is what carries the eye. */
+.k-history__marker {
   font-weight: 500;
   color: var(--kelson-text);
 }
 
-.k-timeline__meta {
+.k-history__meta {
   display: flex;
   flex-wrap: wrap;
   gap: 4px 14px;
@@ -1486,13 +1626,13 @@
 
 /* An absent author is dimmer than a present one and never shouted: it is a fact
    about what the delivery mode records, not a warning. */
-.k-timeline__unattributed {
+.k-history__unattributed {
   color: var(--kelson-muted-2);
 }
 
 /* The images a revision resolved to, one per line so a component name and its
    image read as a pair rather than as a run-on list. */
-.k-timeline__images {
+.k-history__images {
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -1501,7 +1641,7 @@
   color: var(--kelson-text-2);
 }
 
-.k-timeline__image {
+.k-history__image {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
@@ -1509,34 +1649,36 @@
 
 /* The component that resolved the image beside it: a name, so sans inside an
    otherwise mono block. */
-.k-timeline__component {
+.k-history__component {
   min-width: 9ch;
   font-family: var(--kelson-font);
   color: var(--kelson-muted);
 }
 
-.k-timeline__message {
-  margin: 6px 0 0;
-  font-size: var(--kelson-size-fact);
-  color: var(--kelson-text-2);
-}
-
-.k-timeline__actions {
+/* What can be done from an opened stop. It is a quiet expansion of the row —
+   no modal, no overlay, nothing that moves what is under it. */
+.k-history__offer {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 8px;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 10px;
 }
 
-/* The lines under the list that say what the record does not carry. */
-.k-timeline__note {
+.k-history__offer-note {
+  font-size: var(--kelson-size-micro);
+  color: var(--kelson-muted);
+}
+
+/* The lines under the rail that say what the record does not carry. */
+.k-history__note {
   max-width: 78ch;
   margin: 12px 0 0;
   font-size: var(--kelson-size-fact);
   color: var(--kelson-muted);
 }
 
-.k-timeline__note a {
+.k-history__note a {
   color: inherit;
 }
 

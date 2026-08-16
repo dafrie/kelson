@@ -82,13 +82,13 @@ moved where, and for the redirects that keep the old paths working.
 | `/projects/new` | Create a project and its first component: three fields, a rendered preview, then the store | `PutSpec` at `RENDER`, then with an idempotency key |
 | `/projects/:project` | The component × environment matrix and the stored documents. A column header is the link into that environment | `GetSpec`, one `Status` per environment |
 | `/projects/:project/:env` | **Overview**, the environment whole: status, workload verdicts, data services, its PR previews and Secrets. The index tab of the layout that carries Logs, History and the three actions | `GetSpec` (the layout's), `Status`, `Watch`, `GetProfile`, `ListPreviews`, `ListSecrets`, `Render` (deferred presets only), `SetSecret`/`DeleteSecret` on use |
-| `/projects/:project/:env/components/:component` | One component in one environment: its shape, the image its documents resolve to and the scope that set it, the source it builds from, the environment's revision and namespace, its own workload verdict — and links into its environment's tabs and actions, with itself preselected in the logs | `GetSpec`, `Status` |
+| `/projects/:project/:env/components/:component` | One component in one environment: its shape, the image its documents resolve to and the scope that set it, the source it builds from, the environment's revision and namespace, the effective-config table, its own workload verdict — and links into its environment's tabs and actions, with itself preselected in the logs | `GetSpec`, `Status`, `GetEffectiveConfig` |
 | `/projects/:project/edit` | Edit the stored spec: a form tab and a raw YAML tab, a diff before saving, an optimistic-concurrency save. The form reaches `spec.previews` (ADR-0017; the retired `delivery:` stanza is gone per ADR-0028), and appends a component to `spec.components` (`?add=component` opens on it) | `GetSpec`, `PutSpec` at `RENDER` then for real, `Diff` |
 | `/projects/:project/edit`, git-owned | The same screen when `GetSpec` reports a Flux Kustomization owns these documents (#248): `GitOpsBanner` names the owner and the `autoDeploy` collision, Save is replaced by `ExportPanel` (the documents, copyable and downloadable, no server call) and `ProposePanel` (the same bytes as a pull request through a connection that can open one) — `src/pages/GitOpsPanel.tsx` | `GetSpec`, `Diff`, `ProposeSpec`, `ListConnections` |
 | `/projects/:project/:env/actions/deploy` | **Action.** Preview (render dry-run) then a confirm that streams the deployment live. Its step one is the server-side comparison, which is why there is no diff screen | `Deploy` at `RENDER`, then at `NONE`; optional `Diff` at `SERVER` |
 | `/projects/:project/:env/actions/promote` | **Action.** The environment in the path is the **target**: pick a source, read the plan and the diff it produces, then write the pins. It never deploys | `GetSpec`, `Promote` at `RENDER` then `NONE` |
 | `/projects/:project/:env/actions/rollback` | **Action.** Revision picker, irreversibility preview, then the apply. `?to=<revision>` preselects and previews a target, never applies it | `History`, `Rollback` at `RENDER` then `NONE` |
-| `/projects/:project/:env/history` | **Tab.** The recorded revisions, newest first: what each was, when, the spec hash, the recorded author (unattributed today, #74), and a phase pill on the live one. `?from=<revision>` opens the comparison against that revision in place; `?compare=1` opens it against the live cluster | `History`, `Status`, then `Diff` when the comparison is open |
+| `/projects/:project/:env/history` | **Tab.** The revision rail: the recorded revisions newest first, one stop each, a single marker on the live one, and a faded tail where the record thins out into the registry. A stop opens on a click and offers the comparison and the rollback; the head above the newest offers the promotion. `?from=<revision>` opens the comparison against that revision in place; `?compare=1` opens it against the live cluster | `History`, `Status`, then `Diff` when the comparison is open |
 | `/projects/:project/:env/logs` | **Tab.** Bounded Query, and a live tail that pauses, filters, reconnects and saves. `?component=<name>` opens on one component — the link a component's own page carries | `QueryLogs`, `FollowLogs`, `Status` for the namespace |
 | `/projects/:project/:env/previews/:pr` | One change request's preview: phase, hosts, the pinned commit and applied revision, the two Ready conditions, when it appeared — everything `Preview` reports and nothing it doesn't. `:pr` is the change-request number, the identifier a human types (ADR-0017); there is no `GetPreview`, so the page reads the same `ListPreviews` the environment Overview's Previews section does and picks out the matching row, honestly reporting when none matches. The route a commit status and a PR comment link to (ADR-0017 stage 3, #248) | `ListPreviews` |
 | `/cluster` | Server build, the node inventory (count, readiness, CPU/memory usage where metrics.k8s.io answers), the platform-component checklist with its install flow, and the detected ClusterProfile | `/healthz`, `GetProfile`, `GetNodes`, `ListComponents`, `PlanInstall`, `Install` |
@@ -150,6 +150,61 @@ it is the Overview tab of the environment's route instead, so the environment a
 reader is looking at is in the URL and the panel reads its own single `Status`.
 A column header is the link into it.
 
+## The effective-config table
+
+`src/config/` is the component page's answer to *what is this actually running
+with here, and which file put that there*
+([#260](https://github.com/dafrie/kelson/issues/260)). Every environment
+variable, image, replica count, resource quantity, hostname and preset a
+component runs with is the winner of a two- or three-level merge across two
+documents, and until this landed the only way to read it was to open both and
+merge them in your head.
+
+**The merge is not done here, and must never be.** `GetSpec` returns the
+authored documents and `Render` returns the finished manifests; neither answers
+the question, so `SpecService.GetEffectiveConfig` was added to. It carries the
+winning value *and* the block that set it, computed in `internal/model` beside
+the resolver and tested for agreement with it value-for-value on the fixture
+that exercises every precedence rule at once. A copy of that merge in
+TypeScript would drift, silently, in exactly the direction that makes a
+provenance claim wrong — `src/config/effective.ts` therefore reads the answer
+and computes nothing.
+
+Five things the table is deliberate about:
+
+- **A setting the answer did not mention is absent, not blank.** A component
+  awaiting its first build has no `image` row, because nothing in either
+  document names one — the resolver's own placeholder for that state is a
+  sentinel that must not reach a manifest, and it must not reach a table of
+  what runs either. A row with an em dash in it would claim the question was
+  asked and answered.
+- **A secret stays a reference.** The wire's value is a union whose two mapping
+  arms carry a Secret's name and a key, and no message in the schema has a
+  field a value could arrive in — kelson never reads the Secret. The row prints
+  `{ secret: checkout-db, key: url }` through the same `envValueText` the spec
+  builders write, so what a reader sees is what the editor would have produced.
+- **The provenance is a sentence, not a code.** Five answers — "kelson's
+  default", "set on the project", "set on the component", "set on production",
+  "set on production, for this component" — said as facts about two files
+  rather than as the rule numbers that govern them. The two environment answers
+  are parallel to the two project ones so a reader learns the shape once, and a
+  level this build cannot read says "not stated" rather than falling back to
+  something plausible.
+- **A row nobody wrote recedes.** kelson's own defaults are dimmed, because the
+  rows a reader is looking for are the ones a file put there — and dimming is
+  what makes them findable without colouring anything.
+- **Rows are separated on the group, never on the name.** An environment
+  variable is named by its author and `resources.requests.cpu` by the model, so
+  a project is free to declare a variable called `image` and it is a different
+  row from the workload setting. The wire says which group each row is in.
+
+The JSONPath into the document — `$.spec.components[0].env.LOG_LEVEL`, the same
+spelling a structured error's `field` uses — rides on the row's `title` rather
+than taking a column, and the environment's own settings (its secret backend,
+its agent policy) are the table's third group, because one of them changes what
+a row above *means*: a `{secret, key}` reference is served by whichever backend
+this environment names.
+
 ## Flow consolidation
 
 Six flows used to hang off `(project, environment)` as sibling routes —
@@ -185,9 +240,11 @@ Three things it is deliberate about:
 - **The layout reads the spec; the tabs read the cluster.** `EnvironmentPage`
   issues one `GetSpec` — it is what says this environment exists and what its
   siblings are, which is what the promote action needs — and hands the stored
-  documents down. Every cluster-touching call still belongs to the tab that
-  wants it: the logs tab opens no `Status` for a rail it does not draw, and
-  Overview reads the one `Status` the panel always read.
+  documents down, along with the sibling list itself: the logs tab reads the
+  components out of the documents and the History tab reads the siblings to
+  decide whether its rail has a head. Every cluster-touching call still belongs
+  to the tab that wants it: the logs tab opens no `Status` for a phase rail it
+  does not draw, and Overview reads the one `Status` the panel always read.
 - **A tab is a link, an action is a link, and the log screen's two modes are
   buttons.** They look the same and they are not the same: the first two are
   routes worth pasting, the third is one screen with a switch on it.
@@ -919,6 +976,157 @@ those against receipt time would date every one of them to now. The skew is
 handled by clamping at zero — a server whose clock runs ahead prints `now`,
 never a time in the future — and an event carrying no stamp at all falls back to
 when this browser received it. The exact instant stays on the row's `title`.
+
+### The revision rail
+
+The borrowed interaction
+([#260](https://github.com/dafrie/kelson/issues/260), direction B of the UX
+research): the History tab's record is drawn as a **rail** — one vertical line,
+one stop per revision, one filled marker on the revision that is live.
+`src/pages/history.ts`'s `railPlacements` decides where every stop sits and
+`.k-history__*` in `src/pages/pages.css` is the whole of the drawing.
+
+The rail exists because the question this screen is asked is not "what happened"
+but **"what is running, and is it the top one"** — and that is a question about a
+position, not about a list. An environment a rollback pinned shows its marker two
+stops down and the answer arrives before a word is read.
+
+Five decisions:
+
+- **Position is the statement, and it is the only one.** The five placements —
+  `live`, `above`, `below`, `tail`, `unmarked` — are purely spatial, and `above`
+  and `below` paint identically. There is deliberately **no count**: "two
+  revisions behind" is a claim about the spec's generation and nothing on the
+  wire carries one, which is the same reason `DriftMark` refuses it. The drift
+  mark stays the sentence and renders on the marker's own stop exactly as
+  before; the rail adds no second one.
+- **The marker wins over the tail.** The rail runs past the cluster's bounded
+  history into the registry's tag list ([#241](https://github.com/dafrie/kelson/issues/241))
+  and fades there — dotted rail, dimmed ink — because the record thins out rather
+  than ending. But a rollback can pin an environment to a revision the cluster
+  has forgotten, and fading the one stop that is live would hide the marker on
+  the rail it is the point of. `live` is therefore checked before `beyondWindow`.
+- **Click-first, and no drag.** Direction B makes dragging the marker the
+  rollback and dragging it sideways the promotion; its own recommendation is to
+  ship the click first and add the gestures once the confirm flows are proven. So
+  a stop **opens**: a quiet expansion of the row, no modal, no overlay, offering
+  two links into flows that already exist — `?from=` for the comparison panel on
+  this same page and `actions/rollback?to=` for the whole irreversibility-preview
+  screen. The rail never applies anything. A rollback's preview must not be
+  skippable, so there is one rollback flow in this UI and the rail only carries a
+  revision to it.
+- **The offers are collapsed, and that is what makes the rail readable.** Two
+  standing buttons per row is twenty-four controls on a twelve-revision
+  environment. Quiet-when-healthy applies to chrome as much as to colour. The
+  whole summary is the click target — a stretched button under the row with the
+  values lifted back above it — and the caret at the end of the head line is the
+  visible half.
+- **The head is where the next revision arrives, and the only place promotion
+  belongs.** Above the newest stop is one more, which is not a revision; opening
+  it offers `actions/promote` with the environment action bar's label unchanged,
+  because it is the same action. It is drawn only when the project declares
+  another environment to promote from — the same condition that bar uses. A
+  *row* still offers no promotion: a row's revision is this environment's, and a
+  promotion reads the source environment's latest, which no row here knows.
+
+**Sideways promotion, noted and not built.** The research's second gesture —
+dragging a notch from staging's rail into production's — has a cheap click-first
+expression that this slice deliberately did not build, because it is
+cross-environment UI and belongs where environments are already juxtaposed: the
+project page's matrix draws one column per environment with each column's live
+revision in it. A "promote this column into that one" entry there would need one
+thing that does not exist yet — `PromotePage` reads no `?from=` and picks its
+source on screen — so the whole of it is a query parameter, a preselected radio
+and one link per adjacent column pair. No RPC, no proto, no second promote flow.
+### Kubernetes detail, the display preference that adds facts
+
+The second half of the Console's bargain
+([#260](https://github.com/dafrie/kelson/issues/260)). The default screens
+answer a developer's question — is my change live, is it moving, is something
+wrong — and deliberately keep Kubernetes out of the line they answer it in. The
+operator who needs the generation, the namespace and the object names was
+therefore reading a screen that had those facts in hand and would not print
+them. **Kubernetes detail** is the one control that changes that, and it is a
+*display preference* in exactly the sense the theme is one: one localStorage key
+(`kelson-detail`, absent means off, which is the default), one quiet control in
+the header beside the theme, nothing sent to the server, no mode of operation.
+`src/expert/` is all of it — `preference.ts` (the store), `DetailToggle.tsx`
+(the control), `Detail.tsx` (`<Detail>` and `<KubeFact>`), `Why.tsx` (the caret
+and its evidence grid) and `facts.ts` (the two parsers).
+
+Six rules, and the first two are tested rather than described:
+
+- **It gates information, never actions.** Every button, link and flow is on
+  screen in both states. `src/pages/expert.test.tsx` asserts the component
+  page's action bar is *byte-identical* markup with the preference on and off,
+  and that the environment's link set is unchanged — so a screenshot from one
+  reader is actionable by another and nobody is missing a control because of a
+  display setting.
+- **It never hides a could-not-check state or a structured code.** "Not read",
+  "status unavailable", the `env` basis mark, "no reading for this component"
+  and every `ErrorPanel` code are the states a reader most needs, and the
+  honest-absence rule that produced them has no loudness setting. The same test
+  file pins the unreachable-cluster case in both modes. Detail may *add* to such
+  a state — it does, with a caret saying why the word is `unknown` — and may not
+  subtract from it.
+- **Off is exactly what shipped.** Nothing moves, nothing is re-worded, and no
+  normal-mode screen gained a row. The tests assert `.k-why` and `.k-kfact` are
+  absent from the overview, the history tab and the matrix when it is off.
+- **Expert mode surfaces; it does not compute.** Every value it prints is
+  something a response already said. The two derivations are string parsers in
+  `facts.ts` and both are strict: `revisionParts` reads `<generation>-<hash8>`
+  (the tag [ADR-0028](../docs/adr/0028-delivery-spine.md) decision 2 defines,
+  which is why `stale` needs no second read) and `resourceParts` splits a
+  verdict's `Kind/namespace/name`. A shape they do not recognise yields nothing
+  and the screen draws nothing — a wrong generation number on a dense screen is
+  worse than an absent one. **The resource kinds a component *would* render are
+  deliberately not shown**: that mapping lives in `internal/renderer` and the
+  browser would be quoting it from memory, so an object is named only where the
+  cluster actually reported one.
+- **The why-caret belongs to one statement.** Where the UI makes a
+  plain-language claim — a status word, `stuck`, "older than the spec",
+  "deployed now" — expert mode attaches a 14px caret that expands the fields
+  that claim was computed from, verbatim, with one sentence saying which rule
+  applied. It is absent in normal mode and **collapsed by default in expert
+  mode**: the preference says the evidence should be *available*, not that
+  fifteen panels should be open at once. A field the wire did not answer is
+  dropped from the grid rather than rendered blank, because a key with nothing
+  beside it reads as an empty string that was actually sent.
+- **Kubernetes vocabulary is allowed here and only here.** The copy rule above
+  keeps `generation`, `namespace` and `kind` out of the default line; this is
+  the line the reader asked for them on.
+
+Where it landed, and what each surface gained:
+
+| Surface | Facts | Carets |
+| --- | --- | --- |
+| Environment Overview | the revision tag's `generation` and `spec hash`; each verdict's `kind` / `namespace` / `name` | the status word (answer vs. phase), the drift note, a `stuck` verdict |
+| Component page | the same two revision halves; the verdict's three parts | the page's word (its own probe, or its environment's, or unread) |
+| Project matrix | per column: `generation` and the resolved `namespace` | **none** — see below |
+| History tab | each row's `generation` | "deployed now" |
+
+**What was deliberately not reached**, so the next slice starts from the truth:
+
+- **No caret anywhere in the matrix.** A cell is a `<Link>` and a `<details>`
+  cannot live inside an anchor; a column header sits inside
+  `.k-matrix__scroll`, whose `overflow-x` clips a positioned panel on both axes.
+  The environment's Overview is one press away and carries the same evidence
+  with room to draw it. The column heads still gain their two facts.
+- **Untouched surfaces:** the deploy / promote / rollback actions, the logs tab,
+  the previews section and the preview detail page, the cluster and connections
+  screens, the editor, and home. `Preview` in particular carries Flux object
+  names worth surfacing — its `namespace` is documented as also being the name
+  of the OCIRepository and the Kustomization, and `PreviewLifecycle` carries the
+  ResourceSetInputProvider / ResourceSet pair's name and both Ready conditions
+  with their reasons — which is the obvious next application.
+- **Wire gaps hit.** Three facts wanted and not available: `StatusResponse` has
+  a `detail` map documented for adapter counts (`resources` / `live` /
+  `degraded`) that `internal/api` never fills, so there is nothing to print;
+  `stale` is a boolean and the *spec's* current generation is on no message, so
+  "45 vs 47" cannot be shown, only "45, and behind"; and no response carries the
+  Flux `Kustomization` / `OCIRepository` names for a normal environment the way
+  `Preview` does for a preview, so an environment's own Flux objects cannot be
+  named without inventing them from the model's conventions.
 
 ### Two themes
 
