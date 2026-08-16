@@ -86,6 +86,13 @@ The declarative, non-interactive path is `--yes` with an explicit component list
 `--dry-run` prints the preview and stops. There is no config file and no way to override a pin from
 the command line — see §2.
 
+*(Revised in place 2026-08-16, on the owner's direction: one carve-out from ask-first. The **delivery
+substrate** — Flux, in whichever form [ADR-0030](0030-flux-aio-install.md) decision 1 picks — is
+ensured automatically when kelson itself is installed, through this same catalog with this same
+detection table: presence is adoption, absence is an install, Unknown is a refusal. The reasoning is
+that a spec stored on a cluster with no reconciler fails silently, which is the one outcome worse than
+installing something; every optional component keeps the ask-first posture above.)*
+
 ### 2. Pinned upstream install manifests, fetched at install time, verified by digest
 
 Each component installs from the install manifest **its own project publishes**, at a version pinned in
