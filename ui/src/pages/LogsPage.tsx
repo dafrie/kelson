@@ -38,8 +38,8 @@ import "./LogsPage.css";
  * `<project>-<environment>` (docs/model.md) stays as the fallback for exactly
  * that case, and the field stays an editable input either way. The component
  * list is read out of the stored Project document, and `?component=<name>`
- * preselects one: that is the link the project page's component list carries
- * (#214), so pressing a component's Logs arrives at that component's logs.
+ * preselects one: that is the link the component page carries (#214), so
+ * pressing Logs there arrives at that component's logs.
  *
  * The selector's wire field is still `application`: ADR-0032 finished the
  * label rename (pods now carry `kelson.dev/component`) but deliberately left
@@ -81,7 +81,7 @@ export function LogsPage() {
   const fallbackNamespace = `${project}-${env}`;
   const [namespace, setNamespace] = useState(fallbackNamespace);
   const [resolved, setResolved] = useState(false);
-  // `?component=` is how the project page's component list links here (#214):
+  // `?component=` is how the component page links here (#214):
   // the row a reader pressed is the component whose logs they want, and having
   // to pick it again on arrival would be the link failing to carry its own
   // subject. It seeds the field and nothing more — the field stays theirs.

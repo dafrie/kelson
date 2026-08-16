@@ -168,3 +168,33 @@ export function verdictTone(healthy: boolean, degraded: boolean): StatusKind {
   if (healthy) return TONES.live;
   return degraded ? TONES.unhealthy : TONES.failed;
 }
+
+/**
+ * A workload verdict → a word, for a surface that has room for one word and
+ * not for a code.
+ *
+ * The matrix's cells are that surface: a cell says how one component is doing
+ * in one environment, and the observation code goes underneath as the labelled
+ * fact rather than as the pill. Three cases, and the third is the one worth
+ * writing down:
+ *
+ * - **Healthy** keeps the environment's own word. A green Deployment inside an
+ *   environment that is still reconciling is not live yet — the delivery answer
+ *   is the wider claim and it wins.
+ * - **Degraded** is `unhealthy`. The wire's `degraded` is
+ *   `!healthy && !stuck && IsFailure(code)` (internal/api's workloadVerdicts),
+ *   so it is already the settled-failure half of observation's split.
+ * - **Neither** is a wait state — pods not ready yet, no pods yet — and it is
+ *   `deploying`, never a failure. Observation's own `Stuck` does not survive
+ *   the wire projection, so a workload that gave up waiting is indistinguishable
+ *   here from one still starting; calling both `deploying` is the claim the
+ *   fields support, and the code beside it is what tells them apart.
+ */
+export function statusForVerdict(
+  healthy: boolean,
+  degraded: boolean,
+  environment: Status,
+): Status {
+  if (healthy) return environment;
+  return statusFor(degraded ? "unhealthy" : "deploying");
+}

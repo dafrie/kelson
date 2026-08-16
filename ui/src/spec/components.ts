@@ -1,4 +1,4 @@
-import { sequenceItems } from "../dataservices/miniyaml";
+import { mappingFields, sequenceItems } from "../dataservices/miniyaml";
 
 /**
  * The components a stored Project document declares, for screens that describe
@@ -63,6 +63,8 @@ export interface ComponentSummary {
   image: string;
   /** A data component's preset, empty when the document leaves it to the model. */
   preset: string;
+  /** The source this component names, empty when it names none. */
+  source: string;
 }
 
 /**
@@ -96,9 +98,169 @@ export function parseComponents(projectDoc: string): ComponentSummary[] {
       schedule,
       image: item.get("image") ?? "",
       preset: item.get("preset") ?? "",
+      source: item.get("source") ?? "",
     });
   }
   return out;
+}
+
+/**
+ * What an Environment document says about one component (rules P2 and P3).
+ *
+ * Two fields, because two are what a screen can state without pretending to be
+ * the resolver: the image pin, which is the one override a reader looks for,
+ * and the replica override, which is read as written (`replicas: {min: 2}`
+ * yields the flow mapping's text, not a resolved count).
+ */
+export interface ComponentOverride {
+  image: string;
+  replicas: string;
+}
+
+export function parseOverrides(
+  environmentDoc: string,
+): Map<string, ComponentOverride> {
+  const out = new Map<string, ComponentOverride>();
+  for (const item of sequenceItems(environmentDoc, "components")) {
+    const name = item.get("name");
+    if (name === undefined || name === "") continue;
+    out.set(name, {
+      image: item.get("image") ?? "",
+      replicas: item.get("replicas") ?? "",
+    });
+  }
+  return out;
+}
+
+/** The Project's own `spec.image`, which every component falls back to (P3). */
+export function projectImage(projectDoc: string): string {
+  return mappingFields(projectDoc, "spec")?.get("image") ?? "";
+}
+
+/** Where an effective value came from — rule P3's scopes, innermost first. */
+export type ImageScope = "environment" | "component" | "project" | "none";
+
+export interface EffectiveImage {
+  image: string;
+  scope: ImageScope;
+}
+
+/**
+ * Rule P3 as a screen can state it: the innermost scope that names an image
+ * wins, and the scope is reported beside the value because "which of my three
+ * documents put this here" is the question the merge otherwise hides.
+ *
+ * A component with no image anywhere is not an error — it builds from its
+ * source (ADR-0010) — so the absence is a scope of its own rather than a blank.
+ */
+export function effectiveImage(
+  component: ComponentSummary,
+  override: ComponentOverride | undefined,
+  fromProject: string,
+): EffectiveImage {
+  if (override?.image) return { image: override.image, scope: "environment" };
+  if (component.image !== "") {
+    return { image: component.image, scope: "component" };
+  }
+  if (fromProject !== "") return { image: fromProject, scope: "project" };
+  return { image: "", scope: "none" };
+}
+
+/** One entry of a Project's `sources:`, or the singular `source:` shorthand. */
+export interface SpecSource {
+  name: string;
+  git: string;
+  ref: string;
+  /** The connection this source resolves through, empty when it names none. */
+  connection: string;
+  /** True for the one-entry list the singular `source:` shorthand declares. */
+  shorthand: boolean;
+}
+
+/**
+ * The repositories a Project declares (ADR-0035).
+ *
+ * Two spellings, one list: `sources:` is the list, and `source:` as a mapping
+ * is the shorthand for the single entry named `default`. A document that uses
+ * both is refused by the model, so reading the list first and the shorthand
+ * only in its absence agrees with the server without duplicating its check.
+ *
+ * A component's `source:` is a *name* and never a mapping, so it cannot be
+ * mistaken for the shorthand: the shorthand's key has no value on its line.
+ */
+export function parseSources(projectDoc: string): SpecSource[] {
+  const listed = sequenceItems(projectDoc, "sources")
+    .map((item) => ({
+      name: item.get("name") ?? "",
+      git: item.get("git") ?? "",
+      ref: item.get("ref") ?? "",
+      connection: item.get("connection") ?? "",
+      shorthand: false,
+    }))
+    .filter((source) => source.name !== "" || source.git !== "");
+  if (listed.length > 0) return listed;
+
+  const single = mappingFields(projectDoc, "source");
+  const git = single?.get("git") ?? "";
+  if (git === "") return [];
+  return [
+    {
+      name: "default",
+      git,
+      ref: single?.get("ref") ?? "",
+      connection: single?.get("connection") ?? "",
+      shorthand: true,
+    },
+  ];
+}
+
+/**
+ * Which source a component builds from, and how that was decided.
+ *
+ * The rules are docs/model.md's: a named `source:` wins, otherwise the sole
+ * entry (a list of one is not a decision), otherwise the entry called
+ * `default`. What is *not* here is the second tier — the instance's `GitSource`
+ * objects — because a Project document cannot see them. So a name this document
+ * does not declare is reported as undeclared *here* rather than as unknown: it
+ * may be a perfectly good global source, and saying otherwise would be a claim
+ * this reader cannot make.
+ */
+export type BindingBasis =
+  | "named"
+  | "sole"
+  | "default"
+  | "undeclared"
+  | "ambiguous"
+  | "none";
+
+export interface SourceBinding {
+  basis: BindingBasis;
+  /** The bound source, present only when the basis found one. */
+  source: SpecSource | undefined;
+  /** The name the component asked for, when it asked for one. */
+  requested: string;
+}
+
+export function bindingFor(
+  component: ComponentSummary,
+  sources: readonly SpecSource[],
+): SourceBinding {
+  if (component.source !== "") {
+    const named = sources.find((s) => s.name === component.source);
+    return named === undefined
+      ? { basis: "undeclared", source: undefined, requested: component.source }
+      : { basis: "named", source: named, requested: component.source };
+  }
+  if (sources.length === 0) {
+    return { basis: "none", source: undefined, requested: "" };
+  }
+  if (sources.length === 1) {
+    return { basis: "sole", source: sources[0], requested: "" };
+  }
+  const fallback = sources.find((s) => s.name === "default");
+  return fallback === undefined
+    ? { basis: "ambiguous", source: undefined, requested: "" }
+    : { basis: "default", source: fallback, requested: "" };
 }
 
 /** True for a kind this build knows how to talk about (ADR-0014's enum). */
