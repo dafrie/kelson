@@ -161,20 +161,12 @@ export function DataServices({
 
       <ul className="k-data__list k-data__soon">
         {COMING_SOON.map((item) => (
-          <li className="k-data__item k-data__item--soon" key={item.issue}>
+          <li className="k-data__item k-data__item--soon" key={item.title}>
             <div className="k-data__head">
               <span className="k-data__name">{item.title}</span>
               <span className="k-soon">Coming soon</span>
             </div>
             <p className="k-data__summary">{item.summary}</p>
-            <a
-              className="k-data__issue"
-              href={item.url}
-              target="_blank"
-              rel="noreferrer"
-            >
-              #{item.issue}
-            </a>
           </li>
         ))}
       </ul>
@@ -282,14 +274,6 @@ function Deferred({
           its own reason.
         </p>
       ) : null}
-      <a
-        className="k-data__issue"
-        href={deferral.url}
-        target="_blank"
-        rel="noreferrer"
-      >
-        #{deferral.issue}
-      </a>
     </>
   );
 }

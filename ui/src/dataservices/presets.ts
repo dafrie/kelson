@@ -142,12 +142,6 @@ export interface Deferral {
   label: string;
   /** One sentence, in the vocabulary of docs/data-services.md. */
   summary: string;
-  issue: number;
-  url: string;
-}
-
-export function issueUrl(issue: number): string {
-  return `https://github.com/dafrie/kelson/issues/${issue}`;
 }
 
 /**
@@ -163,8 +157,6 @@ export function deferralFor(kind: DataKind, preset: string): Deferral | undefine
       summary:
         "A branch copies durable state, and a kelson cache has none — it renders with " +
         "persistence off, and an empty cache is what starting one already gives you.",
-      issue: 99,
-      url: issueUrl(99),
     };
   }
   if (preset === "shared") {
@@ -173,8 +165,6 @@ export function deferralFor(kind: DataKind, preset: string): Deferral | undefine
       summary:
         "The shared cluster was a cost optimization nobody asked for; the dedicated presets " +
         "(small, ha-small, ha-medium) work today, bindings included.",
-      issue: 93,
-      url: issueUrl(93),
     };
   }
   if (preset === "branch") {
@@ -183,8 +173,6 @@ export function deferralFor(kind: DataKind, preset: string): Deferral | undefine
       summary:
         "A branch needs a source cluster, a snapshot mechanism chosen from the cluster profile " +
         "and a TTL, none of which exists yet.",
-      issue: 99,
-      url: issueUrl(99),
     };
   }
   return undefined;
@@ -199,8 +187,6 @@ export function deferralFor(kind: DataKind, preset: string): Deferral | undefine
 export interface ComingSoon {
   title: string;
   summary: string;
-  issue: number;
-  url: string;
 }
 
 export const COMING_SOON: ComingSoon[] = [
@@ -209,15 +195,11 @@ export const COMING_SOON: ComingSoon[] = [
     summary:
       "Scheduled backups will use CloudNativePG volume snapshots against a destination " +
       "configured per environment; nothing is backed up by kelson today.",
-    issue: 94,
-    url: issueUrl(94),
   },
   {
     title: "Branching",
     summary:
       "Branching a database depends on what your storage can snapshot, which is why the " +
       "capability below is detected and reported before the feature exists.",
-    issue: 99,
-    url: issueUrl(99),
   },
 ];

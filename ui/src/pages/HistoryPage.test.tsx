@@ -283,7 +283,9 @@ describe("HistoryPage", () => {
 
     const unattributed = await screen.findAllByText("unattributed");
     expect(unattributed).toHaveLength(3);
-    expect(unattributed[0]?.getAttribute("title")).toContain("#74");
+    expect(unattributed[0]?.getAttribute("title")).toBe(
+      "kelson does not record who deployed yet",
+    );
   });
 
   it("says what the record does not carry", async () => {

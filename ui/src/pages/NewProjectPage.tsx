@@ -511,9 +511,9 @@ export function NewProjectPage() {
             <p className="k-new__gate k-mono">
               Secret backends, deployment policy and cluster targeting are not
               offered here: kelson validates those fields and renders nothing
-              for them, so it rejects them outright (#141). They arrive with the
-              milestones that implement them. Data services do render now (#89)
-              and are one of the kinds “Add component” offers on the project's
+              for them, so it rejects them outright. They arrive with the
+              milestones that implement them. Data services do render now and
+              are one of the kinds “Add component” offers on the project's
               page, once this project exists.
             </p>
           </div>
