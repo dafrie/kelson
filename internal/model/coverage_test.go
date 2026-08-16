@@ -90,6 +90,8 @@ var renderedFields = map[string]map[string]string{
 		"$.spec.components[].resources.requests.memory": "renderer: container resource requests",
 		"$.spec.components[].resources.limits.cpu":      "renderer: container resource limits",
 		"$.spec.components[].resources.limits.memory":   "renderer: container resource limits",
+		"$.spec.components[].release.command":           "renderer: the release-hook Job's container command (ADR-0019, issue #227)",
+		"$.spec.components[].release.timeout":           "renderer: the release-hook Job's activeDeadlineSeconds, and the release Kustomization's spec.timeout",
 		"$.spec.components[].env.*":                     "renderer: container env (literal form)",
 		"$.spec.components[].env.*.from.service":        "renderer: secretKeyRef name — the credentials Secret of the bound data component",
 		"$.spec.components[].env.*.from.key":            "renderer: secretKeyRef key, mapped onto the operator's own key names",
@@ -289,12 +291,6 @@ spec:
     - {name: web, port: 8080}
   defaults:
     policy: {agents: allow, deployers: [platform-team]}`,
-
-	KindProject + " $.spec.components[].release": `
-spec:
-  image: i:1
-  components:
-    - {name: web, port: 8080, release: {command: ["./manage.py", "migrate"]}}`,
 
 	KindEnvironment + " $.spec.cluster": `
 spec:
