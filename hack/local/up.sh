@@ -105,6 +105,23 @@ for node in $("$KIND" get nodes --name "$CLUSTER_NAME"); do
 EOF
 done
 
+# A stored Project renders nothing until the controller reconciles it, and the
+# controller delivers through Flux (the spine: render → OCI artifact →
+# OCIRepository + Kustomization). Without this stage a project created in the
+# UI stores its custom resources and then nothing happens — which is exactly
+# how the gap was found. Flux comes BEFORE the chart install below because the
+# controller detects it once, at start-up; the rollout restart after the chart
+# is what makes re-runs converge either way.
+log "== flux (kelson install flux) =="
+(cd "$E2E_ROOT" && "$GO" build -o "$KELSON" ./cmd/kelson)
+# Already-installed is a refusal, not an error — safe to re-run.
+"$KELSON" install flux --yes --kubeconfig "$KUBECONFIG_FILE"
+kubectl -n flux-system rollout status deploy/flux-operator --timeout=300s
+kubectl -n flux-system wait --for=condition=Ready fluxinstance/flux --timeout=600s
+for component in source-controller kustomize-controller; do
+	kubectl -n flux-system rollout status "deploy/${component}" --timeout=300s
+done
+
 log "== build the dev image (web UI + kelson-server) =="
 (cd "$E2E_ROOT" && make ui)
 VERSION="$(git -C "$E2E_ROOT" describe --tags --always --dirty 2>/dev/null || echo 0.0.0-dev)"
@@ -117,6 +134,16 @@ trap 'rm -rf "$CTX"' EXIT
 cp "$E2E_ROOT/Dockerfile" "$CTX/"
 docker build -q -t "$IMAGE" "$CTX" >/dev/null
 "$KIND" load docker-image "$IMAGE" --name "$CLUSTER_NAME"
+
+log "== build the controller image =="
+CONTROLLER_CTX="$(mktemp -d)"
+trap 'rm -rf "$CTX" "$CONTROLLER_CTX"' EXIT
+(cd "$E2E_ROOT" && CGO_ENABLED=0 GOOS=linux GOARCH="$("$GO" env GOARCH)" "$GO" build \
+	-ldflags "-s -w -X github.com/dafrie/kelson/internal/version.Version=${VERSION} -X github.com/dafrie/kelson/internal/version.Commit=${COMMIT}" \
+	-o "$CONTROLLER_CTX/kelson-controller" ./cmd/kelson-controller)
+cp "$E2E_ROOT/Dockerfile.controller" "$CONTROLLER_CTX/Dockerfile"
+docker build -q -t "kelson-controller:dev" "$CONTROLLER_CTX" >/dev/null
+"$KIND" load docker-image "kelson-controller:dev" --name "$CLUSTER_NAME"
 
 log "== install kelson =="
 if ! kubectl -n "$NAMESPACE" get secret kelson-auth >/dev/null 2>&1; then
@@ -141,13 +168,21 @@ helm upgrade --install kelson "$E2E_ROOT/deploy/chart/kelson" \
 	--set server.registry="${REGISTRY_HOST}/kelson" \
 	--set "server.insecureRegistries={${REGISTRY_HOST}}" \
 	--set rbac.createDeployClusterRole=true \
+	--set controller.enabled=true \
+	--set controller.image.repository=kelson-controller \
+	--set controller.registry="${REGISTRY_HOST}" \
+	--set "controller.insecureRegistries={${REGISTRY_HOST}}" \
+	--set controller.reconcileInterval=1m \
 	>/dev/null
 
 # The tag is always 'dev', so a Deployment that already ran keeps its old
-# image without this nudge.
+# image without this nudge. The controller restart also guarantees its
+# one-shot start-up detection runs after the Flux stage above.
 kubectl -n "$NAMESPACE" rollout restart deploy/kelson >/dev/null
+kubectl -n "$NAMESPACE" rollout restart deploy/kelson-controller >/dev/null
 kubectl -n "$NAMESPACE" rollout status deploy/kelson-registry --timeout=120s
 kubectl -n "$NAMESPACE" rollout status deploy/kelson --timeout=180s
+kubectl -n "$NAMESPACE" rollout status deploy/kelson-controller --timeout=180s
 
 PASSWORD="$(kubectl -n "$NAMESPACE" get secret kelson-auth -o jsonpath='{.data.password}' | base64 -d)"
 log "kelson is running"
