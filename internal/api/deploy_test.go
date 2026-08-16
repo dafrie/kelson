@@ -1430,12 +1430,18 @@ func TestStatusReportsVerdicts(t *testing.T) {
 		t.Errorf("phase/revision = %q/%q, want them read from Environment.status",
 			res.Msg.GetPhase(), res.Msg.GetRevision())
 	}
+	if got := res.Msg.GetAnswer(); got != string(statemachine.AnswerLive) {
+		t.Errorf("answer = %q, want the engine's own classification %s", got, statemachine.AnswerLive)
+	}
 	verdicts := res.Msg.GetVerdicts()
 	if len(verdicts) != 1 || verdicts[0].GetCode() != string(observation.CodeCrashLoopBackOff) {
 		t.Fatalf("verdicts = %+v, want the crash-loop verdict", verdicts)
 	}
 	if !verdicts[0].GetDegraded() {
 		t.Errorf("verdict = %+v, want degraded", verdicts[0])
+	}
+	if verdicts[0].GetStuck() {
+		t.Errorf("a crash loop is a failure and not a wait: %+v", verdicts[0])
 	}
 	// The namespace the target resolved to, so a client addressing this
 	// environment's workloads reads it rather than reconstructing it (#161).
@@ -1504,5 +1510,163 @@ func TestStatusVerdictsWithoutASyncEvaluator(t *testing.T) {
 	}
 	if len(verdicts) != 1 || verdicts[0].GetResource() != "Deployment/hello-development/web" {
 		t.Fatalf("verdicts = %+v, want the Deployment alone", verdicts)
+	}
+}
+
+// statusSet is the one rendered Deployment the verdict projection tests
+// evaluate against.
+func statusSet() delivery.ManifestSet {
+	return delivery.ManifestSet{Manifests: []delivery.Manifest{
+		{Kind: "Deployment", Name: "web", Namespace: "hello-development"},
+	}}
+}
+
+// TestStatusVerdictCarriesStuck is the wire half of issue #53's split, in the
+// direction that used to be lost: observation says a workload gave up waiting,
+// and the wire says so too.
+//
+// Stuck in, stuck out. And it must not arrive as either of the two answers it
+// used to be collapsed into: not degraded, because the code is a wait code and
+// nothing has failed, and not healthy.
+func TestStatusVerdictCarriesStuck(t *testing.T) {
+	health := fakeEvaluator{"web": {
+		Healthy:     false,
+		Stuck:       true,
+		Code:        observation.CodeProgressing,
+		Resource:    "Deployment/hello-development/web",
+		Reason:      "0 of 1 replicas updated",
+		Remediation: "check the rollout",
+	}}
+	verdicts, err := workloadVerdicts(context.Background(), &Plane{Health: health}, statusSet(), "hello-development")
+	if err != nil {
+		t.Fatalf("workloadVerdicts: %v", err)
+	}
+	if len(verdicts) != 1 {
+		t.Fatalf("verdicts = %+v, want the Deployment's", verdicts)
+	}
+	v := verdicts[0]
+	if !v.GetStuck() {
+		t.Errorf("verdict = %+v, want stuck: the probe gave up waiting and the wire has a field for it now", v)
+	}
+	if v.GetDegraded() {
+		t.Errorf("verdict = %+v: stuck is not a failure — degraded excludes it on purpose", v)
+	}
+	if v.GetHealthy() {
+		t.Errorf("verdict = %+v, want unhealthy", v)
+	}
+}
+
+// TestStatusVerdictProgressingIsNotStuck is the other direction, and it is the
+// one the field exists for: a rollout still in flight has all three flags
+// false. Before `stuck` existed this shape and the one above were identical on
+// the wire, so every client had to call both "deploying".
+func TestStatusVerdictProgressingIsNotStuck(t *testing.T) {
+	health := fakeEvaluator{"web": {
+		Healthy:  false,
+		Code:     observation.CodeProgressing,
+		Resource: "Deployment/hello-development/web",
+		Reason:   "1 of 2 replicas updated",
+	}}
+	verdicts, err := workloadVerdicts(context.Background(), &Plane{Health: health}, statusSet(), "hello-development")
+	if err != nil {
+		t.Fatalf("workloadVerdicts: %v", err)
+	}
+	if len(verdicts) != 1 {
+		t.Fatalf("verdicts = %+v, want the Deployment's", verdicts)
+	}
+	v := verdicts[0]
+	if v.GetStuck() || v.GetDegraded() || v.GetHealthy() {
+		t.Errorf("verdict = %+v, want all three false: a rollout in flight is none of them", v)
+	}
+}
+
+// TestStatusVerdictHealthyIsNeitherStuckNorDegraded pins the fourth cell of the
+// same table, so a future edit cannot make `stuck` a synonym for "not healthy".
+func TestStatusVerdictHealthyIsNeitherStuckNorDegraded(t *testing.T) {
+	verdicts, err := workloadVerdicts(context.Background(), &Plane{Health: fakeEvaluator{}}, statusSet(), "hello-development")
+	if err != nil {
+		t.Fatalf("workloadVerdicts: %v", err)
+	}
+	if len(verdicts) != 1 {
+		t.Fatalf("verdicts = %+v, want the Deployment's", verdicts)
+	}
+	v := verdicts[0]
+	if !v.GetHealthy() || v.GetStuck() || v.GetDegraded() {
+		t.Errorf("verdict = %+v, want healthy alone", v)
+	}
+}
+
+// TestStatusWithoutADeliveryHalfReportsNoAnswer: an empty answer is a value a
+// client can branch on and a guessed `waiting` is not, which is the same rule
+// the empty phase beside it has always followed (issue #53).
+func TestStatusWithoutADeliveryHalfReportsNoAnswer(t *testing.T) {
+	connector, _ := connectorFor(nil)
+	c := serve(t, Options{Delivery: connector})
+
+	res, err := c.deploy.Status(context.Background(), connect.NewRequest(&kelsonv1alpha1.StatusRequest{
+		Spec:        inlineSpec(projectDoc, map[string]string{"development": developmentDoc}),
+		Environment: "development",
+		Profile:     profileRef(),
+	}))
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if res.Msg.GetAnswer() != "" || res.Msg.GetPhase() != "" {
+		t.Errorf("answer/phase = %q/%q, want both empty with the reason in cause",
+			res.Msg.GetAnswer(), res.Msg.GetPhase())
+	}
+	if !strings.Contains(res.Msg.GetCause(), "delivery phase is not reported") {
+		t.Errorf("cause = %q, want it to name the missing seam", res.Msg.GetCause())
+	}
+}
+
+// TestStatusOfAnEnvironmentThatHasDeliveredNothing: the phase is empty because
+// nothing has been delivered, and State.Answer would classify that empty phase
+// as `waiting` — a claim about a revision in flight that nobody made.
+func TestStatusOfAnEnvironmentThatHasDeliveredNothing(t *testing.T) {
+	connector, _ := connectorFor(nil)
+	c := serve(t, Options{Delivery: connector, Environments: newFakeEnvironments(controlstore.EnvironmentState{
+		Project: "hello", Environment: "development", Generation: 1,
+	})})
+
+	res, err := c.deploy.Status(context.Background(), connect.NewRequest(&kelsonv1alpha1.StatusRequest{
+		Spec:        inlineSpec(projectDoc, map[string]string{"development": developmentDoc}),
+		Environment: "development",
+		Profile:     profileRef(),
+	}))
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if res.Msg.GetAnswer() != "" {
+		t.Errorf("answer = %q, want empty: an environment that delivered nothing is not waiting on anything",
+			res.Msg.GetAnswer())
+	}
+}
+
+// TestStatusAnswerMatchesTheStreamsForTheSameStatus is the 1:1 rule stated as a
+// test: a poller and a watcher looking at one `Environment.status` must read
+// one verdict. Two projections of the same state that could disagree is exactly
+// what deriving the answer client-side reintroduces.
+func TestStatusAnswerMatchesTheStreamsForTheSameStatus(t *testing.T) {
+	var states []controlstore.EnvironmentState
+	for _, phase := range []delivery.Phase{
+		delivery.PhaseHealthy, delivery.PhaseDegraded, delivery.PhaseReconciling,
+		delivery.PhaseCommitted, delivery.PhaseRejected,
+	} {
+		st := healthyEnvironment("hello", "development", "3-9f0a1b2c")
+		st.Phase = string(phase)
+		states = append(states, st)
+	}
+
+	for _, st := range states {
+		t.Run(st.Phase, func(t *testing.T) {
+			state := deliveryState(st, false)
+			res := &kelsonv1alpha1.StatusResponse{}
+			(&Server{environments: newFakeEnvironments(st)}).reportDelivery(context.Background(), res,
+				Target{Project: st.Project, Environment: st.Environment})
+			if got, want := res.GetAnswer(), wireTransition(state).GetAnswer(); got != want {
+				t.Errorf("Status answer = %q, stream answer = %q: one status, one verdict", got, want)
+			}
+		})
 	}
 }

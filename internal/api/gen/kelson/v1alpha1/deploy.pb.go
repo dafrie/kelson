@@ -384,7 +384,29 @@ type StatusResponse struct {
 	// environment's workloads — the UI's log selector — had to guess it from the
 	// model's `<project>-<environment>` default and get a spec.namespace override
 	// wrong (#161).
-	Namespace     string `protobuf:"bytes,6,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	Namespace string `protobuf:"bytes,6,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	// Answer is statemachine.State.Answer for this environment:
+	// waiting|progressing|live|stuck|rejected|degraded, the same vocabulary
+	// `DeployResponse.Transition.answer` carries. The engine owns what a state
+	// means (issue #37), and this field is what lets a client that polls read
+	// the same verdict as one that watches.
+	//
+	// It is reported rather than left to be derived from `phase`, because the
+	// phase cannot express all six: `stuck` is not a phase — a deployment that
+	// gave up waiting is wedged in whatever phase it reached, and Committed is
+	// the diagnosis rather than the answer — so a client deriving from the phase
+	// alone must call it `waiting` and say nothing is wrong. Re-deriving it
+	// client-side is also a second opinion, free to disagree with the CLI's.
+	//
+	// Empty means the delivery half is not reported at all and `cause` says why.
+	// It never means "fine".
+	//
+	// One limit, so a client does not read more into the absence than is there:
+	// `stuck` is a timeout verdict and only a watcher holds a budget that can
+	// expire, so today it reaches a client through `Transition.answer` on a
+	// Deploy stream and not through a Status poll. A poll that never says stuck
+	// has not ruled it out.
+	Answer        string `protobuf:"bytes,7,opt,name=answer,proto3" json:"answer,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -461,16 +483,35 @@ func (x *StatusResponse) GetNamespace() string {
 	return ""
 }
 
+func (x *StatusResponse) GetAnswer() string {
+	if x != nil {
+		return x.Answer
+	}
+	return ""
+}
+
 // WorkloadVerdict mirrors observation's classification (the same predicate
 // the CLI's summary uses, #151).
 type WorkloadVerdict struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Resource      string                 `protobuf:"bytes,1,opt,name=resource,proto3" json:"resource,omitempty"` // "Deployment/ns/name"
-	Code          string                 `protobuf:"bytes,2,opt,name=code,proto3" json:"code,omitempty"`         // observation health code, e.g. "crash-loop-back-off"
-	Healthy       bool                   `protobuf:"varint,3,opt,name=healthy,proto3" json:"healthy,omitempty"`
-	Degraded      bool                   `protobuf:"varint,4,opt,name=degraded,proto3" json:"degraded,omitempty"`
-	Message       string                 `protobuf:"bytes,5,opt,name=message,proto3" json:"message,omitempty"`
-	Remediation   string                 `protobuf:"bytes,6,opt,name=remediation,proto3" json:"remediation,omitempty"`
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Resource    string                 `protobuf:"bytes,1,opt,name=resource,proto3" json:"resource,omitempty"` // "Deployment/ns/name"
+	Code        string                 `protobuf:"bytes,2,opt,name=code,proto3" json:"code,omitempty"`         // observation health code, e.g. "crash-loop-back-off"
+	Healthy     bool                   `protobuf:"varint,3,opt,name=healthy,proto3" json:"healthy,omitempty"`
+	Degraded    bool                   `protobuf:"varint,4,opt,name=degraded,proto3" json:"degraded,omitempty"`
+	Message     string                 `protobuf:"bytes,5,opt,name=message,proto3" json:"message,omitempty"`
+	Remediation string                 `protobuf:"bytes,6,opt,name=remediation,proto3" json:"remediation,omitempty"`
+	// Stuck means the probe gave up waiting on this workload: it made no
+	// progress before its budget expired and it was not failing
+	// (internal/observation's Tracker). It is deliberately NOT a failure —
+	// `code` stays a wait code such as `workload/progressing` — which is why
+	// `degraded` excludes it rather than covering it.
+	//
+	// What a consumer may conclude: the four states are healthy, stuck, degraded
+	// and none-of-them, in that order of precedence, and they are exclusive. A
+	// verdict with all three false is a rollout still in flight; before this
+	// field existed that was indistinguishable from one that had given up, and
+	// both had to be called "deploying".
+	Stuck         bool `protobuf:"varint,7,opt,name=stuck,proto3" json:"stuck,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -545,6 +586,13 @@ func (x *WorkloadVerdict) GetRemediation() string {
 		return x.Remediation
 	}
 	return ""
+}
+
+func (x *WorkloadVerdict) GetStuck() bool {
+	if x != nil {
+		return x.Stuck
+	}
+	return false
 }
 
 type RollbackRequest struct {
@@ -1956,24 +2004,26 @@ const file_kelson_v1alpha1_deploy_proto_rawDesc = "" +
 	"\venvironment\x18\x02 \x01(\tR\venvironment\x125\n" +
 	"\aprofile\x18\x03 \x01(\v2\x1b.kelson.v1alpha1.ProfileRefR\aprofile\x12\x14\n" +
 	"\x05image\x18\x04 \x01(\tR\x05image\x12\x12\n" +
-	"\x04mode\x18\x05 \x01(\tR\x04mode\"\xb4\x02\n" +
+	"\x04mode\x18\x05 \x01(\tR\x04mode\"\xcc\x02\n" +
 	"\x0eStatusResponse\x12\x14\n" +
 	"\x05phase\x18\x01 \x01(\tR\x05phase\x12\x1a\n" +
 	"\brevision\x18\x02 \x01(\tR\brevision\x12\x14\n" +
 	"\x05cause\x18\x03 \x01(\tR\x05cause\x12C\n" +
 	"\x06detail\x18\x04 \x03(\v2+.kelson.v1alpha1.StatusResponse.DetailEntryR\x06detail\x12<\n" +
 	"\bverdicts\x18\x05 \x03(\v2 .kelson.v1alpha1.WorkloadVerdictR\bverdicts\x12\x1c\n" +
-	"\tnamespace\x18\x06 \x01(\tR\tnamespace\x1a9\n" +
+	"\tnamespace\x18\x06 \x01(\tR\tnamespace\x12\x16\n" +
+	"\x06answer\x18\a \x01(\tR\x06answer\x1a9\n" +
 	"\vDetailEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb3\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xc9\x01\n" +
 	"\x0fWorkloadVerdict\x12\x1a\n" +
 	"\bresource\x18\x01 \x01(\tR\bresource\x12\x12\n" +
 	"\x04code\x18\x02 \x01(\tR\x04code\x12\x18\n" +
 	"\ahealthy\x18\x03 \x01(\bR\ahealthy\x12\x1a\n" +
 	"\bdegraded\x18\x04 \x01(\bR\bdegraded\x12\x18\n" +
 	"\amessage\x18\x05 \x01(\tR\amessage\x12 \n" +
-	"\vremediation\x18\x06 \x01(\tR\vremediation\"\xa8\x02\n" +
+	"\vremediation\x18\x06 \x01(\tR\vremediation\x12\x14\n" +
+	"\x05stuck\x18\a \x01(\bR\x05stuck\"\xa8\x02\n" +
 	"\x0fRollbackRequest\x12,\n" +
 	"\x04spec\x18\x01 \x01(\v2\x18.kelson.v1alpha1.SpecRefR\x04spec\x12 \n" +
 	"\venvironment\x18\x02 \x01(\tR\venvironment\x125\n" +

@@ -533,6 +533,23 @@ func (s *Server) Status(ctx context.Context, req *connect.Request[kelsonv1alpha1
 // answer the other half would be the wrong trade — so a missing seam, an
 // environment that was never stored and a status that has not caught up are all
 // reported in `cause` with the phase left empty.
+//
+// # The answer is projected, not left to be derived
+//
+// `answer` is [statemachine.State.Answer] on the state this rebuilds, for the
+// reason environment.go's header gives: the engine owns what a state means, and
+// a client re-deriving one from `phase` is a second opinion free to disagree
+// with the CLI's. It is also the only slot on this message a `stuck` verdict
+// could ever arrive in — stuck is not a phase, it is a verdict about a phase —
+// and having no such slot is what made the wire drop it here.
+//
+// What that slot cannot carry yet, said plainly rather than left to be
+// discovered: stuck is a *timeout* verdict, the controller records none (there
+// is no Reason* constant for it in api/kelson/v1alpha1) and a Status is a
+// snapshot with no budget of its own to expire, so no status read through this
+// function classifies as stuck today. Deploy's stream does have a budget, which
+// is why the same projection reports stuck there ([Server.settle]). Nothing
+// here invents one to make the field look livelier than the data.
 func (s *Server) reportDelivery(ctx context.Context, res *kelsonv1alpha1.StatusResponse, t Target) {
 	if s.environments == nil {
 		res.Cause = "the delivery phase is not reported: this server was started without the Environment " +
@@ -547,6 +564,13 @@ func (s *Server) reportDelivery(ctx context.Context, res *kelsonv1alpha1.StatusR
 	res.Phase, res.Revision = st.Phase, st.Revision
 	state := deliveryState(st, false)
 	res.Cause = state.Cause.String()
+	if st.Phase != "" {
+		// An environment that has delivered nothing carries no phase, and
+		// State.Answer would classify the empty phase as `waiting` — which is a
+		// real answer about a revision in flight and would be a claim nobody
+		// made. An empty answer is the honest one, and the wire says so.
+		res.Answer = string(state.Answer())
+	}
 	if !st.Current() {
 		// The status describes an older generation than the spec. Saying so is
 		// the whole point of observedGeneration: the phase below is real, and
@@ -576,9 +600,18 @@ func workloadVerdicts(ctx context.Context, plane *Plane, set delivery.ManifestSe
 	out := make([]*kelsonv1alpha1.WorkloadVerdict, 0, len(verdicts))
 	for _, verdict := range verdicts {
 		out = append(out, &kelsonv1alpha1.WorkloadVerdict{
-			Resource:    verdict.Resource,
-			Code:        string(verdict.Code),
-			Healthy:     verdict.Healthy,
+			Resource: verdict.Resource,
+			Code:     string(verdict.Code),
+			Healthy:  verdict.Healthy,
+			// Stuck is carried rather than folded into degraded, which is what
+			// the `!verdict.Stuck` term below has always been for: observation
+			// keeps "gave up waiting" and "broken" apart on purpose (issue #53,
+			// observation.Verdict.Stuck), and until this field existed the wire
+			// re-conflated them by having nowhere to put the first. A stuck
+			// verdict arrived as neither healthy nor degraded, which is the same
+			// shape a rollout still in flight has, so every client had to call
+			// both "deploying".
+			Stuck:       verdict.Stuck,
 			Degraded:    !verdict.Healthy && !verdict.Stuck && observation.IsFailure(verdict.Code),
 			Message:     verdict.String(),
 			Remediation: verdict.Remediation,
