@@ -54,6 +54,7 @@ type fakeServer struct {
 	watch     func(*kelsonv1alpha1.WatchRequest, *connect.ServerStream[kelsonv1alpha1.WatchResponse]) error
 
 	setSecret   func(*kelsonv1alpha1.SetSecretRequest) (*kelsonv1alpha1.SetSecretResponse, error)
+	unsetSecret func(*kelsonv1alpha1.UnsetSecretRequest) (*kelsonv1alpha1.UnsetSecretResponse, error)
 	listSecrets func(*kelsonv1alpha1.ListSecretsRequest) (*kelsonv1alpha1.ListSecretsResponse, error)
 
 	getProfile func(*kelsonv1alpha1.GetProfileRequest) (*kelsonv1alpha1.GetProfileResponse, error)
@@ -189,6 +190,14 @@ func (f *fakeServer) SetSecret(_ context.Context, req *connect.Request[kelsonv1a
 		return nil, notWired("SetSecret")
 	}
 	msg, err := f.setSecret(req.Msg)
+	return respond(msg, err)
+}
+
+func (f *fakeServer) UnsetSecret(_ context.Context, req *connect.Request[kelsonv1alpha1.UnsetSecretRequest]) (*connect.Response[kelsonv1alpha1.UnsetSecretResponse], error) {
+	if f.unsetSecret == nil {
+		return nil, notWired("UnsetSecret")
+	}
+	msg, err := f.unsetSecret(req.Msg)
 	return respond(msg, err)
 }
 

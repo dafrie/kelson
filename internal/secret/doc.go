@@ -4,16 +4,24 @@
 //
 // [Store] is the `cluster` backend (issue #116, ADR-0018): a value written
 // through the Kubernetes API into the environment's namespace, read back
-// masked, never persisted by kelson. [SOPSStore] is the `sops` backend (issue
-// #81, [ADR-0022]): the same value encrypted in memory with age recipients and
-// committed to the delivery repository, decrypted in-cluster by Flux. The two
-// have the same three methods so `kelson secret` selects a backend rather than
-// a code path, and everything the rest of this doc says about redaction,
-// masking and what kelson does not keep holds for both. Where they differ is
-// [SOPSStore]'s own comment, and it differs in exactly one way: `set` writes
-// the whole Secret there, because merging would need a key kelson never holds.
-// The `externalSecrets` backend has no authoring path here at all — under it
-// no process on kelson's side ever holds a value (ADR-0020).
+// masked, never persisted by kelson. It is the only store in this package, and
+// the other two backends are refusals rather than code paths:
+//
+//   - `sops` (issue #81, [ADR-0022]) had a second store here that encrypted the
+//     value in memory to the environment's age recipients and committed it to
+//     the delivery repository. It went with the git writer ([ADR-0028]), and
+//     what replaces it — the encrypted Secrets shipping inside the published
+//     artifact — is decided and not built (issue #224). Until it is, every
+//     surface refuses a sops environment by name rather than writing the value
+//     somewhere the delivery spine would fight over it (issue #269).
+//   - `externalSecrets` has no authoring path here and never will: under it no
+//     process on kelson's side ever holds a value (ADR-0020). [ExternalBackend]
+//     is the refusal, and it names the store the value does belong in.
+//
+// Reading the backend is the caller's half of that: `kelson secret` reads it
+// off the spec `-f` names (cmd/kelson/secret.go) and kelson-server reads it off
+// the stored spec (internal/api/secret.go), because the effective backend is a
+// resolved, per-environment fact and not something a request may assert.
 //
 // [ADR-0018] decided the reading half. An environment value that is a mapping
 // is a reference — `{secret: <name>, key: <key>}` — and the renderer turns it
@@ -63,9 +71,13 @@
 // `{token}` would prune `token` — two commands, one silently lost credential.
 // So the apply configuration is the union of the keys being written and the
 // keys the live Secret already has, and `kelson secret set` reads as "set these
-// keys" rather than "this is now the whole Secret". Removing a key is deleting
-// the Secret and writing it again; a narrower `unset` is #116's remaining
-// scope.
+// keys" rather than "this is now the whole Secret".
+//
+// [Store.Unset] is the other half of that sentence (issue #269): the only way
+// to say "this key should not exist", named explicitly, one key at a time. It
+// refuses a key the Secret does not hold, and it leaves an empty Secret rather
+// than deleting one — its own comment argues both, and the second is what keeps
+// "remove a key" from becoming a way to remove an object.
 //
 // Carrying the untouched keys through means Set briefly holds values it was not
 // given. They are registered with [redact.Register] on the way past, exactly
@@ -84,4 +96,5 @@
 //
 // [ADR-0018]: https://github.com/dafrie/kelson/blob/main/docs/adr/0018-secret-references.md
 // [ADR-0022]: https://github.com/dafrie/kelson/blob/main/docs/adr/0022-sops-age.md
+// [ADR-0028]: https://github.com/dafrie/kelson/blob/main/docs/adr/0028-delivery-spine.md
 package secret

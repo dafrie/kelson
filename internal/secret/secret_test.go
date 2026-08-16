@@ -333,6 +333,280 @@ func TestDeleteRemovesAManagedSecret(t *testing.T) {
 	}
 }
 
+// The unset half of the merge (issue #269). Set never prunes, so these tests
+// are the only place "this key should not exist" is expressible — and the
+// properties that make handing that to the same surfaces safe are: a named key
+// must be there, a refusal removes nothing at all, and the object survives its
+// last key.
+
+// mustUnset runs an Unset that is expected to succeed.
+func mustUnset(t *testing.T, store *secret.Store, req secret.UnsetRequest) secret.Secret {
+	t.Helper()
+	got, err := store.Unset(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Unset: %v", err)
+	}
+	return got
+}
+
+// TestUnsetRemovesOnlyTheNamedKeys: the complement of the merge. What it does
+// not name it does not touch, which is the same promise `set` makes about the
+// keys it does not write.
+func TestUnsetRemovesOnlyTheNamedKeys(t *testing.T) {
+	cli := fake.NewClientset()
+	store := secret.New(cli)
+	mustSet(t, store, secret.SetRequest{Target: target(), Name: "payments",
+		Values: map[string]string{
+			"api-key":        "sk-live-unset-1111",
+			"webhook-secret": "whsec-unset-2222",
+			"url":            "https://api.example/v1",
+		}})
+
+	got := mustUnset(t, store, secret.UnsetRequest{Target: target(), Name: "payments",
+		Keys: []string{"webhook-secret"}})
+
+	if !reflect.DeepEqual(got.Keys, []string{"api-key", "url"}) {
+		t.Fatalf("keys = %v, want the two that were not named", got.Keys)
+	}
+	live := liveSecret(t, cli, derivedNamespace, "payments")
+	if _, still := live.Data["webhook-secret"]; still {
+		t.Error("the named key survived the unset")
+	}
+	if string(live.Data["api-key"]) != "sk-live-unset-1111" {
+		t.Errorf("an untouched key lost its value: %q", live.Data["api-key"])
+	}
+	if live.Labels[secret.LabelManaged] != "true" {
+		t.Error("the unset dropped kelson's provenance labels")
+	}
+}
+
+// TestUnsetLeavesAnEmptySecretRatherThanDeletingIt is the decision #269 left to
+// the implementation, asserted so a later change to it is a deliberate one:
+// removing keys never removes an object. `kelson secret delete` is the verb
+// that does, with an ownership check and a confirmation in front of it.
+func TestUnsetLeavesAnEmptySecretRatherThanDeletingIt(t *testing.T) {
+	cli := fake.NewClientset()
+	store := secret.New(cli)
+	mustSet(t, store, secret.SetRequest{Target: target(), Name: "checkout-db",
+		Values: map[string]string{"url": "postgres://last-key-0001"}})
+
+	got := mustUnset(t, store, secret.UnsetRequest{Target: target(), Name: "checkout-db",
+		Keys: []string{"url"}})
+	if len(got.Keys) != 0 {
+		t.Fatalf("keys = %v, want none left", got.Keys)
+	}
+
+	live := liveSecret(t, cli, derivedNamespace, "checkout-db")
+	if len(live.Data) != 0 {
+		t.Errorf("data = %v, want it emptied", live.Data)
+	}
+	if live.Labels[secret.LabelManaged] != "true" {
+		t.Error("the emptied Secret is no longer kelson's, so nothing can list or delete it")
+	}
+	// And it is still listed: an empty managed Secret is state a user has to be
+	// able to see in order to clean it up.
+	listed, err := store.List(context.Background(), target())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(listed) != 1 || listed[0].Name != "checkout-db" || len(listed[0].Keys) != 0 {
+		t.Errorf("listing = %+v, want the emptied Secret with no keys", listed)
+	}
+	// Refilling it is an ordinary merge, which is what makes the empty object a
+	// recoverable state rather than a stuck one.
+	refilled := mustSet(t, store, secret.SetRequest{Target: target(), Name: "checkout-db",
+		Values: map[string]string{"url": "postgres://refilled-0002"}})
+	if !reflect.DeepEqual(refilled.Keys, []string{"url"}) {
+		t.Errorf("keys after refill = %v, want [url]", refilled.Keys)
+	}
+}
+
+// TestUnsetRefusesAKeyThatIsNotThere: the safety property. Nothing here reports
+// values, so a caller has no other signal that a mistyped key removed nothing
+// while they believed a credential was gone.
+func TestUnsetRefusesAKeyThatIsNotThere(t *testing.T) {
+	cli := fake.NewClientset()
+	store := secret.New(cli)
+	mustSet(t, store, secret.SetRequest{Target: target(), Name: "payments",
+		Values: map[string]string{"api-key": "sk-live-typo-1111", "url": "https://api.example/v1"}})
+
+	_, err := store.Unset(context.Background(), secret.UnsetRequest{
+		Target: target(), Name: "payments", Keys: []string{"api-key", "pasword"}})
+	if got := codeOf(t, err); got != secret.ErrKeyNotFound {
+		t.Fatalf("code = %q, want %q (%v)", got, secret.ErrKeyNotFound, err)
+	}
+	var se secret.Error
+	_ = errors.As(err, &se)
+	if !strings.Contains(se.Message, "pasword") {
+		t.Errorf("the refusal should name the missing key, got %q", se.Message)
+	}
+	if !strings.Contains(se.Remediation, "api-key") || !strings.Contains(se.Remediation, "url") {
+		t.Errorf("the refusal should list what the Secret does hold, got %q", se.Remediation)
+	}
+	// All-or-nothing: the key that *was* there is still there.
+	live := liveSecret(t, cli, derivedNamespace, "payments")
+	if _, ok := live.Data["api-key"]; !ok {
+		t.Error("a refused unset removed the keys it could, leaving the caller to work out which half happened")
+	}
+}
+
+// TestUnsetRefusesAnUnlabelledSecret: exactly as set and delete do. A key
+// removal is a write, and kelson writes only what it manages.
+func TestUnsetRefusesAnUnlabelledSecret(t *testing.T) {
+	cli := fake.NewClientset(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "cert-manager-tls", Namespace: derivedNamespace},
+		Data:       map[string][]byte{"tls.key": []byte("private"), "tls.crt": []byte("public")},
+	})
+	_, err := secret.New(cli).Unset(context.Background(), secret.UnsetRequest{
+		Target: target(), Name: "cert-manager-tls", Keys: []string{"tls.key"}})
+	if got := codeOf(t, err); got != secret.ErrNotManaged {
+		t.Fatalf("code = %q, want %q (%v)", got, secret.ErrNotManaged, err)
+	}
+	live := liveSecret(t, cli, derivedNamespace, "cert-manager-tls")
+	if _, ok := live.Data["tls.key"]; !ok {
+		t.Error("the refused unset removed the key anyway")
+	}
+}
+
+// TestUnsetOfAMissingSecretIsNotFound, and it is `secret/not-found` rather than
+// a key refusal: the caller is wrong about the object, not about its contents.
+func TestUnsetOfAMissingSecretIsNotFound(t *testing.T) {
+	_, err := secret.New(fake.NewClientset()).Unset(context.Background(), secret.UnsetRequest{
+		Target: target(), Name: "checkout-db", Keys: []string{"url"}})
+	if got := codeOf(t, err); got != secret.ErrNotFound {
+		t.Errorf("code = %q, want %q (%v)", got, secret.ErrNotFound, err)
+	}
+}
+
+// TestUnsetRegistersTheValuesItReads is the redaction contract on this path
+// (#117). Unset holds the whole Secret in order to write the remainder back, so
+// every value in it is a value kelson holds — including the one it is removing.
+func TestUnsetRegistersTheValuesItReads(t *testing.T) {
+	const (
+		kept    = "kept-value-SENTINEL-4d17"
+		removed = "removed-value-SENTINEL-77af"
+	)
+	cli := fake.NewClientset(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "sentinels", Namespace: derivedNamespace,
+			Labels: map[string]string{secret.LabelManaged: "true"},
+		},
+		Data: map[string][]byte{"kept": []byte(kept), "removed": []byte(removed)},
+	})
+	mustUnset(t, secret.New(cli), secret.UnsetRequest{
+		Target: target(), Name: "sentinels", Keys: []string{"removed"}})
+
+	for _, value := range []string{kept, removed} {
+		line := "the API server said: " + value
+		if got := redact.Scrub(line); strings.Contains(got, value) {
+			t.Errorf("%q was not registered for redaction: Scrub returned %q", value, got)
+		}
+	}
+}
+
+// TestUnsetWritesWithTheResourceVersionItRead: the compare-and-swap that makes
+// a read-modify-write safe. Without it a removal computed against a stale copy
+// would restore a key somebody else had just removed.
+func TestUnsetWritesWithTheResourceVersionItRead(t *testing.T) {
+	cli := fake.NewClientset(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "checkout-db", Namespace: derivedNamespace, ResourceVersion: "4711",
+			Labels: map[string]string{secret.LabelManaged: "true"},
+		},
+		Data: map[string][]byte{"url": []byte("postgres://cas-0001"), "token": []byte("t-0002")},
+	})
+	var seen string
+	var dryRun []string
+	cli.PrependReactor("update", "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		update, ok := action.(k8stesting.UpdateActionImpl)
+		if !ok {
+			t.Fatalf("want an UpdateActionImpl, got %T", action)
+		}
+		obj, ok := update.Object.(*corev1.Secret)
+		if !ok {
+			t.Fatalf("want a Secret, got %T", update.Object)
+		}
+		seen = obj.ResourceVersion
+		dryRun = update.UpdateOptions.DryRun
+		return true, obj, nil
+	})
+
+	mustUnset(t, secret.New(cli), secret.UnsetRequest{
+		Target: target(), Name: "checkout-db", Keys: []string{"token"}, DryRun: true})
+
+	if seen != "4711" {
+		t.Errorf("resourceVersion = %q, want the one the read carried", seen)
+	}
+	if !reflect.DeepEqual(dryRun, []string{metav1.DryRunAll}) {
+		t.Errorf("dry-run option = %v, want [All]", dryRun)
+	}
+}
+
+// TestUnsetRefusalsThatNeedNoCluster: the shapes that have no reading, refused
+// before any client call — the same contract the set path holds to.
+func TestUnsetRefusalsThatNeedNoCluster(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		req  secret.UnsetRequest
+		want secret.Code
+	}{
+		{"no project", secret.UnsetRequest{
+			Target: secret.Target{Environment: "production"}, Name: "db", Keys: []string{"url"}},
+			secret.ErrInvalidTarget},
+		{"no name", secret.UnsetRequest{Target: target(), Keys: []string{"url"}}, secret.ErrInvalidName},
+		{"no keys", secret.UnsetRequest{Target: target(), Name: "db"}, secret.ErrNoKeys},
+		{"only empty keys", secret.UnsetRequest{Target: target(), Name: "db", Keys: []string{""}}, secret.ErrNoKeys},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cli := fake.NewClientset()
+			_, err := secret.New(cli).Unset(context.Background(), tc.req)
+			if got := codeOf(t, err); got != tc.want {
+				t.Fatalf("code = %q, want %q (%v)", got, tc.want, err)
+			}
+			if len(cli.Actions()) != 0 {
+				t.Errorf("a refused request still talked to the cluster: %+v", cli.Actions())
+			}
+		})
+	}
+}
+
+// TestUnsetDeduplicatesKeys: a key named twice is one removal. Unlike a set —
+// where a key supplied twice means two values and one is being dropped — there
+// is nothing ambiguous about being told to remove the same key twice.
+func TestUnsetDeduplicatesKeys(t *testing.T) {
+	req := secret.UnsetRequest{Target: target(), Name: "db", Keys: []string{"url", "token", "url", ""}}
+	if got := req.RemovedKeys(); !reflect.DeepEqual(got, []string{"token", "url"}) {
+		t.Errorf("RemovedKeys() = %v, want them sorted and de-duplicated", got)
+	}
+}
+
+// TestExternalBackendRefusalNamesTheStore: the `externalSecrets` refusal is
+// shared by every surface, so it is asserted where it is defined rather than
+// three times over.
+func TestExternalBackendRefusalNamesTheStore(t *testing.T) {
+	err := secret.ExternalBackend(target(), "vault-backend")
+	if got := codeOf(t, err); got != secret.ErrExternalBackend {
+		t.Fatalf("code = %q, want %q", got, secret.ErrExternalBackend)
+	}
+	var se secret.Error
+	_ = errors.As(err, &se)
+	// In the message, not only the remediation: the CLI prints Error(), which
+	// is code and message, and a surface that showed only that would otherwise
+	// say "write it in your secret manager" without saying which one.
+	if !strings.Contains(se.Message, "vault-backend") {
+		t.Errorf("the refusal should name the store the value belongs in, got %q", se.Message)
+	}
+	if se.Resource != "environment/checkout/production" {
+		t.Errorf("resource = %q, want the environment: nothing is wrong with any one Secret", se.Resource)
+	}
+	// Without a named store it still has to say where to write the value.
+	var bare secret.Error
+	_ = errors.As(secret.ExternalBackend(target(), ""), &bare)
+	if !strings.Contains(bare.Message, "SecretStore") {
+		t.Errorf("message = %q, want the resolved SecretStore named in prose", bare.Message)
+	}
+}
+
 // TestDryRunAsksTheAPIServerForOne. The fake's tracker does not honour dry-run
 // — it persists whatever it is handed — so what is asserted is the request
 // kelson makes, which is the only half of a server-side dry run that belongs to

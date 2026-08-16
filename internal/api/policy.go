@@ -159,8 +159,15 @@ var agentOperations = map[string]model.AgentOperation{
 	kelsonv1alpha1connect.BuildServiceReportBuildProcedure:   model.AgentOpDeploy,
 	kelsonv1alpha1connect.SecretServiceSetSecretProcedure:    model.AgentOpSecretSet,
 	kelsonv1alpha1connect.SecretServiceDeleteSecretProcedure: model.AgentOpSecretDelete,
-	kelsonv1alpha1connect.SpecServicePutSpecProcedure:        model.AgentOpSpecWrite,
-	kelsonv1alpha1connect.SpecServiceDeleteSpecProcedure:     model.AgentOpSpecDelete,
+	// UnsetSecret is the third RPC filed under a word another one owns (#269),
+	// and it is the easiest of the three: removing a key and removing the
+	// Secret that holds it are the same act at different granularity, and
+	// `forbid: [secret-delete]` is how an operator says agents may not take
+	// credentials away here. A separate word would be a second thing to
+	// remember to forbid, and forgetting it would be silent.
+	kelsonv1alpha1connect.SecretServiceUnsetSecretProcedure: model.AgentOpSecretDelete,
+	kelsonv1alpha1connect.SpecServicePutSpecProcedure:       model.AgentOpSpecWrite,
+	kelsonv1alpha1connect.SpecServiceDeleteSpecProcedure:    model.AgentOpSpecDelete,
 	// ProposeSpec is the second entry mapping onto a word another RPC already
 	// owns, and the argument runs the opposite way to ReportBuild's (#248,
 	// ADR-0033 decision 3).

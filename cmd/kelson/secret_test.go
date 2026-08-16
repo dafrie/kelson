@@ -30,12 +30,17 @@ const setSentinel = "s3cr3t-VALUE-SENTINEL-4d9a"
 
 type fakeSecretStore struct {
 	sets    []secret.SetRequest
+	unsets  []secret.UnsetRequest
 	lists   []secret.Target
 	deletes []secret.DeleteRequest
 
 	secrets []secret.Secret
 	// keys is the read-back's key list; empty means "whatever the set wrote".
 	keys []string
+	// left is the read-back an Unset returns: the keys the Secret has after the
+	// removal. Empty is the emptied Secret, which is a real answer here rather
+	// than a missing one — the core leaves the object behind.
+	left []string
 	err  error
 }
 
@@ -56,6 +61,18 @@ func (f *fakeSecretStore) Set(_ context.Context, req secret.SetRequest) (secret.
 		return secret.Secret{}, err
 	}
 	return secret.Secret{Name: req.Name, Namespace: namespace, Keys: keys}, nil
+}
+
+func (f *fakeSecretStore) Unset(_ context.Context, req secret.UnsetRequest) (secret.Secret, error) {
+	f.unsets = append(f.unsets, req)
+	if f.err != nil {
+		return secret.Secret{}, f.err
+	}
+	namespace, err := req.Resolve()
+	if err != nil {
+		return secret.Secret{}, err
+	}
+	return secret.Secret{Name: req.Name, Namespace: namespace, Keys: f.left}, nil
 }
 
 func (f *fakeSecretStore) List(_ context.Context, t secret.Target) ([]secret.Secret, error) {
@@ -303,6 +320,103 @@ func TestSecretSetPassesTheNamespaceOverride(t *testing.T) {
 	}
 }
 
+// --- unset --------------------------------------------------------------------
+
+// TestSecretUnsetSendsTheKeysAndPrintsWhatIsLeft: the command's contract. It
+// takes key names rather than values, so the only thing to assert about the
+// output is that it says what went and what remains.
+func TestSecretUnsetSendsTheKeysAndPrintsWhatIsLeft(t *testing.T) {
+	store := &fakeSecretStore{left: []string{"api-key"}}
+	stdout, code, msg := runSecret(t, store,
+		"secret", "unset", "payments", "--project", "checkout", "--env", "production", "webhook", "legacy")
+	if code != exitOK {
+		t.Fatalf("exit = %d (%s)\n%s", code, msg, stdout)
+	}
+	if len(store.unsets) != 1 {
+		t.Fatalf("the store received %d unsets, want 1", len(store.unsets))
+	}
+	got := store.unsets[0]
+	if got.Name != "payments" || got.Project != "checkout" || got.Environment != "production" {
+		t.Errorf("request = %+v, want the addressed Secret", got)
+	}
+	if keys := got.RemovedKeys(); len(keys) != 2 || keys[0] != "legacy" || keys[1] != "webhook" {
+		t.Errorf("keys = %v, want both, sorted", keys)
+	}
+	for _, want := range []string{"removed legacy, webhook", "keys left:    api-key", "next pod start"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout should contain %q:\n%s", want, stdout)
+		}
+	}
+}
+
+// TestSecretUnsetOfTheLastKeySaysTheSecretSurvives: the core leaves an empty
+// Secret rather than deleting one, so this is where a user finds out — and is
+// told the verb that removes the object.
+func TestSecretUnsetOfTheLastKeySaysTheSecretSurvives(t *testing.T) {
+	store := &fakeSecretStore{}
+	stdout, code, msg := runSecret(t, store,
+		"secret", "unset", "checkout-db", "--project", "checkout", "--env", "production", "url")
+	if code != exitOK {
+		t.Fatalf("exit = %d (%s)\n%s", code, msg, stdout)
+	}
+	if !strings.Contains(stdout, "now empty and still exists") ||
+		!strings.Contains(stdout, "kelson secret delete checkout-db") {
+		t.Errorf("stdout should say the object survives and name what removes it:\n%s", stdout)
+	}
+}
+
+// TestSecretUnsetNeedsAKey: `unset <name>` with no key is a usage error rather
+// than a call that removes nothing.
+func TestSecretUnsetNeedsAKey(t *testing.T) {
+	store := &fakeSecretStore{}
+	_, code, msg := runSecret(t, store,
+		"secret", "unset", "checkout-db", "--project", "checkout", "--env", "production")
+	if code != exitErr {
+		t.Fatalf("exit = %d, want %d", code, exitErr)
+	}
+	if !strings.Contains(msg, "arg") {
+		t.Errorf("message = %q, want a usage error about the missing key", msg)
+	}
+	if len(store.unsets) != 0 {
+		t.Errorf("the store was reached anyway: %+v", store.unsets)
+	}
+}
+
+// TestSecretUnsetDryRunChangesNothing: the same rung `set --dry-run` has.
+func TestSecretUnsetDryRunChangesNothing(t *testing.T) {
+	store := &fakeSecretStore{left: []string{"api-key"}}
+	stdout, code, msg := runSecret(t, store,
+		"secret", "unset", "payments", "--project", "checkout", "--env", "production", "webhook", "--dry-run")
+	if code != exitOK {
+		t.Fatalf("exit = %d (%s)\n%s", code, msg, stdout)
+	}
+	if len(store.unsets) != 1 || !store.unsets[0].DryRun {
+		t.Fatalf("unsets = %+v, want one dry run", store.unsets)
+	}
+	if !strings.Contains(stdout, "would remove") || !strings.Contains(stdout, "changed nothing") {
+		t.Errorf("a dry run should say it changed nothing:\n%s", stdout)
+	}
+}
+
+// TestSecretUnsetRefusalReachesTheUser: `secret/key-not-found` is the refusal
+// that makes the verb safe, and the command relays it rather than rewording it.
+func TestSecretUnsetRefusalReachesTheUser(t *testing.T) {
+	store := &fakeSecretStore{err: secret.Error{
+		Code:        secret.ErrKeyNotFound,
+		Resource:    "Secret/checkout-production/payments",
+		Message:     `Secret "payments" in namespace "checkout-production" does not hold "pasword"`,
+		Remediation: "nothing was removed",
+	}}
+	_, code, msg := runSecret(t, store,
+		"secret", "unset", "payments", "--project", "checkout", "--env", "production", "pasword")
+	if code != exitErr {
+		t.Fatalf("exit = %d, want %d", code, exitErr)
+	}
+	if !strings.Contains(msg, string(secret.ErrKeyNotFound)) {
+		t.Errorf("message = %q, want the store's own code", msg)
+	}
+}
+
 // --- list ---------------------------------------------------------------------
 
 // TestSecretListPrintsKeysAndAgesAndNoValues is the masked read-back at the
@@ -465,7 +579,7 @@ func TestSecretIsRegisteredOnTheRoot(t *testing.T) {
 	if found == nil {
 		t.Fatal("`kelson secret` is not registered on the root command")
 	}
-	want := map[string]bool{"set": false, "list": false, "delete": false}
+	want := map[string]bool{"set": false, "unset": false, "list": false, "delete": false}
 	for _, c := range found.Commands() {
 		if _, ok := want[c.Name()]; ok {
 			want[c.Name()] = true
