@@ -23,7 +23,7 @@ wrong, open an issue — it is far cheaper to reverse a decision now than after 
 | [0016](0016-delivery-flows-v0.md) | The four M10 delivery flows, and what each one is in v0 | Accepted (mode gates superseded by 0028) |
 | [0017](0017-pr-previews.md) | PR previews — `previews:`, the artifact tag, and what stage 1 does not do | Accepted (publisher adopted by 0028, d8 amended by 0034) |
 | [0018](0018-secret-references.md) | The secret reference schema — `{secret, key}` in an env value (refines 0009) | Accepted |
-| [0019](0019-release-command-hook.md) | The release command hook — a component field, direct mode only, no new phase | Accepted, implementation gated (0028) |
+| [0019](0019-release-command-hook.md) | The release command hook — a component field, direct mode only, no new phase | Accepted (gate lifted, d3/d4 mechanism superseded by 0037) |
 | [0020](0020-external-secrets.md) | The `externalSecrets` backend — an ExternalSecret per referenced Secret (refines 0018) | Accepted |
 | [0021](0021-installing-missing-components.md) | Installing missing platform components — pinned upstream manifests, per-object provenance | Accepted (extended by 0030) |
 | [0022](0022-sops-age.md) | The `sops` backend — encrypt on write, decrypt in-cluster, kelson holds no key (refines 0018) | Accepted (transport amended by 0028) |
@@ -41,6 +41,7 @@ wrong, open an issue — it is far cheaper to reverse a decision now than after 
 | [0034](0034-forge-driven-delivery.md) | Forge-driven delivery — webhooks, the CI hand-off, server-side preview publishing (amends 0017) | Accepted |
 | [0035](0035-sources.md) | Sources are declared, then bound — per-component sources and the global tier | Accepted |
 | [0036](0036-autodeploy.md) | autoDeploy — an environment opts in, its components follow their sources (completes 0034 d4) | Accepted |
+| [0037](0037-release-hooks-on-the-spine.md) | Release hooks on the spine — two Kustomizations and a dependsOn (supersedes 0019 d3/d4) | Proposed |
 
 *Rebuild note (2026-08-14):* ADRs 0027–0031 are the pre-release rebuild taken as one decision. Read in
 order they are: where state lives, how it is delivered, what renders it, what runs it, and how far it
