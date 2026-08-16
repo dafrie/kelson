@@ -100,6 +100,7 @@ mean. Publishing the images is release work (`.goreleaser.yml`,
 | `ServiceAccount`, `ClusterRole`/`ClusterRoleBinding` `<name>-controller` | release ns / cluster | **Only when `controller.enabled=true`.** kelson-controller's identity and its cluster-scoped grant: `kelson.dev` Projects/Environments and their `status`/`finalizers` subresources, plus `coordination.k8s.io` Leases when `controller.leaderElection.enabled` (on by default). See [Configuring the controller](#configuring-kelson-controller). |
 | `Role`/`RoleBinding` `<name>-controller-flux` | `controller.fluxNamespace` | **Only when `controller.enabled=true`.** CRUD on the `OCIRepository`/`Kustomization` pair the delivery spine owns (ADR-0028 decision 3). |
 | `Deployment` `<name>-controller` | release ns | **Only when `controller.enabled=true`.** kelson-controller itself. |
+| `Job`, `ServiceAccount`, `ClusterRole`/`ClusterRoleBinding` `<name>-ensure-substrate` | release ns / cluster | **Only when `controller.enabled=true` and `substrate.autoInstall=true` (the default).** A `post-install,post-upgrade` **hook**, deleted with the hook: it installs Flux if this cluster has none. See below. |
 
 Every rule exists because a named package makes that call. There are no wildcards, and no verb
 is granted that nothing calls — `watch` is absent from the ConfigMap and Job grants because
@@ -191,6 +192,44 @@ Wiring `internal/observation`'s finer-grained classification into the reconcile 
 read-only workload RBAC that would need — is tracked in
 [#240](https://github.com/dafrie/kelson/issues/240), not forgotten.
 
+## The delivery substrate installs itself
+
+`substrate.autoInstall` is **on by default**, and it only does anything when the controller is
+enabled. What it adds is one `post-install,post-upgrade` hook Job running the controller image in
+its `--ensure-substrate` mode:
+
+1. detect Flux;
+2. **present** → print what was found, apply nothing, exit 0 — from `flux bootstrap`,
+   flux-operator, flux-aio or a vendor's distribution, it makes no difference;
+3. **absent** → install one through the same catalog `kelson install` uses
+   (`internal/delivery/install`): same pins, same digest verification, same per-object
+   created/adopted provenance, so `kelson uninstall --component` is exactly as true about this
+   install as about a hand-run one. flux-aio when the release carries its rendered snapshot,
+   flux-operator otherwise (ADR-0030);
+4. **could not look** → refuse and fail the release, naming the permission. Installing on an
+   unknown is how a cluster ends up with two reconcilers fighting over the same CRDs;
+5. on the install path only: wait for the cluster to serve `OCIRepository` and `Kustomization`,
+   then restart the controller Deployment. The controller detects Flux **once, at start-up**, so a
+   pod that came up before the substrate existed would report `FluxNotInstalled` until somebody
+   restarted it by hand.
+
+The default is on because ADR-0028 makes Flux the only reconciliation path: without it the
+controller renders every environment and deploys none of them. Set `substrate.autoInstall=false`
+for a cluster whose Flux is another pipeline's job.
+
+**The grant, and why it is a hook.** The Job holds its own ServiceAccount and a cluster-scoped
+ClusterRole wide enough to install an operator — `get`/`create`/`patch` on
+`customresourcedefinitions`, `namespaces`, `serviceaccounts`, `services`, `configmaps`, `secrets`,
+`resourcequotas`, `deployments`, `networkpolicies`, `fluxinstances` and the RBAC kinds, plus
+`escalate` and `bind` on `clusterroles`/`roles`, which Kubernetes requires of anything that creates
+RBAC wider than its own. No wildcard appears anywhere and there is no `delete` verb: this hook
+installs, and removal is `kelson uninstall --component`, run by a person under their own
+credentials. Every one of those objects is annotated
+`helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed`, so the identity and
+the grant are gone whether the hook succeeds or fails; only a *failed* Job is kept, because it is
+the only record of why. The standing controller ClusterRole gains nothing — `deploy/chart` asserts
+that it renders identically with the hook on and off.
+
 ## Uninstalling changes nothing about your apps
 
 ```sh
@@ -258,6 +297,9 @@ not delete them.
 | `controller.rbac.create` | `true` | The controller's ClusterRole/binding and the flux namespace's Role/binding. |
 | `controller.resources` | 50m/64Mi requests, 256Mi limit | |
 | `controller.extraArgs` / `.extraEnv` | `[]` | Appended verbatim. |
+| `substrate.autoInstall` | `true` | Install Flux with a hook Job when the cluster has none and `controller.enabled=true`. A cluster that has Flux is adopted untouched either way. See [above](#the-delivery-substrate-installs-itself). |
+| `substrate.timeout` | `10m` | `--substrate-timeout`: how long the hook waits for the cluster to serve `OCIRepository` and `Kustomization`. |
+| `substrate.resources` | 50m/64Mi requests, 256Mi limit | Resources for the hook pod. |
 | `service.type` / `.port` / `.annotations` | `ClusterIP` / `8420` / `{}` | |
 | `resources` | 50m/64Mi requests, 256Mi limit | |
 | `livenessProbe` / `readinessProbe` | see values.yaml | Both hit `/healthz`, which never requires authentication. |
@@ -285,7 +327,10 @@ practice means a `namespace.name` that is not the release namespace. The plain p
   build until its rule exists — and it is absent from a default render;
 - `appVersion` tracks `internal/version`;
 - `helm lint` passes and every rendered document is valid YAML carrying the uninstall label;
-- the auth gate refuses a render with no password, and `image.tag` refuses to default.
+- the auth gate refuses a render with no password, and `image.tag` refuses to default;
+- the ensure-substrate hook renders only when asked for, is hook-scoped and hook-deleted in every
+  direction, names every resource it grants rather than wildcarding, and leaves the standing
+  controller ClusterRole and Deployment identical with it on and off.
 
 The render tests need the `helm` binary and skip with a message when it is absent
 (`go install helm.sh/helm/v3/cmd/helm@latest`).

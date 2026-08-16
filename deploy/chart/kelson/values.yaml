@@ -304,6 +304,57 @@ controller:
   # -- Extra environment variables, as ordinary core/v1 EnvVar entries.
   extraEnv: []
 
+# -- The delivery substrate: Flux, which ADR-0028 makes the only reconciliation
+# path there is.
+#
+# **On by default, and this is what that means.** When `controller.enabled` is
+# true, a `helm install` (and every `helm upgrade`) runs one Job that detects
+# Flux and, if this cluster has none, installs it — flux-aio, every Flux
+# controller in one pod, or flux-operator when the release carries no flux-aio
+# snapshot (ADR-0030). It then waits for the cluster to serve the two kinds
+# kelson writes and restarts the controller, whose Flux detection is one-shot at
+# start-up.
+#
+# Without it, a cluster with no Flux gets a kelson that validates and renders
+# every environment and deploys none of them, reporting `FluxNotInstalled` — a
+# working install of a product that does nothing, which is what this default
+# exists to prevent.
+#
+# **A cluster that already has Flux is untouched.** Detection decides, and
+# ADR-0003's rule holds whether the install was asked for or automatic: kelson
+# never modifies, upgrades or installs beside a component it did not install.
+# The hook prints what it adopted and applies nothing. A cluster where detection
+# cannot see (an RBAC gap over the discovery endpoints) is a refusal, not a
+# guess: the hook fails loudly rather than installing a second Flux beside one
+# it could not look for.
+#
+# **What it costs while it runs.** The Job holds its own ServiceAccount and a
+# cluster-scoped grant wide enough to install an operator — CRDs, namespaces,
+# RBAC including `escalate` and `bind`. All of it is hook-scoped and deleted
+# with the Job, succeed or fail; the standing controller grant gains nothing.
+# templates/substrate-hook.yaml states the per-rule reasoning.
+substrate:
+  # -- Install Flux when this cluster has none. Set false to keep the substrate
+  # somebody else's job — a cluster whose Flux is managed by another pipeline,
+  # or an operator who would rather run `kelson install flux-aio` under their
+  # own credentials, which is the same install by the same code.
+  autoInstall: true
+
+  # -- How long the hook waits for the substrate to serve OCIRepository and
+  # Kustomization (`--substrate-timeout`). Generous because the two rows finish
+  # at very different speeds: flux-aio registers the CRDs in the apply itself,
+  # while flux-operator then reconciles a FluxInstance and pulls six controller
+  # images.
+  timeout: 10m
+
+  # -- Resources for the hook pod. It applies a manifest and polls discovery.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+
 # -- Namespace object. Helm needs the release namespace to exist before it
 # writes its own release record, so this is not a substitute for
 # `helm install --create-namespace`; it exists for the case where the namespace

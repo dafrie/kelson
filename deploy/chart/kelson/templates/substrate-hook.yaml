@@ -1,0 +1,260 @@
+{{- include "kelson.authGate" . -}}
+{{- if and .Values.controller.enabled .Values.substrate.autoInstall }}
+{{- $name := include "kelson.substrate.fullname" . }}
+# Installing kelson installs what kelson cannot work without (owner decision
+# 2026-08-16).
+#
+# ADR-0028 makes Flux the only reconciliation path. On a cluster without it the
+# controller comes up, validates every Environment, renders it — and then
+# reports FluxNotInstalled forever, because there is nothing to reconcile with.
+# A project created through the UI sitting silently unreconciled is not a
+# missing feature the user can be told about later; it is the product not
+# working. So a `helm install` that turns the controller on also makes sure the
+# substrate exists.
+#
+# # What runs, and under what
+#
+# One Job, running the controller image in its --ensure-substrate mode
+# (cmd/kelson-controller/substrate.go). It detects, and then either adopts the
+# Flux that is already there or installs one through the ordinary catalog
+# (internal/delivery/install) — same pins, same digest verification, same
+# per-object created/adopted provenance, so `kelson uninstall --component`
+# stays exactly as true about a hook-installed substrate as a hand-installed
+# one (ADR-0021 decision 3). Which row it installs is ADR-0030's preference:
+# flux-aio when the release carries its rendered snapshot, flux-operator
+# otherwise.
+#
+# # Why the grant below is a hook and not a Role the controller keeps
+#
+# Installing a platform component needs CRDs, cluster-scoped RBAC and a
+# namespace — a far wider grant than reconciling Environments, and one that
+# would have to be read as "this controller may install anything, at any time"
+# if the running controller held it. Everything here is hook-scoped and
+# hook-deleted: the ServiceAccount, the ClusterRole and the binding exist for
+# the length of one Job and are removed with it. The standing controller
+# ClusterRole (templates/controller-clusterrole.yaml) gains nothing, and
+# deploy/chart/helm_test.go asserts that it is byte-identical with this hook on
+# and off.
+#
+# Turn it off with `--set substrate.autoInstall=false`, which is the posture for
+# a cluster whose Flux is managed by somebody else's pipeline. Nothing else
+# changes: a cluster that already has Flux is adopted either way.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kelson.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ensure-substrate
+  annotations:
+    # Weight -5: the identity and its grant exist before the Job that uses them.
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "-5"
+    # Deleted whatever happens, including on failure. A failed hook leaves its
+    # Job behind so `kubectl logs` still answers what went wrong (see the Job's
+    # own policy), but it must never leave an installer identity standing.
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
+---
+# The grant, rule by rule, derived from what the two Flux rows actually apply
+# rather than from a wildcard. Every rule is get/create/patch and nothing else:
+#
+#   - `patch` is the verb a server-side apply authorizes against, and `create`
+#     is what it needs the first time an object does not exist;
+#   - `get` is not optional — internal/delivery/install reads every object
+#     immediately before applying it to decide created-versus-adopted, and a
+#     read it cannot perform is fatal for that component (ADR-0021 decision 3);
+#   - there is no `delete` anywhere. This hook installs. Removing a component is
+#     `kelson uninstall --component`, run by a person under their own
+#     credentials, and an installer that could delete a CRD could delete every
+#     custom resource in the cluster with it;
+#   - there is no `list` and no `watch`. Nothing here enumerates.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "kelson.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ensure-substrate
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
+rules:
+  # Detection, which decides whether anything is installed at all. Flux's
+  # presence is API-group registration, so the discovery endpoints are the whole
+  # of what the verdict reads. Granted explicitly rather than relied upon: it is
+  # served to every authenticated identity by default, and a cluster that has
+  # narrowed `system:discovery` would otherwise turn every install into a
+  # detection gap, which this mode correctly refuses to install over.
+  - nonResourceURLs: ["/version", "/api", "/api/*", "/apis", "/apis/*"]
+    verbs: ["get"]
+
+  # The substrate's namespace and the ordinary objects inside it. flux-system
+  # is created by the install, which is why this cannot be a Role in that
+  # namespace: a Namespace the chart pre-created would be stamped `adopted`
+  # rather than `created`, and `kelson uninstall --component` would then
+  # correctly refuse to remove it — provenance the chart would have corrupted
+  # by being helpful.
+  #
+  # secrets is here because a Flux distribution may ship one (notification
+  # webhook tokens, a registry credential) and an install that failed halfway
+  # through on a missing verb is worse than a grant that names it. Nothing in
+  # this hook reads a Secret it did not apply: there is no `list`.
+  - apiGroups: [""]
+    resources: ["namespaces", "serviceaccounts", "services", "configmaps", "secrets", "resourcequotas"]
+    verbs: ["get", "create", "patch"]
+
+  # The controllers themselves: one Deployment for flux-aio, one for
+  # flux-operator. This is also the rule the post-install bounce of kelson's own
+  # controller Deployment rides on — a resourceNames-scoped Role would be
+  # narrower for the bounce alone, but it cannot narrow the install, since
+  # `create` cannot be restricted by name and the substrate's Deployment is
+  # created by this Job.
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "create", "patch"]
+
+  # Flux's own API. These are the CustomResourceDefinitions that make
+  # OCIRepository and Kustomization — the two kinds kelson writes (ADR-0028
+  # decision 3) — servable at all, so without this rule the hook installs
+  # nothing that matters.
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "create", "patch"]
+
+  # Flux ships NetworkPolicies in its own namespace (deny-ingress and friends).
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "create", "patch"]
+
+  # The RBAC the substrate's controllers run under, and the two verbs that make
+  # applying it possible.
+  #
+  # This is the widest thing in the file and it is stated rather than buried:
+  # `escalate` lets this identity create a ClusterRole holding permissions it
+  # does not itself hold, and `bind` lets it reference one — which Kubernetes
+  # otherwise forbids precisely to stop an installer from granting more than it
+  # has. Both are unavoidable for installing a reconciler: Flux's controllers
+  # need permissions over every kind they may apply, which no enumerable subset
+  # of this hook's own grant could cover.
+  #
+  # What bounds it is lifetime, not scope. This identity exists for the length
+  # of one Job and Helm deletes it whether the Job succeeds or fails; the
+  # standing controller ServiceAccount never holds any of it. An operator who
+  # would rather grant nothing of the sort sets substrate.autoInstall=false and
+  # runs `kelson install flux-aio` under their own credentials, which is the
+  # same install by the same code.
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles", "roles"]
+    verbs: ["get", "create", "patch", "escalate", "bind"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterrolebindings", "rolebindings"]
+    verbs: ["get", "create", "patch"]
+
+  # The one custom resource kelson authors: the FluxInstance the flux-operator
+  # row creates after applying the operator (ADR-0021 decision 5). The flux-aio
+  # row creates none — its snapshot IS the installation — so this rule is dead
+  # weight on that path and the two-line cost of not having a second template.
+  - apiGroups: ["fluxcd.controlplane.io"]
+    resources: ["fluxinstances"]
+    verbs: ["get", "create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "kelson.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ensure-substrate
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kelson.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ensure-substrate
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "0"
+    # Not `hook-failed`: a Job that failed is the only record of why, and
+    # `kubectl -n {{ .Release.Namespace }} logs job/{{ $name }}` has to still
+    # work when somebody asks. `before-hook-creation` clears it on the next
+    # attempt, so it is a diagnostic and not litter.
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  # One attempt. Every apply is a server-side apply and re-running converges, so
+  # `helm upgrade` is the retry — and a substrate install that failed is
+  # something to read, not something to hammer. A blind retry would also double
+  # the worst-case wait an operator sits through.
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        {{- include "kelson.labels" . | nindent 8 }}
+        app.kubernetes.io/component: ensure-substrate
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ $name }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: ensure-substrate
+          image: {{ include "kelson.controller.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - --ensure-substrate
+            - --substrate-timeout={{ .Values.substrate.timeout }}
+            # The bounce, and the whole reason this Job is safe to run after the
+            # controller Deployment exists. The controller detects Flux ONCE, at
+            # start-up, and gates its Flux watches on that answer
+            # (cmd/kelson-controller's package doc) — so on a fresh install its
+            # first pod may well probe a cluster this Job has not finished
+            # installing into. Restarting it makes convergence a property of the
+            # install rather than of which pod won a race.
+            #
+            # It only fires when this Job actually installed something: on the
+            # adopt path Flux was there before the release began, so the
+            # controller's own probe already saw it and nothing needs bouncing.
+            - --substrate-restart-deployment={{ .Release.Namespace }}/{{ include "kelson.controller.fullname" . }}
+          {{- with .Values.substrate.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
