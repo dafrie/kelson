@@ -36,6 +36,19 @@
 // environments converge on the requeue timer. Live refresh of the profile is
 // tracked separately.
 //
+// The one path that would otherwise pay that cost on every fresh install pays
+// it automatically instead: --ensure-substrate installs Flux and then restarts
+// this Deployment itself, so a controller that came up before the substrate
+// existed re-detects rather than waiting for somebody to notice (substrate.go).
+//
+// # A second mode in the same binary
+//
+// --ensure-substrate does not run a controller at all. It installs the delivery
+// substrate once and exits, as a Helm hook Job under a ServiceAccount that is
+// deleted with the hook. It lives here because the image is already in the
+// cluster and already knows how to reach it; substrate.go holds the whole of
+// it, including why the install grant is not this controller's to keep.
+//
 // # Leader election is on by default
 //
 // This is a controller that publishes artifacts and applies Flux objects, so
@@ -149,6 +162,21 @@ type config struct {
 	// correction and not deploy latency: a new revision reaches Flux through an
 	// apply, not through a poll.
 	reconcileInterval time.Duration
+
+	// ensureSubstrate switches the process from "run the controller" to "make
+	// sure this cluster has a Flux, then exit". It is a flag rather than a
+	// subcommand because this binary takes flags only and refuses positional
+	// arguments; substrate.go holds the mode and says why it exists here.
+	ensureSubstrate bool
+
+	// substrateTimeout bounds the wait for the installed substrate to serve
+	// the two kinds kelson writes. Only read in --ensure-substrate mode.
+	substrateTimeout time.Duration
+
+	// substrateRestart is the <namespace>/<name> of a Deployment to restart
+	// after a substrate is installed — this controller's own, in practice.
+	// Empty restarts nothing. Only read in --ensure-substrate mode.
+	substrateRestart string
 }
 
 // leaderElectionID is the name of the Lease two replicas would contend for. It
@@ -188,6 +216,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	// interface controller-runtime's API speaks.
 	handler := slog.NewJSONHandler(stderr, &slog.HandlerOptions{Level: slog.LevelInfo})
 	ctrllog.SetLogger(logr.FromSlogHandler(handler))
+
+	// The one-shot mode, before anything long-running is built. It runs as a
+	// Helm hook Job under its own ServiceAccount and exits; see substrate.go.
+	if cfg.ensureSubstrate {
+		return ensureSubstrate(ctx, cfg, stdout, liveSubstrate())
+	}
 
 	restCfg, err := restConfig(cfg.kubeconfig)
 	if err != nil {
@@ -407,6 +441,14 @@ func parseFlags(args []string, stderr io.Writer) (config, error) {
 			"(default: $"+pullSecretEnv+")")
 	fs.DurationVar(&cfg.reconcileInterval, "reconcile-interval", controller.DefaultInterval,
 		"how often Flux re-checks the objects kelson owns; this is drift correction, not deploy latency")
+	fs.BoolVar(&cfg.ensureSubstrate, "ensure-substrate", false,
+		"install the delivery substrate (Flux) if this cluster has none, wait for it to serve the kinds kelson "+
+			"writes, and exit; a cluster that already has Flux is adopted and nothing is applied")
+	fs.DurationVar(&cfg.substrateTimeout, "substrate-timeout", defaultSubstrateTimeout,
+		"how long --ensure-substrate waits for the substrate to serve OCIRepository and Kustomization")
+	fs.StringVar(&cfg.substrateRestart, "substrate-restart-deployment", "",
+		"<namespace>/<name> of a Deployment to restart after --ensure-substrate installs a substrate, so a "+
+			"controller that started before Flux existed re-runs its one-shot detection")
 	insecure := fs.String("insecure-registries", os.Getenv(insecureRegistriesEnv),
 		"comma-separated registry hosts served over plain HTTP, e.g. localhost:5000 (default: $"+
 			insecureRegistriesEnv+"); only the listed hosts are affected")
@@ -424,6 +466,24 @@ func parseFlags(args []string, stderr io.Writer) (config, error) {
 	}
 	if cfg.reconcileInterval <= 0 {
 		return config{}, fmt.Errorf("--reconcile-interval must be positive, got %s", cfg.reconcileInterval)
+	}
+	// The substrate knobs are refused outside the mode that reads them rather
+	// than ignored. A hook Job that passed --substrate-restart-deployment and
+	// forgot --ensure-substrate would otherwise start a second controller and
+	// restart nothing, which looks like the mode running and is not.
+	if !cfg.ensureSubstrate && strings.TrimSpace(cfg.substrateRestart) != "" {
+		return config{}, errors.New("--substrate-restart-deployment is only read with --ensure-substrate: " +
+			"the running controller never restarts a Deployment")
+	}
+	if cfg.ensureSubstrate {
+		if cfg.substrateTimeout <= 0 {
+			return config{}, fmt.Errorf("--substrate-timeout must be positive, got %s", cfg.substrateTimeout)
+		}
+		if ref := strings.TrimSpace(cfg.substrateRestart); ref != "" {
+			if _, _, err := splitDeploymentRef(ref); err != nil {
+				return config{}, fmt.Errorf("--substrate-restart-deployment: %w", err)
+			}
+		}
 	}
 	// A malformed entry is refused here rather than written into an
 	// OCIRepository's insecure field, where it would match no registry at all
