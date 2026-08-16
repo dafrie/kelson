@@ -815,4 +815,16 @@ func TestServerRoleCanCreateTheFirstProject(t *testing.T) {
 			}
 		}
 	}
+
+	// The event stream: deploy streaming and the UI's transition feed both ride
+	// controlstore.EnvironmentStore.Watch, which is a Kubernetes watch on
+	// environments. Projects deliberately stay unwatched.
+	if !granted(serverRules, "kelson.dev", "environments", "watch") {
+		t.Errorf("the server's state Role does not grant watch on environments — the event "+
+			"stream cannot start:\n%s", mustYAML(t, serverRules))
+	}
+	if granted(serverRules, "kelson.dev", "projects", "watch") {
+		t.Errorf("the server's state Role grants watch on projects, which nothing performs:\n%s",
+			mustYAML(t, serverRules))
+	}
 }
